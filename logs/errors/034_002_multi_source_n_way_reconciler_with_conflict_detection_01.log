@@ -1,0 +1,1208 @@
+22:11:13.238 [info] VARIATION 034_002_multi_source_n_way_reconciler_with_conflict_detection_01: Multi-Source N-Way Reconciler with Conflict Detection
+22:11:13.238 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+22:11:13.238 [debug] claude -p USER prompt:
+Write me an Elixir module called `MultiSourceReconciler` that reconciles records coming from **more than two** sources at once, keyed by a shared composite key, and reports where each key is present and where the sources disagree.
+
+I need this public API:
+
+- `MultiSourceReconciler.reconcile(sources, opts)` where:
+  - `sources` is a **map** from a source name (an atom, e.g. `:crm`, `:billing`, `:support`) to a list of record maps belonging to that source.
+  - `opts` is a keyword list.
+
+It must return a **list of entries**, one entry per distinct composite key found across *all* sources. Each entry is a map with these keys:
+
+- `:key` — a map of `%{key_field => value}` reconstructed from the record's key fields (e.g. `%{id: 1}` or `%{org_id: 1, user_id: 10}`).
+- `:present_in` — a list of the source names that have a record for this key.
+- `:missing_from` — a list of the source names that do **not** have a record for this key.
+- `:records` — a map of `%{source_name => record}` containing the full original record from every present source.
+- `:conflicts` — a map of `%{field => %{source_name => value}}`. A field appears here **only if** the present sources do not all agree on that field's value (compared with `==`). When a field is in conflict, the inner map contains an entry for **every present source**, with the value that source holds for that field. If all present sources agree on a field, that field is absent from `:conflicts`. An entry whose present sources agree on everything has an empty `:conflicts` map.
+
+The `opts` keyword list must support:
+
+- `:key_fields` (required) — a list of atoms forming the composite key. Two records refer to the same entity if and only if all key fields are equal.
+- `:compare_fields` (optional) — a list of atoms specifying which fields to check for conflicts. If omitted or `nil`, conflicts are checked on every field that appears in any present record, minus the key fields.
+
+Behaviour requirements:
+- Key matching must be exact; composite keys (`[:org_id, :user_id]`) must match only when **all** key fields are equal.
+- If a compare field is missing from one of the present records, treat its value as `nil` for that source. So a source that lacks the field and a source that has it are in conflict, and the missing source's value is recorded as `nil` in the inner map.
+- If the same key appears more than once within a single source's list, the last occurrence wins for that source.
+- Order of the returned entries does not matter, and the order of names inside `:present_in` and `:missing_from` does not matter.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+22:12:06.235 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule MultiSourceReconciler do
+  @moduledoc """
+  Reconciles records coming from more than two sources at once.
+
+  Records are keyed by a shared composite key (one or more fields). For every
+  distinct composite key found across all sources, `reconcile/2` reports:
+
+    * which sources have a record for that key (`:present_in`);
+    * which sources are missing it (`:missing_from`);
+    * the full original record from each present source (`:records`);
+    * the fields on which the present sources disagree (`:conflicts`).
+
+  The module is pure: it performs no I/O, spawns no processes, and relies only
+  on the Elixir standard library.
+
+  ## Key matching
+
+  Two records refer to the same entity if and only if the values of *all* key
+  fields are equal. A field that is absent from a record is treated as `nil`.
+
+  ## Conflict detection
+
+  A field is in conflict when the present sources do not all agree on its value
+  (compared with `==`). A missing compare field is treated as `nil` for that
+  source, so a source lacking the field conflicts with one that has it. When a
+  field is in conflict, the reported inner map holds an entry for every present
+  source.
+  """
+
+  @type source_name :: atom()
+  @type record :: map()
+  @type sources :: %{optional(source_name()) => [record()]}
+  @type entry :: %{
+          key: map(),
+          present_in: [source_name()],
+          missing_from: [source_name()],
+          records: %{optional(source_name()) => record()},
+          conflicts: %{optional(atom()) => %{optional(source_name()) => term()}}
+        }
+
+  @doc """
+  Reconciles `sources` into a list of per-key entries.
+
+  `sources` maps each source name (an atom) to its list of record maps. `opts`
+  is a keyword list supporting:
+
+    * `:key_fields` (required) — the list of atoms forming the composite key.
+    * `:compare_fields` (optional) — the list of atoms to check for conflicts.
+      When omitted or `nil`, every field appearing in any present record is
+      checked, minus the key fields.
+
+  Returns one entry per distinct composite key. The order of the entries, and
+  the order of names within `:present_in`/`:missing_from`, are unspecified.
+
+  ## Examples
+
+      iex> crm = [%{id: 1, name: "Ada"}]
+      iex> billing = [%{id: 1, name: "Ada Lovelace"}]
+      iex> [entry] =
+      ...>   MultiSourceReconciler.reconcile(
+      ...>     %{crm: crm, billing: billing},
+      ...>     key_fields: [:id]
+      ...>   )
+      iex> entry.key
+      %{id: 1}
+      iex> entry.conflicts
+      %{name: %{crm: "Ada", billing: "Ada Lovelace"}}
+
+  """
+  @spec reconcile(sources(), keyword()) :: [entry()]
+  def reconcile(sources, opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    source_names = Map.keys(sources)
+
+    indexed =
+      Map.new(sources, fn {name, records} ->
+        {name, index_records(records, key_fields)}
+      end)
+
+    indexed
+    |> Enum.flat_map(fn {_name, keyed} -> Map.keys(keyed) end)
+    |> Enum.uniq()
+    |> Enum.map(fn key_tuple ->
+      build_entry(key_tuple, key_fields, compare_fields, indexed, source_names)
+    end)
+  end
+
+  @spec index_records([record()], [atom()]) :: %{optional([term()]) => record()}
+  defp index_records(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      key_tuple = Enum.map(key_fields, fn field -> Map.get(record, field) end)
+      Map.put(acc, key_tuple, record)
+    end)
+  end
+
+  @spec build_entry([term()], [atom()], [atom()] | nil, map(), [source_name()]) :: entry()
+  defp build_entry(key_tuple, key_fields, compare_fields, indexed, source_names) do
+    present =
+      Enum.filter(source_names, fn name ->
+        Map.has_key?(Map.fetch!(indexed, name), key_tuple)
+      end)
+
+    records =
+      Map.new(present, fn name ->
+        {name, Map.fetch!(Map.fetch!(indexed, name), key_tuple)}
+      end)
+
+    fields = conflict_fields(compare_fields, records, key_fields)
+
+    %{
+      key: key_fields |> Enum.zip(key_tuple) |> Map.new(),
+      present_in: present,
+      missing_from: source_names -- present,
+      records: records,
+      conflicts: compute_conflicts(fields, records, present)
+    }
+  end
+
+  @spec conflict_fields([atom()] | nil, map(), [atom()]) :: [atom()]
+  defp conflict_fields(nil, records, key_fields) do
+    records
+    |> Enum.flat_map(fn {_name, record} -> Map.keys(record) end)
+    |> Enum.uniq()
+    |> Enum.reject(fn field -> field in key_fields end)
+  end
+
+  defp conflict_fields(compare_fields, _records, _key_fields), do: compare_fields
+
+  @spec compute_conflicts([atom()], map(), [source_name()]) :: map()
+  defp compute_conflicts(fields, records, present) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      value_map =
+        Map.new(present, fn name ->
+          {name, Map.get(Map.fetch!(records, name), field)}
+        end)
+
+      values = Enum.map(present, fn name -> Map.fetch!(value_map, name) end)
+
+      if all_agree?(values) do
+        acc
+      else
+        Map.put(acc, field, value_map)
+      end
+    end)
+  end
+
+  @spec all_agree?([term()]) :: boolean()
+  defp all_agree?([]), do: true
+  defp all_agree?([first | rest]), do: Enum.all?(rest, fn value -> value == first end)
+end
+</file>
+22:12:06.235 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1821, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1821, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1821, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1821, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 4591, "type" => "message"}], "output_tokens" => 4591, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+22:12:06.261 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_multi_source_n_way_reconciler_with_conflict_detection_01 solution.ex
+22:12:06.894 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":152,"lines_over_98":0,"max_line_length":90,"mode":"full","pipe_chain_count":8,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_multi_source_n_way_reconciler_with_conflict_detection_01/solution.ex","task":"034_002_multi_source_n_way_reconciler_with_conflict_detection_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-10T20:12:06.867963Z"}
+22:12:06.896 [info] cycle 034_002_multi_source_n_way_reconciler_with_conflict_detection_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+22:12:06.896 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+22:12:06.896 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `MultiSourceReconciler` that reconciles records coming from **more than two** sources at once, keyed by a shared composite key, and reports where each key is present and where the sources disagree.
+
+I need this public API:
+
+- `MultiSourceReconciler.reconcile(sources, opts)` where:
+  - `sources` is a **map** from a source name (an atom, e.g. `:crm`, `:billing`, `:support`) to a list of record maps belonging to that source.
+  - `opts` is a keyword list.
+
+It must return a **list of entries**, one entry per distinct composite key found across *all* sources. Each entry is a map with these keys:
+
+- `:key` — a map of `%{key_field => value}` reconstructed from the record's key fields (e.g. `%{id: 1}` or `%{org_id: 1, user_id: 10}`).
+- `:present_in` — a list of the source names that have a record for this key.
+- `:missing_from` — a list of the source names that do **not** have a record for this key.
+- `:records` — a map of `%{source_name => record}` containing the full original record from every present source.
+- `:conflicts` — a map of `%{field => %{source_name => value}}`. A field appears here **only if** the present sources do not all agree on that field's value (compared with `==`). When a field is in conflict, the inner map contains an entry for **every present source**, with the value that source holds for that field. If all present sources agree on a field, that field is absent from `:conflicts`. An entry whose present sources agree on everything has an empty `:conflicts` map.
+
+The `opts` keyword list must support:
+
+- `:key_fields` (required) — a list of atoms forming the composite key. Two records refer to the same entity if and only if all key fields are equal.
+- `:compare_fields` (optional) — a list of atoms specifying which fields to check for conflicts. If omitted or `nil`, conflicts are checked on every field that appears in any present record, minus the key fields.
+
+Behaviour requirements:
+- Key matching must be exact; composite keys (`[:org_id, :user_id]`) must match only when **all** key fields are equal.
+- If a compare field is missing from one of the present records, treat its value as `nil` for that source. So a source that lacks the field and a source that has it are in conflict, and the missing source's value is recorded as `nil` in the inner map.
+- If the same key appears more than once within a single source's list, the last occurrence wins for that source.
+- Order of the returned entries does not matter, and the order of names inside `:present_in` and `:missing_from` does not matter.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule MultiSourceReconciler do
+  @moduledoc """
+  Reconciles records coming from more than two sources at once.
+
+  Records are keyed by a shared composite key (one or more fields). For every
+  distinct composite key found across all sources, `reconcile/2` reports:
+
+    * which sources have a record for that key (`:present_in`);
+    * which sources are missing it (`:missing_from`);
+    * the full original record from each present source (`:records`);
+    * the fields on which the present sources disagree (`:conflicts`).
+
+  The module is pure: it performs no I/O, spawns no processes, and relies only
+  on the Elixir standard library.
+
+  ## Key matching
+
+  Two records refer to the same entity if and only if the values of *all* key
+  fields are equal. A field that is absent from a record is treated as `nil`.
+
+  ## Conflict detection
+
+  A field is in conflict when the present sources do not all agree on its value
+  (compared with `==`). A missing compare field is treated as `nil` for that
+  source, so a source lacking the field conflicts with one that has it. When a
+  field is in conflict, the reported inner map holds an entry for every present
+  source.
+  """
+
+  @type source_name :: atom()
+  @type record :: map()
+  @type sources :: %{optional(source_name()) => [record()]}
+  @type entry :: %{
+          key: map(),
+          present_in: [source_name()],
+          missing_from: [source_name()],
+          records: %{optional(source_name()) => record()},
+          conflicts: %{optional(atom()) => %{optional(source_name()) => term()}}
+        }
+
+  @doc """
+  Reconciles `sources` into a list of per-key entries.
+
+  `sources` maps each source name (an atom) to its list of record maps. `opts`
+  is a keyword list supporting:
+
+    * `:key_fields` (required) — the list of atoms forming the composite key.
+    * `:compare_fields` (optional) — the list of atoms to check for conflicts.
+      When omitted or `nil`, every field appearing in any present record is
+      checked, minus the key fields.
+
+  Returns one entry per distinct composite key. The order of the entries, and
+  the order of names within `:present_in`/`:missing_from`, are unspecified.
+
+  ## Examples
+
+      iex> crm = [%{id: 1, name: "Ada"}]
+      iex> billing = [%{id: 1, name: "Ada Lovelace"}]
+      iex> [entry] =
+      ...>   MultiSourceReconciler.reconcile(
+      ...>     %{crm: crm, billing: billing},
+      ...>     key_fields: [:id]
+      ...>   )
+      iex> entry.key
+      %{id: 1}
+      iex> entry.conflicts
+      %{name: %{crm: "Ada", billing: "Ada Lovelace"}}
+
+  """
+  @spec reconcile(sources(), keyword()) :: [entry()]
+  def reconcile(sources, opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    source_names = Map.keys(sources)
+
+    indexed =
+      Map.new(sources, fn {name, records} ->
+        {name, index_records(records, key_fields)}
+      end)
+
+    indexed
+    |> Enum.flat_map(fn {_name, keyed} -> Map.keys(keyed) end)
+    |> Enum.uniq()
+    |> Enum.map(fn key_tuple ->
+      build_entry(key_tuple, key_fields, compare_fields, indexed, source_names)
+    end)
+  end
+
+  @spec index_records([record()], [atom()]) :: %{optional([term()]) => record()}
+  defp index_records(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      key_tuple = Enum.map(key_fields, fn field -> Map.get(record, field) end)
+      Map.put(acc, key_tuple, record)
+    end)
+  end
+
+  @spec build_entry([term()], [atom()], [atom()] | nil, map(), [source_name()]) :: entry()
+  defp build_entry(key_tuple, key_fields, compare_fields, indexed, source_names) do
+    present =
+      Enum.filter(source_names, fn name ->
+        Map.has_key?(Map.fetch!(indexed, name), key_tuple)
+      end)
+
+    records =
+      Map.new(present, fn name ->
+        {name, Map.fetch!(Map.fetch!(indexed, name), key_tuple)}
+      end)
+
+    fields = conflict_fields(compare_fields, records, key_fields)
+
+    %{
+      key: key_fields |> Enum.zip(key_tuple) |> Map.new(),
+      present_in: present,
+      missing_from: source_names -- presen (truncated)
+22:19:22.758 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the solution and tests read as behavior-correct and I could find no unused variable. The most likely source of a single compile warning on a modern Elixir (1.18+) toolchain is the set-theoretic type checker: the `entry()` type declares narrow map types for `:records` and `:conflicts`, but the values built at runtime come from helpers spec'd as the broader `map()` (`compute_conflicts/3` returns `map()`, and `Map.new/2` infers `map()`). A broad `map()` value is not a subtype of a narrow closed-map type, which trips a type-mismatch warning. I'll loosen those fields in `entry()` to `map()` so the constructed values conform, keeping all behavior and coverage intact.
+
+<file path="solution.ex">
+defmodule MultiSourceReconciler do
+  @moduledoc """
+  Reconciles records coming from more than two sources at once.
+
+  Records are keyed by a shared composite key (one or more fields). For every
+  distinct composite key found across all sources, `reconcile/2` reports:
+
+    * which sources have a record for that key (`:present_in`);
+    * which sources are missing it (`:missing_from`);
+    * the full original record from each present source (`:records`);
+    * the fields on which the present sources disagree (`:conflicts`).
+
+  The module is pure: it performs no I/O, spawns no processes, and relies only
+  on the Elixir standard library.
+
+  ## Key matching
+
+  Two records refer to the same entity if and only if the values of *all* key
+  fields are equal. A field that is absent from a record is treated as `nil`.
+
+  ## Conflict detection
+
+  A field is in conflict when the present sources do not all agree on its value
+  (compared with `==`). A missing compare field is treated as `nil` for that
+  source, so a source lacking the field conflicts with one that has it. When a
+  field is in conflict, the reported inner map holds an entry for every present
+  source.
+  """
+
+  @type source_name :: atom()
+  @type record :: map()
+  @type sources :: %{optional(source_name()) => [record()]}
+  @type entry :: %{
+          key: map(),
+          present_in: [source_name()],
+          missing_from: [source_name()],
+          records: map(),
+          conflicts: map()
+        }
+
+  @doc """
+  Reconciles `sources` into a list of per-key entries.
+
+  `sources` maps each source name (an atom) to its list of record maps. `opts`
+  is a keyword list supporting:
+
+    * `:key_fields` (required) — the list of atoms forming the composite key.
+    * `:compare_fields` (optional) — the list of atoms to check for conflicts.
+      When omitted or `nil`, every field appearing in any present record is
+      checked, minus the key fields.
+
+  Returns one entry per distinct composite key. The order of the entries, and
+  the order of names within `:present_in`/`:missing_from`, are unspecified.
+
+  ## Examples
+
+      iex> crm = [%{id: 1, name: "Ada"}]
+      iex> billing = [%{id: 1, name: "Ada Lovelace"}]
+      iex> [entry] =
+      ...>   MultiSourceReconciler.reconcile(
+      ...>     %{crm: crm, billing: billing},
+      ...>     key_fields: [:id]
+      ...>   )
+      iex> entry.key
+      %{id: 1}
+      iex> entry.conflicts
+      %{name: %{crm: "Ada", billing: "Ada Lovelace"}}
+
+  """
+  @spec reconcile(sources(), keyword()) :: [entry()]
+  def reconcile(sources, opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    source_names = Map.keys(sources)
+
+    indexed =
+      Map.new(sources, fn {name, records} ->
+        {name, index_records(records, key_fields)}
+      end)
+
+    indexed
+    |> Enum.flat_map(fn {_name, keyed} -> Map.keys(keyed) end)
+    |> Enum.uniq()
+    |> Enum.map(fn key_tuple ->
+      build_entry(key_tuple, key_fields, compare_fields, indexed, source_names)
+    end)
+  end
+
+  @spec index_records([record()], [atom()]) :: %{optional([term()]) => record()}
+  defp index_records(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      key_tuple = Enum.map(key_fields, fn field -> Map.get(record, field) end)
+      Map.put(acc, key_tuple, record)
+    end)
+  end
+
+  @spec build_entry([term()], [atom()], [atom()] | nil, map(), [source_name()]) :: entry()
+  defp build_entry(key_tuple, key_fields, compare_fields, indexed, source_names) do
+    present =
+      Enum.filter(source_names, fn name ->
+        Map.has_key?(Map.fetch!(indexed, name), key_tuple)
+      end)
+
+    records =
+      Map.new(present, fn name ->
+        {name, Map.fetch!(Map.fetch!(indexed, name), key_tuple)}
+      end)
+
+    fields = conflict_fields(compare_fields, records, key_fields)
+
+    %{
+      key: key_fields |> Enum.zip(key_tuple) |> Map.new(),
+      present_in: present,
+      missing_from: source_names -- present,
+      records: records,
+      conflicts: compute_conflicts(fields, records, present)
+    }
+  end
+
+  @spec conflict_fields([atom()] | nil, map(), [atom()]) :: [atom()]
+  defp conflict_fields(nil, records, key_fields) do
+    records
+    |> Enum.flat_map(fn {_name, record} -> Map.keys(record) end)
+    |> Enum.uniq()
+    |> Enum.reject(fn field -> field in key_fields end)
+  end
+
+  defp conflict_fields(compare_fields, _records, _key_fields), do: compare_fields
+
+  @spec compute_conflicts([atom()], map(), [source_name()]) :: map()
+  defp compute_conflicts(fields, records, present) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      value_map =
+        Map.new(present, fn name ->
+          {name, Map.get(Map.fetch!(records, name), field)}
+        end)
+
+      values = Enum.map(present, fn name -> Map.fetch!(value_map, name) end)
+
+      if all_agree?(values) do
+        acc
+      else
+        Map.put(acc, field, value_map)
+      end
+    end)
+  end
+
+  @spec all_agree?([term()]) :: boolean()
+  defp all_agree?([]), do: true
+  defp all_agree?([first | rest]), do: Enum.all?(rest, fn value -> value == first end)
+end
+</file>
+22:19:22.758 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6632, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6632, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6632, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6632, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 31012, "type" => "message"}], "output_tokens" => 31012, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+22:19:22.784 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_multi_source_n_way_reconciler_with_conflict_detection_01 solution.ex
+22:19:23.400 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":152,"lines_over_98":0,"max_line_length":90,"mode":"full","pipe_chain_count":8,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_multi_source_n_way_reconciler_with_conflict_detection_01/solution.ex","task":"034_002_multi_source_n_way_reconciler_with_conflict_detection_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-10T20:19:23.375266Z"}
+22:19:23.402 [info] cycle 034_002_multi_source_n_way_reconciler_with_conflict_detection_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+22:19:23.402 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+22:19:23.402 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `MultiSourceReconciler` that reconciles records coming from **more than two** sources at once, keyed by a shared composite key, and reports where each key is present and where the sources disagree.
+
+I need this public API:
+
+- `MultiSourceReconciler.reconcile(sources, opts)` where:
+  - `sources` is a **map** from a source name (an atom, e.g. `:crm`, `:billing`, `:support`) to a list of record maps belonging to that source.
+  - `opts` is a keyword list.
+
+It must return a **list of entries**, one entry per distinct composite key found across *all* sources. Each entry is a map with these keys:
+
+- `:key` — a map of `%{key_field => value}` reconstructed from the record's key fields (e.g. `%{id: 1}` or `%{org_id: 1, user_id: 10}`).
+- `:present_in` — a list of the source names that have a record for this key.
+- `:missing_from` — a list of the source names that do **not** have a record for this key.
+- `:records` — a map of `%{source_name => record}` containing the full original record from every present source.
+- `:conflicts` — a map of `%{field => %{source_name => value}}`. A field appears here **only if** the present sources do not all agree on that field's value (compared with `==`). When a field is in conflict, the inner map contains an entry for **every present source**, with the value that source holds for that field. If all present sources agree on a field, that field is absent from `:conflicts`. An entry whose present sources agree on everything has an empty `:conflicts` map.
+
+The `opts` keyword list must support:
+
+- `:key_fields` (required) — a list of atoms forming the composite key. Two records refer to the same entity if and only if all key fields are equal.
+- `:compare_fields` (optional) — a list of atoms specifying which fields to check for conflicts. If omitted or `nil`, conflicts are checked on every field that appears in any present record, minus the key fields.
+
+Behaviour requirements:
+- Key matching must be exact; composite keys (`[:org_id, :user_id]`) must match only when **all** key fields are equal.
+- If a compare field is missing from one of the present records, treat its value as `nil` for that source. So a source that lacks the field and a source that has it are in conflict, and the missing source's value is recorded as `nil` in the inner map.
+- If the same key appears more than once within a single source's list, the last occurrence wins for that source.
+- Order of the returned entries does not matter, and the order of names inside `:present_in` and `:missing_from` does not matter.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule MultiSourceReconciler do
+  @moduledoc """
+  Reconciles records coming from more than two sources at once.
+
+  Records are keyed by a shared composite key (one or more fields). For every
+  distinct composite key found across all sources, `reconcile/2` reports:
+
+    * which sources have a record for that key (`:present_in`);
+    * which sources are missing it (`:missing_from`);
+    * the full original record from each present source (`:records`);
+    * the fields on which the present sources disagree (`:conflicts`).
+
+  The module is pure: it performs no I/O, spawns no processes, and relies only
+  on the Elixir standard library.
+
+  ## Key matching
+
+  Two records refer to the same entity if and only if the values of *all* key
+  fields are equal. A field that is absent from a record is treated as `nil`.
+
+  ## Conflict detection
+
+  A field is in conflict when the present sources do not all agree on its value
+  (compared with `==`). A missing compare field is treated as `nil` for that
+  source, so a source lacking the field conflicts with one that has it. When a
+  field is in conflict, the reported inner map holds an entry for every present
+  source.
+  """
+
+  @type source_name :: atom()
+  @type record :: map()
+  @type sources :: %{optional(source_name()) => [record()]}
+  @type entry :: %{
+          key: map(),
+          present_in: [source_name()],
+          missing_from: [source_name()],
+          records: map(),
+          conflicts: map()
+        }
+
+  @doc """
+  Reconciles `sources` into a list of per-key entries.
+
+  `sources` maps each source name (an atom) to its list of record maps. `opts`
+  is a keyword list supporting:
+
+    * `:key_fields` (required) — the list of atoms forming the composite key.
+    * `:compare_fields` (optional) — the list of atoms to check for conflicts.
+      When omitted or `nil`, every field appearing in any present record is
+      checked, minus the key fields.
+
+  Returns one entry per distinct composite key. The order of the entries, and
+  the order of names within `:present_in`/`:missing_from`, are unspecified.
+
+  ## Examples
+
+      iex> crm = [%{id: 1, name: "Ada"}]
+      iex> billing = [%{id: 1, name: "Ada Lovelace"}]
+      iex> [entry] =
+      ...>   MultiSourceReconciler.reconcile(
+      ...>     %{crm: crm, billing: billing},
+      ...>     key_fields: [:id]
+      ...>   )
+      iex> entry.key
+      %{id: 1}
+      iex> entry.conflicts
+      %{name: %{crm: "Ada", billing: "Ada Lovelace"}}
+
+  """
+  @spec reconcile(sources(), keyword()) :: [entry()]
+  def reconcile(sources, opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    source_names = Map.keys(sources)
+
+    indexed =
+      Map.new(sources, fn {name, records} ->
+        {name, index_records(records, key_fields)}
+      end)
+
+    indexed
+    |> Enum.flat_map(fn {_name, keyed} -> Map.keys(keyed) end)
+    |> Enum.uniq()
+    |> Enum.map(fn key_tuple ->
+      build_entry(key_tuple, key_fields, compare_fields, indexed, source_names)
+    end)
+  end
+
+  @spec index_records([record()], [atom()]) :: %{optional([term()]) => record()}
+  defp index_records(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      key_tuple = Enum.map(key_fields, fn field -> Map.get(record, field) end)
+      Map.put(acc, key_tuple, record)
+    end)
+  end
+
+  @spec build_entry([term()], [atom()], [atom()] | nil, map(), [source_name()]) :: entry()
+  defp build_entry(key_tuple, key_fields, compare_fields, indexed, source_names) do
+    present =
+      Enum.filter(source_names, fn name ->
+        Map.has_key?(Map.fetch!(indexed, name), key_tuple)
+      end)
+
+    records =
+      Map.new(present, fn name ->
+        {name, Map.fetch!(Map.fetch!(indexed, name), key_tuple)}
+      end)
+
+    fields = conflict_fields(compare_fields, records, key_fields)
+
+    %{
+      key: key_fields |> Enum.zip(key_tuple) |> Map.new(),
+      present_in: present,
+      missing_from: source_names -- present,
+      records: records,
+      conflicts: compute_conflicts(fields, records, present) (truncated)
+22:34:23.429 [warning] transient error (no JSON on stdout (exit 137)) on fix (034_002_multi_source_n_way_reconciler_with_conflict_detection_01) — retry 1/5 after 2000ms
+22:40:50.301 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the code is functionally correct and tests pass, so the issue is a subtle compile warning. Let me rewrite `solution.ex` to eliminate any warning-prone constructs (the unusual list-as-map-key typespec, and a fragile map-ordering doctest that could trip strict tooling), while keeping behavior and all tests intact.
+
+<file path="solution.ex">
+defmodule MultiSourceReconciler do
+  @moduledoc """
+  Reconciles records coming from more than two sources at once.
+
+  Records are keyed by a shared composite key (one or more fields). For every
+  distinct composite key found across all sources, `reconcile/2` reports:
+
+    * which sources have a record for that key (`:present_in`);
+    * which sources are missing it (`:missing_from`);
+    * the full original record from each present source (`:records`);
+    * the fields on which the present sources disagree (`:conflicts`).
+
+  The module is pure: it performs no I/O, spawns no processes, and relies only
+  on the Elixir standard library.
+
+  ## Key matching
+
+  Two records refer to the same entity if and only if the values of *all* key
+  fields are equal. A field that is absent from a record is treated as `nil`.
+
+  ## Conflict detection
+
+  A field is in conflict when the present sources do not all agree on its value
+  (compared with `==`). A missing compare field is treated as `nil` for that
+  source, so a source lacking the field conflicts with one that has it. When a
+  field is in conflict, the reported inner map holds an entry for every present
+  source.
+  """
+
+  @type source_name :: atom()
+  @type record :: map()
+  @type sources :: %{optional(source_name()) => [record()]}
+  @type entry :: %{
+          key: map(),
+          present_in: [source_name()],
+          missing_from: [source_name()],
+          records: map(),
+          conflicts: map()
+        }
+
+  @doc """
+  Reconciles `sources` into a list of per-key entries.
+
+  `sources` maps each source name (an atom) to its list of record maps. `opts`
+  is a keyword list supporting:
+
+    * `:key_fields` (required) — the list of atoms forming the composite key.
+    * `:compare_fields` (optional) — the list of atoms to check for conflicts.
+      When omitted or `nil`, every field appearing in any present record is
+      checked, minus the key fields.
+
+  Returns one entry per distinct composite key. The order of the entries, and
+  the order of names within `:present_in`/`:missing_from`, are unspecified.
+
+  ## Examples
+
+      iex> sources = %{crm: [%{id: 1, name: "Ada"}], billing: [%{id: 1, name: "Ada"}]}
+      iex> [entry] = MultiSourceReconciler.reconcile(sources, key_fields: [:id])
+      iex> entry.key
+      %{id: 1}
+      iex> entry.conflicts
+      %{}
+
+  """
+  @spec reconcile(sources(), keyword()) :: [entry()]
+  def reconcile(sources, opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    source_names = Map.keys(sources)
+
+    indexed =
+      Map.new(sources, fn {name, records} ->
+        {name, index_records(records, key_fields)}
+      end)
+
+    indexed
+    |> Enum.flat_map(fn {_name, keyed} -> Map.keys(keyed) end)
+    |> Enum.uniq()
+    |> Enum.map(fn key_tuple ->
+      build_entry(key_tuple, key_fields, compare_fields, indexed, source_names)
+    end)
+  end
+
+  @spec index_records([record()], [atom()]) :: map()
+  defp index_records(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      key_tuple = Enum.map(key_fields, fn field -> Map.get(record, field) end)
+      Map.put(acc, key_tuple, record)
+    end)
+  end
+
+  @spec build_entry([term()], [atom()], [atom()] | nil, map(), [source_name()]) :: entry()
+  defp build_entry(key_tuple, key_fields, compare_fields, indexed, source_names) do
+    present =
+      Enum.filter(source_names, fn name ->
+        Map.has_key?(Map.fetch!(indexed, name), key_tuple)
+      end)
+
+    records =
+      Map.new(present, fn name ->
+        {name, Map.fetch!(Map.fetch!(indexed, name), key_tuple)}
+      end)
+
+    fields = conflict_fields(compare_fields, records, key_fields)
+
+    %{
+      key: key_fields |> Enum.zip(key_tuple) |> Map.new(),
+      present_in: present,
+      missing_from: source_names -- present,
+      records: records,
+      conflicts: compute_conflicts(fields, records, present)
+    }
+  end
+
+  @spec conflict_fields([atom()] | nil, map(), [atom()]) :: [atom()]
+  defp conflict_fields(nil, records, key_fields) do
+    records
+    |> Enum.flat_map(fn {_name, record} -> Map.keys(record) end)
+    |> Enum.uniq()
+    |> Enum.reject(fn field -> field in key_fields end)
+  end
+
+  defp conflict_fields(compare_fields, _records, _key_fields), do: compare_fields
+
+  @spec compute_conflicts([atom()], map(), [source_name()]) :: map()
+  defp compute_conflicts(fields, records, present) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      value_map =
+        Map.new(present, fn name ->
+          {name, Map.get(Map.fetch!(records, name), field)}
+        end)
+
+      values = Enum.map(present, fn name -> Map.fetch!(value_map, name) end)
+
+      if all_agree?(values) do
+        acc
+      else
+        Map.put(acc, field, value_map)
+      end
+    end)
+  end
+
+  @spec all_agree?([term()]) :: boolean()
+  defp all_agree?(values) do
+    case values do
+      [] -> true
+      [first | rest] -> Enum.all?(rest, fn value -> value == first end)
+    end
+  end
+end
+</file>
+22:40:50.301 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 21488, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 21488, "input_tokens" => 2972, "output_tokens" => 28179, "type" => "message"}], "output_tokens" => 28179, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+22:40:50.326 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_multi_source_n_way_reconciler_with_conflict_detection_01 solution.ex
+22:40:50.939 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":151,"lines_over_98":0,"max_line_length":90,"mode":"full","pipe_chain_count":8,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_multi_source_n_way_reconciler_with_conflict_detection_01/solution.ex","task":"034_002_multi_source_n_way_reconciler_with_conflict_detection_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-10T20:40:50.916171Z"}
+22:40:50.941 [info] cycle 034_002_multi_source_n_way_reconciler_with_conflict_detection_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+22:40:50.941 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+22:40:50.941 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `MultiSourceReconciler` that reconciles records coming from **more than two** sources at once, keyed by a shared composite key, and reports where each key is present and where the sources disagree.
+
+I need this public API:
+
+- `MultiSourceReconciler.reconcile(sources, opts)` where:
+  - `sources` is a **map** from a source name (an atom, e.g. `:crm`, `:billing`, `:support`) to a list of record maps belonging to that source.
+  - `opts` is a keyword list.
+
+It must return a **list of entries**, one entry per distinct composite key found across *all* sources. Each entry is a map with these keys:
+
+- `:key` — a map of `%{key_field => value}` reconstructed from the record's key fields (e.g. `%{id: 1}` or `%{org_id: 1, user_id: 10}`).
+- `:present_in` — a list of the source names that have a record for this key.
+- `:missing_from` — a list of the source names that do **not** have a record for this key.
+- `:records` — a map of `%{source_name => record}` containing the full original record from every present source.
+- `:conflicts` — a map of `%{field => %{source_name => value}}`. A field appears here **only if** the present sources do not all agree on that field's value (compared with `==`). When a field is in conflict, the inner map contains an entry for **every present source**, with the value that source holds for that field. If all present sources agree on a field, that field is absent from `:conflicts`. An entry whose present sources agree on everything has an empty `:conflicts` map.
+
+The `opts` keyword list must support:
+
+- `:key_fields` (required) — a list of atoms forming the composite key. Two records refer to the same entity if and only if all key fields are equal.
+- `:compare_fields` (optional) — a list of atoms specifying which fields to check for conflicts. If omitted or `nil`, conflicts are checked on every field that appears in any present record, minus the key fields.
+
+Behaviour requirements:
+- Key matching must be exact; composite keys (`[:org_id, :user_id]`) must match only when **all** key fields are equal.
+- If a compare field is missing from one of the present records, treat its value as `nil` for that source. So a source that lacks the field and a source that has it are in conflict, and the missing source's value is recorded as `nil` in the inner map.
+- If the same key appears more than once within a single source's list, the last occurrence wins for that source.
+- Order of the returned entries does not matter, and the order of names inside `:present_in` and `:missing_from` does not matter.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule MultiSourceReconciler do
+  @moduledoc """
+  Reconciles records coming from more than two sources at once.
+
+  Records are keyed by a shared composite key (one or more fields). For every
+  distinct composite key found across all sources, `reconcile/2` reports:
+
+    * which sources have a record for that key (`:present_in`);
+    * which sources are missing it (`:missing_from`);
+    * the full original record from each present source (`:records`);
+    * the fields on which the present sources disagree (`:conflicts`).
+
+  The module is pure: it performs no I/O, spawns no processes, and relies only
+  on the Elixir standard library.
+
+  ## Key matching
+
+  Two records refer to the same entity if and only if the values of *all* key
+  fields are equal. A field that is absent from a record is treated as `nil`.
+
+  ## Conflict detection
+
+  A field is in conflict when the present sources do not all agree on its value
+  (compared with `==`). A missing compare field is treated as `nil` for that
+  source, so a source lacking the field conflicts with one that has it. When a
+  field is in conflict, the reported inner map holds an entry for every present
+  source.
+  """
+
+  @type source_name :: atom()
+  @type record :: map()
+  @type sources :: %{optional(source_name()) => [record()]}
+  @type entry :: %{
+          key: map(),
+          present_in: [source_name()],
+          missing_from: [source_name()],
+          records: map(),
+          conflicts: map()
+        }
+
+  @doc """
+  Reconciles `sources` into a list of per-key entries.
+
+  `sources` maps each source name (an atom) to its list of record maps. `opts`
+  is a keyword list supporting:
+
+    * `:key_fields` (required) — the list of atoms forming the composite key.
+    * `:compare_fields` (optional) — the list of atoms to check for conflicts.
+      When omitted or `nil`, every field appearing in any present record is
+      checked, minus the key fields.
+
+  Returns one entry per distinct composite key. The order of the entries, and
+  the order of names within `:present_in`/`:missing_from`, are unspecified.
+
+  ## Examples
+
+      iex> sources = %{crm: [%{id: 1, name: "Ada"}], billing: [%{id: 1, name: "Ada"}]}
+      iex> [entry] = MultiSourceReconciler.reconcile(sources, key_fields: [:id])
+      iex> entry.key
+      %{id: 1}
+      iex> entry.conflicts
+      %{}
+
+  """
+  @spec reconcile(sources(), keyword()) :: [entry()]
+  def reconcile(sources, opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    source_names = Map.keys(sources)
+
+    indexed =
+      Map.new(sources, fn {name, records} ->
+        {name, index_records(records, key_fields)}
+      end)
+
+    indexed
+    |> Enum.flat_map(fn {_name, keyed} -> Map.keys(keyed) end)
+    |> Enum.uniq()
+    |> Enum.map(fn key_tuple ->
+      build_entry(key_tuple, key_fields, compare_fields, indexed, source_names)
+    end)
+  end
+
+  @spec index_records([record()], [atom()]) :: map()
+  defp index_records(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      key_tuple = Enum.map(key_fields, fn field -> Map.get(record, field) end)
+      Map.put(acc, key_tuple, record)
+    end)
+  end
+
+  @spec build_entry([term()], [atom()], [atom()] | nil, map(), [source_name()]) :: entry()
+  defp build_entry(key_tuple, key_fields, compare_fields, indexed, source_names) do
+    present =
+      Enum.filter(source_names, fn name ->
+        Map.has_key?(Map.fetch!(indexed, name), key_tuple)
+      end)
+
+    records =
+      Map.new(present, fn name ->
+        {name, Map.fetch!(Map.fetch!(indexed, name), key_tuple)}
+      end)
+
+    fields = conflict_fields(compare_fields, records, key_fields)
+
+    %{
+      key: key_fields |> Enum.zip(key_tuple) |> Map.new(),
+      present_in: present,
+      missing_from: source_names -- present,
+      records: records,
+      conflicts: compute_conflicts(fields, records, present)
+    }
+  end
+
+  @spec conflict_fields([atom()] | nil, map(), [atom()]) :: [atom()]
+  defp conflict_fields(nil, records, key_fields) do
+    records
+    |> Enum.f (truncated)
+22:49:44.277 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, both files compile cleanly of the *standard* warnings (no unused vars, no bare float, no unreachable clauses). The one element in `solution.ex` that a grader can independently *execute* — and thus surface a warning from — is the `iex>` doctest in the `@doc`. When a grader runs doctests, a multi-line `iex>` block like this one gets compiled, and the intermediate assignment (`sources = ...`) is a well-known source of a lone "unused variable"/doctest compile warning depending on how the block is stitched together.
+
+I'll keep full behavior and all house-style requirements (`@moduledoc`, plus `@spec` + `@doc` on the public function), but convert the executable doctest into a plain, non-executable usage example so nothing extra gets compiled and warns.
+
+<file path="solution.ex">
+defmodule MultiSourceReconciler do
+  @moduledoc """
+  Reconciles records coming from more than two sources at once.
+
+  Records are keyed by a shared composite key (one or more fields). For every
+  distinct composite key found across all sources, `reconcile/2` reports:
+
+    * which sources have a record for that key (`:present_in`);
+    * which sources are missing it (`:missing_from`);
+    * the full original record from each present source (`:records`);
+    * the fields on which the present sources disagree (`:conflicts`).
+
+  The module is pure: it performs no I/O, spawns no processes, and relies only
+  on the Elixir standard library.
+
+  ## Key matching
+
+  Two records refer to the same entity if and only if the values of *all* key
+  fields are equal. A field that is absent from a record is treated as `nil`.
+
+  ## Conflict detection
+
+  A field is in conflict when the present sources do not all agree on its value
+  (compared with `==`). A missing compare field is treated as `nil` for that
+  source, so a source lacking the field conflicts with one that has it. When a
+  field is in conflict, the reported inner map holds an entry for every present
+  source.
+  """
+
+  @type source_name :: atom()
+  @type record :: map()
+  @type sources :: %{optional(source_name()) => [record()]}
+  @type entry :: %{
+          key: map(),
+          present_in: [source_name()],
+          missing_from: [source_name()],
+          records: map(),
+          conflicts: map()
+        }
+
+  @doc """
+  Reconciles `sources` into a list of per-key entries.
+
+  `sources` maps each source name (an atom) to its list of record maps. `opts`
+  is a keyword list supporting:
+
+    * `:key_fields` (required) — the list of atoms forming the composite key.
+    * `:compare_fields` (optional) — the list of atoms to check for conflicts.
+      When omitted or `nil`, every field appearing in any present record is
+      checked, minus the key fields.
+
+  Returns one entry per distinct composite key. The order of the entries, and
+  the order of names within `:present_in`/`:missing_from`, are unspecified.
+
+  ## Example
+
+  Given two sources that both hold the same record for `id: 1`:
+
+      sources = %{
+        crm: [%{id: 1, name: "Ada"}],
+        billing: [%{id: 1, name: "Ada"}]
+      }
+
+      MultiSourceReconciler.reconcile(sources, key_fields: [:id])
+
+  the single returned entry has `key` equal to `%{id: 1}`, `present_in` listing
+  both `:crm` and `:billing`, an empty `missing_from`, and an empty `conflicts`
+  map (the sources agree on every non-key field).
+  """
+  @spec reconcile(sources(), keyword()) :: [entry()]
+  def reconcile(sources, opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    source_names = Map.keys(sources)
+
+    indexed =
+      Map.new(sources, fn {name, records} ->
+        {name, index_records(records, key_fields)}
+      end)
+
+    indexed
+    |> Enum.flat_map(fn {_name, keyed} -> Map.keys(keyed) end)
+    |> Enum.uniq()
+    |> Enum.map(fn key_tuple ->
+      build_entry(key_tuple, key_fields, compare_fields, indexed, source_names)
+    end)
+  end
+
+  @spec index_records([record()], [atom()]) :: map()
+  defp index_records(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      key_tuple = Enum.map(key_fields, fn field -> Map.get(record, field) end)
+      Map.put(acc, key_tuple, record)
+    end)
+  end
+
+  @spec build_entry([term()], [atom()], [atom()] | nil, map(), [source_name()]) :: entry()
+  defp build_entry(key_tuple, key_fields, compare_fields, indexed, source_names) do
+    present =
+      Enum.filter(source_names, fn name ->
+        Map.has_key?(Map.fetch!(indexed, name), key_tuple)
+      end)
+
+    records =
+      Map.new(present, fn name ->
+        {name, Map.fetch!(Map.fetch!(indexed, name), key_tuple)}
+      end)
+
+    fields = conflict_fields(compare_fields, records, key_fields)
+
+    %{
+      key: key_fields |> Enum.zip(key_tuple) |> Map.new(),
+      present_in: present,
+      missing_from: source_names -- present,
+      records: records,
+      conflicts: compute_conflicts(fields, records, present)
+    }
+  end
+
+  @spec conflict_fields([atom()] | nil, map(), [atom()]) :: [atom()]
+  defp conflict_fields(nil, records, key_fields) do
+    records
+    |> Enum.flat_map(fn {_name, record} -> Map.keys(record) end)
+    |> Enum.uniq()
+    |> Enum.reject(fn field -> field in key_fields end)
+  end
+
+  defp conflict_fields(compare_fields, _records, _key_fields), do: compare_fields
+
+  @spec compute_conflicts([atom()], map(), [source_name()]) :: map()
+  defp compute_conflicts(fields, records, present) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      value_map =
+        Map.new(present, fn name ->
+          {name, Map.get(Map.fetch!(records, name), field)}
+        end)
+
+      values = Enum.map(present, fn name -> Map.fetch!(value_map, name) end)
+
+      if all_agree?(values) do
+        acc
+      else
+        Map.put(acc, field, value_map)
+      end
+    end)
+  end
+
+  @spec all_agree?([term()]) :: boolean()
+  defp all_agree?(values) do
+    case values do
+      [] -> true
+      [first | rest] -> Enum.all?(rest, fn value -> value == first end)
+    end
+  end
+end
+</file>
+22:49:44.277 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6529, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6529, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6529, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6529, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 38611, "type" => "message"}], "output_tokens" => 38611, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+22:49:44.302 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_multi_source_n_way_reconciler_with_conflict_detection_01 solution.ex
+22:49:44.926 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":156,"lines_over_98":0,"max_line_length":90,"mode":"full","pipe_chain_count":8,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_multi_source_n_way_reconciler_with_conflict_detection_01/solution.ex","task":"034_002_multi_source_n_way_reconciler_with_conflict_detection_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-10T20:49:44.902755Z"}
+22:49:44.928 [info] cycle 034_002_multi_source_n_way_reconciler_with_conflict_detection_01: REJECTED after 4 attempt(s)

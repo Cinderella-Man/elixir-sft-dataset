@@ -1,0 +1,446 @@
+17:09:08.806 [info] FIM 019_001_bulk_create_endpoint_with_partial_failure_reporting_fim03 → 019_001_bulk_create_endpoint_with_partial_failure_reporting_04: target translate_errors/1
+17:09:08.807 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+17:09:08.807 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `translate_errors/1`.
+
+Generate a prompt describing how to implement `translate_errors/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `translate_errors/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `translate_errors/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `translate_errors/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir Phoenix JSON API endpoint at `POST /api/items/bulk` that accepts a JSON array of items to create, validates each item independently, and reports per-item success or failure with position indices.
+
+I need the following pieces:
+
+**Schema & Validation (`MyApp.Catalog.Item`):**
+- Fields: `name` (string, required, 1–255 chars), `price` (integer, required, must be > 0), `description` (string, optional, max 1000 chars).
+- Standard Ecto schema with a `changeset/2` function enforcing those validations.
+- Timestamps.
+
+**Context module (`MyApp.Catalog`):**
+- `bulk_create_items(list_of_attrs, opts \\ [])` — takes a list of attribute maps and an options keyword list.
+- When `partial: true` is **not** in opts (the default), wrap everything in a single `Repo.transaction`. If any item fails validation, roll back the entire transaction and return `{:error, results}` where `results` is a list of `{index, :ok, item}` or `{index, :error, changeset}` tuples. No rows should be inserted.
+- When `partial: true` is in opts, insert each valid item individually (still inside a transaction per item for safety) and skip invalid ones. Return `{:ok, results}` with the same tuple format. Valid items are persisted; invalid ones are not.
+- In both modes every entry in the results list must include the zero-based position index from the original input so the caller knows exactly which items succeeded or failed.
+
+**Controller (`MyAppWeb.BulkItemController`):**
+- `create/2` action handling `POST /api/items/bulk`.
+- Read the `partial` query param (`?partial=true`). Anything other than the literal string `"true"` means all-or-nothing mode.
+- Request body shape: `{"items": [ {…}, {…}, … ]}`. If the `"items"` key is missing or is not a list, return 400 with `{"error": "expected a list of items"}`.
+- On all-or-nothing success: respond 201 with `{"status": "all_created", "items": [...]}` where each entry has `"index"`, `"id"`, `"name"`, `"price"`, `"description"`.
+- On all-or-nothing failure: respond 422 with `{"status": "all_failed", "errors": [...]}` where each failed entry has `"index"` and `"errors"` (a map of field → list of messages), and each successful validation still appears with `"index"` and `"valid": true` (but nothing was inserted).
+- On partial mode: respond 201 with `{"status": "partial", "created": [...], "errors": [...]}`. `created` holds the successfully inserted items with their indices; `errors` holds the failures with indices and per-field error messages.
+
+**Router:** Mount the route as `post "/api/items/bulk", BulkItemController, :create` inside an `/api` scope with the `:api` pipeline.
+
+Give me the complete modules in separate files. Use only Phoenix, Ecto, and standard library — no external dependencies. Assume a Postgres repo at `MyApp.Repo` already exists and is configured.
+## Additional interface contract
+
+- Use exactly these module names: router `MyAppWeb.Router`, schema `MyApp.Catalog.Item`, repo `MyApp.Repo`. The repo itself is provided (already configured and started) by the test environment — do NOT define the repo module or a Phoenix endpoint. Your migration file will be run against it before the tests.
+- The tests dispatch requests straight to `MyAppWeb.Router` with `Plug.Test` and parse the JSON request body with `Plug.Parsers` (no endpoint in front), so the route must be servable by the router pipeline alone.
+
+
+=== WHOLE MODULE ===
+```elixir
+defmodule MyApp.Catalog.Item do
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  schema "items" do
+    field(:name, :string)
+    field(:price, :integer)
+    field(:description, :string)
+
+    timestamps()
+  end
+
+  @doc """
+  Validates a catalog item: name 1-255 chars, price integer > 0, optional
+  description <= 1000 chars.
+  """
+  def changeset(item, attrs) do
+    item
+    |> cast(attrs, [:name, :price, :description])
+    |> validate_required([:name, :price])
+    |> validate_length(:name, min: 1, max: 255)
+    |> validate_number(:price, greater_than: 0)
+    |> validate_length(:description, max: 1000)
+  end
+end
+
+defmodule MyApp.Catalog do
+  @moduledoc """
+  Catalog context. Bulk item creation with per-item, index-aware result reporting.
+  """
+
+  alias MyApp.Repo
+  alias MyApp.Catalog.Item
+
+  @doc """
+  Bulk-create items from a list of attribute maps.
+
+  Each entry in the returned `results` list is a 3-tuple carrying the zero-based
+  position index from the original input: `{index, :ok, item}` or
+  `{index, :error, changeset}`.
+
+  Modes:
+    * default (all-or-nothing) — wraps everything in a single `Repo.transaction`.
+      If any item is invalid the whole transaction rolls back and
+      `{:error, results}` is returned; no rows are inserted.
+    * `partial: true` — inserts each valid item individually (each inside its own
+      transaction) and skips invalid ones, returning `{:ok, results}`.
+  """
+  @spec bulk_create_items([map()], keyword()) :: %{created: [map()], errors: [map()]}
+  def bulk_create_items(list_of_attrs, opts \\ []) do
+    if Keyword.get(opts, :partial, false) do
+      partial_create(list_of_attrs)
+    else
+      all_or_nothing(list_of_attrs)
+    end
+  end
+
+  defp all_or_nothing(list_of_attrs) do
+    Repo.transaction(fn ->
+      results = insert_each(list_of_attrs)
+
+      if Enum.any?(results, fn {_index, status, _} -> status == :error end) do
+        Repo.rollback(results)
+      else
+        results
+      end
+    end)
+  end
+
+  defp partial_create(list_of_attrs) do
+    results =
+      list_of_attrs
+      |> Enum.with_index()
+      |> Enum.map(fn {attrs, index} ->
+        outcome =
+          Repo.transaction(fn ->
+            case insert_item(attrs) do
+              {:ok, item} -> item
+              {:error, changeset} -> Repo.rollback(changeset)
+            end
+          end)
+
+        case outcome do
+          {:ok, item} -> {index, :ok, item}
+          {:error, changeset} -> {index, :error, changeset}
+        end
+      end)
+
+    {:ok, results}
+  end
+
+  defp insert_each(list_of_attrs) do
+    list_of_attrs
+    |> Enum.with_index()
+    |> Enum.map(fn {attrs, index} ->
+      case insert_item(attrs) do
+        {:ok, item} -> {index, :ok, item}
+        {:error, changeset} -> {index, :error, changeset}
+      end
+    end)
+  end
+
+  defp insert_item(attrs) do
+    %Item{}
+    |> Item.changeset(attrs)
+    |> Repo.insert()
+  end
+end
+
+defmodule MyAppWeb.BulkItemController do
+  use MyAppWeb, :controller
+
+  alias MyApp.Catalog
+
+  def create(conn, %{"items" => items}) when is_list(items) do
+    conn = fetch_query_params(conn)
+
+    if conn.query_params["partial"] == "true" do
+      create_partial(conn, items)
+    else
+      create_all_or_nothing(conn, items)
+    end
+  end
+
+  def create(conn, _params) do
+    conn
+    |> put_status(400)
+    |> json(%{"error" => "expected a list of items"})
+  end
+
+  defp create_all_or_nothing(conn, items) do
+    case Catalog.bulk_create_items(items) do
+      {:ok, results} ->
+        conn
+        |> put_status(201)
+        |> json(%{"stat (truncated)
+17:09:35.989 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `translate_errors/1` function in `MyAppWeb.BulkItemController`.
+
+It takes an `Ecto.Changeset` and converts its validation errors into a plain map
+suitable for JSON encoding: field name → list of human-readable message strings.
+Use `Ecto.Changeset.traverse_errors/2` so that errors on nested/embedded changesets
+are handled uniformly.
+
+Each raw error arrives as a `{msg, opts}` tuple, where `msg` may contain
+interpolation placeholders of the form `%{key}` (for example
+`"should be at most %{count} character(s)"`) and `opts` is a keyword list holding
+the values for those placeholders (e.g. `count: 255`). The function must substitute
+every `%{key}` placeholder with the corresponding value from `opts`, converting the
+value to a string. If a key is not present in `opts`, fall back to using the key name
+itself as the replacement text. Use a regex (`~r/%{(\w+)}/`) with `Regex.replace/3`
+and look the key up with `String.to_existing_atom/1` on the captured name.
+
+The result for a changeset that failed `validate_required([:name, :price])` should
+look like `%{name: ["can't be blank"], price: ["can't be blank"]}`.
+
+```elixir
+defmodule MyApp.Catalog.Item do
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  schema "items" do
+    field(:name, :string)
+    field(:price, :integer)
+    field(:description, :string)
+
+    timestamps()
+  end
+
+  @doc """
+  Validates a catalog item: name 1-255 chars, price integer > 0, optional
+  description <= 1000 chars.
+  """
+  def changeset(item, attrs) do
+    item
+    |> cast(attrs, [:name, :price, :description])
+    |> validate_required([:name, :price])
+    |> validate_length(:name, min: 1, max: 255)
+    |> validate_number(:price, greater_than: 0)
+    |> validate_length(:description, max: 1000)
+  end
+end
+
+defmodule MyApp.Catalog do
+  @moduledoc """
+  Catalog context. Bulk item creation with per-item, index-aware result reporting.
+  """
+
+  alias MyApp.Repo
+  alias MyApp.Catalog.Item
+
+  @doc """
+  Bulk-create items from a list of attribute maps.
+
+  Each entry in the returned `results` list is a 3-tuple carrying the zero-based
+  position index from the original input: `{index, :ok, item}` or
+  `{index, :error, changeset}`.
+
+  Modes:
+    * default (all-or-nothing) — wraps everything in a single `Repo.transaction`.
+      If any item is invalid the whole transaction rolls back and
+      `{:error, results}` is returned; no rows are inserted.
+    * `partial: true` — inserts each valid item individually (each inside its own
+      transaction) and skips invalid ones, returning `{:ok, results}`.
+  """
+  @spec bulk_create_items([map()], keyword()) :: %{created: [map()], errors: [map()]}
+  def bulk_create_items(list_of_attrs, opts \\ []) do
+    if Keyword.get(opts, :partial, false) do
+      partial_create(list_of_attrs)
+    else
+      all_or_nothing(list_of_attrs)
+    end
+  end
+
+  defp all_or_nothing(list_of_attrs) do
+    Repo.transaction(fn ->
+      results = insert_each(list_of_attrs)
+
+      if Enum.any?(results, fn {_index, status, _} -> status == :error end) do
+        Repo.rollback(results)
+      else
+        results
+      end
+    end)
+  end
+
+  defp partial_create(list_of_attrs) do
+    results =
+      list_of_attrs
+      |> Enum.with_index()
+      |> Enum.map(fn {attrs, index} ->
+        outcome =
+          Repo.transaction(fn ->
+            case insert_item(attrs) do
+              {:ok, item} -> item
+              {:error, changeset} -> Repo.rollback(changeset)
+            end
+          end)
+
+        case outcome do
+          {:ok, item} -> {index, :ok, item}
+          {:error, changeset} -> {index, :error, changeset}
+        end
+      end)
+
+    {:ok, results}
+  end
+
+  defp insert_each(list_of_attrs) do
+    list_of_attrs
+    |> Enum.with_index()
+    |> Enum.map(fn {attrs, index} ->
+      case insert_item(attrs) do
+        {:ok, item} -> {index, :ok, item}
+        {:error, changeset} -> {index, :error, changeset}
+      end
+    end)
+  end
+
+  defp insert_item(attrs) do
+    %Item{}
+    |> Item.changeset(attrs)
+    |> Repo.insert()
+  end
+end
+
+defmodule MyAppWeb.BulkItemController do
+  use MyAppWeb, :controller
+
+  alias MyApp.Catalog
+
+  def create(conn, %{"items" => items}) when is_list(items) do
+    conn = fetch_query_params(conn)
+
+    if conn.query_params["partial"] == "true" do
+      create_partial(conn, items)
+    else
+      create_all_or_nothing(conn, items)
+    end
+  end
+
+  def create(conn, _params) do
+    conn
+    |> put_status(400)
+    |> json(%{"error" => "expected a list of items"})
+  end
+
+  defp create_all_or_nothing(conn, items) do
+    case Catalog.bulk_create_items(items) do
+      {:ok, results} ->
+        conn
+        |> put_status(201)
+        |> json(%{"status" => "all_created", "items" => Enum.map(results, &item_json/1)})
+
+      {:error, results} ->
+        conn
+        |> put_status(422)
+        |> json(%{"status" => "all_failed", "errors" => Enum.map(results, &result_json/1)})
+    end
+  end
+
+  defp create_partial(conn, items) do
+    {:ok, results} = Catalog.bulk_create_items(items, partial: true)
+
+    created = for {index, :ok, item} <- results, do: item_json({index, :ok, item})
+    errors = for {index, :error, changeset} <- results, do: error_json(index, changeset)
+
+    conn
+    |> put_status(201)
+    |> json(%{"status" => "partial", "created" => created, "errors" => errors})
+  end
+
+  # Successful validation but nothing inserted (all-or-nothing failure): mark valid.
+  defp result_json({index, :ok, _item}), do: %{"index" => index, "valid" => true}
+  defp result_json({index, :error, changeset}), do: error_json(index, changeset)
+
+  defp item_json({index, :ok, item}) do
+    %{
+      "index" => index,
+      "id" => item.id,
+      "name" => item.name,
+      "price" => item.price,
+      "description" => item.description
+    }
+  end
+
+  defp error_json(index, changeset) do
+    %{"index" => index, "errors" => translate_errors(changeset)}
+  end
+
+  defp translate_errors(changeset) do
+    # TODO
+  end
+end
+
+defmodule MyAppWeb.Router do
+  use MyAppWeb, :router
+
+  pipeline :api do
+    plug(:accepts, ["json"])
+  end
+
+  scope "/api", MyAppWeb do
+    pipe_through(:api)
+
+    post("/items/bulk", BulkItemController, :create)
+  end
+end
+
+defmodule MyApp.Repo.Migrations.CreateItems do
+  use Ecto.Migration
+
+  def change do
+    create table(:items) do
+      add(:name, :string, null: false)
+      add(:price, :integer, null: false)
+      add(:description, :text)
+
+      timestamps()
+    end
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp translate_errors(changeset) do
+    Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
+      Regex.replace(~r/%{(\w+)}/, msg, fn _, key ->
+        opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
+      end)
+    end)
+  end
+</file>
+17:09:35.990 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7506, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7506, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7506, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7506, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 2753, "type" => "message"}], "output_tokens" => 2753, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+17:09:36.012 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_019_001_bulk_create_endpoint_with_partial_failure_reporting_04/019_001_bulk_create_endpoint_with_partial_failure_reporting_04 solution.ex
+17:09:37.118 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":7,"lines_over_98":0,"max_line_length":77,"mode":"fim","pipe_chain_count":2,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"archetype":"phoenix_conncase","bundle_files":5,"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"019_001_bulk_create_endpoint_with_partial_failure_reporting_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_019_001_bulk_create_endpoint_with_partial_failure_reporting_04/019_001_bulk_create_endpoint_with_partial_failure_reporting_04/solution.ex","task":"019_001_bulk_create_endpoint_with_partial_failure_reporting_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":20,"tier":"B","timestamp":"2026-07-12T15:09:37.093585Z"}
+17:09:37.119 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_019_001_bulk_create_endpoint_with_partial_failure_reporting_04/019_001_bulk_create_endpoint_with_partial_failure_reporting_04 .gen_staging/fim_019_001_bulk_create_endpoint_with_partial_failure_reporting_04/mutant.ex
+17:09:38.211 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":35,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"archetype":"phoenix_conncase","bundle_files":5,"compile_errors":[],"compile_warnings":1,"compiled":true,"parent":"019_001_bulk_create_endpoint_with_partial_failure_reporting_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.9,"mode":"fim","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 11/20 failed"],"tests":0.45},"shape":"fim","solution_file":".gen_staging/fim_019_001_bulk_create_endpoint_with_partial_failure_reporting_04/mutant.ex","task":"019_001_bulk_create_endpoint_with_partial_failure_reporting_04","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"MyAppWeb.BulkItemControllerTest","test":"test all-or-nothing mode inserts zero rows when any single item is invalid"},{"message":"** (RuntimeError) MUTATION","module":"MyAppWeb.BulkItemControllerTest","test":"test all-or-nothing mode reports correct indices for multiple invalid items"},{"message":"** (RuntimeError) MUTATION","module":"MyAppWeb.BulkItemControllerTest","test":"test all-or-nothing mode rolls back the entire transaction even if only the last item fails"},{"message":"** (RuntimeError) MUTATION","module":"MyAppWeb.BulkItemControllerTest","test":"test partial mode inserts valid items and reports invalid ones"},{"message":"** (RuntimeError) MUTATION","module":"MyAppWeb.BulkItemControllerTest","test":"test partial mode returns all errors when every item is invalid in partial mode"},{"message":"** (RuntimeError) MUTATION","module":"MyAppWeb.BulkItemControllerTest","test":"test per-item validation name is required and must be 1-255 chars"},{"message":"** (RuntimeError) MUTATION","module":"MyAppWeb.BulkItemControllerTest","test":"test per-item validation price is required and must be positive"},{"message":"** (RuntimeError) MUTATION","module":"MyAppWeb.BulkItemControllerTest","test":"test per-item validation description is optional but capped at 1000 chars"},{"message":"** (RuntimeError) MUTATION","module":"MyAppWeb.BulkItemControllerTest","test":"test edge cases single invalid item returns 422"},{"message":"** (RuntimeError) MUTATION","module":"MyAppWeb.BulkItemControllerTest","test":"test edge cases partial=false is treated as all-or-nothing"},{"message":"** (RuntimeError) MUTATION","module":"MyAppWeb.BulkItemControllerTest","test":"test database consistency partial mode only persists valid items"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":20,"tier":"B","timestamp":"2026-07-12T15:09:38.185260Z"}
+17:09:38.212 [debug] fim mutation gate: killed
+17:09:38.213 [info] promoted 019_001_bulk_create_endpoint_with_partial_failure_reporting_04 -> tasks/019_001_bulk_create_endpoint_with_partial_failure_reporting_04

@@ -1,0 +1,310 @@
+14:42:19.086 [info] FIM 063_001_concurrent_data_fetcher_with_timeout_fim02 → 063_001_concurrent_data_fetcher_with_timeout_03: target safe_call/1
+14:42:19.086 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:42:19.086 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `safe_call/1`.
+
+Generate a prompt describing how to implement `safe_call/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `safe_call/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `safe_call/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `safe_call/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `ConcurrentFetcher` that fetches data from multiple sources concurrently and enforces a global timeout across all of them.
+
+I need this function in the public API:
+- `ConcurrentFetcher.fetch_all(sources, timeout_ms)` where `sources` is a list of `{name, fetch_fn}` tuples. `name` can be any term (atom, string, etc.) and `fetch_fn` is a zero-arity function that either returns `{:ok, result}` or raises/returns `{:error, reason}`. The function should return a map of `%{name => result_tuple}` where each value is one of:
+  - `{:ok, value}` — the fetch completed successfully within the timeout
+  - `{:error, :timeout}` — the global timeout expired before this fetch finished
+  - `{:error, reason}` — the fetch function crashed or returned an error
+
+The global timeout is shared across all sources, not per-source. Meaning if `timeout_ms` is 500 and one fetch takes 400ms and another takes 600ms, the first gets `{:ok, …}` and the second gets `{:error, :timeout}`. All fetches run concurrently from the moment `fetch_all` is called, not sequentially.
+
+When the global timeout fires, any still-running fetch processes must be killed immediately — no zombies left behind. The function should return only after all spawned processes are either done or confirmed dead.
+
+If `sources` is an empty list, return an empty map immediately.
+
+Do not use any external dependencies — only Elixir's standard library and OTP primitives (`Task`, `Process`, etc.).
+
+Give me the complete implementation in a single file with a single module.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule ConcurrentFetcher do
+  @moduledoc """
+  Fetches data from multiple sources concurrently under a single global timeout.
+
+  All fetches begin at the same instant. The timeout budget is shared — it is
+  not reset or re-applied per source. Any source that has not completed by the
+  time the deadline fires is killed immediately and reported as
+  `{:error, :timeout}`.
+  """
+
+  @doc """
+  Fetch from all sources concurrently, returning results within `timeout_ms`.
+
+  ## Parameters
+  - `sources`    – list of `{name, fetch_fn}` tuples.
+                   `name` is any term; `fetch_fn` is a zero-arity function
+                   returning `{:ok, value}` or `{:error, reason}` (raising is
+                   also handled gracefully).
+  - `timeout_ms` – global wall-clock budget in milliseconds, shared by every
+                   concurrent fetch.
+
+  ## Return value
+  A map of `%{name => result_tuple}` where each value is one of:
+
+  - `{:ok, value}`          – fetch completed successfully within the timeout
+  - `{:error, :timeout}`    – global timeout expired before this fetch finished
+  - `{:error, reason}`      – fetch function raised or returned `{:error, reason}`
+
+  Returns `%{}` immediately when `sources` is empty.
+  """
+  @spec fetch_all([{term(), (-> {:ok, term()} | {:error, term()})}, ...], non_neg_integer()) ::
+          %{term() => {:ok, term()} | {:error, term()}}
+  def fetch_all([], _timeout_ms), do: %{}
+
+  def fetch_all(sources, timeout_ms) when is_list(sources) and is_integer(timeout_ms) and timeout_ms >= 0 do
+    # ── 1. Spawn every fetch concurrently ──────────────────────────────────
+    # Task.async/1 links the task to the caller, which lets us kill it later
+    # via Task.shutdown/2. We pair each Task struct with its source name so we
+    # can reconstruct the result map afterwards.
+    tagged_tasks =
+      Enum.map(sources, fn {name, fetch_fn} ->
+        task = Task.async(fn -> safe_call(fetch_fn) end)
+        {name, task}
+      end)
+
+    tasks = Enum.map(tagged_tasks, fn {_name, task} -> task end)
+
+    # ── 2. Wait for all tasks under the global timeout ─────────────────────
+    # Task.yield_many/2 blocks for at most `timeout_ms` milliseconds and then
+    # returns a list of {task, result_or_nil} pairs in the same order as the
+    # input list.  A nil result means the task did not finish in time.
+    yield_results = Task.yield_many(tasks, timeout_ms)
+
+    # ── 3. Reconcile each task's outcome ──────────────────────────────────
+    # Build a map from task reference → final result_tuple first, then
+    # re-attach names.
+    ref_to_result =
+      Enum.reduce(yield_results, %{}, fn {task, yield_outcome}, acc ->
+        result =
+          case yield_outcome do
+            # Task completed within the timeout window.
+            {:ok, {:ok, value}} ->
+              {:ok, value}
+
+            # Task completed but returned an application-level error.
+            {:ok, {:error, reason}} ->
+              {:error, reason}
+
+            # Task exited/raised before the timeout fired.
+            {:exit, reason} ->
+              {:error, reason}
+
+            # Timeout: the task is still running — shut it down immediately.
+            # Task.shutdown/2 sends an exit signal and waits for the process
+            # to terminate, so no zombie processes are left behind.
+            nil ->
+              Task.shutdown(task, :brutal_kill)
+              {:error, :timeout}
+          end
+
+        Map.put(acc, task.ref, result)
+      end)
+
+    # ── 4. Rebuild the caller-facing map keyed by source name ─────────────
+    Map.new(tagged_tasks, fn {name, task} ->
+      {name, Map.fetch!(ref_to_result, task.ref)}
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Wraps the user-supplied fetch function so that any exception or unexpected
+  # return value is normalised into {:ok, _} | {:error, _} without leaking raw
+  # EXIT signals to the caller.
+  defp safe_call(fetch_fn) do
+    case fetch_fn.() do
+      {:ok, _} = ok -> ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_return, other}}
+    end
+  rescue
+    exception -> {:error, exception}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+end
+
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description + skeleton module with a `# TODO` for safe_call/1
+  - solution.ex — just the safe_call/1 function
+
+
+14:42:42.021 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `safe_call/1` function. It takes a zero-arity `fetch_fn`
+and normalises its outcome into a `{:ok, _} | {:error, _}` tuple so that no raw
+exception or `EXIT` signal ever leaks to the caller. Invoke `fetch_fn.()` and
+inspect the return value: a `{:ok, value}` tuple is passed through unchanged, an
+`{:error, reason}` tuple is passed through unchanged, and any other return value
+becomes `{:error, {:unexpected_return, other}}`. If the function raises an
+exception, rescue it and return `{:error, exception}`. If the function throws or
+exits, catch the `kind` and `value` and return `{:error, {kind, value}}`.
+
+```elixir
+defmodule ConcurrentFetcher do
+  @moduledoc """
+  Fetches data from multiple sources concurrently under a single global timeout.
+
+  All fetches begin at the same instant. The timeout budget is shared — it is
+  not reset or re-applied per source. Any source that has not completed by the
+  time the deadline fires is killed immediately and reported as
+  `{:error, :timeout}`.
+  """
+
+  @doc """
+  Fetch from all sources concurrently, returning results within `timeout_ms`.
+
+  ## Parameters
+  - `sources`    – list of `{name, fetch_fn}` tuples.
+                   `name` is any term; `fetch_fn` is a zero-arity function
+                   returning `{:ok, value}` or `{:error, reason}` (raising is
+                   also handled gracefully).
+  - `timeout_ms` – global wall-clock budget in milliseconds, shared by every
+                   concurrent fetch.
+
+  ## Return value
+  A map of `%{name => result_tuple}` where each value is one of:
+
+  - `{:ok, value}`          – fetch completed successfully within the timeout
+  - `{:error, :timeout}`    – global timeout expired before this fetch finished
+  - `{:error, reason}`      – fetch function raised or returned `{:error, reason}`
+
+  Returns `%{}` immediately when `sources` is empty.
+  """
+  @spec fetch_all([{term(), (-> {:ok, term()} | {:error, term()})}, ...], non_neg_integer()) ::
+          %{term() => {:ok, term()} | {:error, term()}}
+  def fetch_all([], _timeout_ms), do: %{}
+
+  def fetch_all(sources, timeout_ms) when is_list(sources) and is_integer(timeout_ms) and timeout_ms >= 0 do
+    # ── 1. Spawn every fetch concurrently ──────────────────────────────────
+    # Task.async/1 links the task to the caller, which lets us kill it later
+    # via Task.shutdown/2. We pair each Task struct with its source name so we
+    # can reconstruct the result map afterwards.
+    tagged_tasks =
+      Enum.map(sources, fn {name, fetch_fn} ->
+        task = Task.async(fn -> safe_call(fetch_fn) end)
+        {name, task}
+      end)
+
+    tasks = Enum.map(tagged_tasks, fn {_name, task} -> task end)
+
+    # ── 2. Wait for all tasks under the global timeout ─────────────────────
+    # Task.yield_many/2 blocks for at most `timeout_ms` milliseconds and then
+    # returns a list of {task, result_or_nil} pairs in the same order as the
+    # input list.  A nil result means the task did not finish in time.
+    yield_results = Task.yield_many(tasks, timeout_ms)
+
+    # ── 3. Reconcile each task's outcome ──────────────────────────────────
+    # Build a map from task reference → final result_tuple first, then
+    # re-attach names.
+    ref_to_result =
+      Enum.reduce(yield_results, %{}, fn {task, yield_outcome}, acc ->
+        result =
+          case yield_outcome do
+            # Task completed within the timeout window.
+            {:ok, {:ok, value}} ->
+              {:ok, value}
+
+            # Task completed but returned an application-level error.
+            {:ok, {:error, reason}} ->
+              {:error, reason}
+
+            # Task exited/raised before the timeout fired.
+            {:exit, reason} ->
+              {:error, reason}
+
+            # Timeout: the task is still running — shut it down immediately.
+            # Task.shutdown/2 sends an exit signal and waits for the process
+            # to terminate, so no zombie processes are left behind.
+            nil ->
+              Task.shutdown(task, :brutal_kill)
+              {:error, :timeout}
+          end
+
+        Map.put(acc, task.ref, result)
+      end)
+
+    # ── 4. Rebuild the caller-facing map keyed by source name ─────────────
+    Map.new(tagged_tasks, fn {name, task} ->
+      {name, Map.fetch!(ref_to_result, task.ref)}
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Wraps the user-supplied fetch function so that any exception or unexpected
+  # return value is normalised into {:ok, _} | {:error, _} without leaking raw
+  # EXIT signals to the caller.
+  defp safe_call(fetch_fn) do
+    # TODO
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp safe_call(fetch_fn) do
+    case fetch_fn.() do
+      {:ok, _} = ok -> ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_return, other}}
+    end
+  rescue
+    exception -> {:error, exception}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+</file>
+14:42:42.022 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2988, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2988, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2988, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2988, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2023, "type" => "message"}], "output_tokens" => 2023, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:42:42.041 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_063_001_concurrent_data_fetcher_with_timeout_03/063_001_concurrent_data_fetcher_with_timeout_03 solution.ex
+14:42:43.682 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":11,"lines_over_98":0,"max_line_length":52,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"063_001_concurrent_data_fetcher_with_timeout_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_063_001_concurrent_data_fetcher_with_timeout_03/063_001_concurrent_data_fetcher_with_timeout_03/solution.ex","task":"063_001_concurrent_data_fetcher_with_timeout_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T12:42:43.658473Z"}
+14:42:43.682 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_063_001_concurrent_data_fetcher_with_timeout_03/063_001_concurrent_data_fetcher_with_timeout_03 .gen_staging/fim_063_001_concurrent_data_fetcher_with_timeout_03/mutant.ex
+14:42:44.338 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":27,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"parent":"063_001_concurrent_data_fetcher_with_timeout_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.9,"mode":"fim","overall":0.34,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 12/13 failed"],"tests":0.08},"shape":"fim","solution_file":".gen_staging/fim_063_001_concurrent_data_fetcher_with_timeout_03/mutant.ex","task":"063_001_concurrent_data_fetcher_with_timeout_03","test_failures":[{"message":"{:EXIT, #PID<0.208.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentFetcher, :safe_call, 1, [file: ~c\"/tmp/evalfim_828595_2632.ex\", line: 98, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"ConcurrentFetcherTest","test":"test returns ok for all fast fetches"},{"message":"{:EXIT, #PID<0.212.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentFetcher, :safe_call, 1, [file: ~c\"/tmp/evalfim_828595_2632.ex\", line: 98, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"ConcurrentFetcherTest","test":"test returns error tuple for fetch functions that raise"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentFetcher, :safe_call, 1, [file: ~c\"/tmp/evalfim_828595_2632.ex\", line: 98, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"ConcurrentFetcherTest","test":"test returns error tuple for fetch functions that return {:error, reason}"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentFetcher, :safe_call, 1, [file: ~c\"/tmp/evalfim_828595_2632.ex\", line: 98, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"ConcurrentFetcherTest","test":"test slow fetches are reported as :timeout"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentFetcher, :safe_call, 1, [file: ~c\"/tmp/evalfim_828595_2632.ex\", line: 98, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"ConcurrentFetcherTest","test":"test all fetches time out when all are slow"},{"message":"{:EXIT, #PID<0.226.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentFetcher, :safe_call, 1, [file: ~c\"/tmp/evalfim_828595_2632.ex\", line: 98, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"ConcurrentFetcherTest","test":"test mix of fast, slow, and failing sources"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentFetcher, :safe_call, 1, [file: ~c\"/tmp/evalfim_828595_2632.ex\", line: 98, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"ConcurrentFetcherTest","test":"test fetch_all returns within a reasonable margin of the timeout"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentFetcher, :safe_call, 1, [file: ~c\"/tmp/evalfim_828595_2632.ex\", line: 98, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"ConcurrentFetcherTest","test":"test timed-out tasks leave no zombie processes behind"},{"message":"{:EXIT, #PID<0.244.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentFetcher, :safe_call, 1, [file: ~c\"/tmp/evalfim_828595_2632.ex\", line: 98, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"ConcurrentFetcherTest","test":"test all fetches run concurrently, not sequentially"},{"message":"{:EXIT, #PID<0.250.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentFetcher, :safe_call, 1, [file: ~c\"/tmp/evalfim_828595_2632.ex\", line: 98, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"ConcurrentFetcherTest","test":"test supports arbitrary term keys"},{"message":"{:EXIT, #PID<0.254.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentFetcher, :safe_call, 1, [file: ~c\"/tmp/evalfim_828595_2632.ex\", line: 98, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"ConcurrentFetcherTest","test":"test single fast source"},{"message":"{:EXIT, #PID<0.256.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentFetcher, :safe_call, 1, [file: ~c\"/tmp/evalfim_828595_2632.ex\", line: 98, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"ConcurrentFetcherTest","test":"test single timed-out source"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T12:42:44.315843Z"}
+14:42:44.338 [debug] fim mutation gate: killed
+14:42:44.340 [info] promoted 063_001_concurrent_data_fetcher_with_timeout_03 -> tasks/063_001_concurrent_data_fetcher_with_timeout_03

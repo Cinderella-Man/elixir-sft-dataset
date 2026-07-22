@@ -1,0 +1,369 @@
+13:35:18.962 [info] FIM 044_003_labeled_dimensional_metrics_collector_fim03 → 044_003_labeled_dimensional_metrics_collector_04: target reset/1
+13:35:18.962 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:35:18.963 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `reset/1`.
+
+Generate a prompt describing how to implement `reset/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `reset/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `reset/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `reset/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Metrics` that collects **dimensional (labeled) metrics** using ETS for fast, concurrent-safe storage. Unlike a flat counter collector, each metric is identified by a name *plus a set of labels* (a map, e.g. `%{method: "GET", status: 200}`), so the same metric name can carry many independent label combinations — exactly like Prometheus time series.
+
+I need these functions in the public API:
+
+- `Metrics.start_link(opts \\ [])` to start the backing GenServer. It accepts a `:name` option for process registration, defaulting to `__MODULE__`.
+- `Metrics.increment(name, labels \\ %{}, amount \\ 1)` to atomically increment the counter for a specific `{name, labels}` series by `amount` (a non-negative integer). Use `:ets.update_counter` on the hot path — increments must NOT serialize through the GenServer. Two labels maps with the same key/value pairs in a different order (`%{a: 1, b: 2}` vs `%{b: 2, a: 1}`) refer to the *same* series. Support the natural call shapes: `increment(name)`, `increment(name, labels)`, `increment(name, amount)`, and `increment(name, labels, amount)`.
+- `Metrics.gauge(name, value)` and `Metrics.gauge(name, labels, value)` to set the exact value of a series, overwriting the previous value.
+- `Metrics.get(name, labels)` to return the current value of a specific series, or `nil` if that exact series does not exist.
+- `Metrics.get(name)` to return the **aggregate** across all label combinations for that name (the sum of every series' value), or `nil` if the name has no series at all.
+- `Metrics.series(name)` to return a list of `%{labels: labels_map, value: value}` — one entry per label combination recorded under `name`.
+- `Metrics.reset(name, labels)` to set one specific series back to `0`, and `Metrics.reset(name)` to set *every* series under `name` back to `0`.
+- `Metrics.all()` to return a map keyed by `{name, labels_map}` mapping to each series' value.
+
+The ETS table must be public and named so `increment` can bypass the owning process. The GenServer exists only to own the table. Use only OTP/stdlib — no external dependencies. Give me the complete implementation in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Metrics do
+  @moduledoc """
+  A concurrent-safe *dimensional* metrics collector backed by a named public
+  ETS table.
+
+  Every metric is identified by a name plus a set of labels (a map). A series
+  is keyed by `{name, canonical_labels}` where `canonical_labels` is the labels
+  map sorted into a stable list, so label order never matters. Counter
+  increments use `:ets.update_counter/4` directly against the public table and
+  never serialise through the owning GenServer.
+
+  ## Quick start
+
+      {:ok, _pid} = Metrics.start_link()
+      Metrics.increment(:requests, %{method: "GET"})   # => :ok
+      Metrics.increment(:requests, %{method: "POST"}, 3)
+      Metrics.get(:requests, %{method: "GET"})         # => 1
+      Metrics.get(:requests)                           # => 4 (aggregate)
+      Metrics.series(:requests)
+      # => [%{labels: %{method: "GET"}, value: 1},
+      #     %{labels: %{method: "POST"}, value: 3}]
+  """
+
+  use GenServer
+
+  @table __MODULE__
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the backing GenServer and creates the ETS table.
+
+  ## Options
+
+    * `:name` — registration name for the process. Defaults to `#{__MODULE__}`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, init_opts} = Keyword.pop(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, init_opts, name: name)
+  end
+
+  @doc "Increments the `{name, labels}` counter by `amount` (default 1)."
+  @spec increment(term()) :: :ok
+  def increment(name), do: increment(name, %{}, 1)
+
+  @spec increment(term(), map() | non_neg_integer()) :: :ok
+  def increment(name, labels) when is_map(labels), do: increment(name, labels, 1)
+  def increment(name, amount) when is_integer(amount), do: increment(name, %{}, amount)
+
+  @spec increment(term(), map(), non_neg_integer()) :: :ok
+  def increment(name, labels, amount)
+      when is_map(labels) and is_integer(amount) and amount >= 0 do
+    key = key(name, labels)
+    :ets.update_counter(@table, key, {2, amount}, {key, 0})
+    :ok
+  end
+
+  @doc "Sets the `{name, %{}}` gauge to exactly `value`."
+  @spec gauge(term(), number()) :: :ok
+  def gauge(name, value), do: gauge(name, %{}, value)
+
+  @doc "Sets the `{name, labels}` gauge to exactly `value`."
+  @spec gauge(term(), map(), number()) :: :ok
+  def gauge(name, labels, value) when is_map(labels) do
+    :ets.insert(@table, {key(name, labels), value})
+    :ok
+  end
+
+  @doc "Returns the value of a specific series, or `nil` if it does not exist."
+  @spec get(term(), map()) :: number() | nil
+  def get(name, labels) when is_map(labels) do
+    case :ets.lookup(@table, key(name, labels)) do
+      [{_, value}] -> value
+      [] -> nil
+    end
+  end
+
+  @doc """
+  Returns the aggregate (sum) across every series under `name`, or `nil` if the
+  name has no series.
+  """
+  @spec get(term()) :: number() | nil
+  def get(name) do
+    case :ets.select(@table, [{{{name, :"$1"}, :"$2"}, [], [:"$2"]}]) do
+      [] -> nil
+      values -> Enum.sum(values)
+    end
+  end
+
+  @doc "Returns one `%{labels: map, value: value}` entry per series under `name`."
+  @spec series(term()) :: [%{labels: map(), value: number()}]
+  def series(name) do
+    @table
+    |> :ets.select([{{{name, :"$1"}, :"$2"}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.map(fn {norm, value} -> %{labels: Map.new(norm), value: value} end)
+  end
+
+  @doc "Resets one specific series to `0`."
+  @spec reset(term(), map()) :: :ok
+  def reset(name, labels) when is_map(labels) do
+    :ets.insert(@table, {key(name, labels), 0})
+    :ok
+  end
+
+  @doc "Resets every series under `name` to `0`."
+  @spec reset(term()) :: :ok
+  def reset(name) do
+    @table
+    |> :ets.select([{{{name, :"$1"}, :_}, [], [:"$1"]}])
+    |> Enum.each(fn norm -> :ets.insert(@table, {{name, norm}, 0}) end)
+
+    :ok
+  end
+
+  @doc "Returns all series as a map keyed by `{name, labels_map}`."
+  @spec all() :: %{{term(), map()} => number()}
+  def all do
+    :ets.foldl(
+      fn {{name, norm}, value}, acc -> Map.put(acc, {name, Map.new(norm)}, value) end,
+      %{},
+      @table
+    )
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  # Canonicalise labels to a sorted list so key/value order is irrelevant.
+  defp key(name, labels), do: {name, Enum.sort(labels)}
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(_opts) do
+    :ets.new(@table, [
+      :set,
+     (truncated)
+13:35:47.770 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `reset/1` function. It resets *every* series recorded under
+`name` back to `0`, regardless of labels. Use `:ets.select/2` against the named
+table to collect the canonical (sorted) labels list of each series whose key
+matches `{name, labels}` — match on the key shape `{{name, :"$1"}, :_}` and return
+`:"$1"` (the labels portion). Then, for each returned canonical labels list,
+overwrite that series' value by inserting `{{name, norm}, 0}` back into the table.
+Finally return `:ok`.
+
+```elixir
+defmodule Metrics do
+  @moduledoc """
+  A concurrent-safe *dimensional* metrics collector backed by a named public
+  ETS table.
+
+  Every metric is identified by a name plus a set of labels (a map). A series
+  is keyed by `{name, canonical_labels}` where `canonical_labels` is the labels
+  map sorted into a stable list, so label order never matters. Counter
+  increments use `:ets.update_counter/4` directly against the public table and
+  never serialise through the owning GenServer.
+
+  ## Quick start
+
+      {:ok, _pid} = Metrics.start_link()
+      Metrics.increment(:requests, %{method: "GET"})   # => :ok
+      Metrics.increment(:requests, %{method: "POST"}, 3)
+      Metrics.get(:requests, %{method: "GET"})         # => 1
+      Metrics.get(:requests)                           # => 4 (aggregate)
+      Metrics.series(:requests)
+      # => [%{labels: %{method: "GET"}, value: 1},
+      #     %{labels: %{method: "POST"}, value: 3}]
+  """
+
+  use GenServer
+
+  @table __MODULE__
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the backing GenServer and creates the ETS table.
+
+  ## Options
+
+    * `:name` — registration name for the process. Defaults to `#{__MODULE__}`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, init_opts} = Keyword.pop(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, init_opts, name: name)
+  end
+
+  @doc "Increments the `{name, labels}` counter by `amount` (default 1)."
+  @spec increment(term()) :: :ok
+  def increment(name), do: increment(name, %{}, 1)
+
+  @spec increment(term(), map() | non_neg_integer()) :: :ok
+  def increment(name, labels) when is_map(labels), do: increment(name, labels, 1)
+  def increment(name, amount) when is_integer(amount), do: increment(name, %{}, amount)
+
+  @spec increment(term(), map(), non_neg_integer()) :: :ok
+  def increment(name, labels, amount)
+      when is_map(labels) and is_integer(amount) and amount >= 0 do
+    key = key(name, labels)
+    :ets.update_counter(@table, key, {2, amount}, {key, 0})
+    :ok
+  end
+
+  @doc "Sets the `{name, %{}}` gauge to exactly `value`."
+  @spec gauge(term(), number()) :: :ok
+  def gauge(name, value), do: gauge(name, %{}, value)
+
+  @doc "Sets the `{name, labels}` gauge to exactly `value`."
+  @spec gauge(term(), map(), number()) :: :ok
+  def gauge(name, labels, value) when is_map(labels) do
+    :ets.insert(@table, {key(name, labels), value})
+    :ok
+  end
+
+  @doc "Returns the value of a specific series, or `nil` if it does not exist."
+  @spec get(term(), map()) :: number() | nil
+  def get(name, labels) when is_map(labels) do
+    case :ets.lookup(@table, key(name, labels)) do
+      [{_, value}] -> value
+      [] -> nil
+    end
+  end
+
+  @doc """
+  Returns the aggregate (sum) across every series under `name`, or `nil` if the
+  name has no series.
+  """
+  @spec get(term()) :: number() | nil
+  def get(name) do
+    case :ets.select(@table, [{{{name, :"$1"}, :"$2"}, [], [:"$2"]}]) do
+      [] -> nil
+      values -> Enum.sum(values)
+    end
+  end
+
+  @doc "Returns one `%{labels: map, value: value}` entry per series under `name`."
+  @spec series(term()) :: [%{labels: map(), value: number()}]
+  def series(name) do
+    @table
+    |> :ets.select([{{{name, :"$1"}, :"$2"}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.map(fn {norm, value} -> %{labels: Map.new(norm), value: value} end)
+  end
+
+  @doc "Resets one specific series to `0`."
+  @spec reset(term(), map()) :: :ok
+  def reset(name, labels) when is_map(labels) do
+    :ets.insert(@table, {key(name, labels), 0})
+    :ok
+  end
+
+  @doc "Resets every series under `name` to `0`."
+  @spec reset(term()) :: :ok
+  def reset(name) do
+    # TODO
+  end
+
+  @doc "Returns all series as a map keyed by `{name, labels_map}`."
+  @spec all() :: %{{term(), map()} => number()}
+  def all do
+    :ets.foldl(
+      fn {{name, norm}, value}, acc -> Map.put(acc, {name, Map.new(norm)}, value) end,
+      %{},
+      @table
+    )
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  # Canonicalise labels to a sorted list so key/value order is irrelevant.
+  defp key(name, labels), do: {name, Enum.sort(labels)}
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(_opts) do
+    :ets.new(@table, [
+      :set,
+      :named_table,
+      :public,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
+
+    {:ok, %{}}
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  @doc "Resets every series under `name` to `0`."
+  @spec reset(term()) :: :ok
+  def reset(name) do
+    @table
+    |> :ets.select([{{{name, :"$1"}, :_}, [], [:"$1"]}])
+    |> Enum.each(fn norm -> :ets.insert(@table, {{name, norm}, 0}) end)
+
+    :ok
+  end
+</file>
+13:35:47.770 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3638, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3638, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3638, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3638, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2537, "type" => "message"}], "output_tokens" => 2537, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:35:47.789 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_044_003_labeled_dimensional_metrics_collector_04/044_003_labeled_dimensional_metrics_collector_04 solution.ex
+13:35:48.398 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":true,"has_moduledoc":false,"has_typespecs":true,"line_count":9,"lines_over_98":0,"max_line_length":71,"mode":"fim","pipe_chain_count":2,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"parent":"044_003_labeled_dimensional_metrics_collector_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.9,"mode":"fim","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_044_003_labeled_dimensional_metrics_collector_04/044_003_labeled_dimensional_metrics_collector_04/solution.ex","task":"044_003_labeled_dimensional_metrics_collector_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T11:35:48.376048Z"}
+13:35:48.399 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_044_003_labeled_dimensional_metrics_collector_04/044_003_labeled_dimensional_metrics_collector_04 .gen_staging/fim_044_003_labeled_dimensional_metrics_collector_04/mutant.ex
+13:35:49.048 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":true,"has_moduledoc":false,"has_typespecs":true,"line_count":5,"lines_over_98":0,"max_line_length":47,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"044_003_labeled_dimensional_metrics_collector_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.94,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 1/17 failed"],"tests":0.94},"shape":"fim","solution_file":".gen_staging/fim_044_003_labeled_dimensional_metrics_collector_04/mutant.ex","task":"044_003_labeled_dimensional_metrics_collector_04","test_failures":[{"message":"MUTATION","module":"MetricsTest","test":"test reset/1 zeroes every series under the name"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T11:35:49.024000Z"}
+13:35:49.048 [debug] fim mutation gate: killed
+13:35:49.049 [info] promoted 044_003_labeled_dimensional_metrics_collector_04 -> tasks/044_003_labeled_dimensional_metrics_collector_04

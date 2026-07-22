@@ -1,0 +1,194 @@
+13:52:24.634 [info] FIM candidate-select for 015_004_concurrent_sweep_heartbeat_monitor_01 (up to 3)
+13:52:24.634 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:52:24.634 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+# Concurrent Sweep Heartbeat Monitor
+
+Write me an Elixir `GenServer` module called `AsyncMonitor` that watches a set of
+enrolled services and probes them **concurrently**. Unlike a monitor that runs each
+probe synchronously inside the server, this one dispatches every service's probe to
+its **own separate process** so that slow probes cannot block one another, and a
+"sweep" gathers the results.
+
+Use only the OTP standard library — no external dependencies. Give me the complete
+module in a single file.
+
+## Public API
+
+- `AsyncMonitor.start_link(opts \\ [])` — starts the process, linked to the caller,
+  returning the usual `GenServer.on_start()` result. `opts` defaults to `[]`. A
+  `:name` option, when present, is used for process registration (functions accept
+  the pid or the registered name); otherwise the process is unregistered. A freshly
+  started server has zero enrolled services.
+
+- `AsyncMonitor.enroll(server, name, probe, opts \\ [])` — enrolls a service and
+  returns `:ok`.
+  - `name` is any term identifying the service (compared by value).
+  - `probe` is a **zero-arity** function returning `:ok` or `{:error, reason}`.
+    Guard the public function with `is_function(probe, 0)`.
+  - `opts` may contain:
+    - `:threshold` — a positive integer, the number of **consecutive** failed
+      probes required before the service is marked `:down`. Defaults to `3`.
+    - `:on_change` — an arity-2 function called as `on_change.(name, new_status)`
+      on each status transition (see below). Defaults to a no-op.
+  - A newly enrolled service starts with status `:up` and `0` consecutive failures.
+    Enrolling a `name` that already exists replaces its configuration and resets it
+    to this initial state.
+
+- `AsyncMonitor.sweep(server)` — runs **one probe for every currently enrolled
+  service**. Each service's probe is invoked in its own separate process, and all
+  the probes of a single sweep run **concurrently** (one probe process per service,
+  all launched before any of them needs to finish). `sweep/1` **blocks** and returns
+  `:ok` only after every probe in the sweep has finished and its result has been
+  applied to that service's status. If no services are enrolled, `sweep/1` returns
+  `:ok` immediately.
+
+- `AsyncMonitor.status(server, name)` — returns `{:ok, :up}` / `{:ok, :down}` for an
+  enrolled service, or `{:error, :not_found}` if it was never enrolled.
+
+- `AsyncMonitor.overview(server)` — returns a map `%{name => :up | :down}` for every
+  enrolled service. Empty map `%{}` when nothing is enrolled.
+
+## Applying a probe result
+
+For each probe run in a sweep, the result updates that service's status. Let the
+service have status `st`, consecutive-failure count `c`, and threshold `t`.
+
+- If the probe returns `:ok`: the count resets to `0`; if `st` was `:down` it
+  becomes `:up`, otherwise it stays `:up`.
+- If the probe returns `{:error, _reason}`: the count becomes `c + 1`; if the new
+  count is `>= t` **and** `st` was `:up`, the status becomes `:down`; otherwise the
+  status is left unchanged. Because failures must be consecutive, any `:ok` result
+  resets the count.
+- If a probe **raises or throws**, it is treated as a failure (equivalent to an
+  `{:error, _}` result) and must not crash the server.
+
+## Status transitions and notifications
+
+A "transition" is any change of the status field (`:up` → `:down` or
+`:down` → `:up`). On each actual change — and only then — the service's `:on_change`
+callback is invoked exactly once as `on_change.(name, new_status)` with the status
+just entered. A probe that leaves the status unchanged calls nothing.
+
+## Concurrency, independence, and robustness
+
+- Within a sweep, every service is probed in a distinct process, and those processes
+  are all started before the sweep waits for any of them; a probe that blocks does
+  not prevent the other services' probes from being invoked.
+- Services are fully independent: one service's result or status never affects
+  another's.
+- Any message the server does not understand must be ignored: it must neither crash
+  the process nor alter any service's state.
+
+=== MODULE ===
+```elixir
+defmodule AsyncMonitor do
+  @moduledoc """
+  A `GenServer` that watches enrolled services and probes them concurrently.
+
+  Each enrolled service has a zero-arity probe function returning `:ok` or
+  `{:error, reason}`. Calling `sweep/1` runs one probe for every enrolled
+  service, dispatching each probe to its **own separate process** so that a
+  slow or blocking probe cannot delay the others. A sweep blocks until every
+  probe has finished and its result has been applied to the owning service.
+
+  A service becomes `:down` only after `:threshold` *consecutive* failed
+  probes while it was `:up`; any successful probe resets the failure count and
+  brings a `:down` service back `:up`. On each actual status transition the
+  service's `:on_change` callback is invoked exactly once as
+  `on_change.(name, new_status)`.
+
+  Services are fully independent: one service's result never affects another's.
+  Unknown messages are ignored and never crash the server.
+  """
+
+  use GenServer
+
+  @default_threshold 3
+
+  @typedoc "Status of an enrolled service."
+  @type status :: :up | :down
+
+  @typedoc "A zero-arity probe function."
+  @type probe :: (-> :ok | {:error, term()})
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the monitor linked to the caller.
+
+  `opts` may contain a `:name` used for process registration; when absent the
+  process is left unregistered. A freshly started server has zero enrolled
+  services.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, rest} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, rest, gen_opts)
+  end
+
+  @doc """
+  Enrolls (or replaces) a service identified by `name`.
+
+  `probe` must be a zero-arity function. `opts` accepts `:threshold` (a
+  positive integer, default `#{@default_threshold}`) and `:on_change` (an
+  arity-2 callback, default a no-op). The service starts `:up` with `0`
+  consecutive failures; re-enrolling an existing `name` resets it to that
+  initial state.
+  """
+  @spec enroll(GenServer.server(), term(), probe(), keyword()) :: :ok
+  def enroll(server, name, probe, opts \\ []) when is_function(probe, 0) do
+    GenServer.call(server, {:enroll, name, probe, opts})
+  end
+
+  @doc """
+  Runs one probe for every currently enrolled service.
+
+  Every service's probe runs in its own process and all probes of the sweep
+  are launched before any of them must finish. Blocks and returns `:ok` only
+  after every probe has finished and been applied. Returns `:ok` immediately
+  when nothing is enrolled.
+  """
+  @spec sweep(GenServer.server()) :: :ok
+  def sweep(server) do
+    GenServer.call(server, :sweep, :infinity)
+  end
+
+  @doc """
+  Returns `{:ok, status}` for an enrolled service, or `{:error, :not_found}`.
+  """
+  @spec status(GenServer.server(), term()) :: {:ok, status()} | {:error, :not_found}
+  def status(server, name) do
+    GenServer.call(server, {:status, name})
+  end
+
+  @doc """
+  Returns a map of `%{name => status}` for every enrolled service.
+  """
+  @spec overview(GenServer.server()) :: %{optional(term()) => status()}
+  def overview(server) do
+    GenServer.call(server, :overview)
+  end
+
+  # ── GenServer callbacks ────── (truncated)
+13:52:31.400 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+apply_result/2
+run_sweep/1
+apply_all/2
+</file>
+13:52:31.400 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8451, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8451, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8451, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8451, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 329, "type" => "message"}], "output_tokens" => 329, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

@@ -1,0 +1,1539 @@
+13:10:28.111 [info] VARIATION 100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01: Multi-Algorithm otpauth URI Codec with Configurable Digits and Period
+13:10:28.111 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:10:28.112 [debug] claude -p USER prompt:
+Write me an Elixir module called `OTPAuth` that implements a **multi-algorithm, configuration-driven** one-time-password codec: RFC 6238 TOTP code generation plus a full `otpauth://` provisioning-URI **codec** (build *and* parse). Use only the Erlang/OTP + Elixir standard libraries — no external dependencies, and do not use `Base.encode32/2` or `Base.decode32/2`; write the base32 layer yourself.
+
+Unlike a fixed SHA1 / 6-digit / 30-second implementation, every knob here is part of a **config map** that can be produced by parsing a URI supplied by a third party, so parsing is where the failure semantics live: parsing never raises, it returns tagged error tuples.
+
+## The config map
+
+A config is a plain map with these keys:
+
+* `:secret` — base32 secret string (required)
+* `:issuer` — string (required by `build_uri/1`)
+* `:account_name` — string (required by `build_uri/1`)
+* `:algorithm` — `:sha1` | `:sha256` | `:sha512` (optional, defaults to `:sha1`)
+* `:digits` — `6`, `7`, or `8` (optional, defaults to `6`)
+* `:period` — positive integer seconds (optional, defaults to `30`)
+
+`generate_code/2` and `valid?/3` only need `:secret`; any of `:algorithm`, `:digits`, `:period` that are absent from the map take the defaults above.
+
+## Public API
+
+### `OTPAuth.generate_secret(bytes \\ 20)`
+
+Returns a cryptographically random, unpadded, uppercase base32 string encoding `bytes` bytes of entropy (default 20 = 160 bits). Must use `:crypto.strong_rand_bytes/1`. The result must match `~r/\A[A-Z2-7]+\z/`.
+
+### `OTPAuth.decode_secret(secret)`
+
+Returns `{:ok, binary}` or `{:error, :invalid_secret}`.
+
+Decoding is **lenient about presentation** and follows RFC 4648 base32 (alphabet `A`–`Z`, `2`–`7`):
+
+* lowercase letters are accepted (upcased first),
+* ASCII whitespace is ignored (authenticator apps display secrets in space-separated groups),
+* trailing `=` padding characters are ignored,
+* leftover bits that do not complete a byte are discarded.
+
+Any other character, or a secret that normalizes to fewer than 8 bits of data (e.g. the empty string), yields `{:error, :invalid_secret}`.
+
+### `OTPAuth.generate_code(config, time \\ :os.system_time(:second))`
+
+Returns the zero-padded decimal code string for the given UNIX timestamp:
+
+* time step is `div(time, period)`, encoded as a big-endian unsigned 64-bit integer,
+* HMAC of that counter with the decoded secret under the configured hash, via `:crypto.mac(:hmac, algorithm, key, counter)`,
+* RFC 4226 §5.3 dynamic truncation: `offset = last_byte &&& 0x0F`, read the 4 bytes at `offset`, mask the top bit of the first with `0x7F`, combine big-endian,
+* take the result modulo `10^digits` and left-pad with zeros to exactly `digits` characters.
+
+The returned string is always exactly `digits` characters long and matches `~r/\A\d+\z/`.
+
+If `config.secret` is not valid base32, `generate_code/2` raises `ArgumentError`.
+
+### `OTPAuth.valid?(config, code, opts \\ [])`
+
+Validates a code given as a string or an integer (an integer is zero-padded to `digits` before comparison). Options:
+
+* `:time` — UNIX seconds to validate against (default: current system time),
+* `:window` — number of steps of `config.period` accepted in **each** direction (default: `1`).
+
+Returns `true` if the code equals the code generated at any step in `time - window*period .. time + window*period`, `false` otherwise. `window: 0` accepts only the exact current step. The comparison must be constant-time with respect to matching-prefix length (compare all bytes, no early exit).
+
+### `OTPAuth.build_uri(config)`
+
+Returns an `otpauth://totp/` URI:
+
+* label is `issuer:account_name`, each side URI-encoded (unreserved characters only),
+* query string, in this exact key order: `secret`, `issuer`, `algorithm`, `digits`, `period`, built with `URI.encode_query/1`,
+* `algorithm` is emitted uppercase: `SHA1`, `SHA256` or `SHA512`,
+* `digits` and `period` are emitted as decimal strings,
+* defaults are materialized: a config without `:algorithm` / `:digits` / `:period` still emits `algorithm=SHA1`, `digits=6`, `period=30`.
+
+### `OTPAuth.parse_uri(uri)`
+
+Returns `{:ok, config}` or `{:error, reason}`. It must **never raise** on malformed input. The returned config always has all six keys populated (defaults filled in), and `:secret` is normalized — upcased, with whitespace and `=` padding removed.
+
+Validation happens in exactly this order, returning the first failure:
+
+1. scheme must be `otpauth` → else `{:error, :invalid_scheme}`
+2. host must be `totp` → else `{:error, :unsupported_type}`
+3. the path must contain a non-empty label after the leading `/` → else `{:error, :invalid_label}`. The label is percent-decoded. If it contains a `:`, it splits at the **first** colon into a label-issuer and the account name, and leading spaces are trimmed from the account name (so `Acme:%20alice` yields account `"alice"`). If it contains no colon, the whole label is the account name and there is no label-issuer.
+4. a `secret` query parameter must be present → else `{:error, :missing_secret}`
+5. the secret must decode per `decode_secret/1` → else `{:error, :invalid_secret}`
+6. if both a label-issuer and an `issuer` query parameter are present and they differ, `{:error, :issuer_mismatch}`. Otherwise the issuer is the `issuer` query parameter if present, else the label-issuer if present, else `""`.
+7. `algorithm` (case-insensitive `sha1` / `sha256` / `sha512`, absent ⇒ `:sha1`) → else `{:error, :unsupported_algorithm}`
+8. `digits` must be the decimal string `6`, `7`, or `8` (absent ⇒ `6`) → else `{:error, :invalid_digits}`
+9. `period` must be a decimal string for a positive integer (absent ⇒ `30`) → else `{:error, :invalid_period}`
+
+`parse_uri(build_uri(config))` must round-trip a fully populated config back to an equal map.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+13:11:32.274 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule OTPAuth do
+  @moduledoc """
+  A multi-algorithm, configuration-driven one-time-password codec.
+
+  `OTPAuth` implements RFC 6238 time-based one-time passwords (TOTP) on top of the
+  RFC 4226 HOTP dynamic-truncation algorithm, plus a complete `otpauth://` provisioning
+  URI codec: it can both build a URI from a config map and parse a third-party URI back
+  into one.
+
+  Everything is driven by a plain map (the *config*):
+
+    * `:secret` — base32-encoded shared secret (required)
+    * `:issuer` — issuer string (required by `build_uri/1`)
+    * `:account_name` — account name string (required by `build_uri/1`)
+    * `:algorithm` — `:sha1` | `:sha256` | `:sha512` (default `:sha1`)
+    * `:digits` — `6`, `7` or `8` (default `6`)
+    * `:period` — positive integer seconds (default `30`)
+
+  Code generation (`generate_code/2`, `valid?/3`) only requires `:secret`; the remaining
+  algorithm knobs fall back to the defaults above when absent.
+
+  Base32 encoding/decoding is implemented in this module (RFC 4648, alphabet `A`-`Z` and
+  `2`-`7`, no padding on output). Decoding is deliberately lenient about *presentation* —
+  lowercase input, embedded ASCII whitespace and trailing `=` padding are all tolerated,
+  because authenticator apps display secrets in whitespace-separated groups.
+
+  Parsing never raises: `parse_uri/1` returns `{:ok, config}` or `{:error, reason}`.
+
+      iex> config = %{secret: "JBSWY3DPEHPK3PXP", issuer: "Acme", account_name: "alice"}
+      iex> OTPAuth.generate_code(config, 59)
+      "287082"
+
+  """
+
+  @default_algorithm :sha1
+  @default_digits 6
+  @default_period 30
+  @default_secret_bytes 20
+
+  @b32_alphabet ~c"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @type algorithm :: :sha1 | :sha256 | :sha512
+
+  @type config :: %{
+          optional(:secret) => String.t(),
+          optional(:issuer) => String.t(),
+          optional(:account_name) => String.t(),
+          optional(:algorithm) => algorithm(),
+          optional(:digits) => 6 | 7 | 8,
+          optional(:period) => pos_integer()
+        }
+
+  @type parse_error ::
+          :invalid_scheme
+          | :unsupported_type
+          | :invalid_label
+          | :missing_secret
+          | :invalid_secret
+          | :issuer_mismatch
+          | :unsupported_algorithm
+          | :invalid_digits
+          | :invalid_period
+
+  @doc """
+  Generates a cryptographically random base32 secret.
+
+  `bytes` bytes of entropy are drawn from `:crypto.strong_rand_bytes/1` (default `20`,
+  i.e. 160 bits, the size recommended by RFC 4226) and encoded as an unpadded, uppercase
+  RFC 4648 base32 string matching `~r/\\A[A-Z2-7]+\\z/`.
+
+  ## Examples
+
+      iex> secret = OTPAuth.generate_secret()
+      iex> String.match?(secret, ~r/\\A[A-Z2-7]+\\z/)
+      true
+
+  """
+  @spec generate_secret(pos_integer()) :: String.t()
+  def generate_secret(bytes \\ @default_secret_bytes) when is_integer(bytes) and bytes > 0 do
+    bytes
+    |> :crypto.strong_rand_bytes()
+    |> base32_encode()
+  end
+
+  @doc """
+  Decodes a base32 `secret` into its raw binary form.
+
+  Returns `{:ok, binary}`, or `{:error, :invalid_secret}` when the secret contains a
+  character outside the RFC 4648 base32 alphabet or carries fewer than 8 bits of data.
+
+  Lowercase letters are upcased, ASCII whitespace is stripped, trailing `=` padding is
+  ignored and trailing bits that do not complete a byte are discarded.
+
+  ## Examples
+
+      iex> OTPAuth.decode_secret("jbsw y3dp ====")
+      {:ok, "Hello"}
+
+      iex> OTPAuth.decode_secret("1234")
+      {:error, :invalid_secret}
+
+  """
+  @spec decode_secret(String.t()) :: {:ok, binary()} | {:error, :invalid_secret}
+  def decode_secret(secret) when is_binary(secret) do
+    secret
+    |> normalize_secret()
+    |> base32_decode()
+  end
+
+  def decode_secret(_secret), do: {:error, :invalid_secret}
+
+  @doc """
+  Generates the TOTP code for `config` at the given UNIX `time` (seconds).
+
+  The counter is `div(time, period)` encoded as a big-endian unsigned 64-bit integer, HMACed
+  with the decoded secret under the configured hash algorithm, then reduced with the RFC 4226
+  §5.3 dynamic-truncation rule and taken modulo `10 ** digits`. The result is zero-padded to
+  exactly `digits` characters.
+
+  Raises `ArgumentError` if `config.secret` is not valid base32.
+
+  ## Examples
+
+      iex> OTPAuth.generate_code(%{secret: "JBSWY3DPEHPK3PXP"}, 1_111_111_109)
+      "081804"
+
+  """
+  @spec generate_code(config(), integer()) :: String.t()
+  def generate_code(config, time \\ :os.system_time(:second))
+      when is_map(config) and is_integer(time) do
+    key =
+      case decode_secret(Map.fetch!(config, :secret)) do
+        {:ok, key} -> key
+        {:error, :invalid_secret} -> raise ArgumentError, "invalid base32 secret"
+      end
+
+    algorithm = algorithm(config)
+    digits = digits(config)
+    period = period(config)
+
+    counter = div(time, period)
+    hmac = :crypto.mac(:hmac, algorithm, key, <<counter::unsigned-big-integer-size(64)>>)
+
+    hmac
+    |> dynamic_truncate()
+    |> rem(pow10(digits))
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  @doc """
+  Checks whether `code` is valid for `config`.
+
+  `code` may be a string or an integer (an integer is zero-padded to `digits` first).
+
+  ## Options
+
+    * `:time` — UNIX seconds to validate against (default: current system time)
+    * `:window` — number of `config.period` steps accepted in *each* direction (default `1`);
+      `0` accepts only the current step
+
+  The comparison against every candidate code is constant-time with respect to the length of
+  a matching prefix.
+
+  ## Examples
+
+      iex> config = %{secret: "JBSWY3DPEHPK3PXP"}
+      iex> OTPAuth.valid?(config, OTPAuth.generate_code(config, 1_000), time: 1_000, window: 0)
+      true
+
+  """
+  @spec valid?(config(), String.t() | integer(), keyword()) :: boolean()
+  def valid?(config, code, opts \\ []) when is_map(config) and is_list(opts) do
+    digits = digits(config)
+    period = period(config)
+    time = Keyword.get(opts, :time, :os.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+
+    expected = normalize_code(code, digits)
+
+    -window..window
+    |> Enum.reduce(false, fn step, acc ->
+      candidate = generate_code(config, time + step * period)
+      secure_compare(candidate, expected) or acc
+    end)
+  end
+
+  @doc """
+  Builds an `otpauth://totp/` provisioning URI from `config`.
+
+  The label is `issuer:account_name` with each side percent-encoded down to the unreserved
+  character set. The query string is emitted in a fixed key order — `secret`, `issuer`,
+  `algorithm`, `digits`, `period` — with defaults materialized, so a config carrying only
+  `:secret`, `:issuer` and `:account_name` still emits `algorithm=SHA1`, `digits=6` and
+  `period=30`.
+
+  ## Examples
+
+      iex> OTPAuth.build_uri(%{secret: "JBSWY3DP", issuer: "Acme", account_name: "alice"})
+      "otpauth://totp/Acme:alice?secret=JBSWY3DP&issuer=Acme&algorithm=SHA1&digits=6&period=30"
+
+  """
+  @spec build_uri(config()) :: String.t()
+  def build_uri(config) when is_map(config) do
+    secret = Map.fetch!(config, :secret)
+    issuer = Map.fetch!(config, :issuer)
+    account_name = Map.fetch!(config, :account_name)
+
+    label = encode_component(issuer) <> ":" <> encode_component(account_name)
+
+    query =
+      URI.encode_query([
+        {"secret", secret},
+        {"issuer", issuer},
+        {"algorithm", algorithm_to_string(algorithm(config))},
+        {"digits", Integer.to_string(digits(config))},
+        {"period", Integer.to_string(period(config))}
+      ])
+
+    "otpauth://totp/" <> label <> "?" <> query
+  end
+
+  @doc """
+  Parses an `otpauth://` provisioning URI into a config map.
+
+  Returns `{:ok, config}` with all six keys populated (defaults filled in and the secret
+  normalized — upcased, whitespace and `=` padding removed), or `{:error, reason}`. This
+  function never raises, whatever the input.
+
+  Failures are reported in a fixed precedence: `:invalid_scheme`, `:unsupported_type`,
+  `:invalid_label`, `:mis (truncated)
+13:11:32.274 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6051, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6051, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6051, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6051, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 6895, "type" => "message"}], "output_tokens" => 6895, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:11:32.293 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01 solution.ex
+13:11:32.755 [debug] grade JSON: {"analysis":{"defp_count":40,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":520,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":24,"public_fn_count":8,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":".gen_staging/100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01/solution.ex: cannot compile module OTPAuth (errors have been logged)","type":"CompileError"}],"compile_warnings":2,"compiled":false,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: failed to compile (0.0)"],"tests":0.0},"shape":"single","solution_file":".gen_staging/100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01/solution.ex","task":"100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-12T11:11:32.732475Z"}
+13:11:32.756 [info] cycle 100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01: repairing — Compilation failed:
+  - CompileError: .gen_staging/100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01/solution.ex: cannot compile module OTPAuth (errors have been logged)
+13:11:32.756 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:11:32.756 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Compilation failed:
+  - CompileError: .gen_staging/100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01/solution.ex: cannot compile module OTPAuth (errors have been logged)
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `OTPAuth` that implements a **multi-algorithm, configuration-driven** one-time-password codec: RFC 6238 TOTP code generation plus a full `otpauth://` provisioning-URI **codec** (build *and* parse). Use only the Erlang/OTP + Elixir standard libraries — no external dependencies, and do not use `Base.encode32/2` or `Base.decode32/2`; write the base32 layer yourself.
+
+Unlike a fixed SHA1 / 6-digit / 30-second implementation, every knob here is part of a **config map** that can be produced by parsing a URI supplied by a third party, so parsing is where the failure semantics live: parsing never raises, it returns tagged error tuples.
+
+## The config map
+
+A config is a plain map with these keys:
+
+* `:secret` — base32 secret string (required)
+* `:issuer` — string (required by `build_uri/1`)
+* `:account_name` — string (required by `build_uri/1`)
+* `:algorithm` — `:sha1` | `:sha256` | `:sha512` (optional, defaults to `:sha1`)
+* `:digits` — `6`, `7`, or `8` (optional, defaults to `6`)
+* `:period` — positive integer seconds (optional, defaults to `30`)
+
+`generate_code/2` and `valid?/3` only need `:secret`; any of `:algorithm`, `:digits`, `:period` that are absent from the map take the defaults above.
+
+## Public API
+
+### `OTPAuth.generate_secret(bytes \\ 20)`
+
+Returns a cryptographically random, unpadded, uppercase base32 string encoding `bytes` bytes of entropy (default 20 = 160 bits). Must use `:crypto.strong_rand_bytes/1`. The result must match `~r/\A[A-Z2-7]+\z/`.
+
+### `OTPAuth.decode_secret(secret)`
+
+Returns `{:ok, binary}` or `{:error, :invalid_secret}`.
+
+Decoding is **lenient about presentation** and follows RFC 4648 base32 (alphabet `A`–`Z`, `2`–`7`):
+
+* lowercase letters are accepted (upcased first),
+* ASCII whitespace is ignored (authenticator apps display secrets in space-separated groups),
+* trailing `=` padding characters are ignored,
+* leftover bits that do not complete a byte are discarded.
+
+Any other character, or a secret that normalizes to fewer than 8 bits of data (e.g. the empty string), yields `{:error, :invalid_secret}`.
+
+### `OTPAuth.generate_code(config, time \\ :os.system_time(:second))`
+
+Returns the zero-padded decimal code string for the given UNIX timestamp:
+
+* time step is `div(time, period)`, encoded as a big-endian unsigned 64-bit integer,
+* HMAC of that counter with the decoded secret under the configured hash, via `:crypto.mac(:hmac, algorithm, key, counter)`,
+* RFC 4226 §5.3 dynamic truncation: `offset = last_byte &&& 0x0F`, read the 4 bytes at `offset`, mask the top bit of the first with `0x7F`, combine big-endian,
+* take the result modulo `10^digits` and left-pad with zeros to exactly `digits` characters.
+
+The returned string is always exactly `digits` characters long and matches `~r/\A\d+\z/`.
+
+If `config.secret` is not valid base32, `generate_code/2` raises `ArgumentError`.
+
+### `OTPAuth.valid?(config, code, opts \\ [])`
+
+Validates a code given as a string or an integer (an integer is zero-padded to `digits` before comparison). Options:
+
+* `:time` — UNIX seconds to validate against (default: current system time),
+* `:window` — number of steps of `config.period` accepted in **each** direction (default: `1`).
+
+Returns `true` if the code equals the code generated at any step in `time - window*period .. time + window*period`, `false` otherwise. `window: 0` accepts only the exact current step. The comparison must be constant-time with respect to matching-prefix length (compare all bytes, no early exit).
+
+### `OTPAuth.build_uri(config)`
+
+Returns an `otpauth://totp/` URI:
+
+* label is `issuer:account_name`, each side URI-encoded (unreserved characters only),
+* query string, in this exact key order: `secret`, `issuer`, `algorithm`, `digits`, `period`, built with `URI.encode_query/1`,
+* `algorithm` is emitted uppercase: `SHA1`, `SHA256` or `SHA512`,
+* `digits` and `period` are emitted as decimal strings,
+* defaults are materialized: a config without `:algorithm` / `:digits` / `:period` still emits `algorithm=SHA1`, `digits=6`, `period=30`.
+
+### `OTPAuth.parse_uri(uri)`
+
+Returns `{:ok, config}` or `{:error, reason}`. It must **never raise** on malformed input. The returned config always has all six keys populated (defaults filled in), and `:secret` is normalized — upcased, with whitespace and `=` padding removed.
+
+Validation happens in exactly this order, returning the first failure:
+
+1. scheme must be `otpauth` → else `{:error, :invalid_scheme}`
+2. host must be `totp` → else `{:error, :unsupported_type}`
+3. the path must contain a non-empty label after the leading `/` → else `{:error, :invalid_label}`. The label is percent-decoded. If it contains a `:`, it splits at the **first** colon into a label-issuer and the account name, and leading spaces are trimmed from the account name (so `Acme:%20alice` yields account `"alice"`). If it contains no colon, the whole label is the account name and there is no label-issuer.
+4. a `secret` query parameter must be present → else `{:error, :missing_secret}`
+5. the secret must decode per `decode_secret/1` → else `{:error, :invalid_secret}`
+6. if both a label-issuer and an `issuer` query parameter are present and they differ, `{:error, :issuer_mismatch}`. Otherwise the issuer is the `issuer` query parameter if present, else the label-issuer if present, else `""`.
+7. `algorithm` (case-insensitive `sha1` / `sha256` / `sha512`, absent ⇒ `:sha1`) → else `{:error, :unsupported_algorithm}`
+8. `digits` must be the decimal string `6`, `7`, or `8` (absent ⇒ `6`) → else `{:error, :invalid_digits}`
+9. `period` must be a decimal string for a positive integer (absent ⇒ `30`) → else `{:error, :invalid_period}`
+
+`parse_uri(build_uri(config))` must round-trip a fully populated config back to an equal map.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule OTPAuth do
+  @moduledoc """
+  A multi-algorithm, configuration-driven one-time-password codec.
+
+  `OTPAuth` implements RFC 6238 time-based one-time passwords (TOTP) on top of the
+  RFC 4226 HOTP dynamic-truncation algorithm, plus a complete `otpauth://` provisioning
+  URI codec: it can both build a URI from a config map and parse a third-party URI back
+  into one.
+
+  Everything is driven by a plain map (the *config*):
+
+    * `:secret` — base32-encoded shared secret (required)
+    * `:issuer` — issuer string (required by `build_uri/1`)
+    * `:account_name` — account name string (required by `build_uri/1`)
+    * `:algorithm` — `:sha1` | `:sha256` | `:sha512` (default `:sha1`)
+    * `:digits` — `6`, `7` or `8` (default `6`)
+    * `:period` — positive integer seconds (default `30`)
+
+  Code generation (`generate_code/2`, `valid?/3`) only requires `:secret`; the remaining
+  algorithm knobs fall back to the defaults above when absent.
+
+  Base32 encoding/decoding is implemented in this module (RFC 4648, alphabet `A`-`Z` and
+  `2`-`7`, no padding on output). Decoding is deliberately lenient about *presentation* —
+  lowercase input, embedded ASCII  (truncated)
+13:12:47.570 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule OTPAuth do
+  @moduledoc """
+  A multi-algorithm, configuration-driven one-time-password codec.
+
+  `OTPAuth` implements RFC 6238 time-based one-time passwords (TOTP) on top of the
+  RFC 4226 HOTP dynamic-truncation algorithm, plus a complete `otpauth://` provisioning
+  URI codec: it can both build a URI from a config map and parse a third-party URI back
+  into one.
+
+  Everything is driven by a plain map (the *config*):
+
+    * `:secret` — base32-encoded shared secret (required)
+    * `:issuer` — issuer string (required by `build_uri/1`)
+    * `:account_name` — account name string (required by `build_uri/1`)
+    * `:algorithm` — `:sha1` | `:sha256` | `:sha512` (default `:sha1`)
+    * `:digits` — `6`, `7` or `8` (default `6`)
+    * `:period` — positive integer seconds (default `30`)
+
+  Code generation (`generate_code/2`, `valid?/3`) only requires `:secret`; the remaining
+  algorithm knobs fall back to the defaults above when absent.
+
+  Base32 encoding/decoding is implemented in this module (RFC 4648, alphabet `A`-`Z` and
+  `2`-`7`, no padding on output). Decoding is deliberately lenient about *presentation* —
+  lowercase input, embedded ASCII whitespace and trailing `=` padding are all tolerated,
+  because authenticator apps display secrets in whitespace-separated groups.
+
+  Parsing never raises: `parse_uri/1` returns `{:ok, config}` or `{:error, reason}`.
+
+      iex> config = %{secret: "JBSWY3DPEHPK3PXP", issuer: "Acme", account_name: "alice"}
+      iex> OTPAuth.generate_code(config, 59)
+      "287082"
+
+  """
+
+  import Bitwise
+
+  @default_algorithm :sha1
+  @default_digits 6
+  @default_period 30
+  @default_secret_bytes 20
+
+  @b32_alphabet ~c"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @type algorithm :: :sha1 | :sha256 | :sha512
+
+  @type config :: %{
+          optional(:secret) => String.t(),
+          optional(:issuer) => String.t(),
+          optional(:account_name) => String.t(),
+          optional(:algorithm) => algorithm(),
+          optional(:digits) => 6 | 7 | 8,
+          optional(:period) => pos_integer()
+        }
+
+  @type parse_error ::
+          :invalid_scheme
+          | :unsupported_type
+          | :invalid_label
+          | :missing_secret
+          | :invalid_secret
+          | :issuer_mismatch
+          | :unsupported_algorithm
+          | :invalid_digits
+          | :invalid_period
+
+  @doc """
+  Generates a cryptographically random base32 secret.
+
+  `bytes` bytes of entropy are drawn from `:crypto.strong_rand_bytes/1` (default `20`,
+  i.e. 160 bits, the size recommended by RFC 4226) and encoded as an unpadded, uppercase
+  RFC 4648 base32 string matching `~r/\\A[A-Z2-7]+\\z/`.
+
+  ## Examples
+
+      iex> secret = OTPAuth.generate_secret()
+      iex> String.match?(secret, ~r/\\A[A-Z2-7]+\\z/)
+      true
+
+  """
+  @spec generate_secret(pos_integer()) :: String.t()
+  def generate_secret(bytes \\ @default_secret_bytes) when is_integer(bytes) and bytes > 0 do
+    bytes
+    |> :crypto.strong_rand_bytes()
+    |> base32_encode()
+  end
+
+  @doc """
+  Decodes a base32 `secret` into its raw binary form.
+
+  Returns `{:ok, binary}`, or `{:error, :invalid_secret}` when the secret contains a
+  character outside the RFC 4648 base32 alphabet or carries fewer than 8 bits of data.
+
+  Lowercase letters are upcased, ASCII whitespace is stripped, trailing `=` padding is
+  ignored and trailing bits that do not complete a byte are discarded.
+
+  ## Examples
+
+      iex> OTPAuth.decode_secret("jbsw y3dp ====")
+      {:ok, "Hello"}
+
+      iex> OTPAuth.decode_secret("1234")
+      {:error, :invalid_secret}
+
+  """
+  @spec decode_secret(String.t()) :: {:ok, binary()} | {:error, :invalid_secret}
+  def decode_secret(secret) when is_binary(secret) do
+    secret
+    |> normalize_secret()
+    |> base32_decode()
+  end
+
+  def decode_secret(_secret), do: {:error, :invalid_secret}
+
+  @doc """
+  Generates the TOTP code for `config` at the given UNIX `time` (seconds).
+
+  The counter is `div(time, period)` encoded as a big-endian unsigned 64-bit integer, HMACed
+  with the decoded secret under the configured hash algorithm, then reduced with the RFC 4226
+  §5.3 dynamic-truncation rule and taken modulo `10 ** digits`. The result is zero-padded to
+  exactly `digits` characters.
+
+  Raises `ArgumentError` if `config.secret` is not valid base32.
+
+  ## Examples
+
+      iex> OTPAuth.generate_code(%{secret: "JBSWY3DPEHPK3PXP"}, 1_111_111_109)
+      "081804"
+
+  """
+  @spec generate_code(config(), integer()) :: String.t()
+  def generate_code(config, time \\ :os.system_time(:second))
+      when is_map(config) and is_integer(time) do
+    key =
+      case decode_secret(Map.fetch!(config, :secret)) do
+        {:ok, key} -> key
+        {:error, :invalid_secret} -> raise ArgumentError, "invalid base32 secret"
+      end
+
+    algorithm = algorithm(config)
+    digits = digits(config)
+    period = period(config)
+
+    counter = div(time, period)
+    hmac = :crypto.mac(:hmac, algorithm, key, <<counter::unsigned-big-integer-size(64)>>)
+
+    hmac
+    |> dynamic_truncate()
+    |> rem(pow10(digits))
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  @doc """
+  Checks whether `code` is valid for `config`.
+
+  `code` may be a string or an integer (an integer is zero-padded to `digits` first).
+
+  ## Options
+
+    * `:time` — UNIX seconds to validate against (default: current system time)
+    * `:window` — number of `config.period` steps accepted in *each* direction (default `1`);
+      `0` accepts only the current step
+
+  The comparison against every candidate code is constant-time with respect to the length of
+  a matching prefix.
+
+  ## Examples
+
+      iex> config = %{secret: "JBSWY3DPEHPK3PXP"}
+      iex> OTPAuth.valid?(config, OTPAuth.generate_code(config, 1_000), time: 1_000, window: 0)
+      true
+
+  """
+  @spec valid?(config(), String.t() | integer(), keyword()) :: boolean()
+  def valid?(config, code, opts \\ []) when is_map(config) and is_list(opts) do
+    digits = digits(config)
+    period = period(config)
+    time = Keyword.get(opts, :time, :os.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+
+    expected = normalize_code(code, digits)
+
+    -window..window
+    |> Enum.reduce(false, fn step, acc ->
+      candidate = generate_code(config, time + step * period)
+      secure_compare(candidate, expected) or acc
+    end)
+  end
+
+  @doc """
+  Builds an `otpauth://totp/` provisioning URI from `config`.
+
+  The label is `issuer:account_name` with each side percent-encoded down to the unreserved
+  character set. The query string is emitted in a fixed key order — `secret`, `issuer`,
+  `algorithm`, `digits`, `period` — with defaults materialized, so a config carrying only
+  `:secret`, `:issuer` and `:account_name` still emits `algorithm=SHA1`, `digits=6` and
+  `period=30`.
+
+  ## Examples
+
+      iex> OTPAuth.build_uri(%{secret: "JBSWY3DP", issuer: "Acme", account_name: "alice"})
+      "otpauth://totp/Acme:alice?secret=JBSWY3DP&issuer=Acme&algorithm=SHA1&digits=6&period=30"
+
+  """
+  @spec build_uri(config()) :: String.t()
+  def build_uri(config) when is_map(config) do
+    secret = Map.fetch!(config, :secret)
+    issuer = Map.fetch!(config, :issuer)
+    account_name = Map.fetch!(config, :account_name)
+
+    label = encode_component(issuer) <> ":" <> encode_component(account_name)
+
+    query =
+      URI.encode_query([
+        {"secret", secret},
+        {"issuer", issuer},
+        {"algorithm", algorithm_to_string(algorithm(config))},
+        {"digits", Integer.to_string(digits(config))},
+        {"period", Integer.to_string(period(config))}
+      ])
+
+    "otpauth://totp/" <> label <> "?" <> query
+  end
+
+  @doc """
+  Parses an `otpauth://` provisioning URI into a config map.
+
+  Returns `{:ok, config}` with all six keys populated (defaults filled in and the secret
+  normalized — upcased, whitespace and `=` padding removed), or `{:error, reason}`. This
+  function never raises, whatever the input.
+
+  Failures are reported in a fixed precedence: `:invalid_scheme`, `:unsupported_type`,
+  `:inv (truncated)
+13:12:47.570 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 21541, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 21541, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 21541, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 21541, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 8167, "type" => "message"}], "output_tokens" => 8167, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:12:47.599 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01 solution.ex
+13:12:48.457 [debug] grade JSON: {"analysis":{"defp_count":41,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":523,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":24,"public_fn_count":8,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 13/55 failed"],"tests":0.76},"shape":"single","solution_file":".gen_staging/100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01/solution.ex","task":"100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01","test_failures":[{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test RFC 6238 vectors for SHA1 with 8 digits"},{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test 6-digit codes are the low 6 digits of the 8-digit code"},{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test 7-digit codes are the low 7 digits of the 8-digit code"},{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test codes are zero-padded to exactly the configured digit count"},{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test a config with only a secret defaults to SHA1 / 6 digits / 30 seconds"},{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test the code is stable inside a period and changes at the boundary"},{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test codes depend only on the time step, so period and time scale together"},{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test valid? accepts the current code and rejects a wrong one"},{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test valid? accepts an integer code, zero-padding it to the digit count"},{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test valid? honours the default window of one step in each direction"},{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test valid? window is measured in units of the configured period"},{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test valid? with window 0 accepts only the exact step"},{"message":"Erlang error: {:badarg, {~c\"mac.c\", 281}, ~c\"Bad digest algorithm for HMAC\"}:\n\n  * 2nd argument: Bad digest algorithm for HMAC\n","module":"OTPAuthTest","test":"test parse_uri normalizes the secret"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":42,"tests_ran":true,"tests_skipped":0,"tests_total":55,"timestamp":"2026-07-12T11:12:48.432256Z"}
+13:12:48.458 [info] cycle 100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01: repairing — Tests failed (13 failed, 0 errors):
+  - test RFC 6238 vectors for SHA1 with 8 digits (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test 6-digit codes are the low 6 digits of the 8-digit code (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test 7-digit codes are the low 7 digits of the 8-digit code (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test codes are zero-padded to exactly the configured digit count (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test a config with only a secret defaults to SHA1 / 6 digits / 30 seconds (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test the code is stable inside a period and changes at the boundary (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test codes depend only on the time step, so period and time scale together (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test valid? accepts the current code and rejects a wrong one (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test valid? accepts an integer code, zero-padding it to the digit count (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test valid? honours the default window of one step in each direction (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test valid? window is measured in units of the configured period (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test valid? with window 0 accepts only the exact step (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test parse_uri normalizes the secret (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+13:12:48.458 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:12:48.458 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Tests failed (13 failed, 0 errors):
+  - test RFC 6238 vectors for SHA1 with 8 digits (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test 6-digit codes are the low 6 digits of the 8-digit code (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test 7-digit codes are the low 7 digits of the 8-digit code (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test codes are zero-padded to exactly the configured digit count (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test a config with only a secret defaults to SHA1 / 6 digits / 30 seconds (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test the code is stable inside a period and changes at the boundary (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test codes depend only on the time step, so period and time scale together (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test valid? accepts the current code and rejects a wrong one (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test valid? accepts an integer code, zero-padding it to the digit count (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test valid? honours the default window of one step in each direction (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test valid? window is measured in units of the configured period (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test valid? with window 0 accepts only the exact step (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+  - test parse_uri normalizes the secret (OTPAuthTest): Erlang error: {:badarg, {~c"mac.c", 281}, ~c"Bad digest algorithm for HMAC"}:
+
+  * 2nd argument: Bad digest algorithm for HMAC
+
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `OTPAuth` that implements a **multi-algorithm, configuration-driven** one-time-password codec: RFC 6238 TOTP code generation plus a full `otpauth://` provisioning-URI **codec** (build *and* parse). Use only the Erlang/OTP + Elixir standard libraries — no external dependencies, and do not use `Base.encode32/2` or `Base.decode32/2`; write the base32 layer yourself.
+
+Unlike a fixed SHA1 / 6-digit / 30-second implementation, every knob here is part of a **config map** that can be produced by parsing a URI supplied by a third party, so parsing is where the failure semantics live: parsing never raises, it returns tagged error tuples.
+
+## The config map
+
+A config is a plain map with these keys:
+
+* `:secret` — base32 secret string (required)
+* `:issuer` — string (required by `build_uri/1`)
+* `:account_name` — string (required by `build_uri/1`)
+* `:algorithm` — `:sha1` | `:sha256` | `:sha512` (optional, defaults to `:sha1`)
+* `:digits` — `6`, `7`, or `8` (optional, defaults to `6`)
+* `:period` — positive integer seconds (optional, defaults to `30`)
+
+`generate_code/2` and `valid?/3` only need `:secret`; any of `:algorithm`, `:digits`, `:period` that are absent from the map take the defaults above.
+
+## Public API
+
+### `OTPAuth.generate_secret(bytes \\ 20)`
+
+Returns a cryptographically random, unpadded, uppercase base32 string encoding `bytes` bytes of entropy (default 20 = 160 bits). Must use `:crypto.strong_rand_bytes/1`. The result must match `~r/\A[A-Z2-7]+\z/`.
+
+### `OTPAuth.decode_secret(secret)`
+
+Returns `{:ok, binary}` or `{:error, :invalid_secret}`.
+
+Decoding is **lenient about presentation** and follows RFC 4648 base32 (alphabet `A`–`Z`, `2`–`7`):
+
+* lowercase letters are accepted (upcased first),
+* ASCII whitespace is ignored (authenticator apps display secrets in space-separated groups),
+* trailing `=` padding characters are ignored,
+* leftover bits that do not complete a byte are discarded.
+
+Any other character, or a secret that normalizes to fewer than 8 bits of data (e.g. the empty string), yields `{:error, :invalid_secret}`.
+
+### `OTPAuth.generate_code(config, time \\ :os.system_time(:second))`
+
+Returns the zero-padded decimal code string for the given UNIX timestamp:
+
+* time step is `div(time, period)`, encoded as a big-endian unsigned 64-bit integer,
+* HMAC of that counter with the decoded secret under the configured hash, via `:crypto.mac(:hmac, algorithm, key, counter)`,
+* RFC 4226 §5.3 dynamic truncation: `offset = last_byte &&& 0x0F`, read the 4 bytes at `offset`, mask the top bit of the first with `0x7F`, combine big-endian,
+* take the result modulo `10^digits` and left-pad with zeros to exactly `digits` characters.
+
+The returned string is always exactly `digits` characters long and matches `~r/\A\d+\z/`.
+
+If `config.secret` is not valid base32, `generate_code/2` raises `ArgumentError`.
+
+### `OTPAuth.valid?(config, code, opts \\ [])`
+
+Validates a code given as a string or an integer (an integer is zero-padded to `digits` before comparison). Options:
+
+* `:time` — UNIX seconds to validate against (default: current system time),
+* `:window` — number of steps of `config.period` accepted in **each** direction (default: `1`).
+
+Returns `true` if the code equals the code generated at any step in `time - window*period .. time + window*period`, `false` otherwise. `window: 0` accepts only the exact current step. The comparison must be constant-time with respect to matching-prefix length (compare all bytes, no early exit).
+
+### `OTPAuth.build_uri(config)`
+
+Returns an `otpauth://totp/` URI:
+
+* label is `issuer:account_name`, each side URI-encoded (unreserved characters only),
+* query string, in this exact key order: `secret`, `issuer`, `algorithm`, `digits`, `period`, built with `URI.encode_query/1`,
+* `algorithm` is emitted uppercase: `SHA1`, `SHA256` or `SHA512`,
+* `digits` and `period` are emitted as decimal strings,
+* defaults are materialized: a config without `:algorithm` / `:digits` / `:period` still emits `algorithm=SHA1`, `digits=6`, `period=30`.
+
+### `OTPAuth.parse_uri(uri)`
+
+Returns `{:ok, config}` or `{:error, reason}`. It must **never raise** on malformed input. The returned config always has all six keys populated (defaults filled in), and `:secret` is normalized — upcased, with whitespace and `=` padding removed.
+
+Validation happens in exactly this order, returning the first failure:
+
+1. scheme must be `otpauth` → else `{:error, :invalid_scheme}`
+2. host must be `totp` → (truncated)
+13:13:48.001 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule OTPAuth do
+  @moduledoc """
+  A multi-algorithm, configuration-driven one-time-password codec.
+
+  `OTPAuth` implements RFC 6238 time-based one-time passwords (TOTP) on top of the
+  RFC 4226 HOTP dynamic-truncation algorithm, plus a complete `otpauth://` provisioning
+  URI codec: it can both build a URI from a config map and parse a third-party URI back
+  into one.
+
+  Everything is driven by a plain map (the *config*):
+
+    * `:secret` — base32-encoded shared secret (required)
+    * `:issuer` — issuer string (required by `build_uri/1`)
+    * `:account_name` — account name string (required by `build_uri/1`)
+    * `:algorithm` — `:sha1` | `:sha256` | `:sha512` (default `:sha1`)
+    * `:digits` — `6`, `7` or `8` (default `6`)
+    * `:period` — positive integer seconds (default `30`)
+
+  Code generation (`generate_code/2`, `valid?/3`) only requires `:secret`; the remaining
+  algorithm knobs fall back to the defaults above when absent.
+
+  Base32 encoding/decoding is implemented in this module (RFC 4648, alphabet `A`-`Z` and
+  `2`-`7`, no padding on output). Decoding is deliberately lenient about *presentation* —
+  lowercase input, embedded ASCII whitespace and trailing `=` padding are all tolerated,
+  because authenticator apps display secrets in whitespace-separated groups.
+
+  Parsing never raises: `parse_uri/1` returns `{:ok, config}` or `{:error, reason}`.
+
+      iex> config = %{secret: "JBSWY3DPEHPK3PXP", issuer: "Acme", account_name: "alice"}
+      iex> OTPAuth.generate_code(config, 59)
+      "287082"
+
+  """
+
+  import Bitwise
+
+  @default_algorithm :sha1
+  @default_digits 6
+  @default_period 30
+  @default_secret_bytes 20
+
+  @b32_alphabet ~c"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @type algorithm :: :sha1 | :sha256 | :sha512
+
+  @type config :: %{
+          optional(:secret) => String.t(),
+          optional(:issuer) => String.t(),
+          optional(:account_name) => String.t(),
+          optional(:algorithm) => algorithm(),
+          optional(:digits) => 6 | 7 | 8,
+          optional(:period) => pos_integer()
+        }
+
+  @type parse_error ::
+          :invalid_scheme
+          | :unsupported_type
+          | :invalid_label
+          | :missing_secret
+          | :invalid_secret
+          | :issuer_mismatch
+          | :unsupported_algorithm
+          | :invalid_digits
+          | :invalid_period
+
+  @doc """
+  Generates a cryptographically random base32 secret.
+
+  `bytes` bytes of entropy are drawn from `:crypto.strong_rand_bytes/1` (default `20`,
+  i.e. 160 bits, the size recommended by RFC 4226) and encoded as an unpadded, uppercase
+  RFC 4648 base32 string matching `~r/\\A[A-Z2-7]+\\z/`.
+
+  ## Examples
+
+      iex> secret = OTPAuth.generate_secret()
+      iex> String.match?(secret, ~r/\\A[A-Z2-7]+\\z/)
+      true
+
+  """
+  @spec generate_secret(pos_integer()) :: String.t()
+  def generate_secret(bytes \\ @default_secret_bytes) when is_integer(bytes) and bytes > 0 do
+    bytes
+    |> :crypto.strong_rand_bytes()
+    |> base32_encode()
+  end
+
+  @doc """
+  Decodes a base32 `secret` into its raw binary form.
+
+  Returns `{:ok, binary}`, or `{:error, :invalid_secret}` when the secret contains a
+  character outside the RFC 4648 base32 alphabet or carries fewer than 8 bits of data.
+
+  Lowercase letters are upcased, ASCII whitespace is stripped, trailing `=` padding is
+  ignored and trailing bits that do not complete a byte are discarded.
+
+  ## Examples
+
+      iex> OTPAuth.decode_secret("jbsw y3dp ====")
+      {:ok, "Hello"}
+
+      iex> OTPAuth.decode_secret("1234")
+      {:error, :invalid_secret}
+
+  """
+  @spec decode_secret(String.t()) :: {:ok, binary()} | {:error, :invalid_secret}
+  def decode_secret(secret) when is_binary(secret) do
+    secret
+    |> normalize_secret()
+    |> base32_decode()
+  end
+
+  def decode_secret(_secret), do: {:error, :invalid_secret}
+
+  @doc """
+  Generates the TOTP code for `config` at the given UNIX `time` (seconds).
+
+  The counter is `div(time, period)` encoded as a big-endian unsigned 64-bit integer, HMACed
+  with the decoded secret under the configured hash algorithm, then reduced with the RFC 4226
+  §5.3 dynamic-truncation rule and taken modulo `10 ** digits`. The result is zero-padded to
+  exactly `digits` characters.
+
+  Raises `ArgumentError` if `config.secret` is not valid base32.
+
+  ## Examples
+
+      iex> OTPAuth.generate_code(%{secret: "JBSWY3DPEHPK3PXP"}, 1_111_111_109)
+      "081804"
+
+  """
+  @spec generate_code(config(), integer()) :: String.t()
+  def generate_code(config, time \\ :os.system_time(:second))
+      when is_map(config) and is_integer(time) do
+    key =
+      case decode_secret(Map.fetch!(config, :secret)) do
+        {:ok, key} -> key
+        {:error, :invalid_secret} -> raise ArgumentError, "invalid base32 secret"
+      end
+
+    digest = digest(algorithm(config))
+    digits = digits(config)
+    period = period(config)
+
+    counter = div(time, period)
+    hmac = :crypto.mac(:hmac, digest, key, <<counter::unsigned-big-integer-size(64)>>)
+
+    hmac
+    |> dynamic_truncate()
+    |> rem(pow10(digits))
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  @doc """
+  Checks whether `code` is valid for `config`.
+
+  `code` may be a string or an integer (an integer is zero-padded to `digits` first).
+
+  ## Options
+
+    * `:time` — UNIX seconds to validate against (default: current system time)
+    * `:window` — number of `config.period` steps accepted in *each* direction (default `1`);
+      `0` accepts only the current step
+
+  The comparison against every candidate code is constant-time with respect to the length of
+  a matching prefix.
+
+  ## Examples
+
+      iex> config = %{secret: "JBSWY3DPEHPK3PXP"}
+      iex> OTPAuth.valid?(config, OTPAuth.generate_code(config, 1_000), time: 1_000, window: 0)
+      true
+
+  """
+  @spec valid?(config(), String.t() | integer(), keyword()) :: boolean()
+  def valid?(config, code, opts \\ []) when is_map(config) and is_list(opts) do
+    digits = digits(config)
+    period = period(config)
+    time = Keyword.get(opts, :time, :os.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+
+    expected = normalize_code(code, digits)
+
+    -window..window
+    |> Enum.reduce(false, fn step, acc ->
+      candidate = generate_code(config, time + step * period)
+      secure_compare(candidate, expected) or acc
+    end)
+  end
+
+  @doc """
+  Builds an `otpauth://totp/` provisioning URI from `config`.
+
+  The label is `issuer:account_name` with each side percent-encoded down to the unreserved
+  character set. The query string is emitted in a fixed key order — `secret`, `issuer`,
+  `algorithm`, `digits`, `period` — with defaults materialized, so a config carrying only
+  `:secret`, `:issuer` and `:account_name` still emits `algorithm=SHA1`, `digits=6` and
+  `period=30`.
+
+  ## Examples
+
+      iex> OTPAuth.build_uri(%{secret: "JBSWY3DP", issuer: "Acme", account_name: "alice"})
+      "otpauth://totp/Acme:alice?secret=JBSWY3DP&issuer=Acme&algorithm=SHA1&digits=6&period=30"
+
+  """
+  @spec build_uri(config()) :: String.t()
+  def build_uri(config) when is_map(config) do
+    secret = Map.fetch!(config, :secret)
+    issuer = Map.fetch!(config, :issuer)
+    account_name = Map.fetch!(config, :account_name)
+
+    label = encode_component(issuer) <> ":" <> encode_component(account_name)
+
+    query =
+      URI.encode_query([
+        {"secret", secret},
+        {"issuer", issuer},
+        {"algorithm", algorithm_to_string(algorithm(config))},
+        {"digits", Integer.to_string(digits(config))},
+        {"period", Integer.to_string(period(config))}
+      ])
+
+    "otpauth://totp/" <> label <> "?" <> query
+  end
+
+  @doc """
+  Parses an `otpauth://` provisioning URI into a config map.
+
+  Returns `{:ok, config}` with all six keys populated (defaults filled in and the secret
+  normalized — upcased, whitespace and `=` padding removed), or `{:error, reason}`. This
+  function never raises, whatever the input.
+
+  Failures are reported in a fixed precedence: `:invalid_scheme`, `:unsupported_type`,
+  `:i (truncated)
+13:13:48.002 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 22774, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 22774, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 22774, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 22774, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 7046, "type" => "message"}], "output_tokens" => 7046, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:13:48.031 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01 solution.ex
+13:13:48.868 [debug] grade JSON: {"analysis":{"defp_count":44,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":528,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":24,"public_fn_count":8,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01/solution.ex","task":"100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":55,"tests_ran":true,"tests_skipped":0,"tests_total":55,"timestamp":"2026-07-12T11:13:48.843264Z"}
+13:13:48.871 [info] cycle 100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01: repairing — The files graded green but fall short of the house style / harness standard: 2 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+13:13:48.871 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:13:48.871 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 2 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `OTPAuth` that implements a **multi-algorithm, configuration-driven** one-time-password codec: RFC 6238 TOTP code generation plus a full `otpauth://` provisioning-URI **codec** (build *and* parse). Use only the Erlang/OTP + Elixir standard libraries — no external dependencies, and do not use `Base.encode32/2` or `Base.decode32/2`; write the base32 layer yourself.
+
+Unlike a fixed SHA1 / 6-digit / 30-second implementation, every knob here is part of a **config map** that can be produced by parsing a URI supplied by a third party, so parsing is where the failure semantics live: parsing never raises, it returns tagged error tuples.
+
+## The config map
+
+A config is a plain map with these keys:
+
+* `:secret` — base32 secret string (required)
+* `:issuer` — string (required by `build_uri/1`)
+* `:account_name` — string (required by `build_uri/1`)
+* `:algorithm` — `:sha1` | `:sha256` | `:sha512` (optional, defaults to `:sha1`)
+* `:digits` — `6`, `7`, or `8` (optional, defaults to `6`)
+* `:period` — positive integer seconds (optional, defaults to `30`)
+
+`generate_code/2` and `valid?/3` only need `:secret`; any of `:algorithm`, `:digits`, `:period` that are absent from the map take the defaults above.
+
+## Public API
+
+### `OTPAuth.generate_secret(bytes \\ 20)`
+
+Returns a cryptographically random, unpadded, uppercase base32 string encoding `bytes` bytes of entropy (default 20 = 160 bits). Must use `:crypto.strong_rand_bytes/1`. The result must match `~r/\A[A-Z2-7]+\z/`.
+
+### `OTPAuth.decode_secret(secret)`
+
+Returns `{:ok, binary}` or `{:error, :invalid_secret}`.
+
+Decoding is **lenient about presentation** and follows RFC 4648 base32 (alphabet `A`–`Z`, `2`–`7`):
+
+* lowercase letters are accepted (upcased first),
+* ASCII whitespace is ignored (authenticator apps display secrets in space-separated groups),
+* trailing `=` padding characters are ignored,
+* leftover bits that do not complete a byte are discarded.
+
+Any other character, or a secret that normalizes to fewer than 8 bits of data (e.g. the empty string), yields `{:error, :invalid_secret}`.
+
+### `OTPAuth.generate_code(config, time \\ :os.system_time(:second))`
+
+Returns the zero-padded decimal code string for the given UNIX timestamp:
+
+* time step is `div(time, period)`, encoded as a big-endian unsigned 64-bit integer,
+* HMAC of that counter with the decoded secret under the configured hash, via `:crypto.mac(:hmac, algorithm, key, counter)`,
+* RFC 4226 §5.3 dynamic truncation: `offset = last_byte &&& 0x0F`, read the 4 bytes at `offset`, mask the top bit of the first with `0x7F`, combine big-endian,
+* take the result modulo `10^digits` and left-pad with zeros to exactly `digits` characters.
+
+The returned string is always exactly `digits` characters long and matches `~r/\A\d+\z/`.
+
+If `config.secret` is not valid base32, `generate_code/2` raises `ArgumentError`.
+
+### `OTPAuth.valid?(config, code, opts \\ [])`
+
+Validates a code given as a string or an integer (an integer is zero-padded to `digits` before comparison). Options:
+
+* `:time` — UNIX seconds to validate against (default: current system time),
+* `:window` — number of steps of `config.period` accepted in **each** direction (default: `1`).
+
+Returns `true` if the code equals the code generated at any step in `time - window*period .. time + window*period`, `false` otherwise. `window: 0` accepts only the exact current step. The comparison must be constant-time with respect to matching-prefix length (compare all bytes, no early exit).
+
+### `OTPAuth.build_uri(config)`
+
+Returns an `otpauth://totp/` URI:
+
+* label is `issuer:account_name`, each side URI-encoded (unreserved characters only),
+* query string, in this exact key order: `secret`, `issuer`, `algorithm`, `digits`, `period`, built with `URI.encode_query/1`,
+* `algorithm` is emitted uppercase: `SHA1`, `SHA256` or `SHA512`,
+* `digits` and `period` are emitted as decimal strings,
+* defaults are materialized: a config without `:algorithm` / `:digits` / `:period` still emits `algorithm=SHA1`, `digits=6`, `period=30`.
+
+### `OTPAuth.parse_uri(uri)`
+
+Returns `{:ok, config}` or `{:error, reason}`. It must **never raise** on malformed input. The returned config always has all six keys populated (defaults filled in), and `:secret` is normalized — upcased, with whitespace and `=` padding removed.
+
+Validation happens in exactly this order, returning the first failure:
+
+1. scheme must be `otpauth` → else `{:error, :invalid_scheme}`
+2. host must be `totp` → else `{:error, :unsupported_type}`
+3. the path must contain a non-empty label after the leading `/` → else `{:error, :invalid_label}`. The label is percent-decoded. If it contains a `:`, it splits at the **first** colon into a label-issuer and the account name, and leading spaces are trimmed from the account name (so `Acme:%20alice` yields account `"alice"`). If it contains no colon, the whole label is the account name and there is no label-issuer.
+4. a `secret` query parameter must be present → else `{:error, :missing_secret}`
+5. the secret must decode per `decode_secret/1` → else `{:error, :invalid_secret}`
+6. if both a label-issuer and an `issuer` query parameter are present and they differ, `{:error, :issuer_mismatch}`. Otherwise the issuer is the `issuer` query parameter if present, else the label-issuer if present, else `""`.
+7. `algorithm` (case-insensitive `sha1` / `sha256` / `sha512`, absent ⇒ `:sha1`) → else `{:error, :unsupported_algorithm}`
+8. `digits` must be the decimal string `6`, `7`, or `8` (absent ⇒ `6`) → else `{:error, :invalid_digits}`
+9. `period` must be a decimal string for a positive integer (absent ⇒ `30`) → else `{:error, :invalid_period}`
+
+`parse_uri(build_uri(config))` must round-trip a fully populated config back to an equal map.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule OTPAuth do
+  @moduledoc """
+  A multi-algorithm, configuration-driven one-time-password codec.
+
+  `OTPAuth` implements RFC 6238 time-based one-time passwords (TOTP) on top of the
+  RFC 4226 HOTP dynamic-truncation algorithm, plus a complete `otpauth://` provisioning
+  URI codec: it can both build a URI from a config map and parse a third-party URI back
+  into one.
+
+  Everything is driven by a plain map (the *config*):
+
+    * `:secret` — base32-encoded shared secret (required)
+    * `:issuer` — issuer string (required by `build_uri/1`)
+    * `:account_name` — account name string (required by `build_uri/1`)
+    * `:algorithm` — `:sha1` | `:sha256` | `:sha512` (default `:sha1`)
+    * `:digits` — `6`, `7` or `8` (default `6`)
+    * `:period` — positive integer seconds (default `30`)
+
+  Code generation (`generate_code/2`, `valid?/3`) only requires `:secret`; the remaining
+  algorithm knobs fall back to the defaults above when absent.
+
+  Base32 (truncated)
+13:19:20.137 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule OTPAuth do
+  @moduledoc """
+  A multi-algorithm, configuration-driven one-time-password codec.
+
+  `OTPAuth` implements RFC 6238 time-based one-time passwords (TOTP) on top of the
+  RFC 4226 HOTP dynamic-truncation algorithm, plus a complete `otpauth://` provisioning
+  URI codec: it can both build a URI from a config map and parse a third-party URI back
+  into one.
+
+  Everything is driven by a plain map (the *config*):
+
+    * `:secret` — base32-encoded shared secret (required)
+    * `:issuer` — issuer string (required by `build_uri/1`)
+    * `:account_name` — account name string (required by `build_uri/1`)
+    * `:algorithm` — `:sha1` | `:sha256` | `:sha512` (default `:sha1`)
+    * `:digits` — `6`, `7` or `8` (default `6`)
+    * `:period` — positive integer seconds (default `30`)
+
+  Code generation (`generate_code/2`, `valid?/3`) only requires `:secret`; the remaining
+  algorithm knobs fall back to the defaults above when absent.
+
+  Base32 encoding/decoding is implemented in this module (RFC 4648, alphabet `A`-`Z` and
+  `2`-`7`, no padding on output). Decoding is deliberately lenient about *presentation* —
+  lowercase input, embedded ASCII whitespace and trailing `=` padding are all tolerated,
+  because authenticator apps display secrets in whitespace-separated groups.
+
+  Parsing never raises: `parse_uri/1` returns `{:ok, config}` or `{:error, reason}`.
+
+      config = %{secret: "JBSWY3DPEHPK3PXP", issuer: "Acme", account_name: "alice"}
+      OTPAuth.generate_code(config, 59)
+      #=> "287082"
+
+  """
+
+  import Bitwise
+
+  @default_algorithm :sha1
+  @default_digits 6
+  @default_period 30
+  @default_secret_bytes 20
+
+  @b32_alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @type algorithm :: :sha1 | :sha256 | :sha512
+
+  @type config :: %{
+          optional(:secret) => String.t(),
+          optional(:issuer) => String.t(),
+          optional(:account_name) => String.t(),
+          optional(:algorithm) => algorithm(),
+          optional(:digits) => 6 | 7 | 8,
+          optional(:period) => pos_integer()
+        }
+
+  @type parse_error ::
+          :invalid_scheme
+          | :unsupported_type
+          | :invalid_label
+          | :missing_secret
+          | :invalid_secret
+          | :issuer_mismatch
+          | :unsupported_algorithm
+          | :invalid_digits
+          | :invalid_period
+
+  @doc """
+  Generates a cryptographically random base32 secret.
+
+  `bytes` bytes of entropy are drawn from `:crypto.strong_rand_bytes/1` (default `20`,
+  i.e. 160 bits, the size recommended by RFC 4226) and encoded as an unpadded, uppercase
+  RFC 4648 base32 string containing only the characters `A`-`Z` and `2`-`7`.
+
+  ## Examples
+
+      secret = OTPAuth.generate_secret()
+      String.match?(secret, ~r/\\A[A-Z2-7]+\\z/)
+      #=> true
+
+  """
+  @spec generate_secret(pos_integer()) :: String.t()
+  def generate_secret(bytes \\ @default_secret_bytes) when is_integer(bytes) and bytes > 0 do
+    bytes
+    |> :crypto.strong_rand_bytes()
+    |> base32_encode()
+  end
+
+  @doc """
+  Decodes a base32 `secret` into its raw binary form.
+
+  Returns `{:ok, binary}`, or `{:error, :invalid_secret}` when the secret contains a
+  character outside the RFC 4648 base32 alphabet or carries fewer than 8 bits of data.
+
+  Lowercase letters are upcased, ASCII whitespace is stripped, trailing `=` padding is
+  ignored and trailing bits that do not complete a byte are discarded.
+
+  ## Examples
+
+      OTPAuth.decode_secret("jbsw y3dp ====")
+      #=> {:ok, "Hello"}
+
+      OTPAuth.decode_secret("1234")
+      #=> {:error, :invalid_secret}
+
+  """
+  @spec decode_secret(String.t()) :: {:ok, binary()} | {:error, :invalid_secret}
+  def decode_secret(secret) when is_binary(secret) do
+    secret
+    |> normalize_secret()
+    |> base32_decode()
+  end
+
+  def decode_secret(_secret), do: {:error, :invalid_secret}
+
+  @doc """
+  Generates the TOTP code for `config` at the given UNIX `time` (seconds).
+
+  The counter is `div(time, period)` encoded as a big-endian unsigned 64-bit integer, HMACed
+  with the decoded secret under the configured hash algorithm, then reduced with the RFC 4226
+  §5.3 dynamic-truncation rule and taken modulo `10 ** digits`. The result is zero-padded to
+  exactly `digits` characters.
+
+  Raises `ArgumentError` if `config.secret` is not valid base32.
+
+  ## Examples
+
+      OTPAuth.generate_code(%{secret: "JBSWY3DPEHPK3PXP"}, 1_111_111_109)
+      #=> "081804"
+
+  """
+  @spec generate_code(config(), integer()) :: String.t()
+  def generate_code(config, time \\ :os.system_time(:second))
+      when is_map(config) and is_integer(time) do
+    key =
+      case decode_secret(Map.fetch!(config, :secret)) do
+        {:ok, decoded} -> decoded
+        {:error, :invalid_secret} -> raise ArgumentError, "invalid base32 secret"
+      end
+
+    digest = digest(algorithm(config))
+    digits = digits(config)
+    period = period(config)
+
+    counter = div(time, period)
+    hmac = :crypto.mac(:hmac, digest, key, <<counter::unsigned-big-integer-size(64)>>)
+
+    hmac
+    |> dynamic_truncate()
+    |> rem(Integer.pow(10, digits))
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  @doc """
+  Checks whether `code` is valid for `config`.
+
+  `code` may be a string or an integer (an integer is zero-padded to `digits` first).
+
+  ## Options
+
+    * `:time` — UNIX seconds to validate against (default: current system time)
+    * `:window` — number of `config.period` steps accepted in *each* direction (default `1`);
+      `0` accepts only the current step
+
+  The comparison against every candidate code is constant-time with respect to the length of
+  a matching prefix.
+
+  ## Examples
+
+      config = %{secret: "JBSWY3DPEHPK3PXP"}
+      OTPAuth.valid?(config, OTPAuth.generate_code(config, 1_000), time: 1_000, window: 0)
+      #=> true
+
+  """
+  @spec valid?(config(), String.t() | integer(), keyword()) :: boolean()
+  def valid?(config, code, opts \\ []) when is_map(config) and is_list(opts) do
+    digits = digits(config)
+    period = period(config)
+    time = Keyword.get(opts, :time, :os.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+
+    expected = normalize_code(code, digits)
+
+    Enum.reduce(-window..window, false, fn step, acc ->
+      candidate = generate_code(config, time + step * period)
+      secure_compare(candidate, expected) or acc
+    end)
+  end
+
+  @doc """
+  Builds an `otpauth://totp/` provisioning URI from `config`.
+
+  The label is `issuer:account_name` with each side percent-encoded down to the unreserved
+  character set. The query string is emitted in a fixed key order — `secret`, `issuer`,
+  `algorithm`, `digits`, `period` — with defaults materialized, so a config carrying only
+  `:secret`, `:issuer` and `:account_name` still emits `algorithm=SHA1`, `digits=6` and
+  `period=30`.
+
+  ## Examples
+
+      OTPAuth.build_uri(%{secret: "JBSWY3DP", issuer: "Acme", account_name: "alice"})
+      #=> "otpauth://totp/Acme:alice?secret=JBSWY3DP&issuer=Acme&algorithm=SHA1&digits=6&period=30"
+
+  """
+  @spec build_uri(config()) :: String.t()
+  def build_uri(config) when is_map(config) do
+    secret = Map.fetch!(config, :secret)
+    issuer = Map.fetch!(config, :issuer)
+    account_name = Map.fetch!(config, :account_name)
+
+    label = encode_component(issuer) <> ":" <> encode_component(account_name)
+
+    query =
+      URI.encode_query([
+        {"secret", secret},
+        {"issuer", issuer},
+        {"algorithm", algorithm_to_string(algorithm(config))},
+        {"digits", Integer.to_string(digits(config))},
+        {"period", Integer.to_string(period(config))}
+      ])
+
+    "otpauth://totp/" <> label <> "?" <> query
+  end
+
+  @doc """
+  Parses an `otpauth://` provisioning URI into a config map.
+
+  Returns `{:ok, config}` with all six keys populated (defaults filled in and the secret
+  normalized — upcased, whitespace and `=` padding removed), or `{:error, reason}`. This
+  function never raises, whatever the input.
+
+  Failures are reported in a fixed precedence: `:invalid_scheme`, `:unsupported_type (truncated)
+13:19:20.138 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 21635, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 21635, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 21635, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 21635, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 31653, "type" => "message"}], "output_tokens" => 31653, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:19:20.168 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01 solution.ex
+13:19:20.981 [debug] grade JSON: {"analysis":{"defp_count":38,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":492,"lines_over_98":1,"max_line_length":99,"mode":"full","pipe_chain_count":18,"public_fn_count":8,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01/solution.ex","task":"100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":55,"tests_ran":true,"tests_skipped":0,"tests_total":55,"timestamp":"2026-07-12T11:19:20.957069Z"}
+13:19:20.985 [info] cycle 100_002_multi_algorithm_otpauth_uri_codec_with_configurable_digits_and_period_01: REJECTED after 4 attempt(s)

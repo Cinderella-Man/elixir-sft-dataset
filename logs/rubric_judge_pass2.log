@@ -1,0 +1,56 @@
+REFUSING --go: a generation loop (generate.exs) is alive.
+[0mWaiting for lock on the build directory (held by process 2544859)
+judging 37 root(s) with opus + sonnet, sequential, ledger logs/rubric_judge.jsonl
+
+[1/37] 004_003_retryscheduler_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[2/37] 005_003_replayeventbus_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[3/37] 008_003_two_phase_set_crdt_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[4/37] 009_003_retry_aware_request_deduplicator_01 ... 
+21:14:45.626 [warning] rubric_judge (009_003_retry_aware_request_deduplicator_01): contract violation: rubric.json must be {"scores": {each axis 1-5}, "issues": [{axis,file,evidence,why,severity}]} — reminding
+opus: 4/4/4 | sonnet: 5/5/5
+[5/37] 011_002_priority_worker_pool_with_starvation_prevention_01 ... opus: 4/4/4 | sonnet: 5/5/5
+[6/37] 011_003_cancellable_worker_pool_01 ... opus: 5/4/4 | sonnet: 5/3/4
+[7/37] 015_001_heartbeat_monitor_01 ... opus: 4/3/4 | sonnet: 5/2/3
+[8/37] 020_001_file_upload_with_validation_01 ... opus: 5/4/5 | sonnet: 5/5/5
+[9/37] 021_002_media_type_content_negotiation_with_quality_values_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[10/37] 025_004_multi_channel_fan_in_long_poll_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[11/37] 031_002_jsonl_importer_with_schema_validation_01 ... opus: 5/5/5 | sonnet: 5/4/4
+[12/37] 034_003_rule_driven_tolerant_reconciler_with_compiled_config_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[13/37] 035_002_multi_series_aligned_resampler_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[14/37] 037_003_reversible_tokenization_vault_anonymizer_01 ... opus: 5/5/4 | sonnet: 5/3/4  [1 axis disagreement(s)]
+[15/37] 040_001_configuration_merger_with_override_rules_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[16/37] 041_001_lru_cache_backed_by_ets_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[17/37] 043_001_ets_based_leaderboard_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[18/37] 045_002_multivariate_a_b_c_feature_flag_store_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[19/37] 070_003_nested_sub_saga_composition_01 ... opus: 4/5/5 | sonnet: 5/5/5
+[20/37] 071_001_factory_module_for_test_data_generation_01 ... opus: 5/5/4 | sonnet: 5/5/4
+[21/37] 071_004_validation_aware_factory_with_compensating_rollback_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[22/37] 076_004_wildcard_pattern_matching_trie_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[23/37] 079_002_counting_bloom_filter_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[24/37] 089_001_promo_code_system_01 ... opus: 4/5/5 | sonnet: 5/5/5
+[25/37] 092_004_bayesian_weighted_rating_ranking_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[26/37] 095_003_currency_precision_money_module_01 ... 
+21:59:56.412 [warning] transient error (error_max_turns ) on rubric_judge (095_003_currency_precision_money_module_01) — retry 1/5 after 2000ms
+
+22:00:45.073 [warning] transient error (error_max_turns ) on rubric_judge (095_003_currency_precision_money_module_01) — retry 2/5 after 4000ms
+opus: 5/5/5 | sonnet: 5/5/5
+[27/37] 101_002_sliding_window_distinct_cardinality_counter_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[28/37] 103_002_backoff_scheduled_retry_dead_letter_queue_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[29/37] 103_003_deduplicating_dead_letter_queue_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[30/37] 104_002_health_validated_connection_pool_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[31/37] 104_003_overflow_connection_pool_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[32/37] 105_002_leading_trailing_edge_debouncer_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[33/37] 105_003_max_wait_debouncer_with_flush_and_cancel_01 ... opus: 5/4/5 | sonnet: 5/3/5
+[34/37] 106_002_grace_count_watchdog_timer_01 ... opus: 4/5/5 | sonnet: 5/5/5
+[35/37] 107_001_event_aggregator_with_flushing_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[36/37] 623_001_mini_elasticsearch_like_inverted_index_01 ... opus: 5/5/4 | sonnet: 5/5/3
+[37/37] 626_003_reset_aware_counter_time_series_db_01 ... opus: 5/5/4 | sonnet: 5/5/3
+
+=== RUBRIC JUDGE LEDGER (42 root(s), latest-per-task over 86 rows) ===
+  requirement_conformance: both-judge low (<=3): 0; agreement rate: 40/41
+  logical_correctness: both-judge low (<=3): 2; agreement rate: 40/41
+    TRIAGE prefix_control2:control_095_003
+    TRIAGE 015_001_heartbeat_monitor_01
+  edge_case_consideration: both-judge low (<=3): 1; agreement rate: 41/41
+    TRIAGE prefix_control2:control_095_003
+  rows with a judge error: 1

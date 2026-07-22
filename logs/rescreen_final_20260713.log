@@ -1,0 +1,35 @@
+Blind-solve screen: 3 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/3] 101_001_sliding_window_counter_01 ... GREEN
+[2/3] 101_003_weighted_sliding_sum_counter_01 ... RED (test amounts outside the window are not included: 
+
+Assertion with == failed
+code:  assert 0 == SlidingSum.sum(sc, "k", 1000)
+left:  0
+right: 5
+)
+[3/3] 102_003_auto_expiring_persisted_state_machine_01 ... RED (test a pending entity auto-cancels after the TTL and records an :expire transition: 
+
+Assertion with == failed
+code:  assert entry.event == :expire
+left:  "expire"
+right: :expire
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 3   green: 1   RED: 2   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 101_003_weighted_sliding_sum_counter_01: test amounts outside the window are not included: 
+
+Assertion with == failed
+code:  assert 0 == SlidingSum.sum(sc, "k", 1000)
+left:  0
+right: 5
+
+    - 102_003_auto_expiring_persisted_state_machine_01: test a pending entity auto-cancels after the TTL and records an :expire transition: 
+
+Assertion with == failed
+code:  assert entry.event == :expire
+left:  "expire"
+right: :expire
+

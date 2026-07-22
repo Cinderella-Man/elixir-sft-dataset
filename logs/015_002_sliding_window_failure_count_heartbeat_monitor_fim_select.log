@@ -1,0 +1,183 @@
+13:31:52.873 [info] FIM candidate-select for 015_002_sliding_window_failure_count_heartbeat_monitor_01 (up to 3)
+13:31:52.873 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:31:52.873 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+# Sliding-Window Failure-Count Heartbeat Monitor
+
+Write me an Elixir `GenServer` module called `WindowMonitor` that watches a set of
+registered services by running a health *probe* for each one and deciding whether
+the service is `:up` or `:down` based on **how many of its most recent probe
+results were failures** — a sliding window, not a run of consecutive failures.
+
+Use only the OTP standard library — no external dependencies. Give me the complete
+module in a single file.
+
+## Public API
+
+- `WindowMonitor.start_link(opts \\ [])` — starts the process, linked to the caller,
+  returning the usual `GenServer.on_start()` result. `opts` is a keyword list
+  defaulting to `[]`. When a `:name` option is present it is used for process
+  registration (so the other functions accept either the pid or the registered
+  name); when absent the process starts unregistered. A freshly started server
+  watches zero services.
+
+- `WindowMonitor.watch(server, name, probe, opts \\ [])` — registers a service to
+  be watched and returns `:ok`.
+  - `name` is any term identifying the service (compared by value).
+  - `probe` is a **zero-arity** function returning either `:ok` (healthy) or
+    `{:error, reason}` (unhealthy); `reason` may be any term. Guard the public
+    function with `is_function(probe, 0)`.
+  - `opts` may contain:
+    - `:window` — a positive integer, the number of most-recent probe results the
+      server retains for this service. Defaults to `5`.
+    - `:threshold` — a positive integer, the number of failures **within the
+      retained window** at or above which the service is considered `:down`.
+      Defaults to `3`.
+    - `:on_change` — an arity-2 function called as `on_change.(name, new_status)`
+      on each status transition (see below). Defaults to a no-op.
+    - `:interval` — a positive integer number of milliseconds, or the atom
+      `:manual` (the default). When a positive integer, the server automatically
+      probes this service on that interval using `Process.send_after/3`; the first
+      automatic probe fires one interval after `watch`, and probing repeats
+      indefinitely. When `:manual`, the service is only probed via `probe_now/2`.
+  - A newly watched service starts with status `:up` and an **empty** result
+    window. Watching a `name` that already exists replaces its configuration and
+    resets it to this initial state.
+
+- `WindowMonitor.probe_now(server, name)` — runs exactly one probe for the named
+  service immediately (the same work an automatic tick performs), applies the
+  result, and returns `{:ok, new_status}` where `new_status` is that service's
+  status after the probe. Returns `{:error, :not_found}` if `name` is not watched.
+
+- `WindowMonitor.health(server, name)` — returns `{:ok, :up}` / `{:ok, :down}` for
+  a watched service, or `{:error, :not_found}` if it was never watched.
+
+- `WindowMonitor.report(server)` — returns a map `%{name => :up | :down}` of every
+  currently watched service and its current status. Empty map `%{}` when nothing is
+  watched.
+
+## Running a probe
+
+A single probe invokes the service's `probe` function (**synchronously inside the
+server process**) and records the outcome as either a success or a failure. The
+server keeps only the `:window` most-recent outcomes for the service (older ones are
+discarded). After recording:
+
+- Let `f` be the number of **failures among the retained results** (at most
+  `:window` of them) and `t` be `:threshold`.
+- The new status is `:down` when `f >= t`, otherwise `:up`.
+- The status is recomputed from the window on **every** probe. Because the window
+  slides, a service can recover automatically: once enough healthy results push
+  failures out of the window so that `f < t`, it returns to `:up` — no explicit
+  "success streak" is required.
+
+Failures do **not** have to be consecutive. For example with `window: 5` and
+`threshold: 3`, the sequence error, ok, error, ok, error leaves three failures in
+the window and marks the service `:down`, even though no two failures were adjacent.
+
+## Status transitions and notifications
+
+A "transition" is any change of the status field (`:up` → `:down` or
+`:down` → `:up`). On each actual change — and only then — the service's `:on_change`
+function is called exactly once as `on_change.(name, new_status)` with the status
+just entered. A probe that leaves the status unchanged calls nothing.
+
+## Independence and robustness
+
+- Services are fully independent: one service's results, window, or status never
+  affect another's.
+- Any message the server does not understand must be ignored: it must neither crash
+  the process nor alter any service's state.
+
+=== MODULE ===
+```elixir
+defmodule WindowMonitor do
+  @moduledoc """
+  A `GenServer` that watches registered services and classifies each as `:up`
+  or `:down` using a **sliding window of recent probe results**.
+
+  For every watched service the server retains only its `:window` most-recent
+  probe outcomes. After each probe it counts how many of those retained results
+  were failures (`f`) and compares against the configured `:threshold` (`t`):
+  the service is `:down` when `f >= t`, otherwise `:up`. Because the window
+  slides, failures need not be consecutive and a service recovers on its own
+  once enough healthy results push failures out of the window.
+
+  Services are independent — one service's results, window, or status never
+  affect another's. On each actual status change the service's `:on_change`
+  callback is invoked exactly once. Unknown messages are ignored.
+
+  Only the OTP standard library is used.
+  """
+
+  use GenServer
+
+  @typedoc "A zero-arity health probe."
+  @type probe :: (-> :ok | {:error, term()})
+
+  @typedoc "A service status."
+  @type status :: :up | :down
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the monitor linked to the caller.
+
+  When `opts` contains a `:name`, the process is registered under it; otherwise
+  it starts unregistered. A freshly started server watches zero services.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, opts, name: name)
+      :error -> GenServer.start_link(__MODULE__, opts)
+    end
+  end
+
+  @doc """
+  Registers `name` to be watched using the zero-arity `probe`.
+
+  Options: `:window` (positive integer, default `5`), `:threshold` (positive
+  integer, default `3`), `:on_change` (arity-2 callback, default no-op) and
+  `:interval` (positive integer milliseconds or `:manual`, default `:manual`).
+
+  A newly watched service starts `:up` with an empty window. Re-watching an
+  existing `name` replaces its configuration and resets it to this state.
+  """
+  @spec watch(GenServer.server(), term(), probe(), keyword()) :: :ok
+  def watch(server, name, probe, opts \\ []) when is_function(probe, 0) do
+    GenServer.call(server, {:watch, name, probe, opts})
+  end
+
+  @doc """
+  Runs exactly one probe for `name` immediately, applies the result, and returns
+  `{:ok, new_status}`. Returns `{:error, :not_found}` if `name` is not watched.
+  """
+  @spec probe_now(GenServer.server(), term()) ::
+          {:ok, status()} | {:error, :not_found}
+  def probe_now(server, name) do
+    GenServer.call(server, {:probe_now, name})
+  end
+
+  @doc """
+  Returns `{:ok, status}` for a watched service or `{:error, :not_foun (truncated)
+13:32:08.371 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+probe_and_notify/2
+handle_info/2
+maybe_schedule/3
+</file>
+13:32:08.371 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8261, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8261, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8261, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8261, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 679, "type" => "message"}], "output_tokens" => 679, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

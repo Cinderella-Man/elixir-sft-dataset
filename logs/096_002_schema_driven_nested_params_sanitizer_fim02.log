@@ -1,0 +1,367 @@
+[22m07:09:16.928 [info] FIM 096_002_schema_driven_nested_params_sanitizer_fim02 → 096_002_schema_driven_nested_params_sanitizer_03: target filename/1[0m
+[36m07:09:16.928 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m07:09:16.928 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `filename/1`.
+
+Generate a prompt describing how to implement `filename/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `filename/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `filename/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `filename/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Sanitizer` that sanitizes **nested parameter maps** against a declarative schema — think mass-assignment protection plus per-field cleaning for controller params.
+
+The core function is `Sanitizer.sanitize(params, schema)` where `params` is a (possibly deeply nested) map with **string keys** and `schema` describes how to treat each key.
+
+A schema is itself a map with string keys. Each value (a "field spec") is one of:
+
+- An **atom field type**:
+  - `:text` — HTML-escape the value and clean it. Strip C0 control characters (except tab `\t`, newline `\n`, carriage return `\r`), trim surrounding whitespace, then escape `&`, `<`, `>`, `"`, and `'` to `&amp;`, `&lt;`, `&gt;`, `&quot;`, and `&#39;` respectively. Always succeeds for binaries; a non-binary is an error (`:not_a_string`).
+  - `:identifier` — safe SQL identifier. Keep only `[A-Za-z0-9_]`. If empty after stripping → error `:empty`. If it starts with a digit, prepend `_`. Non-binary → `:not_a_string`.
+  - `:filename` — safe filename. Strip null bytes, strip `/` and `\`, keep only `[A-Za-z0-9_.-]`, collapse runs of 2+ dots to a single dot, trim leading/trailing dots. Empty result → `:empty`. Non-binary → `:not_a_string`.
+  - `:integer` — accept an integer as-is; accept a binary that parses cleanly to an integer (after trimming); otherwise error `:not_an_integer`.
+  - `:boolean` — accept `true`/`false`, or the strings `"true"`/`"false"`; otherwise error `:not_a_boolean`.
+- A **`{:list, inner}`** tuple — the value must be a list; apply `inner` (itself a field spec) to every element.
+- A **nested schema map** — the value must be a map; recurse.
+
+Rules:
+
+- **Whitelist semantics:** only keys present in the schema survive into the output. Any key in `params` that is not in the schema is dropped.
+- **Missing keys:** a schema key with no corresponding key in `params` is simply skipped (not an error, not present in output).
+- **Errors:** collect *all* field errors keyed by their **path** (a list of segments — string keys and integer list indices, e.g. `["profile", "handle"]` or `["scores", 1]`). If there are no errors, return `{:ok, cleaned_map}`. If there is at least one error, return `{:error, errors_map}` where `errors_map` maps each failing path to its reason atom.
+
+Also expose `Sanitizer.sql_identifier/1` and `Sanitizer.filename/1` as public helpers returning `{:ok, string}` or `{:error, :empty}`.
+
+Give me the complete module in a single file, standard library only — no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Sanitizer do
+  @moduledoc """
+  Schema-driven sanitizer for nested parameter maps.
+
+  `sanitize/2` walks a nested `params` map (string keys) against a declarative
+  `schema`, applying per-field cleaning, dropping keys not present in the
+  schema (whitelist / mass-assignment protection), and collecting all field
+  errors keyed by their path.
+
+  All logic is pure — standard library only, no external dependencies.
+  """
+
+  @type field :: atom() | {:list, field()} | map()
+
+  @doc """
+  Sanitize `params` against `schema`.
+
+  Returns `{:ok, cleaned}` when every field is valid, otherwise
+  `{:error, errors}` where `errors` maps a path (list of string keys and
+  integer list indices) to a reason atom.
+  """
+  @spec sanitize(map(), map()) :: {:ok, map()} | {:error, map()}
+  def sanitize(params, schema) when is_map(params) and is_map(schema) do
+    {clean, errors} = walk_map(params, schema, [])
+
+    if errors == %{} do
+      {:ok, clean}
+    else
+      {:error, errors}
+    end
+  end
+
+  # ── Recursion over a map/schema ────────────────────────────────────────────
+
+  defp walk_map(params, schema, path) do
+    Enum.reduce(schema, {%{}, %{}}, fn {key, spec}, {acc, errs} ->
+      case Map.fetch(params, key) do
+        :error ->
+          {acc, errs}
+
+        {:ok, value} ->
+          case apply_spec(value, spec, path ++ [key]) do
+            {:ok, cleaned} -> {Map.put(acc, key, cleaned), errs}
+            {:error, field_errs} -> {acc, Map.merge(errs, field_errs)}
+          end
+      end
+    end)
+  end
+
+  # ── Field spec dispatch ────────────────────────────────────────────────────
+
+  defp apply_spec(value, {:list, inner}, path) do
+    if is_list(value) do
+      {clean, errs, _} =
+        Enum.reduce(value, {[], %{}, 0}, fn item, {acc, e, i} ->
+          case apply_spec(item, inner, path ++ [i]) do
+            {:ok, c} -> {[c | acc], e, i + 1}
+            {:error, fe} -> {acc, Map.merge(e, fe), i + 1}
+          end
+        end)
+
+      if errs == %{}, do: {:ok, Enum.reverse(clean)}, else: {:error, errs}
+    else
+      {:error, %{path => :expected_list}}
+    end
+  end
+
+  defp apply_spec(value, spec, path) when is_map(spec) do
+    if is_map(value) do
+      {clean, errs} = walk_map(value, spec, path)
+      if errs == %{}, do: {:ok, clean}, else: {:error, errs}
+    else
+      {:error, %{path => :expected_map}}
+    end
+  end
+
+  defp apply_spec(value, type, path) when is_atom(type) do
+    case sanitize_field(type, value) do
+      {:ok, v} -> {:ok, v}
+      {:error, reason} -> {:error, %{path => reason}}
+    end
+  end
+
+  # ── Leaf field sanitizers ──────────────────────────────────────────────────
+
+  defp sanitize_field(:text, v) when is_binary(v), do: {:ok, escape_text(v)}
+  defp sanitize_field(:text, _), do: {:error, :not_a_string}
+
+  defp sanitize_field(:identifier, v) when is_binary(v), do: sql_identifier(v)
+  defp sanitize_field(:identifier, _), do: {:error, :not_a_string}
+
+  defp sanitize_field(:filename, v) when is_binary(v), do: filename(v)
+  defp sanitize_field(:filename, _), do: {:error, :not_a_string}
+
+  defp sanitize_field(:integer, v) when is_integer(v), do: {:ok, v}
+
+  defp sanitize_field(:integer, v) when is_binary(v) do
+    case Integer.parse(String.trim(v)) do
+      {n, ""} -> {:ok, n}
+      _ -> {:error, :not_an_integer}
+    end
+  end
+
+  defp sanitize_field(:integer, _), do: {:error, :not_an_integer}
+
+  defp sanitize_field(:boolean, v) when is_boolean(v), do: {:ok, v}
+  defp sanitize_field(:boolean, "true"), do: {:ok, true}
+  defp sanitize_field(:boolean, "false"), do: {:ok, false}
+  defp sanitize_field(:boolean, _), do: {:error, :not_a_boolean}
+
+  defp sanitize_field(type, _), do: {:error, {:unknown_field_type, type}}
+
+  # ── Public helpers ─────────────────────────────────────────────────────────
+
+  @doc "Safe SQL identifier (`{:ok, s}` or `{:error, :empty}`)."
+  @spec sql_identifier(String.t()) :: {:ok, String.t()} | {:error, :empty}
+  def sql_identifier(input) when is_binary(input) do
+    sanitized = String.replace(input (truncated)[0m
+[36m07:09:44.547 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `filename/1` function. It takes a binary `input` and returns
+a safe filename as `{:ok, string}`, or `{:error, :empty}` when nothing usable
+remains. Build the sanitized value by, in order: stripping null bytes (`\0`),
+stripping forward slashes (`/`) and backslashes (`\`), removing every character
+that is not in `[A-Za-z0-9_.-]`, collapsing any run of 2 or more dots into a
+single dot, and trimming leading and trailing dots. If the result is the empty
+string, return `{:error, :empty}`; otherwise return `{:ok, sanitized}`. The
+function head guards on `is_binary(input)`.
+
+```elixir
+defmodule Sanitizer do
+  @moduledoc """
+  Schema-driven sanitizer for nested parameter maps.
+
+  `sanitize/2` walks a nested `params` map (string keys) against a declarative
+  `schema`, applying per-field cleaning, dropping keys not present in the
+  schema (whitelist / mass-assignment protection), and collecting all field
+  errors keyed by their path.
+
+  All logic is pure — standard library only, no external dependencies.
+  """
+
+  @type field :: atom() | {:list, field()} | map()
+
+  @doc """
+  Sanitize `params` against `schema`.
+
+  Returns `{:ok, cleaned}` when every field is valid, otherwise
+  `{:error, errors}` where `errors` maps a path (list of string keys and
+  integer list indices) to a reason atom.
+  """
+  @spec sanitize(map(), map()) :: {:ok, map()} | {:error, map()}
+  def sanitize(params, schema) when is_map(params) and is_map(schema) do
+    {clean, errors} = walk_map(params, schema, [])
+
+    if errors == %{} do
+      {:ok, clean}
+    else
+      {:error, errors}
+    end
+  end
+
+  # ── Recursion over a map/schema ────────────────────────────────────────────
+
+  defp walk_map(params, schema, path) do
+    Enum.reduce(schema, {%{}, %{}}, fn {key, spec}, {acc, errs} ->
+      case Map.fetch(params, key) do
+        :error ->
+          {acc, errs}
+
+        {:ok, value} ->
+          case apply_spec(value, spec, path ++ [key]) do
+            {:ok, cleaned} -> {Map.put(acc, key, cleaned), errs}
+            {:error, field_errs} -> {acc, Map.merge(errs, field_errs)}
+          end
+      end
+    end)
+  end
+
+  # ── Field spec dispatch ────────────────────────────────────────────────────
+
+  defp apply_spec(value, {:list, inner}, path) do
+    if is_list(value) do
+      {clean, errs, _} =
+        Enum.reduce(value, {[], %{}, 0}, fn item, {acc, e, i} ->
+          case apply_spec(item, inner, path ++ [i]) do
+            {:ok, c} -> {[c | acc], e, i + 1}
+            {:error, fe} -> {acc, Map.merge(e, fe), i + 1}
+          end
+        end)
+
+      if errs == %{}, do: {:ok, Enum.reverse(clean)}, else: {:error, errs}
+    else
+      {:error, %{path => :expected_list}}
+    end
+  end
+
+  defp apply_spec(value, spec, path) when is_map(spec) do
+    if is_map(value) do
+      {clean, errs} = walk_map(value, spec, path)
+      if errs == %{}, do: {:ok, clean}, else: {:error, errs}
+    else
+      {:error, %{path => :expected_map}}
+    end
+  end
+
+  defp apply_spec(value, type, path) when is_atom(type) do
+    case sanitize_field(type, value) do
+      {:ok, v} -> {:ok, v}
+      {:error, reason} -> {:error, %{path => reason}}
+    end
+  end
+
+  # ── Leaf field sanitizers ──────────────────────────────────────────────────
+
+  defp sanitize_field(:text, v) when is_binary(v), do: {:ok, escape_text(v)}
+  defp sanitize_field(:text, _), do: {:error, :not_a_string}
+
+  defp sanitize_field(:identifier, v) when is_binary(v), do: sql_identifier(v)
+  defp sanitize_field(:identifier, _), do: {:error, :not_a_string}
+
+  defp sanitize_field(:filename, v) when is_binary(v), do: filename(v)
+  defp sanitize_field(:filename, _), do: {:error, :not_a_string}
+
+  defp sanitize_field(:integer, v) when is_integer(v), do: {:ok, v}
+
+  defp sanitize_field(:integer, v) when is_binary(v) do
+    case Integer.parse(String.trim(v)) do
+      {n, ""} -> {:ok, n}
+      _ -> {:error, :not_an_integer}
+    end
+  end
+
+  defp sanitize_field(:integer, _), do: {:error, :not_an_integer}
+
+  defp sanitize_field(:boolean, v) when is_boolean(v), do: {:ok, v}
+  defp sanitize_field(:boolean, "true"), do: {:ok, true}
+  defp sanitize_field(:boolean, "false"), do: {:ok, false}
+  defp sanitize_field(:boolean, _), do: {:error, :not_a_boolean}
+
+  defp sanitize_field(type, _), do: {:error, {:unknown_field_type, type}}
+
+  # ── Public helpers ─────────────────────────────────────────────────────────
+
+  @doc "Safe SQL identifier (`{:ok, s}` or `{:error, :empty}`)."
+  @spec sql_identifier(String.t()) :: {:ok, String.t()} | {:error, :empty}
+  def sql_identifier(input) when is_binary(input) do
+    sanitized = String.replace(input, ~r/[^a-zA-Z0-9_]/, "")
+
+    cond do
+      sanitized == "" -> {:error, :empty}
+      String.match?(sanitized, ~r/\A[0-9]/) -> {:ok, "_" <> sanitized}
+      true -> {:ok, sanitized}
+    end
+  end
+
+  @doc "Safe filename (`{:ok, s}` or `{:error, :empty}`)."
+  @spec filename(String.t()) :: {:ok, String.t()} | {:error, :empty}
+  def filename(input) when is_binary(input) do
+    # TODO
+  end
+
+  # ── Text escaping ──────────────────────────────────────────────────────────
+
+  defp escape_text(v) do
+    v
+    |> String.replace(~r/[\x00-\x08\x0B\x0C\x0E-\x1F]/, "")
+    |> String.trim()
+    |> html_escape()
+  end
+
+  defp html_escape(s) do
+    s
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+    |> String.replace("\"", "&quot;")
+    |> String.replace("'", "&#39;")
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  @doc "Safe filename (`{:ok, s}` or `{:error, :empty}`)."
+  @spec filename(String.t()) :: {:ok, String.t()} | {:error, :empty}
+  def filename(input) when is_binary(input) do
+    sanitized =
+      input
+      |> String.replace("\0", "")
+      |> String.replace("/", "")
+      |> String.replace("\\", "")
+      |> String.replace(~r/[^a-zA-Z0-9_\-.]/, "")
+      |> String.replace(~r/\.{2,}/, ".")
+      |> String.trim(".")
+
+    if sanitized == "" do
+      {:error, :empty}
+    else
+      {:ok, sanitized}
+    end
+  end
+</file>[0m
+[36m07:09:44.547 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4104, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4104, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4104, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4104, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 2755, "type" => "message"}], "output_tokens" => 2755, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m07:09:44.566 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_096_002_schema_driven_nested_params_sanitizer_03/096_002_schema_driven_nested_params_sanitizer_03 solution.ex[0m
+[36m07:09:45.174 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":true,"has_moduledoc":false,"has_typespecs":true,"line_count":18,"lines_over_98":0,"max_line_length":68,"mode":"fim","pipe_chain_count":6,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"parent":"096_002_schema_driven_nested_params_sanitizer_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.9,"mode":"fim","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_096_002_schema_driven_nested_params_sanitizer_03/096_002_schema_driven_nested_params_sanitizer_03/solution.ex","task":"096_002_schema_driven_nested_params_sanitizer_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-07T05:09:45.154338Z"}[0m
+[36m07:09:45.175 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_096_002_schema_driven_nested_params_sanitizer_03/096_002_schema_driven_nested_params_sanitizer_03 .gen_staging/fim_096_002_schema_driven_nested_params_sanitizer_03/mutant.ex[0m
+[36m07:09:45.821 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":true,"has_moduledoc":false,"has_typespecs":true,"line_count":5,"lines_over_98":0,"max_line_length":66,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"parent":"096_002_schema_driven_nested_params_sanitizer_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.9,"mode":"fim","overall":0.9,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 2/15 failed"],"tests":0.87},"shape":"fim","solution_file":".gen_staging/fim_096_002_schema_driven_nested_params_sanitizer_03/mutant.ex","task":"096_002_schema_driven_nested_params_sanitizer_03","test_failures":[{"message":"MUTATION","module":"SanitizerTest","test":"test Sanitizer.sanitize/2 happy path cleans a fully valid nested payload"},{"message":"MUTATION","module":"SanitizerTest","test":"test public helpers filename/1"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-07T05:09:45.801144Z"}[0m
+[36m07:09:45.821 [debug] fim mutation gate: killed[0m
+[22m07:09:45.822 [info] promoted 096_002_schema_driven_nested_params_sanitizer_03 -> tasks/096_002_schema_driven_nested_params_sanitizer_03[0m

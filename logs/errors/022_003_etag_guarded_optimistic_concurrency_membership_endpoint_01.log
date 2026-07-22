@@ -1,0 +1,1187 @@
+02:09:15.216 [info] VARIATION 022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01: ETag-Guarded Optimistic-Concurrency Membership Endpoint
+02:09:15.217 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01 solution.ex
+02:09:16.005 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":false,"line_count":270,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.63,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.92,"reasons":["analysis: @doc on public functions → 0/1 pts","analysis: @spec annotations present → 0/2 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:09:15.982734Z"}
+02:09:16.006 [info] cycle 022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01: repairing — The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+02:09:16.006 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:09:16.006 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement a nested team-membership endpoint guarded by **optimistic concurrency control** using HTTP `ETag` / `If-Match` semantics, with only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Every team's membership roster carries a monotonically increasing **version** number. Reads expose that version as an `ETag`. Writes must present the version they expect via `If-Match`; stale or missing preconditions are rejected so two clients editing the same roster can't silently clobber each other.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer holding users, teams, memberships, and per-team version numbers. Public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option.
+- `TeamStore.create_user(server, id, token)` — stores a user with a bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id)` — creates a team at version `0`. Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — seeds a membership and bumps the version. Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true`/`false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true`/`false`.
+- `TeamStore.version(server, team_id)` — returns `{:ok, version}` or `:error`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, members, version}` or `{:error, :not_found}`.
+- `TeamStore.add_member_safe(server, team_id, user_id, expected_version)` — checks the precondition first: returns `{:error, :version_mismatch, current_version}` if `expected_version` doesn't equal the team's current version; then `{:error, :conflict}` if the user is already a member; on success bumps the version and returns `{:ok, user_id, new_version}`; `{:error, :not_found}` if the team is missing.
+
+**`AuthPlug`** — reads `authorization: Bearer <token>`, resolves the user via `TeamStore.get_user_by_token/2`, assigns `:current_user`, and halts with 401 JSON `{"error":"unauthorized"}` otherwise. Accepts a `:store` option.
+
+**`TeamRouter`** — a `Plug.Router` accepting a `:store` option and plugging `AuthPlug` before matching. Endpoints:
+
+- `GET /api/teams/:team_id/members` — 404 `{"error":"not_found"}` if the team is missing; 403 `{"error":"forbidden"}` if the caller isn't a member; otherwise 200 with an `ETag` response header set to the quoted version (e.g. `"3"`) and body `{"members": [...], "version": v}`.
+
+- `POST /api/teams/:team_id/members` — body `{"user_id": "..."}`. Check order: 404 (missing team) → 403 (non-member) → then the precondition. If there is **no** `If-Match` header, return 428 `{"error":"precondition_required"}`. If `If-Match` is present but doesn't match the current version (or isn't a valid version), return 412 `{"error":"precondition_failed"}`. A malformed body is 400 `{"error":"bad_request"}`. If the target is already a member, 409 `{"error":"conflict"}`. On success 201 with an updated `ETag` header and body `{"added": user_id, "version": new_version}`.
+
+`If-Match` values may be quoted (`"3"`) or bare (`3`). All responses must be `application/json`. Give me all modules in a single file, using only `plug`, `jason`, and the OTP standard library.
+
+----- solution.ex -----
+defmodule TeamStore do
+  @moduledoc """
+  In-memory `GenServer` holding users, teams, memberships and per-team version
+  numbers for optimistic concurrency control.
+  """
+
+  use GenServer
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
+
+  def create_team(server, team_id), do: GenServer.call(server, {:create_team, team_id})
+
+  def add_member(server, team_id, user_id),
+    do: GenServer.call(server, {:add_member, team_id, user_id})
+
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})
+
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})
+
+  def is_member?(server, team_id, user_id),
+    do: GenServer.call(server, {:is_member?, team_id, user_id})
+
+  def version(server, team_id), do: GenServer.call(server, {:version, team_id})
+
+  def list_members(server, team_id), do: GenServer.call(server, {:list_members, team_id})
+
+  def add_member_safe(server, team_id, user_id, expected_version),
+    do: GenServer.call(server, {:add_member_safe, team_id, user_id, expected_version})
+
+  @impl true
+  def init(_opts), do: {:ok, %{tokens: %{}, teams: %{}}}
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    {:reply, :ok, put_in(state.tokens[token], id)}
+  end
+
+  def handle_call({:create_team, team_id}, _from, state) do
+    teams = Map.put_new(state.teams, team_id, %{members: [], version: 0})
+    {:reply, :ok, %{state | teams: teams}}
+  end
+
+  def handle_call({:add_member, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{members: members, version: v}} ->
+        members = if user_id in members, do: members, else: members ++ [user_id]
+        team = %{members: members, version: v + 1}
+        {:reply, :ok, %{state | teams: Map.put(state.teams, team_id, team)}}
+
+      :error ->
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:get_user_by_token, token}, _from, state) do
+    case Map.fetch(state.tokens, token) do
+      {:ok, user_id} -> {:reply, {:ok, user_id}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:team_exists?, team_id}, _from, state) do
+    {:reply, Map.has_key?(state.teams, team_id), state}
+  end
+
+  def handle_call({:is_member?, team_id, user_id}, _from, state) do
+    members =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, %{members: m}} -> m
+        :error -> []
+      end
+
+    {:reply, user_id in members, state}
+  end
+
+  def handle_call({:version, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{version: v}} -> {:reply, {:ok, v}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:list_members, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{members: members, version: v}} -> {:reply, {:ok, members, v}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:add_member_safe, team_id, user_id, expected}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, %{members: members, version: v}} ->
+        cond do
+          expected != v ->
+            {:reply, {:error, :version_mismatch, v}, state}
+
+          user_id in members ->
+            {:reply, {:error, :conflict}, state}
+
+          true ->
+            team = %{members: members ++ [user_id], version: v + 1}
+            teams = Map.put(state.teams, team_id, team)
+            {:reply, {:ok, user_id, v + 1}, %{state | teams: teams} (truncated)
+02:10:41.773 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TeamStore do
+  @moduledoc """
+  In-memory `GenServer` holding users, teams, memberships and per-team version
+  numbers for optimistic concurrency control.
+
+  Every team carries a monotonically increasing version. Reads expose that
+  version and writes must present the expected version so that concurrent
+  clients editing the same roster cannot silently clobber each other.
+  """
+
+  use GenServer
+
+  @typedoc "A reference to a running `TeamStore` process."
+  @type server :: GenServer.server()
+
+  @typedoc "An opaque identifier (user id, team id or bearer token)."
+  @type id :: binary()
+
+  @doc """
+  Starts the store process. Accepts a `:name` option to register the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc "Stores a user identified by `id` with the given bearer `token`."
+  @spec create_user(server(), id(), id()) :: :ok
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
+
+  @doc "Creates a team at version `0`."
+  @spec create_team(server(), id()) :: :ok
+  def create_team(server, team_id), do: GenServer.call(server, {:create_team, team_id})
+
+  @doc "Seeds a membership and bumps the team version. No-op for a missing team."
+  @spec add_member(server(), id(), id()) :: :ok
+  def add_member(server, team_id, user_id),
+    do: GenServer.call(server, {:add_member, team_id, user_id})
+
+  @doc "Resolves a bearer `token` to its user id, or `:error` when unknown."
+  @spec get_user_by_token(server(), id()) :: {:ok, id()} | :error
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})
+
+  @doc "Returns whether a team exists."
+  @spec team_exists?(server(), id()) :: boolean()
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})
+
+  @doc "Returns whether `user_id` is a member of `team_id`."
+  @spec is_member?(server(), id(), id()) :: boolean()
+  def is_member?(server, team_id, user_id),
+    do: GenServer.call(server, {:is_member?, team_id, user_id})
+
+  @doc "Returns `{:ok, version}` for an existing team, or `:error`."
+  @spec version(server(), id()) :: {:ok, non_neg_integer()} | :error
+  def version(server, team_id), do: GenServer.call(server, {:version, team_id})
+
+  @doc """
+  Returns `{:ok, members, version}` for an existing team, or
+  `{:error, :not_found}` when the team is missing.
+  """
+  @spec list_members(server(), id()) ::
+          {:ok, [id()], non_neg_integer()} | {:error, :not_found}
+  def list_members(server, team_id), do: GenServer.call(server, {:list_members, team_id})
+
+  @doc """
+  Adds a member under an optimistic-concurrency precondition.
+
+  Checks the precondition first: returns `{:error, :version_mismatch, current}`
+  when `expected_version` differs from the team's current version, then
+  `{:error, :conflict}` when the user is already a member. On success the
+  version is bumped and `{:ok, user_id, new_version}` is returned.
+  Returns `{:error, :not_found}` when the team is missing.
+  """
+  @spec add_member_safe(server(), id(), id(), non_neg_integer()) ::
+          {:ok, id(), non_neg_integer()}
+          | {:error, :version_mismatch, non_neg_integer()}
+          | {:error, :conflict}
+          | {:error, :not_found}
+  def add_member_safe(server, team_id, user_id, expected_version),
+    do: GenServer.call(server, {:add_member_safe, team_id, user_id, expected_version})
+
+  @impl true
+  def init(_opts), do: {:ok, %{tokens: %{}, teams: %{}}}
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    {:reply, :ok, put_in(state.tokens[token], id)}
+  end
+
+  def handle_call({:create_team, team_id}, _from, state) do
+    teams = Map.put_new(state.teams, team_id, %{members: [], version: 0})
+    {:reply, :ok, %{state | teams: teams}}
+  end
+
+  def handle_call({:add_member, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{members: members, version: v}} ->
+        members = if user_id in members, do: members, else: members ++ [user_id]
+        team = %{members: members, version: v + 1}
+        {:reply, :ok, %{state | teams: Map.put(state.teams, team_id, team)}}
+
+      :error ->
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:get_user_by_token, token}, _from, state) do
+    case Map.fetch(state.tokens, token) do
+      {:ok, user_id} -> {:reply, {:ok, user_id}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:team_exists?, team_id}, _from, state) do
+    {:reply, Map.has_key?(state.teams, team_id), state}
+  end
+
+  def handle_call({:is_member?, team_id, user_id}, _from, state) do
+    members =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, %{members: m}} -> m
+        :error -> []
+      end
+
+    {:reply, user_id in members, state}
+  end
+
+  def handle_call({:version, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{version: v}} -> {:reply, {:ok, v}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:list_members, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{members: members, version: v}} -> {:reply, {:ok, members, v}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:add_member_safe, team_id, user_id, expected}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, %{members: members, version: v}} ->
+        cond do
+          expected != v ->
+            {:reply, {:error, :version_mismatch, v}, state}
+
+          user_id in members ->
+            {:reply, {:error, :conflict}, state}
+
+          true ->
+            team = %{members: members ++ [user_id], version: v + 1}
+            teams = Map.put(state.teams, team_id, team)
+            {:reply, {:ok, user_id, v + 1}, %{state | teams: teams}}
+        end
+    end
+  end
+end
+
+defmodule AuthPlug do
+  @moduledoc """
+  Authenticates a bearer token via `TeamStore` and assigns `:current_user`,
+  or halts with a 401 JSON response. Accepts a `:store` option.
+  """
+
+  import Plug.Conn
+
+  @doc "Initialises the plug, returning its options unchanged."
+  @spec init(Plug.opts()) :: Plug.opts()
+  def init(opts), do: opts
+
+  @doc """
+  Resolves the `authorization: Bearer <token>` header to a user and assigns
+  `:current_user`, halting with a 401 JSON response when authentication fails.
+  """
+  @spec call(Plug.Conn.t(), Plug.opts()) :: Plug.Conn.t()
+  def call(conn, opts) do
+    store = resolve_store(conn, opts)
+
+    case get_req_header(conn, "authorization") do
+      ["Bearer " <> token] ->
+        case TeamStore.get_user_by_token(store, token) do
+          {:ok, user_id} -> assign(conn, :current_user, user_id)
+          :error -> unauthorized(conn)
+        end
+
+      _ ->
+        unauthorized(conn)
+    end
+  end
+
+  defp resolve_store(conn, opts) do
+    conn.private[:team_store] || Keyword.get(opts, :store) ||
+      Keyword.get(conn.assigns[:router_opts] || [], :store)
+  end
+
+  defp unauthorized(conn) do
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(401, Jason.encode!(%{error: "unauthorized"}))
+    |> halt()
+  end
+end
+
+defmodule TeamRouter do
+  @moduledoc """
+  `Plug.Router` exposing nested team-membership resources guarded by ETag /
+  If-Match optimistic concurrency control. Accepts a `:store` option.
+  """
+
+  use Plug.Router, copy_opts_to_assign: :router_opts
+
+  plug AuthPlug
+  plug :match
+  plug :dispatch
+
+  get "/api/teams/:team_id/members" do
+    store = store(conn)
+    user = conn.assigns.current_user
+
+    cond do
+      not TeamStore.team_exists?(store, team_id) ->
+        json(conn, 404, %{error: "not_found"})
+
+      not TeamStore.is_member?(store, team_id, user) ->
+        json(conn, 403, %{error: "forbidden"})
+
+      true ->
+        {:ok, members, v} = TeamStore.list_members(store, team_id)
+        json_etag(conn, 200 (truncated)
+02:10:41.773 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8277, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8277, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8277, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8277, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 7588, "type" => "message"}], "output_tokens" => 7588, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:10:41.792 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01 solution.ex
+02:10:42.579 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":325,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:10:42.556797Z"}
+02:10:42.586 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:10:43.377 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 21/21 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"failed to start child with the spec {TeamStore, [name: :store_5253]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5317]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5381]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5445]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test GET returns 401 without auth"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5509]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5573]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5637]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5701]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5765]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution. (truncated)
+02:10:43.386 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:10:44.147 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 21/21 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test version returns the current team version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports version_mismatch with the current version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports conflict when version matches"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":21,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:10:44.123598Z"}
+02:10:44.156 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:10:44.919 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.26,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 21/21 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test version returns the current team version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports version_mismatch with the current version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports conflict when version matches"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":21,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:10:44.895754Z"}
+02:10:44.928 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:10:45.688 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 21/21 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test version returns the current team version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports version_mismatch with the current version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports conflict when version matches"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":21,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:10:45.664348Z"}
+02:10:45.697 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:10:46.470 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.4,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 16/21 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.24},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":16,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:10:46.447114Z"}
+02:10:46.477 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:10:47.235 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.43,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 15/21 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.29},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":15,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:10:47.214504Z"}
+02:10:47.244 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:10:48.021 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.49,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 13/21 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.38},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:10:48.000836Z"}
+02:10:48.029 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:10:48.804 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.89,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 2/21 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.9},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test version returns the current team version"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:10:48.783534Z"}
+02:10:48.812 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:10:49.594 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.78,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 5/21 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.76},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:10:49.573573Z"}
+02:10:49.602 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:10:50.395 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":8,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.2,"mode":"full","overall":0.59,"reasons":["compilation: 8 warning(s) → -0.8 pts","tests: 9/21 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.57},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports version_mismatch with the current version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports conflict when version matches"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:10:50.374212Z"}
+02:10:50.402 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:10:50.913 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"MUTATION","type":"RuntimeError"}],"compile_warnings":1,"compiled":false,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: failed to compile (0.0)","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-04T00:10:50.892456Z"}
+02:10:50.913 [debug] base mutation gate (per-fn): init/1 inconclusive
+02:10:50.914 [info] cycle 022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01: repairing — Mutation gate failed: the raise-mutant of `init/1` graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+02:10:50.914 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:10:50.914 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Mutation gate failed: the raise-mutant of `init/1` graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement a nested team-membership endpoint guarded by **optimistic concurrency control** using HTTP `ETag` / `If-Match` semantics, with only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Every team's membership roster carries a monotonically increasing **version** number. Reads expose that version as an `ETag`. Writes must present the version they expect via `If-Match`; stale or missing preconditions are rejected so two clients editing the same roster can't silently clobber each other.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer holding users, teams, memberships, and per-team version numbers. Public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option.
+- `TeamStore.create_user(server, id, token)` — stores a user with a bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id)` — creates a team at version `0`. Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — seeds a membership and bumps the version. Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true`/`false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true`/`false`.
+- `TeamStore.version(server, team_id)` — returns `{:ok, version}` or `:error`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, members, version}` or `{:error, :not_found}`.
+- `TeamStore.add_member_safe(server, team_id, user_id, expected_version)` — checks the precondition first: returns `{:error, :version_mismatch, current_version}` if `expected_version` doesn't equal the team's current version; then `{:error, :conflict}` if the user is already a member; on success bumps the version and returns `{:ok, user_id, new_version}`; `{:error, :not_found}` if the team is missing.
+
+**`AuthPlug`** — reads `authorization: Bearer <token>`, resolves the user via `TeamStore.get_user_by_token/2`, assigns `:current_user`, and halts with 401 JSON `{"error":"unauthorized"}` otherwise. Accepts a `:store` option.
+
+**`TeamRouter`** — a `Plug.Router` accepting a `:store` option and plugging `AuthPlug` before matching. Endpoints:
+
+- `GET /api/teams/:team_id/members` — 404 `{"error":"not_found"}` if the team is missing; 403 `{"error":"forbidden"}` if the caller isn't a member; otherwise 200 with an `ETag` response header set to the quoted version (e.g. `"3"`) and body `{"members": [...], "version": v}`.
+
+- `POST /api/teams/:team_id/members` — body `{"user_id": "..."}`. Check order: 404 (missing team) → 403 (non-member) → then the precondition. If there is **no** `If-Match` header, return 428 `{"error":"precondition_required"}`. If `If-Match` is present but doesn't match the current version (or isn't a valid version), return 412 `{"error":"precondition_failed"}`. A malformed body is 400 `{"error":"bad_request"}`. If the target is already a member, 409 `{"error":"conflict"}`. On success 201 with an updated `ETag` header and body `{"added": user_id, "version": new_version}`.
+
+`If-Match` values may be quoted (`"3"`) or bare (`3`). All responses must be `application/json`. Give me all modules in a single file, using only `plug`, `jason`, and the OTP standard library.
+
+----- solution.ex -----
+defmodule TeamStore do
+  @moduledoc """
+  In-memory `GenServer` holding users, teams, memberships and per-team version
+  numbers for optimistic concurrency control.
+
+  Every team carries a monotonically increasing version. Reads expose that
+  version and writes must present the expected version so that concurrent
+  clients editing the same roster cannot silently clobber each other.
+  """
+
+  use GenServer
+
+  @typedoc "A reference to a running `TeamStore` process."
+  @type server :: GenServer.server()
+
+  @typedoc "An opaque identifier (user id, team id or bearer token)."
+  @type id :: binary()
+
+  @doc """
+  Starts the store process. Accepts a `:name` option to register the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc "Stores a user identified by `id` with the given bearer `token`."
+  @spec create_user(server(), id(), id()) :: :ok
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
+
+  @doc "Creates a team at version `0`."
+  @spec create_team(server(), id()) :: :ok
+  def create_team(server, team_id), do: GenServer.call(server, {:create_team, team_id})
+
+  @doc "Seeds a membership and bumps the team version. No-op for a missing team."
+  @spec add_member(server(), id(), id()) :: :ok
+  def add_member(server, team_id, user_id),
+    do: GenServer.call(server, {:add_member, team_id, user_id})
+
+  @doc "Resolves a bearer `token` to its user id, or `:error` when unknown."
+  @spec get_user_by_token(server(), id()) :: {:ok, id()} | :error
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})
+
+  @doc "Returns whether a team exists."
+  @spec team_exists?(server(), id()) :: boolean()
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})
+
+  @doc "Returns whether `user_id` is a member of `team_id`."
+  @spec is_member?(server(), id(), id()) :: boolean()
+  def is_member?(server, team_id, user_id),
+    do: GenServer.call(server, {:is_member?, team_id, user_id})
+
+  @doc "Returns `{:ok, version}` for an existing team, or `:error`."
+  @spec version(server(), id()) :: {:ok, non_neg_integer()} | :error
+  def version(server, team_id), do: GenServer.call(server, {:version, team_id})
+
+  @doc """
+  Returns `{:ok, members, version}` for an existing team, or
+  `{:error, :not_found}` when the team is missing.
+  """
+  @spec list_members(server(), id()) ::
+          {:ok, [id()], non_neg_integer()} | {:error, :not_found}
+  def list_members(server, team_id), do: GenServer.call(server, {:list_members, team_id})
+
+  @doc """
+  Adds a member under an optimistic-concurrency precondition.
+
+  Checks the precondition first: returns `{:error, :version_mismatch, current}`
+  when `expected_version` differs from the team's current version, then
+  `{:error, :conflict}` when the user is already a member. On success the
+  version is bumped and `{:ok, user_id, new_version}` is returned.
+  Returns `{:error, :not_found}` when the team is missing.
+  """
+  @spec add_member_safe(server(), id(), id(), non_neg_integer()) ::
+          {:ok, id(), non_neg_integer()}
+          | {:error, :version_mismatch, non_neg_integer()}
+          | {:error, :conflict}
+          | {:error, :not_found}
+  def add_member_safe(server, team_id, user_id, expected_version),
+    do: GenServer.call(server, {:add_member_safe, team_id, user_id, expected_version})
+
+  @impl true
+  def init(_opts), do: {:ok, %{tokens: %{}, teams: %{}}}
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    {:reply, :ok, put_in(state.tokens[token], id)}
+  end
+
+  def handle_cal (truncated)
+02:12:08.534 [debug] claude -p RESULT (stop="end_turn"):
+The mutation of `init/1` raises inside `TeamStore.init/1`, which makes `GenServer.start_link` return `{:error, reason}` (the caller doesn't raise). The current suite only ever starts the store via `start_supervised!` in `setup`, so a raising init causes a *setup crash* the grader treats as inconclusive rather than a clean test failure. I'll add a test that starts the store directly and pattern-matches on `{:ok, pid}`, plus asserts the exact empty state that `init/1` returns — so gutting `init/1` produces a clean assertion failure.
+
+<file path="test_harness.exs">
+defmodule TeamRouterEtagTest do
+  use ExUnit.Case, async: false
+
+  import Plug.Conn
+  import Plug.Test
+
+  setup do
+    store = start_supervised!({TeamStore, name: :"store_#{System.unique_integer([:positive])}"})
+
+    :ok = TeamStore.create_user(store, "alice", "token-alice")
+    :ok = TeamStore.create_user(store, "bob", "token-bob")
+    :ok = TeamStore.create_user(store, "carol", "token-carol")
+
+    :ok = TeamStore.create_team(store, "team-1")
+    :ok = TeamStore.create_team(store, "team-2")
+
+    # team-1 -> version 2 after two seeds
+    :ok = TeamStore.add_member(store, "team-1", "alice")
+    :ok = TeamStore.add_member(store, "team-1", "bob")
+    # team-2 -> version 1
+    :ok = TeamStore.add_member(store, "team-2", "carol")
+
+    %{store: store}
+  end
+
+  # ---------------- helpers ----------------
+
+  defp get_members(store, team_id, token) do
+    :get
+    |> conn("/api/teams/#{team_id}/members")
+    |> maybe_auth(token)
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp post_member(store, team_id, user_id, token, if_match) do
+    :post
+    |> conn("/api/teams/#{team_id}/members", Jason.encode!(%{"user_id" => user_id}))
+    |> put_req_header("content-type", "application/json")
+    |> maybe_auth(token)
+    |> maybe_if_match(if_match)
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp maybe_auth(conn, nil), do: conn
+  defp maybe_auth(conn, token), do: put_req_header(conn, "authorization", "Bearer #{token}")
+
+  defp maybe_if_match(conn, nil), do: conn
+  defp maybe_if_match(conn, v), do: put_req_header(conn, "if-match", v)
+
+  defp json_body(conn), do: Jason.decode!(conn.resp_body)
+
+  defp etag(conn), do: conn |> get_resp_header("etag") |> List.first()
+
+  # ---------------- GET ----------------
+
+  test "GET returns members, version, and an ETag header", %{store: store} do
+    conn = get_members(store, "team-1", "token-alice")
+    assert conn.status == 200
+    body = json_body(conn)
+    assert "alice" in body["members"]
+    assert "bob" in body["members"]
+    assert body["version"] == 2
+    assert etag(conn) == ~s("2")
+  end
+
+  test "ETag matches the reported version", %{store: store} do
+    conn = get_members(store, "team-2", "token-carol")
+    assert json_body(conn)["version"] == 1
+    assert etag(conn) == ~s("1")
+  end
+
+  test "GET returns 403 for a non-member", %{store: store} do
+    conn = get_members(store, "team-1", "token-carol")
+    assert conn.status == 403
+    assert json_body(conn)["error"] == "forbidden"
+  end
+
+  test "GET returns 401 without auth", %{store: store} do
+    conn = get_members(store, "team-1", nil)
+    assert conn.status == 401
+  end
+
+  test "GET returns 404 for a missing team", %{store: store} do
+    conn = get_members(store, "ghost", "token-alice")
+    assert conn.status == 404
+  end
+
+  # ---------------- POST optimistic concurrency ----------------
+
+  test "POST with correct If-Match succeeds and bumps the version", %{store: store} do
+    conn = post_member(store, "team-1", "carol", "token-alice", ~s("2"))
+    assert conn.status == 201
+    body = json_body(conn)
+    assert body["added"] == "carol"
+    assert body["version"] == 3
+    assert etag(conn) == ~s("3")
+    assert {:ok, 3} = TeamStore.version(store, "team-1")
+  end
+
+  test "bare (unquoted) If-Match is accepted", %{store: store} do
+    conn = post_member(store, "team-1", "carol", "token-alice", "2")
+    assert conn.status == 201
+    assert json_body(conn)["version"] == 3
+  end
+
+  test "added member and new version appear in a subsequent GET", %{store: store} do
+    _ = post_member(store, "team-1", "carol", "token-alice", ~s("2"))
+    conn = get_members(store, "team-1", "token-alice")
+    assert "carol" in json_body(conn)["members"]
+    assert json_body(conn)["version"] == 3
+  end
+
+  test "stale If-Match returns 412", %{store: store} do
+    conn1 = post_member(store, "team-1", "carol", "token-alice", ~s("2"))
+    assert conn1.status == 201
+
+    conn2 = post_member(store, "team-1", "dave", "token-alice", ~s("2"))
+    assert conn2.status == 412
+    assert json_body(conn2)["error"] == "precondition_failed"
+  end
+
+  test "missing If-Match returns 428", %{store: store} do
+    conn = post_member(store, "team-1", "carol", "token-alice", nil)
+    assert conn.status == 428
+    assert json_body(conn)["error"] == "precondition_required"
+  end
+
+  test "duplicate member with matching version returns 409", %{store: store} do
+    conn = post_member(store, "team-1", "bob", "token-alice", ~s("2"))
+    assert conn.status == 409
+    assert json_body(conn)["error"] == "conflict"
+  end
+
+  test "non-member gets 403 before any precondition check", %{store: store} do
+    conn = post_member(store, "team-1", "dave", "token-carol", nil)
+    assert conn.status == 403
+  end
+
+  test "missing team gets 404 before any precondition check", %{store: store} do
+    conn = post_member(store, "ghost", "dave", "token-alice", nil)
+    assert conn.status == 404
+  end
+
+  test "POST returns 401 with invalid token", %{store: store} do
+    conn = post_member(store, "team-1", "carol", "token-nobody", ~s("2"))
+    assert conn.status == 401
+  end
+
+  test "malformed body with valid precondition returns 400", %{store: store} do
+    conn =
+      :post
+      |> conn("/api/teams/team-1/members", Jason.encode!(%{"nope" => "x"}))
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("authorization", "Bearer token-alice")
+      |> put_req_header("if-match", ~s("2"))
+      |> put_private(:team_store, store)
+      |> TeamRouter.call(TeamRouter.init(store: store))
+
+    assert conn.status == 400
+  end
+
+  # ---------------- cross-cutting ----------------
+
+  test "response content-type is application/json", %{store: store} do
+    conn = get_members(store, "team-1", "token-alice")
+    ct = conn |> get_resp_header("content-type") |> List.first("")
+    assert ct =~ "application/json"
+  end
+
+  test "operations on team-1 do not affect team-2", %{store: store} do
+    _ = post_member(store, "team-1", "carol", "token-alice", ~s("2"))
+    conn = get_members(store, "team-2", "token-carol")
+    assert json_body(conn)["members"] == ["carol"]
+    assert json_body(conn)["version"] == 1
+  end
+
+  # ---------------- direct store API ----------------
+
+  test "start_link/init/1 yields a live, empty store", _ctx do
+    # A raising or gutted init/1 makes GenServer.start_link return an error
+    # tuple (the caller does not raise), so this clean pattern match fails.
+    assert {:ok, pid} = TeamStore.start_link([])
+    assert is_pid(pid)
+    assert Process.alive?(pid)
+
+    # init/1 must seed an empty tokens/teams state: no users, no teams.
+    assert TeamStore.get_user_by_token(pid, "token-alice") == :error
+    assert TeamStore.team_exists?(pid, "team-1") == false
+    assert TeamStore.version(pid, "team-1") == :error
+    assert TeamStore.list_members(pid, "team-1") == {:error, :not_found}
+    assert TeamStore.is_member?(pid, "team-1", "alice") == false
+
+    # And that empty state must be usable for the full seed lifecycle.
+    :ok = TeamStore.create_user(pid, "zoe", "token-zoe")
+    assert {:ok, "zoe"} = TeamStore.get_user_by_token(pid, "token-zoe")
+
+    :ok = TeamStore.create_team(pid, "fresh-team")
+    assert TeamStore.team_exists?(pid, "fresh-team")
+    assert {:ok, 0} = TeamStore.version(pid, "fresh-team")
+    assert {:ok, [], 0} = TeamStore.list_members(pid, "fresh-team")
+
+    :ok = TeamStore.add_member(pid, (truncated)
+02:12:08.534 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9346, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9346, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9346, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9346, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 6910, "type" => "message"}], "output_tokens" => 6910, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:12:08.554 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01 solution.ex
+02:12:09.365 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":325,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-04T00:12:09.342251Z"}
+02:12:09.375 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:12:10.199 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 23/23 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"failed to start child with the spec {TeamStore, [name: :store_22]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"failed to start child with the spec {TeamStore, [name: :store_86]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"failed to start child with the spec {TeamStore, [name: :store_150]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_214]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test GET returns 401 without auth"},{"message":"failed to start child with the spec {TeamStore, [name: :store_278]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_342]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"failed to start child with the spec {TeamStore, [name: :store_406]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"failed to start child with the spec {TeamStore, [name: :store_470]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"failed to start child with the spec {TeamStore, [name: :store_534]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: Team (truncated)
+02:12:10.209 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:12:11.002 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 23/23 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link honours the :name option (exercises init/1 registration)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test version returns the current team version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports version_mismatch with the current version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports conflict when version matches"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":23,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-04T00:12:10.976489Z"}
+02:12:11.010 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:12:11.806 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.26,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 23/23 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link honours the :name option (exercises init/1 registration)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test version returns the current team version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports version_mismatch with the current version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports conflict when version matches"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":23,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-04T00:12:11.781593Z"}
+02:12:11.814 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:12:12.611 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 23/23 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link honours the :name option (exercises init/1 registration)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test version returns the current team version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports version_mismatch with the current version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports conflict when version matches"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":23,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-04T00:12:12.589403Z"}
+02:12:12.619 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:12:13.418 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.42,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 17/23 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.26},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":17,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-04T00:12:13.396099Z"}
+02:12:13.426 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:12:14.257 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.45,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 16/23 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.3},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":16,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-04T00:12:14.233508Z"}
+02:12:14.266 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:12:15.101 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.5,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 14/23 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.39},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":14,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-04T00:12:15.079164Z"}
+02:12:15.109 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:12:15.926 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.83,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 4/23 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.83},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link honours the :name option (exercises init/1 registration)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test version returns the current team version"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-04T00:12:15.904724Z"}
+02:12:15.934 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:12:16.755 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.76,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 6/23 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.74},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-04T00:12:16.732908Z"}
+02:12:16.763 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:12:17.554 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":8,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.2,"mode":"full","overall":0.62,"reasons":["compilation: 8 warning(s) → -0.8 pts","tests: 9/23 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.61},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports version_mismatch with the current version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports conflict when version matches"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-04T00:12:17.531822Z"}
+02:12:17.562 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:12:18.074 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"MUTATION","type":"RuntimeError"}],"compile_warnings":1,"compiled":false,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: failed to compile (0.0)","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-04T00:12:18.054767Z"}
+02:12:18.074 [debug] base mutation gate (per-fn): init/1 inconclusive
+02:12:18.075 [info] cycle 022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01: repairing — Mutation gate failed: the raise-mutant of `init/1` graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+02:12:18.075 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:12:18.075 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Mutation gate failed: the raise-mutant of `init/1` graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement a nested team-membership endpoint guarded by **optimistic concurrency control** using HTTP `ETag` / `If-Match` semantics, with only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Every team's membership roster carries a monotonically increasing **version** number. Reads expose that version as an `ETag`. Writes must present the version they expect via `If-Match`; stale or missing preconditions are rejected so two clients editing the same roster can't silently clobber each other.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer holding users, teams, memberships, and per-team version numbers. Public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option.
+- `TeamStore.create_user(server, id, token)` — stores a user with a bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id)` — creates a team at version `0`. Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — seeds a membership and bumps the version. Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true`/`false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true`/`false`.
+- `TeamStore.version(server, team_id)` — returns `{:ok, version}` or `:error`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, members, version}` or `{:error, :not_found}`.
+- `TeamStore.add_member_safe(server, team_id, user_id, expected_version)` — checks the precondition first: returns `{:error, :version_mismatch, current_version}` if `expected_version` doesn't equal the team's current version; then `{:error, :conflict}` if the user is already a member; on success bumps the version and returns `{:ok, user_id, new_version}`; `{:error, :not_found}` if the team is missing.
+
+**`AuthPlug`** — reads `authorization: Bearer <token>`, resolves the user via `TeamStore.get_user_by_token/2`, assigns `:current_user`, and halts with 401 JSON `{"error":"unauthorized"}` otherwise. Accepts a `:store` option.
+
+**`TeamRouter`** — a `Plug.Router` accepting a `:store` option and plugging `AuthPlug` before matching. Endpoints:
+
+- `GET /api/teams/:team_id/members` — 404 `{"error":"not_found"}` if the team is missing; 403 `{"error":"forbidden"}` if the caller isn't a member; otherwise 200 with an `ETag` response header set to the quoted version (e.g. `"3"`) and body `{"members": [...], "version": v}`.
+
+- `POST /api/teams/:team_id/members` — body `{"user_id": "..."}`. Check order: 404 (missing team) → 403 (non-member) → then the precondition. If there is **no** `If-Match` header, return 428 `{"error":"precondition_required"}`. If `If-Match` is present but doesn't match the current version (or isn't a valid version), return 412 `{"error":"precondition_failed"}`. A malformed body is 400 `{"error":"bad_request"}`. If the target is already a member, 409 `{"error":"conflict"}`. On success 201 with an updated `ETag` header and body `{"added": user_id, "version": new_version}`.
+
+`If-Match` values may be quoted (`"3"`) or bare (`3`). All responses must be `application/json`. Give me all modules in a single file, using only `plug`, `jason`, and the OTP standard library.
+
+----- solution.ex -----
+defmodule TeamStore do
+  @moduledoc """
+  In-memory `GenServer` holding users, teams, memberships and per-team version
+  numbers for optimistic concurrency control.
+
+  Every team carries a monotonically increasing version. Reads expose that
+  version and writes must present the expected version so that concurrent
+  clients editing the same roster cannot silently clobber each other.
+  """
+
+  use GenServer
+
+  @typedoc "A reference to a running `TeamStore` process."
+  @type server :: GenServer.server()
+
+  @typedoc "An opaque identifier (user id, team id or bearer token)."
+  @type id :: binary()
+
+  @doc """
+  Starts the store process. Accepts a `:name` option to register the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc "Stores a user identified by `id` with the given bearer `token`."
+  @spec create_user(server(), id(), id()) :: :ok
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
+
+  @doc "Creates a team at version `0`."
+  @spec create_team(server(), id()) :: :ok
+  def create_team(server, team_id), do: GenServer.call(server, {:create_team, team_id})
+
+  @doc "Seeds a membership and bumps the team version. No-op for a missing team."
+  @spec add_member(server(), id(), id()) :: :ok
+  def add_member(server, team_id, user_id),
+    do: GenServer.call(server, {:add_member, team_id, user_id})
+
+  @doc "Resolves a bearer `token` to its user id, or `:error` when unknown."
+  @spec get_user_by_token(server(), id()) :: {:ok, id()} | :error
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})
+
+  @doc "Returns whether a team exists."
+  @spec team_exists?(server(), id()) :: boolean()
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})
+
+  @doc "Returns whether `user_id` is a member of `team_id`."
+  @spec is_member?(server(), id(), id()) :: boolean()
+  def is_member?(server, team_id, user_id),
+    do: GenServer.call(server, {:is_member?, team_id, user_id})
+
+  @doc "Returns `{:ok, version}` for an existing team, or `:error`."
+  @spec version(server(), id()) :: {:ok, non_neg_integer()} | :error
+  def version(server, team_id), do: GenServer.call(server, {:version, team_id})
+
+  @doc """
+  Returns `{:ok, members, version}` for an existing team, or
+  `{:error, :not_found}` when the team is missing.
+  """
+  @spec list_members(server(), id()) ::
+          {:ok, [id()], non_neg_integer()} | {:error, :not_found}
+  def list_members(server, team_id), do: GenServer.call(server, {:list_members, team_id})
+
+  @doc """
+  Adds a member under an optimistic-concurrency precondition.
+
+  Checks the precondition first: returns `{:error, :version_mismatch, current}`
+  when `expected_version` differs from the team's current version, then
+  `{:error, :conflict}` when the user is already a member. On success the
+  version is bumped and `{:ok, user_id, new_version}` is returned.
+  Returns `{:error, :not_found}` when the team is missing.
+  """
+  @spec add_member_safe(server(), id(), id(), non_neg_integer()) ::
+          {:ok, id(), non_neg_integer()}
+          | {:error, :version_mismatch, non_neg_integer()}
+          | {:error, :conflict}
+          | {:error, :not_found}
+  def add_member_safe(server, team_id, user_id, expected_version),
+    do: GenServer.call(server, {:add_member_safe, team_id, user_id, expected_version})
+
+  @impl true
+  def init(_opts), do: {:ok, %{tokens: %{}, teams: %{}}}
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    {:reply, :ok, put_in(state.tokens[token], id)}
+  end
+
+  def handle_cal (truncated)
+02:14:12.930 [debug] claude -p RESULT (stop="end_turn"):
+Looking at the failure, the raise-mutant of `init/1` graded inconclusively — the existing init tests all go through process spawning (`start_link`/`start_supervised!`), so a raising `init/1` produces process crashes and noise rather than a clean, fast test failure. I'll add a direct unit test that calls `TeamStore.init/1` in-process and asserts its exact return value, converting any raise into a clean assertion failure. This kills the mutant deterministically without spawning anything.
+
+I only need to change `test_harness.exs`.
+
+<file path="test_harness.exs">
+defmodule TeamRouterEtagTest do
+  use ExUnit.Case, async: false
+
+  import Plug.Conn
+  import Plug.Test
+
+  setup do
+    store = start_supervised!({TeamStore, name: :"store_#{System.unique_integer([:positive])}"})
+
+    :ok = TeamStore.create_user(store, "alice", "token-alice")
+    :ok = TeamStore.create_user(store, "bob", "token-bob")
+    :ok = TeamStore.create_user(store, "carol", "token-carol")
+
+    :ok = TeamStore.create_team(store, "team-1")
+    :ok = TeamStore.create_team(store, "team-2")
+
+    # team-1 -> version 2 after two seeds
+    :ok = TeamStore.add_member(store, "team-1", "alice")
+    :ok = TeamStore.add_member(store, "team-1", "bob")
+    # team-2 -> version 1
+    :ok = TeamStore.add_member(store, "team-2", "carol")
+
+    %{store: store}
+  end
+
+  # ---------------- helpers ----------------
+
+  defp get_members(store, team_id, token) do
+    :get
+    |> conn("/api/teams/#{team_id}/members")
+    |> maybe_auth(token)
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp post_member(store, team_id, user_id, token, if_match) do
+    :post
+    |> conn("/api/teams/#{team_id}/members", Jason.encode!(%{"user_id" => user_id}))
+    |> put_req_header("content-type", "application/json")
+    |> maybe_auth(token)
+    |> maybe_if_match(if_match)
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp maybe_auth(conn, nil), do: conn
+  defp maybe_auth(conn, token), do: put_req_header(conn, "authorization", "Bearer #{token}")
+
+  defp maybe_if_match(conn, nil), do: conn
+  defp maybe_if_match(conn, v), do: put_req_header(conn, "if-match", v)
+
+  defp json_body(conn), do: Jason.decode!(conn.resp_body)
+
+  defp etag(conn), do: conn |> get_resp_header("etag") |> List.first()
+
+  # ---------------- GET ----------------
+
+  test "GET returns members, version, and an ETag header", %{store: store} do
+    conn = get_members(store, "team-1", "token-alice")
+    assert conn.status == 200
+    body = json_body(conn)
+    assert "alice" in body["members"]
+    assert "bob" in body["members"]
+    assert body["version"] == 2
+    assert etag(conn) == ~s("2")
+  end
+
+  test "ETag matches the reported version", %{store: store} do
+    conn = get_members(store, "team-2", "token-carol")
+    assert json_body(conn)["version"] == 1
+    assert etag(conn) == ~s("1")
+  end
+
+  test "GET returns 403 for a non-member", %{store: store} do
+    conn = get_members(store, "team-1", "token-carol")
+    assert conn.status == 403
+    assert json_body(conn)["error"] == "forbidden"
+  end
+
+  test "GET returns 401 without auth", %{store: store} do
+    conn = get_members(store, "team-1", nil)
+    assert conn.status == 401
+  end
+
+  test "GET returns 404 for a missing team", %{store: store} do
+    conn = get_members(store, "ghost", "token-alice")
+    assert conn.status == 404
+  end
+
+  # ---------------- POST optimistic concurrency ----------------
+
+  test "POST with correct If-Match succeeds and bumps the version", %{store: store} do
+    conn = post_member(store, "team-1", "carol", "token-alice", ~s("2"))
+    assert conn.status == 201
+    body = json_body(conn)
+    assert body["added"] == "carol"
+    assert body["version"] == 3
+    assert etag(conn) == ~s("3")
+    assert {:ok, 3} = TeamStore.version(store, "team-1")
+  end
+
+  test "bare (unquoted) If-Match is accepted", %{store: store} do
+    conn = post_member(store, "team-1", "carol", "token-alice", "2")
+    assert conn.status == 201
+    assert json_body(conn)["version"] == 3
+  end
+
+  test "added member and new version appear in a subsequent GET", %{store: store} do
+    _ = post_member(store, "team-1", "carol", "token-alice", ~s("2"))
+    conn = get_members(store, "team-1", "token-alice")
+    assert "carol" in json_body(conn)["members"]
+    assert json_body(conn)["version"] == 3
+  end
+
+  test "stale If-Match returns 412", %{store: store} do
+    conn1 = post_member(store, "team-1", "carol", "token-alice", ~s("2"))
+    assert conn1.status == 201
+
+    conn2 = post_member(store, "team-1", "dave", "token-alice", ~s("2"))
+    assert conn2.status == 412
+    assert json_body(conn2)["error"] == "precondition_failed"
+  end
+
+  test "missing If-Match returns 428", %{store: store} do
+    conn = post_member(store, "team-1", "carol", "token-alice", nil)
+    assert conn.status == 428
+    assert json_body(conn)["error"] == "precondition_required"
+  end
+
+  test "duplicate member with matching version returns 409", %{store: store} do
+    conn = post_member(store, "team-1", "bob", "token-alice", ~s("2"))
+    assert conn.status == 409
+    assert json_body(conn)["error"] == "conflict"
+  end
+
+  test "non-member gets 403 before any precondition check", %{store: store} do
+    conn = post_member(store, "team-1", "dave", "token-carol", nil)
+    assert conn.status == 403
+  end
+
+  test "missing team gets 404 before any precondition check", %{store: store} do
+    conn = post_member(store, "ghost", "dave", "token-alice", nil)
+    assert conn.status == 404
+  end
+
+  test "POST returns 401 with invalid token", %{store: store} do
+    conn = post_member(store, "team-1", "carol", "token-nobody", ~s("2"))
+    assert conn.status == 401
+  end
+
+  test "malformed body with valid precondition returns 400", %{store: store} do
+    conn =
+      :post
+      |> conn("/api/teams/team-1/members", Jason.encode!(%{"nope" => "x"}))
+      |> put_req_header("content-type", "application/json")
+      |> put_req_header("authorization", "Bearer token-alice")
+      |> put_req_header("if-match", ~s("2"))
+      |> put_private(:team_store, store)
+      |> TeamRouter.call(TeamRouter.init(store: store))
+
+    assert conn.status == 400
+  end
+
+  # ---------------- cross-cutting ----------------
+
+  test "response content-type is application/json", %{store: store} do
+    conn = get_members(store, "team-1", "token-alice")
+    ct = conn |> get_resp_header("content-type") |> List.first("")
+    assert ct =~ "application/json"
+  end
+
+  test "operations on team-1 do not affect team-2", %{store: store} do
+    _ = post_member(store, "team-1", "carol", "token-alice", ~s("2"))
+    conn = get_members(store, "team-2", "token-carol")
+    assert json_body(conn)["members"] == ["carol"]
+    assert json_body(conn)["version"] == 1
+  end
+
+  # ---------------- direct store API ----------------
+
+  test "init/1 directly seeds an empty tokens/teams state (kills raise-mutant)" do
+    # Call init/1 in-process (no spawning) so a gutted/raising body is turned
+    # into a plain value here and the assertion below fails cleanly & fast,
+    # rather than surfacing as process-crash noise or an eval timeout.
+    result =
+      try do
+        TeamStore.init([])
+      rescue
+        _ -> :init_raised
+      catch
+        _, _ -> :init_nonlocal_exit
+      end
+
+    # init/1 must return {:ok, state} with EMPTY tokens and teams maps.
+    assert result == {:ok, %{tokens: %{}, teams: %{}}}
+
+    {:ok, state} = result
+    assert state.tokens == %{}
+    assert state.teams == %{}
+    assert map_size(state.tokens) == 0
+    assert map_size(state.teams) == 0
+
+    # The initial state must actually drive an empty store: a process booted
+    # from it has no users, no teams, and can complete a fresh seed lifecycle.
+    {:ok, pid} = GenServer.start_link(TeamStore, [])
+    assert :sys.get_state(pid) == %{tokens: %{}, teams: %{}}
+    assert TeamStore.get_user_by_token(pid, "token-alice") == :error
+    assert TeamStore.team_exists?(pid, "team-1") == false
+    assert TeamStore.version(pid, (truncated)
+02:14:12.930 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10116, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10116, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10116, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10116, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 9498, "type" => "message"}], "output_tokens" => 9498, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:14:12.941 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01 solution.ex
+02:14:13.776 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":325,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:14:13.753871Z"}
+02:14:13.786 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:14:14.629 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 24/24 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"failed to start child with the spec {TeamStore, [name: :store_131]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"failed to start child with the spec {TeamStore, [name: :store_195]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"failed to start child with the spec {TeamStore, [name: :store_259]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_323]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test GET returns 401 without auth"},{"message":"failed to start child with the spec {TeamStore, [name: :store_387]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_451]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"failed to start child with the spec {TeamStore, [name: :store_515]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"failed to start child with the spec {TeamStore, [name: :store_579]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"failed to start child with the spec {TeamStore, [name: :store_643]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex:11: Te (truncated)
+02:14:14.638 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:14:15.465 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 24/24 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test init/1 directly seeds an empty tokens/teams state (kills raise-mutant)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link honours the :name option (exercises init/1 registration)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test version returns the current team version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports version_mismatch with the current version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports conflict when version matches"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":24,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:14:15.442350Z"}
+02:14:15.472 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:14:16.301 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.26,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 24/24 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test init/1 directly seeds an empty tokens/teams state (kills raise-mutant)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link honours the :name option (exercises init/1 registration)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test version returns the current team version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports version_mismatch with the current version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports conflict when version matches"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":24,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:14:16.276983Z"}
+02:14:16.308 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:14:17.147 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 24/24 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test init/1 directly seeds an empty tokens/teams state (kills raise-mutant)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link honours the :name option (exercises init/1 registration)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test version returns the current team version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports version_mismatch with the current version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports conflict when version matches"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":24,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:14:17.124289Z"}
+02:14:17.156 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:14:18.014 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.41,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 18/24 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.25},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test init/1 directly seeds an empty tokens/teams state (kills raise-mutant)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":18,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:14:17.989988Z"}
+02:14:18.023 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:14:18.877 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.44,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 17/24 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.29},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 404 for a missing team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test missing team gets 404 before any precondition check"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test init/1 directly seeds an empty tokens/teams state (kills raise-mutant)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":17,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:14:18.853539Z"}
+02:14:18.885 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:14:19.720 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.52,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 14/24 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.42},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test missing If-Match returns 428"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test non-member gets 403 before any precondition check"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test malformed body with valid precondition returns 400"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":14,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:14:19.697878Z"}
+02:14:19.727 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:14:20.568 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.81,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 5/24 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.79},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test init/1 directly seeds an empty tokens/teams state (kills raise-mutant)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link honours the :name option (exercises init/1 registration)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test version returns the current team version"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:14:20.547563Z"}
+02:14:20.576 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:14:21.411 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.74,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 7/24 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.71},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test GET returns members, version, and an ETag header"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test ETag matches the reported version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test init/1 directly seeds an empty tokens/teams state (kills raise-mutant)"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test start_link/init/1 yields a live, empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":7,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:14:21.389145Z"}
+02:14:21.419 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:14:22.259 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":8,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.2,"mode":"full","overall":0.63,"reasons":["compilation: 8 warning(s) → -0.8 pts","tests: 9/24 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.63},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test POST with correct If-Match succeeds and bumps the version"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test bare (unquoted) If-Match is accepted"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test added member and new version appear in a subsequent GET"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test stale If-Match returns 412"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test duplicate member with matching version returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterEtagTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports version_mismatch with the current version"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports conflict when version matches"},{"message":"MUTATION","module":"TeamRouterEtagTest","test":"test add_member_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:14:22.235698Z"}
+02:14:22.267 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut solution.ex
+02:14:22.776 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":304,"lines_over_98":6,"max_line_length":419,"mode":"full","pipe_chain_count":10,"public_fn_count":22,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"MUTATION","type":"RuntimeError"}],"compile_warnings":1,"compiled":false,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: failed to compile (0.0)","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut/solution.ex","task":"022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-04T00:14:22.756085Z"}
+02:14:22.776 [debug] base mutation gate (per-fn): init/1 inconclusive
+02:14:22.777 [info] cycle 022_003_etag_guarded_optimistic_concurrency_membership_endpoint_01: REJECTED after 4 attempt(s)

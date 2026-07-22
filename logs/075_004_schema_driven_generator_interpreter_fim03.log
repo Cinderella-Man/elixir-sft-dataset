@@ -1,0 +1,308 @@
+19:43:02.254 [info] FIM 075_004_schema_driven_generator_interpreter_fim03 → 075_004_schema_driven_generator_interpreter_02: target from_schema/1
+19:43:02.254 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+19:43:02.254 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `from_schema/1`.
+
+Generate a prompt describing how to implement `from_schema/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `from_schema/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `from_schema/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `from_schema/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `SchemaGenerators` that turns a **declarative schema description** into a `StreamData` generator at runtime, for use with property-based testing via `StreamData` and `ExUnitProperties`.
+
+Instead of hand-writing a fixed generator per type, I want one interpreter, `SchemaGenerators.from_schema/1`, that recursively walks a schema term and returns a `%StreamData{}` generator whose produced values conform to that schema. This lets tests describe the data they want as plain data.
+
+`from_schema/1` must support exactly this schema grammar:
+
+- `:integer` — any integer.
+- `{:integer, min, max}` — an integer in `min..max` (require `min <= max`).
+- `:boolean` — a boolean.
+- `:string` — an alphanumeric string (possibly empty).
+- `{:string, min_len, max_len}` — an alphanumeric string whose length is in `min_len..max_len`.
+- `{:enum, values}` — one of the given non-empty list of literal `values`.
+- `{:list, schema}` — a list (0 or more elements) of values conforming to `schema`.
+- `{:list, schema, opts}` — a list whose length is in `Keyword.get(opts, :min, 0)..Keyword.get(opts, :max, 10)`, of values conforming to `schema`.
+- `{:map, schema_map}` — a map with exactly the keys of `schema_map`, where each value conforms to that key's schema (a fixed-shape map).
+- `{:optional, schema}` — either `nil` or a value conforming to `schema`.
+- `{:one_of, schemas}` — a value conforming to one of the given non-empty list of `schemas`.
+
+The interpreter must recurse so that nested schemas (e.g. a list of maps, a map with optional list-valued fields) produce correctly nested generators. All constraints come from the returned generator itself — consumers never filter. The result of `from_schema/1` must be a `%StreamData{}` struct that composes with the standard `StreamData` combinators.
+
+Give me the complete module in a single file. Use only `stream_data` as an external dependency, no others.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule SchemaGenerators do
+  @moduledoc """
+  Turns a declarative schema term into a `StreamData` generator at runtime, for
+  use with property-based testing via `StreamData` and `ExUnitProperties`.
+
+  Rather than hand-writing one generator per type, `from_schema/1` is a small
+  recursive interpreter: it walks a schema value and returns a `%StreamData{}`
+  generator whose outputs conform to that schema. Nested schemas produce nested
+  generators, and every constraint is baked into the returned generator so
+  consumers never filter.
+
+  ## Schema grammar
+
+      :integer
+      {:integer, min, max}
+      :boolean
+      :string
+      {:string, min_len, max_len}
+      {:enum, [value, ...]}
+      {:list, schema}
+      {:list, schema, opts}          # opts: [min: n, max: n]
+      {:map, %{key => schema}}
+      {:optional, schema}
+      {:one_of, [schema, ...]}
+
+  ## Usage
+
+      use ExUnitProperties
+
+      property "conforms to the schema" do
+        gen = SchemaGenerators.from_schema({:map, %{id: {:integer, 1, 100}}})
+
+        check all value <- gen do
+          assert value.id in 1..100
+        end
+      end
+  """
+
+  alias StreamData, as: SD
+
+  @doc """
+  Interprets `schema` and returns a `StreamData` generator producing conforming
+  values. Recurses through nested schemas.
+  """
+  @spec from_schema(term()) :: StreamData.t(term())
+  def from_schema(:integer), do: SD.integer()
+
+  def from_schema(:boolean), do: SD.boolean()
+
+  def from_schema(:string), do: SD.string(:alphanumeric)
+
+  def from_schema({:integer, min, max})
+      when is_integer(min) and is_integer(max) and min <= max do
+    SD.integer(min..max)
+  end
+
+  def from_schema({:string, min_len, max_len})
+      when is_integer(min_len) and is_integer(max_len) and min_len >= 0 and min_len <= max_len do
+    SD.string(:alphanumeric, min_length: min_len, max_length: max_len)
+  end
+
+  def from_schema({:enum, values}) when is_list(values) and values != [] do
+    SD.member_of(values)
+  end
+
+  def from_schema({:list, inner}) do
+    SD.list_of(from_schema(inner))
+  end
+
+  def from_schema({:list, inner, opts}) when is_list(opts) do
+    min = Keyword.get(opts, :min, 0)
+    max = Keyword.get(opts, :max, 10)
+
+    SD.bind(SD.integer(min..max), fn len ->
+      SD.list_of(from_schema(inner), length: len)
+    end)
+  end
+
+  def from_schema({:map, schema_map}) when is_map(schema_map) do
+    generators = Map.new(schema_map, fn {key, schema} -> {key, from_schema(schema)} end)
+    SD.fixed_map(generators)
+  end
+
+  def from_schema({:optional, inner}) do
+    SD.one_of([SD.constant(nil), from_schema(inner)])
+  end
+
+  def from_schema({:one_of, schemas}) when is_list(schemas) and schemas != [] do
+    SD.one_of(Enum.map(schemas, &from_schema/1))
+  end
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description + skeleton module with a `# TODO` for from_schema/1
+  - solution.ex — just the from_schema/1 function
+
+
+19:43:32.810 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Task: implement `SchemaGenerators.from_schema/1`
+
+Implement the public `from_schema/1` function. It is a small recursive interpreter
+that walks a declarative schema term and returns a `%StreamData{}` generator whose
+produced values conform to that schema. Use `alias StreamData, as: SD`. Every
+constraint must be baked into the returned generator so that consumers never have to
+filter, and nested schemas must recurse so that nested generators compose correctly.
+
+Support exactly this schema grammar, one clause at a time:
+
+- `:integer` — any integer, via `SD.integer()`.
+- `{:integer, min, max}` — an integer in `min..max`, via `SD.integer(min..max)`. Guard
+  that `min` and `max` are integers with `min <= max`.
+- `:boolean` — a boolean, via `SD.boolean()`.
+- `:string` — a possibly-empty alphanumeric string, via `SD.string(:alphanumeric)`.
+- `{:string, min_len, max_len}` — an alphanumeric string whose length is in
+  `min_len..max_len`, via `SD.string(:alphanumeric, min_length: min_len, max_length: max_len)`.
+  Guard that both are integers with `min_len >= 0` and `min_len <= max_len`.
+- `{:enum, values}` — one of a non-empty list of literal `values`, via `SD.member_of(values)`.
+  Guard that `values` is a non-empty list.
+- `{:list, schema}` — a list (0 or more elements) of values conforming to `schema`, via
+  `SD.list_of/1` applied to the recursively-built inner generator.
+- `{:list, schema, opts}` — a list whose length is in
+  `Keyword.get(opts, :min, 0)..Keyword.get(opts, :max, 10)`, of values conforming to
+  `schema`. Use `SD.bind/2` over `SD.integer(min..max)` to pick a length, then
+  `SD.list_of(inner, length: len)`. Guard that `opts` is a list.
+- `{:map, schema_map}` — a fixed-shape map with exactly the keys of `schema_map`, where
+  each value conforms to that key's schema. Build a map of per-key generators
+  (recursing on each value schema) and pass it to `SD.fixed_map/1`. Guard that
+  `schema_map` is a map.
+- `{:optional, schema}` — either `nil` or a value conforming to `schema`, via
+  `SD.one_of([SD.constant(nil), inner])`.
+- `{:one_of, schemas}` — a value conforming to one of a non-empty list of `schemas`, via
+  `SD.one_of/1` over the recursively-built generators. Guard that `schemas` is a
+  non-empty list.
+
+The result must be a `%StreamData{}` struct that composes with the standard
+`StreamData` combinators.
+
+```elixir
+defmodule SchemaGenerators do
+  @moduledoc """
+  Turns a declarative schema term into a `StreamData` generator at runtime, for
+  use with property-based testing via `StreamData` and `ExUnitProperties`.
+
+  Rather than hand-writing one generator per type, `from_schema/1` is a small
+  recursive interpreter: it walks a schema value and returns a `%StreamData{}`
+  generator whose outputs conform to that schema. Nested schemas produce nested
+  generators, and every constraint is baked into the returned generator so
+  consumers never filter.
+
+  ## Schema grammar
+
+      :integer
+      {:integer, min, max}
+      :boolean
+      :string
+      {:string, min_len, max_len}
+      {:enum, [value, ...]}
+      {:list, schema}
+      {:list, schema, opts}          # opts: [min: n, max: n]
+      {:map, %{key => schema}}
+      {:optional, schema}
+      {:one_of, [schema, ...]}
+
+  ## Usage
+
+      use ExUnitProperties
+
+      property "conforms to the schema" do
+        gen = SchemaGenerators.from_schema({:map, %{id: {:integer, 1, 100}}})
+
+        check all value <- gen do
+          assert value.id in 1..100
+        end
+      end
+  """
+
+  alias StreamData, as: SD
+
+  @doc """
+  Interprets `schema` and returns a `StreamData` generator producing conforming
+  values. Recurses through nested schemas.
+  """
+  @spec from_schema(term()) :: StreamData.t(term())
+  def from_schema(schema) do
+    # TODO
+  end
+end
+```
+</file>
+<file path="solution.ex">
+def from_schema(:integer), do: SD.integer()
+
+def from_schema(:boolean), do: SD.boolean()
+
+def from_schema(:string), do: SD.string(:alphanumeric)
+
+def from_schema({:integer, min, max})
+    when is_integer(min) and is_integer(max) and min <= max do
+  SD.integer(min..max)
+end
+
+def from_schema({:string, min_len, max_len})
+    when is_integer(min_len) and is_integer(max_len) and min_len >= 0 and min_len <= max_len do
+  SD.string(:alphanumeric, min_length: min_len, max_length: max_len)
+end
+
+def from_schema({:enum, values}) when is_list(values) and values != [] do
+  SD.member_of(values)
+end
+
+def from_schema({:list, inner}) do
+  SD.list_of(from_schema(inner))
+end
+
+def from_schema({:list, inner, opts}) when is_list(opts) do
+  min = Keyword.get(opts, :min, 0)
+  max = Keyword.get(opts, :max, 10)
+
+  SD.bind(SD.integer(min..max), fn len ->
+    SD.list_of(from_schema(inner), length: len)
+  end)
+end
+
+def from_schema({:map, schema_map}) when is_map(schema_map) do
+  generators = Map.new(schema_map, fn {key, schema} -> {key, from_schema(schema)} end)
+  SD.fixed_map(generators)
+end
+
+def from_schema({:optional, inner}) do
+  SD.one_of([SD.constant(nil), from_schema(inner)])
+end
+
+def from_schema({:one_of, schemas}) when is_list(schemas) and schemas != [] do
+  SD.one_of(Enum.map(schemas, &from_schema/1))
+end
+</file>
+19:43:32.810 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 17448, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 17448, "input_tokens" => 2972, "output_tokens" => 2619, "type" => "message"}], "output_tokens" => 2619, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+19:43:32.830 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_075_004_schema_driven_generator_interpreter_02/075_004_schema_driven_generator_interpreter_02 solution.ex
+19:43:33.777 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":45,"lines_over_98":0,"max_line_length":95,"mode":"fim","pipe_chain_count":0,"public_fn_count":11,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"075_004_schema_driven_generator_interpreter_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_075_004_schema_driven_generator_interpreter_02/075_004_schema_driven_generator_interpreter_02/solution.ex","task":"075_004_schema_driven_generator_interpreter_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-04T17:43:33.751601Z"}
+19:43:33.779 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_075_004_schema_driven_generator_interpreter_02/075_004_schema_driven_generator_interpreter_02 .gen_staging/fim_075_004_schema_driven_generator_interpreter_02/mutant.ex
+19:43:34.724 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":44,"lines_over_98":0,"max_line_length":96,"mode":"fim","pipe_chain_count":0,"public_fn_count":11,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"parent":"075_004_schema_driven_generator_interpreter_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.6,"mode":"fim","overall":0.26,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 16/16 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_075_004_schema_driven_generator_interpreter_02/mutant.ex","task":"075_004_schema_driven_generator_interpreter_02","test_failures":[{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property scalar schemas :integer produces integers"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property scalar schemas {:integer, min, max} stays within bounds"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property scalar schemas :boolean produces booleans"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property scalar schemas :string produces alphanumeric strings"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property scalar schemas {:string, min, max} respects the length bounds"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property scalar schemas {:enum, values} only produces listed values"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property list schemas {:list, schema} produces lists of conforming values"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property list schemas {:list, schema, opts} respects length bounds"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property map schemas {:map, schema_map} produces fixed-shape maps"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property map schemas nested list-of-maps schema produces correctly nested values"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property optional and one_of schemas {:optional, schema} produces nil or a conforming value"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property optional and one_of schemas {:optional, schema} produces both nil and values across samples"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property optional and one_of schemas {:one_of, schemas} produces a value from one branch"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property optional and one_of schemas {:one_of, schemas} exercises multiple branches across samples"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property composability with StreamData a schema generator can be nested in list_of"},{"message":"MUTATION","module":"SchemaGeneratorsTest","test":"property composability with StreamData a schema generator can be mapped"}],"tests_errors":0,"tests_excluded":0,"tests_failed":16,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-04T17:43:34.697441Z"}
+19:43:34.724 [debug] fim mutation gate: killed
+19:43:34.725 [info] promoted 075_004_schema_driven_generator_interpreter_02 -> tasks/075_004_schema_driven_generator_interpreter_02

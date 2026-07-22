@@ -1,0 +1,294 @@
+19:26:20.928 [info] FIM 075_002_recursive_json_value_generators_with_bounded_depth_fim01 → 075_002_recursive_json_value_generators_with_bounded_depth_02: target value/1
+19:26:20.928 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+19:26:20.928 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `value/1`.
+
+Generate a prompt describing how to implement `value/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `value/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `value/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `value/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `JsonGenerators` that provides reusable `StreamData` generators for **recursive, JSON-shaped values**, intended for use with property-based testing via the `StreamData` and `ExUnitProperties` libraries.
+
+Unlike flat domain-model generators, the interesting constraint here is **bounded recursion depth**: nested arrays and objects must never nest deeper than a caller-specified limit, and that bound must be guaranteed structurally (never by rejection/filtering).
+
+Define the depth of a value as: a scalar (null, boolean, integer, string) has depth `0`; a container (array or object) has depth `1 + max(depth of its children)`, where an empty container has depth `1`.
+
+I need these generators in the public API:
+
+- `JsonGenerators.scalar()` — produces a JSON scalar: one of `nil`, a boolean, an integer, or an alphanumeric string (max 8 chars). Depth is always `0`.
+- `JsonGenerators.array(element_gen, max_length)` — produces a list of `0..max_length` elements drawn from `element_gen`.
+- `JsonGenerators.object(value_gen, max_length)` — produces a map with `0..max_length` entries, where each key is a **non-empty** alphanumeric string and each value is drawn from `value_gen`.
+- `JsonGenerators.value(max_depth)` — produces an arbitrary JSON value (scalar, array, or object). When `max_depth <= 0` it always produces a scalar; otherwise it may produce scalars or containers whose children are drawn from `value(max_depth - 1)`. The generated value's depth must **always** be `<= max_depth`.
+
+All depth and shape constraints must be enforced inside the generators themselves — consumers should never need to call `StreamData.filter/2`. Each generator must return a `%StreamData{}` struct so it composes with the standard `StreamData` combinators.
+
+Give me the complete module in a single file. Use only `stream_data` as an external dependency, no others.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule JsonGenerators do
+  @moduledoc """
+  Reusable `StreamData` generators for recursive, JSON-shaped values, intended
+  for use with property-based testing via `StreamData` and `ExUnitProperties`.
+
+  The distinguishing feature of these generators is **structurally-bounded
+  recursion depth**: `value/1` never produces a value that nests deeper than the
+  requested limit, and that guarantee comes from the shape of the generator
+  itself — never from rejection-filtering.
+
+  Depth convention:
+
+    * a scalar (`nil`, boolean, integer, string) has depth `0`
+    * a container (list/map) has depth `1 + max(child depths)`; an empty
+      container has depth `1`
+
+  ## Usage
+
+      use ExUnitProperties
+
+      property "bounded json never nests too deep" do
+        check all value <- JsonGenerators.value(3) do
+          assert depth(value) <= 3
+        end
+      end
+
+  All generators return `%StreamData{}` structs and compose with the standard
+  `StreamData` combinator API.
+  """
+
+  # Qualify every call explicitly rather than bulk-importing StreamData: a bare
+  # `import StreamData` pulls in dozens of functions whose arities can clash with
+  # auto-imported Kernel functions.
+  alias StreamData, as: SD
+
+  @doc """
+  Produces a JSON scalar: one of `nil`, a boolean, an integer, or an
+  alphanumeric string of at most 8 characters. Always depth `0`.
+  """
+  @spec scalar() :: StreamData.t(term())
+  def scalar do
+    SD.one_of([
+      SD.constant(nil),
+      SD.boolean(),
+      SD.integer(),
+      SD.string(:alphanumeric, max_length: 8)
+    ])
+  end
+
+  @doc """
+  Produces a list of `0..max_length` elements drawn from `element_gen`.
+  """
+  @spec array(StreamData.t(a), non_neg_integer()) :: StreamData.t([a]) when a: term()
+  def array(element_gen, max_length) when is_integer(max_length) and max_length >= 0 do
+    SD.list_of(element_gen, max_length: max_length)
+  end
+
+  @doc """
+  Produces a map of `0..max_length` entries where every key is a non-empty
+  alphanumeric string and every value is drawn from `value_gen`.
+
+  Keys are drawn independently, so the final map may contain fewer than
+  `max_length` entries when keys collide — this is always a valid object.
+  """
+  @spec object(StreamData.t(a), non_neg_integer()) :: StreamData.t(%{optional(String.t()) => a})
+        when a: term()
+  def object(value_gen, max_length) when is_integer(max_length) and max_length >= 0 do
+    key = SD.string(:alphanumeric, min_length: 1, max_length: 8)
+    pair = SD.tuple({key, value_gen})
+
+    SD.map(SD.list_of(pair, max_length: max_length), &Map.new/1)
+  end
+
+  @doc """
+  Produces an arbitrary JSON value whose depth is guaranteed `<= max_depth`.
+
+  For `max_depth <= 0` this always yields a scalar. For a positive depth it may
+  yield a scalar, or a container whose children are drawn from
+  `value(max_depth - 1)` — so by induction the depth invariant always holds.
+  """
+  @spec value(integer()) :: StreamData.t(term())
+  def value(max_depth) when is_integer(max_depth) and max_depth <= 0 do
+    scalar()
+  end
+
+  def value(max_depth) when is_integer(max_depth) and max_depth > 0 do
+    child = value(max_depth - 1)
+
+    SD.one_of([
+      scalar(),
+      array(child, 5),
+      object(child, 5)
+    ])
+  end
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description + skeleton module with a `# TODO` for value/1
+  - solution.ex — just the value/1 function
+
+
+19:26:45.531 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `value/1` function. It produces a `StreamData` generator for
+an arbitrary JSON value whose depth is structurally guaranteed to be `<= max_depth`
+— the bound must come from the shape of the generator, never from filtering.
+
+Write it as two guarded clauses over the integer `max_depth`:
+
+- When `max_depth <= 0`, the generator must always yield a scalar. Delegate to
+  `scalar/0`.
+- When `max_depth > 0`, first build a `child` generator for the next level down by
+  recursing with `value(max_depth - 1)`. Then return `SD.one_of/1` over three
+  alternatives: a `scalar()`, an `array(child, 5)`, and an `object(child, 5)`. Because
+  every container's children are drawn from `value(max_depth - 1)`, induction
+  guarantees the depth invariant holds.
+
+The function must return a `%StreamData{}` struct so it composes with the standard
+`StreamData` combinators.
+
+```elixir
+defmodule JsonGenerators do
+  @moduledoc """
+  Reusable `StreamData` generators for recursive, JSON-shaped values, intended
+  for use with property-based testing via `StreamData` and `ExUnitProperties`.
+
+  The distinguishing feature of these generators is **structurally-bounded
+  recursion depth**: `value/1` never produces a value that nests deeper than the
+  requested limit, and that guarantee comes from the shape of the generator
+  itself — never from rejection-filtering.
+
+  Depth convention:
+
+    * a scalar (`nil`, boolean, integer, string) has depth `0`
+    * a container (list/map) has depth `1 + max(child depths)`; an empty
+      container has depth `1`
+
+  ## Usage
+
+      use ExUnitProperties
+
+      property "bounded json never nests too deep" do
+        check all value <- JsonGenerators.value(3) do
+          assert depth(value) <= 3
+        end
+      end
+
+  All generators return `%StreamData{}` structs and compose with the standard
+  `StreamData` combinator API.
+  """
+
+  # Qualify every call explicitly rather than bulk-importing StreamData: a bare
+  # `import StreamData` pulls in dozens of functions whose arities can clash with
+  # auto-imported Kernel functions.
+  alias StreamData, as: SD
+
+  @doc """
+  Produces a JSON scalar: one of `nil`, a boolean, an integer, or an
+  alphanumeric string of at most 8 characters. Always depth `0`.
+  """
+  @spec scalar() :: StreamData.t(term())
+  def scalar do
+    SD.one_of([
+      SD.constant(nil),
+      SD.boolean(),
+      SD.integer(),
+      SD.string(:alphanumeric, max_length: 8)
+    ])
+  end
+
+  @doc """
+  Produces a list of `0..max_length` elements drawn from `element_gen`.
+  """
+  @spec array(StreamData.t(a), non_neg_integer()) :: StreamData.t([a]) when a: term()
+  def array(element_gen, max_length) when is_integer(max_length) and max_length >= 0 do
+    SD.list_of(element_gen, max_length: max_length)
+  end
+
+  @doc """
+  Produces a map of `0..max_length` entries where every key is a non-empty
+  alphanumeric string and every value is drawn from `value_gen`.
+
+  Keys are drawn independently, so the final map may contain fewer than
+  `max_length` entries when keys collide — this is always a valid object.
+  """
+  @spec object(StreamData.t(a), non_neg_integer()) :: StreamData.t(%{optional(String.t()) => a})
+        when a: term()
+  def object(value_gen, max_length) when is_integer(max_length) and max_length >= 0 do
+    key = SD.string(:alphanumeric, min_length: 1, max_length: 8)
+    pair = SD.tuple({key, value_gen})
+
+    SD.map(SD.list_of(pair, max_length: max_length), &Map.new/1)
+  end
+
+  @doc """
+  Produces an arbitrary JSON value whose depth is guaranteed `<= max_depth`.
+
+  For `max_depth <= 0` this always yields a scalar. For a positive depth it may
+  yield a scalar, or a container whose children are drawn from
+  `value(max_depth - 1)` — so by induction the depth invariant always holds.
+  """
+  @spec value(integer()) :: StreamData.t(term())
+  def value(max_depth) when is_integer(max_depth) and max_depth <= 0 do
+    # TODO
+  end
+
+  def value(max_depth) when is_integer(max_depth) and max_depth > 0 do
+    # TODO
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+def value(max_depth) when is_integer(max_depth) and max_depth <= 0 do
+  scalar()
+end
+
+def value(max_depth) when is_integer(max_depth) and max_depth > 0 do
+  child = value(max_depth - 1)
+
+  SD.one_of([
+    scalar(),
+    array(child, 5),
+    object(child, 5)
+  ])
+end
+</file>
+19:26:45.531 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2736, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2736, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2736, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2736, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 1879, "type" => "message"}], "output_tokens" => 1879, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+19:26:45.550 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_075_002_recursive_json_value_generators_with_bounded_depth_02/075_002_recursive_json_value_generators_with_bounded_depth_02 solution.ex
+19:26:46.503 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":13,"lines_over_98":0,"max_line_length":69,"mode":"fim","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"075_002_recursive_json_value_generators_with_bounded_depth_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_075_002_recursive_json_value_generators_with_bounded_depth_02/075_002_recursive_json_value_generators_with_bounded_depth_02/solution.ex","task":"075_002_recursive_json_value_generators_with_bounded_depth_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T17:26:46.478396Z"}
+19:26:46.503 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_075_002_recursive_json_value_generators_with_bounded_depth_02/075_002_recursive_json_value_generators_with_bounded_depth_02 .gen_staging/fim_075_002_recursive_json_value_generators_with_bounded_depth_02/mutant.ex
+19:26:47.424 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":7,"lines_over_98":0,"max_line_length":69,"mode":"fim","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"075_002_recursive_json_value_generators_with_bounded_depth_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":0.67,"reasons":["tests: 8/17 failed"],"tests":0.53},"shape":"fim","solution_file":".gen_staging/fim_075_002_recursive_json_value_generators_with_bounded_depth_02/mutant.ex","task":"075_002_recursive_json_value_generators_with_bounded_depth_02","test_failures":[{"message":"MUTATION","module":"JsonGeneratorsTest","test":"property JsonGenerators.value/1 value(0) is always a scalar"},{"message":"MUTATION","module":"JsonGeneratorsTest","test":"property JsonGenerators.value/1 negative depth is treated as a scalar"},{"message":"MUTATION","module":"JsonGeneratorsTest","test":"property JsonGenerators.value/1 value(2) never exceeds depth 2"},{"message":"MUTATION","module":"JsonGeneratorsTest","test":"property JsonGenerators.value/1 value(4) never exceeds depth 4"},{"message":"MUTATION","module":"JsonGeneratorsTest","test":"property JsonGenerators.value/1 every produced value is JSON-shaped (scalar, list, or map)"},{"message":"MUTATION","module":"JsonGeneratorsTest","test":"property JsonGenerators.value/1 produces scalars, arrays, and objects across many samples"},{"message":"MUTATION","module":"JsonGeneratorsTest","test":"property composability with StreamData value can be nested inside list_of"},{"message":"MUTATION","module":"JsonGeneratorsTest","test":"property composability with StreamData value can be filtered to only containers"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T17:26:47.396389Z"}
+19:26:47.424 [debug] fim mutation gate: killed
+19:26:47.426 [info] promoted 075_002_recursive_json_value_generators_with_bounded_depth_02 -> tasks/075_002_recursive_json_value_generators_with_bounded_depth_02

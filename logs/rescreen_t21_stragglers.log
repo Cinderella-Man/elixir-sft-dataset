@@ -1,0 +1,41 @@
+Blind-solve screen: 3 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/3] 005_003_replayeventbus_01 ... GREEN
+[2/3] 007_001_moving_average_calculator_01 ... RED (test SMA cold-start: fewer values than the period: 
+
+Expected 6.0 to be within 1.0e-9 of 4.0
+)
+[3/3] 007_002_weightedmovingaverage_01 ... RED (test larger period grows max_period and retains more history: 
+
+Expected truthy, got false
+code: assert close_to(narrow, 26 / 6)
+arguments:
+
+         # 1
+         3.6666666666666665
+
+         # 2
+         4.333333333333333
+
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 3   green: 1   RED: 2   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 007_001_moving_average_calculator_01: test SMA cold-start: fewer values than the period: 
+
+Expected 6.0 to be within 1.0e-9 of 4.0
+
+    - 007_002_weightedmovingaverage_01: test larger period grows max_period and retains more history: 
+
+Expected truthy, got false
+code: assert close_to(narrow, 26 / 6)
+arguments:
+
+         # 1
+         3.6666666666666665
+
+         # 2
+         4.333333333333333
+
+

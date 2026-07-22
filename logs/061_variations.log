@@ -1,0 +1,447 @@
+14:00:47.637 [info] VARIATIONS gen for 061_001_parallel_map_with_concurrency_limit_01 (3 slot(s))
+14:00:47.638 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:00:47.638 [debug] claude -p USER prompt:
+I have this SFT task (idea #61 — "Parallel Map with Concurrency Limit"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 61 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `ParallelMap` that applies a function to a collection
+in parallel while enforcing a maximum concurrency limit.
+
+I need one public function:
+- `ParallelMap.pmap(collection, func, max_concurrency)` which applies `func` to each
+  element of `collection` in parallel, with at most `max_concurrency` tasks running at
+  the same time. It must return results in the same order as the input collection,
+  regardless of completion order.
+
+Task crash handling: if `func` raises or the spawned task exits abnormally for a given
+element, that element's result should be `{:error, reason}` — this must not affect or
+cancel other in-flight tasks.
+
+For concurrency enforcement: use a pool/semaphore approach so that at no point are more
+than `max_concurrency` tasks alive simultaneously. A new task should only be spawned once
+a running one has finished (or crashed).
+
+You will also need to write a helper GenServer called `ConcurrencyCounter` in the same
+file. It must expose:
+- `ConcurrencyCounter.start_link(opts)` — starts the process, accepts `:name`
+- `ConcurrencyCounter.increment(server)` — increments the active count, returns the new value
+- `ConcurrencyCounter.decrement(server)` — decrements the active count, returns the new value
+- `ConcurrencyCounter.peak(server)` — returns the highest value the counter has ever reached
+
+`ConcurrencyCounter` is intended for use in tests to verify the concurrency limit is
+actually respected at runtime — your `pmap` implementation itself does not need to use it.
+
+Give me the complete implementation in a single file. Use only OTP and the standard
+library — no external dependencies. Do not use `Task.async_stream`; implement the
+scheduling logic yourself using `Task.async` / `Task.yield`.
+
+=== BASE solution.ex ===
+defmodule ConcurrencyCounter do
+  @moduledoc """
+  A GenServer that tracks an active-task count and remembers the highest
+  value it has ever reached (the "peak"). Intended for use in tests to
+  verify that `ParallelMap.pmap/3` never exceeds its declared concurrency
+  limit at runtime.
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc "Starts the counter. Accepts `:name` in `opts`."
+  def start_link(opts \\ []) do
+    {name, server_opts} =
+      case Keyword.pop(opts, :name) do
+        {nil, rest}    -> {__MODULE__, rest}
+        {name, rest}   -> {name, rest}
+      end
+
+    GenServer.start_link(__MODULE__, %{count: 0, peak: 0}, [{:name, name} | server_opts])
+  end
+
+  @doc "Increments the active count by 1. Returns the new value."
+  def increment(server), do: GenServer.call(server, :increment)
+
+  @doc "Decrements the active count by 1. Returns the new value."
+  def decrement(server), do: GenServer.call(server, :decrement)
+
+  @doc "Returns the highest value the counter has ever reached."
+  def peak(server), do: GenServer.call(server, :peak)
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:increment, _from, %{count: count, peak: peak} = state) do
+    new_count = count + 1
+    new_state = %{state | count: new_count, peak: max(new_count, peak)}
+    {:reply, new_count, new_state}
+  end
+
+  def handle_call(:decrement, _from, %{count: count} = state) do
+    new_count = count - 1
+    {:reply, new_count, %{state | count: new_count}}
+  end
+
+  def handle_call(:peak, _from, %{peak: peak} = state) do
+    {:reply, peak, state}
+  end
+end
+
+
+defmodule ParallelMap do
+  @moduledoc """
+  Applies a function to every element of a collection in parallel while
+  keeping the number of concurrently running tasks at or below
+  `max_concurrency`.
+
+  Results are always returned in the same order as the input. If the
+  function raises or the spawned process exits abnormally, the corresponding
+  result is `{:error, reason}`; all other in-flight tasks continue
+  unaffected.
+
+  Scheduling is implemented with `spawn_monitor` rather than `Task.async`
+  so that task crashes never propagate as exit signals to the caller —
+  only a `:DOWN` monitor message is delivered.
+  """
+
+  @doc """
+  Maps `func` over `collection` in parallel, with at most `max_concurrency`
+  tasks alive at any one time.
+
+  ## Examples
+
+      iex> ParallelMap.pmap(1..5, fn x -> x * 2 end, 2)
+      [2, 4, 6, 8, 10]
+
+      iex> ParallelMap.pmap([1, :boom, 3], fn
+      ...>   :boom -> raise "oops"
+      ...>   x    -> x * 10
+      ...> end, 2)
+      [10, {:error, _}, 30]
+  """
+  @spec pmap(Enumerable.t(), (term() -> term()), pos_integer()) :: [term()]
+  def pmap(collection, func, max_concurrency)
+      when is_function(func, 1) and is_integer(max_concurrency) and max_concurrency >= 1 do
+    indexed = collection |> Enum.to_list() |> Enum.with_index()
+    total   = length(indexed)
+
+    if total == 0 do
+      []
+    else
+      parent          = self()
+      {seed, queue}   = Enum.split(indexed, max_concurrency)
+
+      # running: %{our_ref => {monitor_ref, original_index}}
+      #
+      # We use our own `make_ref()` as the primary key because it is the
+      # value embedded in the result message that the spawned process sends
+      # back.  The monitor ref is kept alongside so we can demonitor cleanly
+      # after receiving the result.
+      running =
+        Map.new(seed, fn {elem, idx} ->
+          {our_ref, mon_ref} = spawn_task(parent, func, elem)
+          {our_ref, {mon_ref, idx}}
+        end)
+
+      raw = collect(running, queue, func, parent, _results = %{})
+
+      # Reassemble in original order.
+      Enum.map(0..(total - 1), fn i -> Map.fetch!(raw, i) end)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Spawns a monitored (but NOT linked) process that runs `func.(elem)`.
+  #
+  # All exceptions and exits are caught inside the spawned process and
+  # converted into a tagged result message sent to `parent`.  This means
+  # the process always exits with reason `:normal`, so the `:DOWN` message
+  # we will eventually receive is harmless and can simply be flushed.
+  #
+  # Returns `{our_ref, monitor_ref}`.
+  defp spawn_task(parent, func, elem) do
+    our_ref = make_ref()
+
+    {_pid, mon_ref} =
+      spawn_monitor(fn ->
+        result =
+          try do
+            {:ok, func.(elem)}
+          rescue
+            e -> {:error, {e, __STACKTRACE__}}
+          catch
+            :exit,  r -> {:error, r}
+            :throw, t -> {:error, {:throw, t}}
+          end
+
+        send(parent, {our_ref, result})
+      end)
+
+    {our_ref, mon_ref}
+  end
+
+  # Base case: nothing running and nothing queued.
+  defp collect(running, _queue = [], _func, _parent, results)
+       when map_size(running) == 0,
+       do: results
+
+  defp collect(running, queue, func, parent, results) do
+    {finished_r (truncated)
+14:07:12.689 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `FailFastMap` that applies a function to a collection
+in parallel with a maximum concurrency limit, but using **fail-fast** semantics instead
+of collecting per-element errors.
+
+I need one public function:
+- `FailFastMap.pmap(collection, func, max_concurrency)` which applies `func` to each
+  element of `collection` in parallel, with at most `max_concurrency` tasks running at
+  the same time.
+
+Result semantics (this is the key difference from a normal parallel map):
+- If **every** element succeeds, return `{:ok, results}` where `results` is the list of
+  return values in the **same order** as the input collection.
+- If **any** element's `func` raises or its task exits abnormally, immediately
+  short-circuit: return `{:error, {index, reason}}` where `index` is the zero-based
+  position of the failing element and `reason` describes the failure. As soon as a
+  failure is detected you must **cancel all still-running tasks** (kill their processes)
+  and you must **not** start any queued elements that had not yet begun.
+- An empty collection returns `{:ok, []}`.
+
+For concurrency enforcement: use a pool/semaphore approach so that at no point are more
+than `max_concurrency` tasks alive simultaneously. A new task should only be spawned once
+a running one has finished (or when you are still filling the initial window).
+
+You will also need to write a helper GenServer called `ConcurrencyCounter` in the same
+file. It must expose:
+- `ConcurrencyCounter.start_link(opts)` — starts the process, accepts `:name`
+- `ConcurrencyCounter.increment(server)` — increments the active count, returns the new value
+- `ConcurrencyCounter.decrement(server)` — decrements the active count, returns the new value
+- `ConcurrencyCounter.peak(server)` — returns the highest value the counter has ever reached
+- `ConcurrencyCounter.started(server)` — returns how many times `increment/1` has ever been called
+
+`ConcurrencyCounter` is intended for use in tests to verify both the concurrency limit and
+that queued work is genuinely cancelled after a failure; your `pmap` implementation itself
+does not need to use it.
+
+Give me the complete implementation in a single file. Use only OTP and the standard
+library — no external dependencies. Do not use `Task.async_stream`; implement the
+scheduling and cancellation logic yourself using `spawn_monitor` / `Process.exit`.
+</file>
+
+<file path="v1/solution.ex">
+defmodule ConcurrencyCounter do
+  @moduledoc """
+  A GenServer that tracks an active-task count, the highest value it has ever
+  reached (`peak`), and the total number of times it was incremented
+  (`started`). Intended for tests to verify that `FailFastMap.pmap/3` respects
+  its concurrency limit and cancels queued work after a failure.
+  """
+
+  use GenServer
+
+  def start_link(opts \\ []) do
+    {name, server_opts} =
+      case Keyword.pop(opts, :name) do
+        {nil, rest} -> {__MODULE__, rest}
+        {name, rest} -> {name, rest}
+      end
+
+    GenServer.start_link(__MODULE__, %{count: 0, peak: 0, started: 0}, [{:name, name} | server_opts])
+  end
+
+  def increment(server), do: GenServer.call(server, :increment)
+  def decrement(server), do: GenServer.call(server, :decrement)
+  def peak(server), do: GenServer.call(server, :peak)
+  def started(server), do: GenServer.call(server, :started)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:increment, _from, %{count: count, peak: peak, started: started} = state) do
+    new_count = count + 1
+    {:reply, new_count, %{state | count: new_count, peak: max(new_count, peak), started: started + 1}}
+  end
+
+  def handle_call(:decrement, _from, %{count: count} = state) do
+    new_count = count - 1
+    {:reply, new_count, %{state | count: new_count}}
+  end
+
+  def handle_call(:peak, _from, %{peak: peak} = state), do: {:reply, peak, state}
+  def handle_call(:started, _from, %{started: started} = state), do: {:reply, started, state}
+end
+
+
+defmodule FailFastMap do
+  @moduledoc """
+  Parallel map with a concurrency limit and fail-fast semantics.
+
+  Returns `{:ok, results}` (in input order) when every element succeeds, or
+  `{:error, {index, reason}}` on the first failure — at which point every
+  still-running task is killed and no queued element is started.
+  """
+
+  @spec pmap(Enumerable.t(), (term() -> term()), pos_integer()) ::
+          {:ok, [term()]} | {:error, {non_neg_integer(), term()}}
+  def pmap(collection, func, max_concurrency)
+      when is_function(func, 1) and is_integer(max_concurrency) and max_concurrency >= 1 do
+    indexed = collection |> Enum.to_list() |> Enum.with_index()
+
+    if indexed == [] do
+      {:ok, []}
+    else
+      parent = self()
+      {seed, queue} = Enum.split(indexed, max_concurrency)
+
+      running =
+        Map.new(seed, fn {elem, idx} ->
+          {ref, pid, mon} = spawn_task(parent, func, elem)
+          {ref, {pid, mon, idx}}
+        end)
+
+      loop(running, queue, func, parent, %{})
+    end
+  end
+
+  # Runs `func.(elem)` in a monitored (unlinked) process; all errors are caught
+  # and reported back as a tagged message so the process exits `:normal`.
+  defp spawn_task(parent, func, elem) do
+    ref = make_ref()
+
+    {pid, mon} =
+      spawn_monitor(fn ->
+        result =
+          try do
+            {:ok, func.(elem)}
+          rescue
+            e -> {:error, {e, __STACKTRACE__}}
+          catch
+            :exit, r -> {:error, r}
+            :throw, t -> {:error, {:throw, t}}
+          end
+
+        send(parent, {ref, result})
+      end)
+
+    {ref, pid, mon}
+  end
+
+  # All tasks accounted for and none failed.
+  defp loop(running, _queue, _func, _parent, results) when map_size(running) == 0 do
+    {:ok, order_results(results)}
+  end
+
+  defp loop(running, queue, func, parent, results) do
+    receive do
+      {ref, {:ok, value}} when is_map_key(running, ref) ->
+        {_pid, mon, idx} = Map.fetch!(running, ref)
+        Process.demonitor(mon, [:flush])
+        running = Map.delete(running, ref)
+        results = Map.put(results, idx, value)
+
+        {running, queue} =
+          case queue do
+            [] ->
+              {running, []}
+
+            [{elem, i} | rest] ->
+              {r, pid, m} = spawn_task(parent, func, elem)
+              {Map.put(running, r, {pid, m, i}), rest}
+          end
+
+        loop(running, queue, func, parent, results)
+
+      {ref, {:error, reason}} when is_map_key(running, ref) ->
+        {_pid, mon, idx} = Map.fetch!(running, ref)
+        Process.demonitor(mon, [:flush])
+        cancel_all(Map.delete(running, ref))
+        {:error, {idx, reason}}
+
+      {:DOWN, mon, :process, _pid, reason} ->
+        case Enum.find(running, fn {_ref, {_pid, m, _idx}} -> m == mon end) do
+          {ref, {_pid, _mon, idx}} ->
+            cancel_all(Map.delete(running, ref))
+            {:error, {idx, reason}}
+
+          nil ->
+            loop(running, queue, func, parent, results)
+        end
+
+      _other ->
+        loop(running, queue, func, parent, results)
+    end
+  end
+
+  # Kill every still-running task and discard any messages they may have sent.
+  defp cancel_all(running) do
+    Enum.each(running, fn {ref, {pid, mon, _idx}} ->
+      Process.demonitor(mon, [:flush])
+      Process.exit(pid, :kill)
+
+      receive do
+        {^ref, _} -> :ok
+      after
+        0 -> :ok
+      end
+    end)
+
+    :ok
+  end
+
+  defp order_results(results) do
+    results |> Map.keys() |> Enum.sort() |> Enum.map(&Map.fetch!(results, &1))
+  end
+end
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule FailFastMapTest do
+  use ExUnit.Case, async: false
+
+  defp slow(value, ms) do
+    Process.sleep(ms)
+    value
+  end
+
+  # -------------------------------------------------------
+  # Success path
+  # -------------------------------------------------------
+
+  test "empty collection returns {:ok, []}" do
+    assert {:ok, []} = FailFastMap.pmap([], fn x -> x end, 3)
+  end
+
+  test "all-success returns {:ok, results} in original order" do
+    input = Enum.to_list(1..20)
+    assert {:ok, results} = FailFa (truncated)
+14:07:12.689 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 25038, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 25038, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 25038, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 25038, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 33292, "type" => "message"}], "output_tokens" => 33292, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

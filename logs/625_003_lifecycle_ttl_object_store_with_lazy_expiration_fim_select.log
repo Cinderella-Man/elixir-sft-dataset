@@ -1,0 +1,166 @@
+13:20:43.612 [info] FIM candidate-select for 625_003_lifecycle_ttl_object_store_with_lazy_expiration_01 (up to 2)
+13:20:43.612 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:20:43.612 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 2 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+Do NOT pick any of these — they are already covered or known to be untested by the harness:
+  - compute_expires_at/2
+
+=== ORIGINAL PROMPT ===
+# Lifecycle TTL Object Store with Lazy Expiration
+
+Write me an Elixir GenServer module called `TtlObjectStorage` — an S3-like, **in-memory** object store where objects can carry a time-to-live and expire automatically, similar to an S3 lifecycle expiration rule. Expiration is **lazy**: an expired object is treated as absent and is removed the moment it is next touched, and there is also an explicit sweep to reclaim expired objects in bulk. Storage is in memory only and does **not** need to survive a restart.
+
+All TTLs are expressed in **milliseconds** and are measured from the moment of the `put_object` (or `set_ttl`) call. A TTL may also be the atom `:infinity`, meaning the object never expires. An object is considered *expired* once at least its TTL milliseconds have elapsed since it was written or last had its TTL set.
+
+## Public API
+
+- `TtlObjectStorage.start_link(opts)` — start the process. Accepts a `:name` option for registration and a `:default_ttl_ms` option (a positive integer number of milliseconds, or `:infinity`; default `:infinity`) used for any `put_object` that does not specify its own TTL.
+
+- `TtlObjectStorage.create_bucket(server, name)` — create a bucket. Return `:ok`, or `{:error, :already_exists}`. Bucket names must be non-empty strings of lowercase alphanumeric characters, hyphens, and dots — otherwise `{:error, :invalid_name}`.
+
+- `TtlObjectStorage.list_buckets(server)` — return `{:ok, [bucket_name]}`, sorted.
+
+- `TtlObjectStorage.delete_bucket(server, name)` — delete a bucket, but only if it holds no **live** (unexpired) objects; expired objects are ignored and do not block deletion. Return `:ok`, `{:error, :not_found}` if the bucket does not exist, or `{:error, :not_empty}` if the bucket still contains at least one live object.
+
+- `TtlObjectStorage.put_object(server, bucket, key, data, opts \\ [])` — store an object, overwriting any existing object under the same key (which also resets its TTL). `data` is a binary. `opts` may include `:ttl_ms` (a positive integer, or `:infinity`); if omitted, the server's `:default_ttl_ms` applies. Return `:ok`, or `{:error, :bucket_not_found}`.
+
+- `TtlObjectStorage.get_object(server, bucket, key)` — retrieve a live object. Return `{:ok, %{data: binary, size: integer, last_modified: DateTime.t()}}`. Return `{:error, :bucket_not_found}` if the bucket is missing, or `{:error, :not_found}` if the key does not exist **or** has expired. If the key exists but has expired, this call also removes it (lazy expiration).
+
+- `TtlObjectStorage.delete_object(server, bucket, key)` — remove an object. Return `:ok` (idempotent — succeed even if the key does not exist), or `{:error, :bucket_not_found}`.
+
+- `TtlObjectStorage.list_objects(server, bucket)` — return `{:ok, [%{key: string, size: integer, last_modified: DateTime.t()}]}` for the **live** objects only (expired objects are excluded), sorted lexicographically by key. Return `{:error, :bucket_not_found}`.
+
+- `TtlObjectStorage.set_ttl(server, bucket, key, ttl_ms)` — reset the TTL of an existing live object; `ttl_ms` is a positive integer or `:infinity`, measured from now. Return `:ok`, `{:error, :bucket_not_found}` if the bucket is missing, or `{:error, :not_found}` if the key does not exist or has already expired.
+
+- `TtlObjectStorage.purge_expired(server)` — sweep every bucket and permanently remove all currently-expired objects. Return `{:ok, count}` where `count` is the number of objects removed.
+
+Give me the complete module in a single file. Use only the OTP standard library — no external dependencies.
+
+=== MODULE ===
+```elixir
+defmodule TtlObjectStorage do
+  @moduledoc """
+  An S3-like, in-memory object store with lifecycle time-to-live (TTL) expiration.
+
+  Objects may carry a TTL expressed in milliseconds (or the atom `:infinity`),
+  measured from the moment of the `put_object/5` or `set_ttl/4` call. Once at
+  least its TTL has elapsed, an object is considered *expired*.
+
+  Expiration is **lazy**: an expired object is treated as absent and is removed
+  the moment it is next touched (e.g. via `get_object/3`). In addition,
+  `purge_expired/1` provides an explicit bulk sweep that reclaims all currently
+  expired objects across every bucket.
+
+  Storage lives entirely in process memory and does not survive a restart.
+
+  ## State
+
+  Internally the server keeps a map of bucket name to a map of key to object.
+  Each object records its binary `data`, its `size`, a `last_modified`
+  `DateTime`, and an `expires_at` deadline expressed on the monotonic clock
+  (or `:infinity`). The monotonic clock is used for expiration decisions so
+  that wall-clock adjustments cannot affect TTL semantics.
+  """
+
+  use GenServer
+
+  @typedoc "A registered process name or pid used to address the server."
+  @type server :: GenServer.server()
+
+  @typedoc "A time-to-live in milliseconds, or `:infinity` to never expire."
+  @type ttl :: pos_integer() | :infinity
+
+  @name_regex ~r/^[a-z0-9.-]+$/
+
+  ## Public API
+
+  @doc """
+  Start the object store process.
+
+  Options:
+
+    * `:name` — an optional name under which to register the process.
+    * `:default_ttl_ms` — a positive integer number of milliseconds, or
+      `:infinity` (the default), applied to any `put_object/5` that does not
+      specify its own `:ttl_ms`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    default_ttl = Keyword.get(opts, :default_ttl_ms, :infinity)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, %{default_ttl_ms: default_ttl}, gen_opts)
+  end
+
+  @doc """
+  Create a bucket named `name`.
+
+  Returns `:ok` on success, `{:error, :already_exists}` if the bucket already
+  exists, or `{:error, :invalid_name}` if `name` is not a non-empty string of
+  lowercase alphanumeric characters, hyphens, and dots.
+  """
+  @spec create_bucket(server(), String.t()) ::
+          :ok | {:error, :already_exists | :invalid_name}
+  def create_bucket(server, name) do
+    GenServer.call(server, {:create_bucket, name})
+  end
+
+  @doc """
+  List all bucket names, sorted lexicographically.
+  """
+  @spec list_buckets(server()) :: {:ok, [String.t()]}
+  def list_buckets(server) do
+    GenServer.call(server, :list_buckets)
+  end
+
+  @doc """
+  Delete the bucket named `name`.
+
+  The bucket is deleted only if it holds no live (unexpired) objects; expired
+  objects are ignored and do not block deletion. Returns `:ok`,
+  `{:error, :not_found}` if the bucket does not exist, or
+  `{:error, :not_empty}` if it still contains at least one live object.
+  """
+  @spec delete_bucket(server(), String.t()) ::
+          :ok | {:error, :not_found | :not_empty}
+  def delete_bucket(server, name) do
+    GenServer.call(server, {:delete_bucket, name})
+  end
+
+  @doc """
+  Store `data` (a binary) under `key` in `bucket`, overwriting any existing
+  object with the same key and resetting its TTL.
+
+  Options:
+
+    * `:ttl_ms` — a positive integer, or `:infinity`. If omitted, the server's
+      `:default_ttl_ms` applies.
+
+  Returns `:ok`, or `{:error, :bucket_not_found}`.
+  """
+  @spec put_object(server(), String.t(), String.t(), binary(), keyword()) ::
+          :ok | {:error, :bucket_not_found}
+  def put_object(server, bucket, key, data, opts \\ []) when is_binary(data) do
+    GenServer.call(server, {:put_object, bucket, key, data, opts})
+  end
+
+  @doc """
+  Retrieve the live object sto (truncated)
+13:20:47.848 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+handle_call/3 (:purge_expired clause)
+handle_call/3 ({:get_object, bucket, key} clause)
+</file>
+13:20:47.848 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10128, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10128, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10128, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10128, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 58, "type" => "message"}], "output_tokens" => 58, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

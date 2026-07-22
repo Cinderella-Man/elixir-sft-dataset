@@ -1,0 +1,352 @@
+08:21:15.541 [info] VARIATION 623_002_boolean_phrase_query_inverted_index_01: Boolean Phrase Query Inverted Index
+08:21:15.541 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+08:21:15.541 [debug] claude -p USER prompt:
+Write me an Elixir module called `InvertedIndex` that implements a **Boolean full-text search engine** with positional storage and phrase queries. Unlike a ranked search engine, this one answers set-membership questions: a document either satisfies a Boolean query or it does not — there is no relevance score.
+
+I need these functions in the public API:
+
+- `InvertedIndex.start_link(opts)` to start the process. It must accept a `:name` option for process registration and a `:stop_words` option which is a `MapSet` of words to exclude during tokenization. If `:stop_words` is not provided, default to a built-in set containing at minimum: "the", "a", "an", "is", "are", "was", "were", "in", "on", "at", "to", "of", "and", "or", "it", "this", "that", "for", "with", "as", "by", "not", "be", "has", "had", "have", "do", "does", "did", "but", "if", "from".
+
+- `InvertedIndex.index(server, id, fields)` which indexes a document. `id` is a string, `fields` is a map of field names to text strings (e.g. `%{title: "Quick brown fox", body: "The fox jumped over the lazy dog"}`). Tokenization must: lowercase everything, split on whitespace and punctuation via the regex `~r/[^a-z0-9]+/`, then remove stop words. The **order** of the surviving tokens within each field must be preserved, because phrase queries match on consecutive positions. Indexing the same `id` again must replace the previous version of that document cleanly. Return `:ok`.
+
+- `InvertedIndex.remove(server, id)` which removes a document from the index entirely. After removal it must not appear in any search results and must not contribute to the vocabulary. Return `:ok`. Removing a non-existent id must not raise.
+
+- `InvertedIndex.search(server, query)` which evaluates a Boolean query expression and returns the **sorted (ascending) list of matching document ids** (a list of strings). There is no scoring. The `query` is one of the following expression forms (they nest arbitrarily):
+  - `{:term, word}` — `word` is run through the same tokenization pipeline; only the first resulting token is used (if tokenization yields nothing — e.g. `word` is a stop word — the query matches no documents). A document matches if that token appears in **any** of its fields.
+  - `{:phrase, text}` — `text` is run through the same tokenization pipeline to produce a sequence of terms (stop words in the phrase are dropped, exactly as in indexing). A document matches if **some single field** contains that exact term sequence at consecutive positions, in order. A one-term phrase is equivalent to `{:term, term}`. A phrase that tokenizes to nothing matches no documents.
+  - `{:and, list}` — a document matches if it matches every sub-expression in `list`. An empty list matches **all** indexed documents.
+  - `{:or, list}` — a document matches if it matches at least one sub-expression in `list`. An empty list matches **no** documents.
+  - `{:not, expr}` — a document matches if it does **not** match `expr`. Evaluated against all currently indexed documents.
+
+- `InvertedIndex.suggest(server, prefix, limit \\ 10)` which returns term completions from the index vocabulary. The prefix is lowercased before lookup. Return up to `limit` terms that start with the prefix, sorted by document frequency descending (terms appearing in more documents come first). Return a list of strings.
+
+- `InvertedIndex.stats(server)` which returns `%{document_count: integer, term_count: integer}` — the total indexed documents and the total unique terms in the vocabulary.
+
+Additional requirements:
+- Implement this as a GenServer. Use no external dependencies — only standard library and OTP.
+- All term storage and lookup must be case-insensitive.
+- The module must be in a single file called `inverted_index.ex`.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+08:22:53.773 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule InvertedIndex do
+  @moduledoc """
+  A Boolean full-text search engine backed by a `GenServer`.
+
+  Documents are tokenized field-by-field (lowercase, split on punctuation and
+  whitespace, stop words removed) while preserving token order so that phrase
+  queries can match on consecutive positions. Queries are Boolean expressions
+  built from `{:term, ...}`, `{:phrase, ...}`, `{:and, ...}`, `{:or, ...}` and
+  `{:not, ...}` nodes. There is no relevance scoring: a document either
+  satisfies a query or it does not.
+
+  Two internal structures are maintained:
+
+    * `documents` — `%{id => %{field => [token]}}`, used for phrase matching and
+      for clean removal/replacement of documents.
+    * `postings` — `%{term => MapSet.t(id)}`, used for fast term membership,
+      document-frequency ranking of suggestions, and vocabulary statistics.
+  """
+
+  use GenServer
+
+  @type query ::
+          {:term, String.t()}
+          | {:phrase, String.t()}
+          | {:and, [query]}
+          | {:or, [query]}
+          | {:not, query}
+
+  @default_stop_words MapSet.new([
+                        "the", "a", "an", "is", "are", "was", "were", "in", "on",
+                        "at", "to", "of", "and", "or", "it", "this", "that", "for",
+                        "with", "as", "by", "not", "be", "has", "had", "have", "do",
+                        "does", "did", "but", "if", "from"
+                      ])
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the index process.
+
+  Options:
+
+    * `:name` — optional process name for registration.
+    * `:stop_words` — optional `MapSet` of words to exclude during tokenization.
+      Defaults to a built-in English stop-word set.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Indexes `fields` (a map of field name to text) under `id`.
+
+  Re-indexing an existing `id` cleanly replaces its previous version.
+  """
+  @spec index(GenServer.server(), String.t(), map()) :: :ok
+  def index(server, id, fields) do
+    GenServer.call(server, {:index, id, fields})
+  end
+
+  @doc """
+  Removes the document `id` from the index entirely.
+
+  Removing a non-existent `id` is a no-op.
+  """
+  @spec remove(GenServer.server(), String.t()) :: :ok
+  def remove(server, id) do
+    GenServer.call(server, {:remove, id})
+  end
+
+  @doc """
+  Evaluates a Boolean `query` and returns the sorted list of matching ids.
+  """
+  @spec search(GenServer.server(), query()) :: [String.t()]
+  def search(server, query) do
+    GenServer.call(server, {:search, query})
+  end
+
+  @doc """
+  Returns up to `limit` vocabulary terms starting with `prefix`.
+
+  Terms are sorted by document frequency descending (ties broken
+  alphabetically). The `prefix` is lowercased before lookup.
+  """
+  @spec suggest(GenServer.server(), String.t(), non_neg_integer()) :: [String.t()]
+  def suggest(server, prefix, limit \\ 10) do
+    GenServer.call(server, {:suggest, prefix, limit})
+  end
+
+  @doc """
+  Returns `%{document_count: integer, term_count: integer}` for the index.
+  """
+  @spec stats(GenServer.server()) :: %{document_count: non_neg_integer(), term_count: non_neg_integer()}
+  def stats(server) do
+    GenServer.call(server, :stats)
+  end
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    stop_words = Keyword.get(opts, :stop_words, @default_stop_words)
+    {:ok, %{stop_words: stop_words, documents: %{}, postings: %{}}}
+  end
+
+  @impl true
+  def handle_call({:index, id, fields}, _from, state) do
+    state = do_remove(state, id)
+
+    tokenized =
+      fields
+      |> Enum.map(fn {field, text} -> {field, tokenize(text, state.stop_words)} end)
+      |> Map.new()
+
+    terms = doc_terms(tokenized)
+
+    postings =
+      Enum.reduce(terms, state.postings, fn term, acc ->
+        Map.update(acc, term, MapSet.new([id]), &MapSet.put(&1, id))
+      end)
+
+    documents = Map.put(state.documents, id, tokenized)
+    {:reply, :ok, %{state | documents: documents, postings: postings}}
+  end
+
+  def handle_call({:remove, id}, _from, state) do
+    {:reply, :ok, do_remove(state, id)}
+  end
+
+  def handle_call({:search, query}, _from, state) do
+    ids = query |> eval(state) |> MapSet.to_list() |> Enum.sort()
+    {:reply, ids, state}
+  end
+
+  def handle_call({:suggest, prefix, limit}, _from, state) do
+    prefix = String.downcase(prefix)
+
+    terms =
+      state.postings
+      |> Enum.filter(fn {term, _ids} -> String.starts_with?(term, prefix) end)
+      |> Enum.sort_by(fn {term, ids} -> {-MapSet.size(ids), term} end)
+      |> Enum.take(limit)
+      |> Enum.map(fn {term, _ids} -> term end)
+
+    {:reply, terms, state}
+  end
+
+  def handle_call(:stats, _from, state) do
+    stats = %{
+      document_count: map_size(state.documents),
+      term_count: map_size(state.postings)
+    }
+
+    {:reply, stats, state}
+  end
+
+  # ------------------------------------------------------------------
+  # Indexing / removal helpers
+  # ------------------------------------------------------------------
+
+  defp do_remove(state, id) do
+    case Map.pop(state.documents, id) do
+      {nil, _documents} ->
+        state
+
+      {tokenized, documents} ->
+        terms = doc_terms(tokenized)
+
+        postings =
+          Enum.reduce(terms, state.postings, fn term, acc ->
+            drop_posting(acc, term, id)
+          end)
+
+        %{state | documents: documents, postings: postings}
+    end
+  end
+
+  defp drop_posting(postings, term, id) do
+    case Map.get(postings, term) do
+      nil ->
+        postings
+
+      set ->
+        set = MapSet.delete(set, id)
+
+        if MapSet.size(set) == 0 do
+          Map.delete(postings, term)
+        else
+          Map.put(postings, term, set)
+        end
+    end
+  end
+
+  defp doc_terms(tokenized) do
+    tokenized
+    |> Enum.flat_map(fn {_field, tokens} -> tokens end)
+    |> MapSet.new()
+  end
+
+  defp tokenize(text, stop_words) do
+    text
+    |> String.downcase()
+    |> String.split(~r/[^a-z0-9]+/, trim: true)
+    |> Enum.reject(&MapSet.member?(stop_words, &1))
+  end
+
+  # ------------------------------------------------------------------
+  # Query evaluation — returns a MapSet of matching ids
+  # ------------------------------------------------------------------
+
+  defp eval({:term, word}, state) do
+    case tokenize(word, state.stop_words) do
+      [] -> MapSet.new()
+      [term | _rest] -> Map.get(state.postings, term, MapSet.new())
+    end
+  end
+
+  defp eval({:phrase, text}, state) do
+    case tokenize(text, state.stop_words) do
+      [] ->
+        MapSet.new()
+
+      [single] ->
+        Map.get(state.postings, single, MapSet.new())
+
+      terms ->
+        terms
+        |> candidate_ids(state)
+        |> Enum.filter(fn id -> doc_has_phrase?(Map.get(state.documents, id), terms) end)
+        |> MapSet.new()
+    end
+  end
+
+  defp eval({:and, []}, state), do: all_ids(state)
+
+  defp eval({:and, list}, state) do
+    list
+    |> Enum.map(&eval(&1, state))
+    |> intersect_all()
+  end
+
+  defp eval({:or, list}, state) do
+    Enum.reduce(list, MapSet.new(), fn q, acc -> MapSet.union(acc, eval(q, state)) end)
+  end
+
+  defp eval({:not, expr}, state) do
+    MapSet.difference(all_ids(state), eval(expr, state))
+  end
+
+  defp candidate_ids(terms, state) do
+    terms
+    |> Enum.map(&Map.get(state.postings, &1, MapSet.new()))
+    |> intersect_all()
+  end
+
+  defp doc_has_phrase?(nil, _terms), do: false
+
+  defp doc_has_phrase?(tokenized, terms) do
+    Enum.any?(tokenized, fn {_field, tokens} -> contains_sequence?(tokens, terms) end)
+  end
+
+  defp contains_sequence?(tokens, terms) do
+    len = length(terms)
+
+    tokens
+    |> Stream.chunk_every(len, 1, :discard)
+ (truncated)
+08:22:53.773 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5187, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5187, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5187, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5187, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 8667, "type" => "message"}], "output_tokens" => 8667, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:22:53.804 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_002_boolean_phrase_query_inverted_index_01 solution.ex
+08:22:54.569 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":318,"lines_over_98":0,"max_line_length":89,"mode":"full","pipe_chain_count":25,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/623_002_boolean_phrase_query_inverted_index_01/solution.ex","task":"623_002_boolean_phrase_query_inverted_index_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":26,"tests_ran":true,"tests_skipped":0,"tests_total":26,"timestamp":"2026-07-11T06:22:54.543300Z"}
+08:22:54.582 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut solution.ex
+08:22:55.299 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":246,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":25,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 26/26 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex","task":"623_002_boolean_phrase_query_inverted_index_01_mut","test_failures":[{"message":"MUTATION","module":"InvertedIndexTest","test":"test term query finds documents containing the token"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test term query is case-insensitive"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test term query for a stop word matches nothing"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test and returns intersection"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test or returns union"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test not excludes matching documents"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test empty and matches all, empty or matches none"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test nested boolean expressions evaluate correctly"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test results are sorted ascending by id"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test phrase matches consecutive terms"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test phrase does not match non-consecutive terms"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test phrase must lie within a single field"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test stop words in a phrase are dropped before matching"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test single-term phrase behaves like a term query"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test stats reflects document and term counts"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test custom stop words override the defaults"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test removed document no longer appears"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test removing non-existent doc does not raise"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test re-indexing replaces previous content"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test suggest returns prefix matches sorted by document frequency"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test suggest respects limit and is case-insensitive"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test suggest without a limit returns at most 10 terms"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test suggest returns empty list for non-matching prefix"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test search on empty index returns empty list"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test punctuation is stripped during tokenization"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test accepts :name option for registration"}],"tests_errors":0,"tests_excluded":0,"tests_failed":26,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":26,"timestamp":"2026-07-11T06:22:55.276956Z"}
+08:22:55.306 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut solution.ex
+08:22:56.024 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":255,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":25,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 24/26 failed"],"tests":0.08},"shape":"single","solution_file":".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex","task":"623_002_boolean_phrase_query_inverted_index_01_mut","test_failures":[{"message":"MUTATION","module":"InvertedIndexTest","test":"test term query finds documents containing the token"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test term query is case-insensitive"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test term query for a stop word matches nothing"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test and returns intersection"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test or returns union"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test not excludes matching documents"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test empty and matches all, empty or matches none"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test nested boolean expressions evaluate correctly"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test results are sorted ascending by id"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test phrase matches consecutive terms"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test phrase does not match non-consecutive terms"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test phrase must lie within a single field"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test stop words in a phrase are dropped before matching"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test single-term phrase behaves like a term query"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test stats reflects document and term counts"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test custom stop words override the defaults"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test removed document no longer appears"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test re-indexing replaces previous content"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test suggest returns prefix matches sorted by document frequency"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test suggest respects limit and is case-insensitive"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test suggest without a limit returns at most 10 terms"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test suggest returns empty list for non-matching prefix"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test punctuation is stripped during tokenization"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test accepts :name option for registration"}],"tests_errors":0,"tests_excluded":0,"tests_failed":24,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":26,"timestamp":"2026-07-11T06:22:56.000315Z"}
+08:22:56.031 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut solution.ex
+08:22:56.739 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":255,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":25,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 2/26 failed"],"tests":0.92},"shape":"single","solution_file":".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex","task":"623_002_boolean_phrase_query_inverted_index_01_mut","test_failures":[{"message":"MUTATION","module":"InvertedIndexTest","test":"test removed document no longer appears"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test removing non-existent doc does not raise"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":26,"timestamp":"2026-07-11T06:22:56.714199Z"}
+08:22:56.746 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut solution.ex
+08:22:57.439 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":255,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":25,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 20/26 failed"],"tests":0.23},"shape":"single","solution_file":".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex","task":"623_002_boolean_phrase_query_inverted_index_01_mut","test_failures":[{"message":"MUTATION","module":"InvertedIndexTest","test":"test term query finds documents containing the token"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test term query is case-insensitive"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test term query for a stop word matches nothing"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test and returns intersection"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test or returns union"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test not excludes matching documents"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test empty and matches all, empty or matches none"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test nested boolean expressions evaluate correctly"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test results are sorted ascending by id"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test phrase matches consecutive terms"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test phrase does not match non-consecutive terms"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test phrase must lie within a single field"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test stop words in a phrase are dropped before matching"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test single-term phrase behaves like a term query"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test custom stop words override the defaults"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test removed document no longer appears"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test re-indexing replaces previous content"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test search on empty index returns empty list"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test punctuation is stripped during tokenization"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test accepts :name option for registration"}],"tests_errors":0,"tests_excluded":0,"tests_failed":20,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":26,"timestamp":"2026-07-11T06:22:57.416746Z"}
+08:22:57.446 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut solution.ex
+08:22:58.158 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":255,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":25,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 4/26 failed"],"tests":0.85},"shape":"single","solution_file":".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex","task":"623_002_boolean_phrase_query_inverted_index_01_mut","test_failures":[{"message":"MUTATION","module":"InvertedIndexTest","test":"test suggest returns prefix matches sorted by document frequency"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test suggest respects limit and is case-insensitive"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test suggest without a limit returns at most 10 terms"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test suggest returns empty list for non-matching prefix"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":22,"tests_ran":true,"tests_skipped":0,"tests_total":26,"timestamp":"2026-07-11T06:22:58.133829Z"}
+08:22:58.165 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut solution.ex
+08:22:58.878 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":255,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":25,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 3/26 failed"],"tests":0.88},"shape":"single","solution_file":".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex","task":"623_002_boolean_phrase_query_inverted_index_01_mut","test_failures":[{"message":"MUTATION","module":"InvertedIndexTest","test":"test stats reflects document and term counts"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test removed document no longer appears"},{"message":"MUTATION","module":"InvertedIndexTest","test":"test re-indexing replaces previous content"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":26,"timestamp":"2026-07-11T06:22:58.855335Z"}
+08:22:58.884 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut solution.ex
+08:22:59.616 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":254,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":25,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 26/26 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex","task":"623_002_boolean_phrase_query_inverted_index_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test term query finds documents containing the token"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test term query is case-insensitive"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test term query for a stop word matches nothing"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test and returns intersection"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test or returns union"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test not excludes matching documents"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test empty and matches all, empty or matches none"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test nested boolean expressions evaluate correctly"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test results are sorted ascending by id"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test phrase matches consecutive terms"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test phrase does not match non-consecutive terms"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test phrase must lie within a single field"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test stop words in a phrase are dropped before matching"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :init, 1, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", (truncated)
+08:22:59.624 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut solution.ex
+08:23:00.340 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":229,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":16,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":21,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 21 warning(s) → hard fail (overall 0.0)","tests: 26/26 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex","task":"623_002_boolean_phrase_query_inverted_index_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test term query finds documents containing the token"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test term query is case-insensitive"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test term query for a stop word matches nothing"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test and returns intersection"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test or returns union"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test not excludes matching documents"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test empty and matches all, empty or matches none"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test nested boolean expressions evaluate correctly"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test results are sorted ascending by id"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test phrase matches consecutive terms"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test phrase does not match non-consecutive terms"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test phrase must lie within a single field"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test stop words in a phrase are dropped before matching"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\".gen_staging/623_002_boolean_phrase_query_inverted_index_01_mut/solu (truncated)
+08:23:00.340 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_002_boolean_phrase_query_inverted_index_01 solution.ex (seed 727693451)
+08:23:01.065 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":318,"lines_over_98":0,"max_line_length":89,"mode":"full","pipe_chain_count":25,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/623_002_boolean_phrase_query_inverted_index_01/solution.ex","task":"623_002_boolean_phrase_query_inverted_index_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":26,"tests_ran":true,"tests_skipped":0,"tests_total":26,"timestamp":"2026-07-11T06:23:01.041397Z"}
+08:23:01.068 [info] cycle 623_002_boolean_phrase_query_inverted_index_01: ACCEPTED on attempt 0
+08:23:01.069 [info] promoted 623_002_boolean_phrase_query_inverted_index_01 -> tasks/623_002_boolean_phrase_query_inverted_index_01

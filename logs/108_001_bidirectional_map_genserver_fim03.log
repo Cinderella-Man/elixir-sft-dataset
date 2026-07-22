@@ -1,0 +1,366 @@
+07:56:04.340 [info] FIM 108_001_bidirectional_map_genserver_fim03 → 108_001_bidirectional_map_genserver_04: target start_link/1
+07:56:04.340 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+07:56:04.340 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `start_link/1`.
+
+Generate a prompt describing how to implement `start_link/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `start_link/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `start_link/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `start_link/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Bidirectional Map GenServer
+
+Write me an Elixir GenServer module called `BiMap` that maintains a **bidirectional mapping** between keys and values. Every key maps to exactly one value, and every value maps back to exactly one key — the mapping is always a bijection.
+
+## Public API
+
+- `BiMap.start_link(opts)` — starts the process. It must accept a `:name` option used to register the process (all other functions take that name — or any valid GenServer server reference — as their first argument). Return the usual `{:ok, pid}`.
+
+- `BiMap.put(name, key, value)` — inserts or updates the association between `key` and `value`. Always returns `:ok`. This is where the bijection invariant must be enforced:
+  - If `key` is already associated with a *different* value, the old value's reverse mapping must be removed before the new one is installed.
+  - If `value` is already associated with a *different* key, that old key's mapping must be removed (so the value now points to the new key).
+  - Putting the exact same `{key, value}` pair again is a no-op that leaves the pair intact.
+
+- `BiMap.get_by_key(name, key)` — returns `{:ok, value}` if `key` is present, otherwise `:error`.
+
+- `BiMap.get_by_value(name, value)` — returns `{:ok, key}` if `value` is present, otherwise `:error`.
+
+- `BiMap.delete(name, key)` — removes `key` and its associated value (both directions). Returns `:ok`. Deleting a key that isn't present is a harmless no-op that still returns `:ok`.
+
+## The invariant
+
+At all times the structure must remain a true bijection: there is never a forward entry `key → value` without the matching reverse entry `value → key`, and no value or key is ever associated with more than one partner. Concretely, after any sequence of `put`/`delete` calls:
+
+- Every `get_by_key(name, k)` that returns `{:ok, v}` implies `get_by_value(name, v)` returns `{:ok, k}`, and vice versa.
+- Reassigning a key to a new value must orphan the old value (its `get_by_value` becomes `:error`).
+- Reassigning a value to a new key must orphan the old key (its `get_by_key` becomes `:error`).
+
+Keys and values can be any term (atoms, integers, strings, tuples, etc.).
+
+Give me the complete module in a single file. Use only the OTP standard library — no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule BiMap do
+  @moduledoc """
+  A GenServer maintaining a bidirectional (bijective) mapping between keys and
+  values.
+
+  Every key maps to exactly one value and every value maps back to exactly one
+  key. The bijection invariant is enforced on every `put/3`: reassigning a key
+  orphans its old value, and reassigning a value orphans its old key, so the
+  forward and reverse maps stay perfectly consistent.
+
+  Keys and values may be any term.
+  """
+
+  use GenServer
+
+  ## Client API
+
+  @doc """
+  Starts the BiMap process.
+
+  Accepts a `:name` option used to register the process. All other functions
+  accept that name (or any valid GenServer server reference) as their first
+  argument.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    GenServer.start_link(__MODULE__, :ok, [name: name] ++ opts)
+  end
+
+  @doc """
+  Inserts or updates the association between `key` and `value`, preserving the
+  bijection invariant. Always returns `:ok`.
+  """
+  @spec put(GenServer.server(), term(), term()) :: :ok
+  def put(name, key, value) do
+    GenServer.call(name, {:put, key, value})
+  end
+
+  @doc """
+  Returns `{:ok, value}` if `key` is present, otherwise `:error`.
+  """
+  @spec get_by_key(GenServer.server(), term()) :: {:ok, term()} | :error
+  def get_by_key(name, key) do
+    GenServer.call(name, {:get_by_key, key})
+  end
+
+  @doc """
+  Returns `{:ok, key}` if `value` is present, otherwise `:error`.
+  """
+  @spec get_by_value(GenServer.server(), term()) :: {:ok, term()} | :error
+  def get_by_value(name, value) do
+    GenServer.call(name, {:get_by_value, value})
+  end
+
+  @doc """
+  Removes `key` and its associated value in both directions. Always returns
+  `:ok`, even when `key` is absent.
+  """
+  @spec delete(GenServer.server(), term()) :: :ok
+  def delete(name, key) do
+    GenServer.call(name, {:delete, key})
+  end
+
+  ## Server callbacks
+
+  @impl true
+  def init(:ok) do
+    # forward: key => value, reverse: value => key
+    {:ok, %{forward: %{}, reverse: %{}}}
+  end
+
+  @impl true
+  def handle_call({:put, key, value}, _from, state) do
+    %{forward: forward, reverse: reverse} = state
+
+    # If key currently points to a different value, orphan that old value.
+    reverse =
+      case Map.fetch(forward, key) do
+        {:ok, ^value} -> reverse
+        {:ok, old_value} -> Map.delete(reverse, old_value)
+        :error -> reverse
+      end
+
+    # If value currently points to a different key, orphan that old key.
+    forward =
+      case Map.fetch(reverse, value) do
+        {:ok, ^key} -> forward
+        {:ok, old_key} -> Map.delete(forward, old_key)
+        :error -> forward
+      end
+
+    forward = Map.put(forward, key, value)
+    reverse = Map.put(reverse, value, key)
+
+    {:reply, :ok, %{state | forward: forward, reverse: reverse}}
+  end
+
+  @impl true
+  def handle_call({:get_by_key, key}, _from, state) do
+    {:reply, Map.fetch(state.forward, key), state}
+  end
+
+  @impl true
+  def handle_call({:get_by_value, value}, _from, state) do
+    {:reply, Map.fetch(state.reverse, value), state}
+  end
+
+  @impl true
+  def handle_call({:delete, key}, _from, state) do
+    %{forward: forward, reverse: reverse} = state
+
+    case Map.fetch(forward, key) do
+      {:ok, value} ->
+        new_state = %{
+          state
+          | forward: Map.delete(forward, key),
+            reverse: Map.delete(reverse, value)
+        }
+
+        {:reply, :ok, new_state}
+
+      :error ->
+        {:reply, :ok, state}
+    end
+  end
+end
+
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description + skeleton module with a `# TODO` for start_link/1
+  - solution.ex — just the start_link/1 function
+
+
+07:56:26.749 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the Middle: `BiMap.start_link/1`
+
+Implement the public `start_link/1` function for the `BiMap` GenServer.
+
+`start_link/1` receives a keyword list of options. It must pull the `:name`
+option out of that list using `Keyword.pop/2`, binding the extracted name and
+the remaining options separately. It then starts the GenServer with
+`GenServer.start_link/3`, passing `__MODULE__` as the module, `:ok` as the init
+argument, and an options list that registers the process under the extracted
+`:name` while still forwarding any remaining options. Concretely, build the
+options list as `[name: name] ++ opts` so the `:name` registration is applied
+and every other caller-supplied option is preserved. Return the usual
+`GenServer.on_start()` result (e.g. `{:ok, pid}`).
+
+```elixir
+defmodule BiMap do
+  @moduledoc """
+  A GenServer maintaining a bidirectional (bijective) mapping between keys and
+  values.
+
+  Every key maps to exactly one value and every value maps back to exactly one
+  key. The bijection invariant is enforced on every `put/3`: reassigning a key
+  orphans its old value, and reassigning a value orphans its old key, so the
+  forward and reverse maps stay perfectly consistent.
+
+  Keys and values may be any term.
+  """
+
+  use GenServer
+
+  ## Client API
+
+  @doc """
+  Starts the BiMap process.
+
+  Accepts a `:name` option used to register the process. All other functions
+  accept that name (or any valid GenServer server reference) as their first
+  argument.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    # TODO
+  end
+
+  @doc """
+  Inserts or updates the association between `key` and `value`, preserving the
+  bijection invariant. Always returns `:ok`.
+  """
+  @spec put(GenServer.server(), term(), term()) :: :ok
+  def put(name, key, value) do
+    GenServer.call(name, {:put, key, value})
+  end
+
+  @doc """
+  Returns `{:ok, value}` if `key` is present, otherwise `:error`.
+  """
+  @spec get_by_key(GenServer.server(), term()) :: {:ok, term()} | :error
+  def get_by_key(name, key) do
+    GenServer.call(name, {:get_by_key, key})
+  end
+
+  @doc """
+  Returns `{:ok, key}` if `value` is present, otherwise `:error`.
+  """
+  @spec get_by_value(GenServer.server(), term()) :: {:ok, term()} | :error
+  def get_by_value(name, value) do
+    GenServer.call(name, {:get_by_value, value})
+  end
+
+  @doc """
+  Removes `key` and its associated value in both directions. Always returns
+  `:ok`, even when `key` is absent.
+  """
+  @spec delete(GenServer.server(), term()) :: :ok
+  def delete(name, key) do
+    GenServer.call(name, {:delete, key})
+  end
+
+  ## Server callbacks
+
+  @impl true
+  def init(:ok) do
+    # forward: key => value, reverse: value => key
+    {:ok, %{forward: %{}, reverse: %{}}}
+  end
+
+  @impl true
+  def handle_call({:put, key, value}, _from, state) do
+    %{forward: forward, reverse: reverse} = state
+
+    # If key currently points to a different value, orphan that old value.
+    reverse =
+      case Map.fetch(forward, key) do
+        {:ok, ^value} -> reverse
+        {:ok, old_value} -> Map.delete(reverse, old_value)
+        :error -> reverse
+      end
+
+    # If value currently points to a different key, orphan that old key.
+    forward =
+      case Map.fetch(reverse, value) do
+        {:ok, ^key} -> forward
+        {:ok, old_key} -> Map.delete(forward, old_key)
+        :error -> forward
+      end
+
+    forward = Map.put(forward, key, value)
+    reverse = Map.put(reverse, value, key)
+
+    {:reply, :ok, %{state | forward: forward, reverse: reverse}}
+  end
+
+  @impl true
+  def handle_call({:get_by_key, key}, _from, state) do
+    {:reply, Map.fetch(state.forward, key), state}
+  end
+
+  @impl true
+  def handle_call({:get_by_value, value}, _from, state) do
+    {:reply, Map.fetch(state.reverse, value), state}
+  end
+
+  @impl true
+  def handle_call({:delete, key}, _from, state) do
+    %{forward: forward, reverse: reverse} = state
+
+    case Map.fetch(forward, key) do
+      {:ok, value} ->
+        new_state = %{
+          state
+          | forward: Map.delete(forward, key),
+            reverse: Map.delete(reverse, value)
+        }
+
+        {:reply, :ok, new_state}
+
+      :error ->
+        {:reply, :ok, state}
+    end
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    GenServer.start_link(__MODULE__, :ok, [name: name] ++ opts)
+  end
+</file>
+07:56:26.750 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6410, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6410, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6410, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6410, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 1822, "type" => "message"}], "output_tokens" => 1822, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+07:56:26.769 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_108_001_bidirectional_map_genserver_04/108_001_bidirectional_map_genserver_04 solution.ex
+07:56:27.464 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":4,"lines_over_98":0,"max_line_length":63,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"108_001_bidirectional_map_genserver_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_108_001_bidirectional_map_genserver_04/108_001_bidirectional_map_genserver_04/solution.ex","task":"108_001_bidirectional_map_genserver_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-11T05:56:27.433511Z"}
+07:56:27.465 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_108_001_bidirectional_map_genserver_04/108_001_bidirectional_map_genserver_04 .gen_staging/fim_108_001_bidirectional_map_genserver_04/mutant.ex
+07:56:28.159 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":23,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"parent":"108_001_bidirectional_map_genserver_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.9,"mode":"fim","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 12/12 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_108_001_bidirectional_map_genserver_04/mutant.ex","task":"108_001_bidirectional_map_genserver_04","test_failures":[{"message":"failed to start child with the spec {BiMap, [name: :bimap_21]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_1580876_2627.ex:27: BiMap.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"BiMapTest","test":"test put then look up in both directions"},{"message":"failed to start child with the spec {BiMap, [name: :bimap_85]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_1580876_2627.ex:27: BiMap.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"BiMapTest","test":"test missing key and missing value return :error"},{"message":"failed to start child with the spec {BiMap, [name: :bimap_149]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_1580876_2627.ex:27: BiMap.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"BiMapTest","test":"test multiple independent pairs coexist"},{"message":"failed to start child with the spec {BiMap, [name: :bimap_213]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_1580876_2627.ex:27: BiMap.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"BiMapTest","test":"test keys and values may be arbitrary terms"},{"message":"failed to start child with the spec {BiMap, [name: :bimap_277]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_1580876_2627.ex:27: BiMap.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"BiMapTest","test":"test putting a duplicate value under a new key evicts the old key"},{"message":"failed to start child with the spec {BiMap, [name: :bimap_341]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_1580876_2627.ex:27: BiMap.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"BiMapTest","test":"test reassigning a key to a new value removes the old reverse mapping"},{"message":"failed to start child with the spec {BiMap, [name: :bimap_405]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_1580876_2627.ex:27: BiMap.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"BiMapTest","test":"test reassigning across existing entries preserves the bijection"},{"message":"failed to start child with the spec {BiMap, [name: :bimap_469]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_1580876_2627.ex:27: BiMap.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"BiMapTest","test":"test putting the same pair twice leaves it intact"},{"message":"failed to start child with the spec {BiMap, [name: :bimap_533]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_1580876_2627.ex:27: BiMap.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"BiMapTest","test":"test delete removes both directions"},{"message":"failed to start child with the spec {BiMap, [name: :bimap_597]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp (truncated)
+07:56:28.159 [debug] fim mutation gate: killed
+07:56:28.160 [info] promoted 108_001_bidirectional_map_genserver_04 -> tasks/108_001_bidirectional_map_genserver_04

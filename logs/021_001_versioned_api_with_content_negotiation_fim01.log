@@ -1,0 +1,635 @@
+01:59:06.655 [info] FIM 021_001_versioned_api_with_content_negotiation_fim01 → 021_001_versioned_api_with_content_negotiation_04: target send_json/3
+01:59:06.655 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+01:59:06.655 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `send_json/3`.
+
+Generate a prompt describing how to implement `send_json/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `send_json/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `send_json/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `send_json/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir Plug-based API module called `VersionedApi.Router` that serves a `GET /api/users/:id` endpoint returning different JSON response shapes depending on the `Accept-Version` request header.
+
+I need these modules:
+
+- `VersionedApi.Router` — a `Plug.Router` that defines the `GET /api/users/:id` route. It should use a version plug (described below) before matching routes. The route handler should look up the user by id from a simple in-memory data source (a module attribute map is fine — no database needed), then delegate to a versioned view to render the response. If the user id is not found, return 404 with `{"error": "not found"}`.
+
+- `VersionedApi.Plugs.ApiVersion` — a custom Plug that extracts the `accept-version` header, validates it against a list of supported versions, and stores the resolved version in `conn.assigns[:api_version]`. It should accept a `:supported` option (list of strings like `["v1", "v2"]`) and a `:default` option (string like `"v2"`). If no `Accept-Version` header is present, assign the default version. If the header value is not in the supported list, halt the connection and return `406 Not Acceptable` with the JSON body `{"error": "unsupported version", "supported": ["v1", "v2"]}`.
+
+- `VersionedApi.Views.UserView` — a module with a `render(version, user)` function that returns a map with the appropriate shape:
+  - `"v1"` returns `%{name: first_name <> " " <> last_name, email: email}`
+  - `"v2"` returns `%{first_name: first_name, last_name: last_name, email: email, created_at: created_at}`
+
+The in-memory user store should contain at least these entries:
+
+```
+"1" => %{first_name: "Alice", last_name: "Smith", email: "alice@example.com", created_at: "2024-01-15T10:30:00Z"}
+"2" => %{first_name: "Bob", last_name: "Jones", email: "bob@example.com", created_at: "2024-06-20T14:00:00Z"}
+```
+
+All JSON responses must have a `content-type` of `application/json`. Use `Jason` for JSON encoding.
+
+Give me all three modules, each in its own file. Only depend on `plug`, `jason`, and their transitive dependencies — no Phoenix, no database.
+
+=== WHOLE MODULE ===
+```elixir
+<file path="lib/versioned_api/views/user_view.ex">
+defmodule VersionedApi.Views.UserView do
+  @moduledoc "Renders a user map per API version: v1 is a flat name, v2 is structured."
+
+  @doc ~s|Renders `u` for API `version` ("v1" or "v2") as a plain map.|
+  @spec render(String.t(), map()) :: map()
+  def render("v1", u), do: %{name: u.first_name <> " " <> u.last_name, email: u.email}
+
+  def render("v2", u) do
+    %{first_name: u.first_name, last_name: u.last_name, email: u.email, created_at: u.created_at}
+  end
+end
+</file>
+<file path="lib/versioned_api/plugs/api_version.ex">
+defmodule VersionedApi.Plugs.ApiVersion do
+  import Plug.Conn
+  def init(opts), do: opts
+
+  def call(conn, opts) do
+    supported = Keyword.get(opts, :supported, ["v1", "v2"])
+    default = Keyword.get(opts, :default, "v2")
+
+    version =
+      case get_req_header(conn, "accept-version") do
+        [v | _] -> v
+        [] -> default
+      end
+
+    if version in supported do
+      assign(conn, :api_version, version)
+    else
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(406, Jason.encode!(%{error: "unsupported version", supported: supported}))
+      |> halt()
+    end
+  end
+end
+</file>
+<file path="lib/versioned_api/router.ex">
+defmodule VersionedApi.Router do
+  use Plug.Router
+
+  @users %{
+    "1" => %{
+      first_name: "Alice",
+      last_name: "Smith",
+      email: "alice@example.com",
+      created_at: "2024-01-15T10:30:00Z"
+    },
+    "2" => %{
+      first_name: "Bob",
+      last_name: "Jones",
+      email: "bob@example.com",
+      created_at: "2024-06-20T14:00:00Z"
+    }
+  }
+  plug(VersionedApi.Plugs.ApiVersion, supported: ["v1", "v2"], default: "v2")
+  plug(:match)
+  plug(:dispatch)
+
+  get "/api/users/:id" do
+    case Map.get(@users, id) do
+      nil ->
+        send_json(conn, 404, %{error: "not found"})
+
+      user ->
+        rendered = VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+        send_json(conn, 200, rendered)
+    end
+  end
+
+  match _ do
+    send_json(conn, 404, %{error: "not found"})
+  end
+
+  defp send_json(conn, status, body) do
+    conn |> put_resp_content_type("application/json") |> send_resp(status, Jason.encode!(body))
+  end
+end
+</file>
+
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description + skeleton module with a `# TODO` for send_json/3
+  - solution.ex — just the send_json/3 function
+
+
+01:59:20.578 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `send_json/3` helper function. It takes a `conn`, an HTTP
+`status` code, and a `body` term. It should set the response content type to
+`application/json`, then send the response with the given `status` and the `body`
+encoded to JSON via `Jason.encode!/1`. Return the resulting `conn`.
+
+```elixir
+defmodule VersionedApi.Router do
+  use Plug.Router
+
+  @users %{
+    "1" => %{
+      first_name: "Alice",
+      last_name: "Smith",
+      email: "alice@example.com",
+      created_at: "2024-01-15T10:30:00Z"
+    },
+    "2" => %{
+      first_name: "Bob",
+      last_name: "Jones",
+      email: "bob@example.com",
+      created_at: "2024-06-20T14:00:00Z"
+    }
+  }
+  plug(VersionedApi.Plugs.ApiVersion, supported: ["v1", "v2"], default: "v2")
+  plug(:match)
+  plug(:dispatch)
+
+  get "/api/users/:id" do
+    case Map.get(@users, id) do
+      nil ->
+        send_json(conn, 404, %{error: "not found"})
+
+      user ->
+        rendered = VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+        send_json(conn, 200, rendered)
+    end
+  end
+
+  match _ do
+    send_json(conn, 404, %{error: "not found"})
+  end
+
+  defp send_json(conn, status, body) do
+    # TODO
+  end
+end
+```
+</file>
+<file path="solution.ex">
+  defp send_json(conn, status, body) do
+    conn |> put_resp_content_type("application/json") |> send_resp(status, Jason.encode!(body))
+  end
+</file>
+01:59:20.578 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2739, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2739, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2739, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2739, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 916, "type" => "message"}], "output_tokens" => 916, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+01:59:20.598 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_021_001_versioned_api_with_content_negotiation_04/021_001_versioned_api_with_content_negotiation_04 solution.ex
+01:59:21.013 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":95,"mode":"fim","pipe_chain_count":2,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"function VersionedApi.Plugs.ApiVersion.init/1 is undefined (module VersionedApi.Plugs.ApiVersion is not available)","type":"UndefinedFunctionError"}],"compile_warnings":0,"compiled":false,"parent":"021_001_versioned_api_with_content_negotiation_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.0,"reasons":["compilation: failed to compile (0.0)"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_021_001_versioned_api_with_content_negotiation_04/021_001_versioned_api_with_content_negotiation_04/solution.ex","task":"021_001_versioned_api_with_content_negotiation_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-09T23:59:20.993020Z"}
+01:59:21.014 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+01:59:21.014 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit prompt.md and/or solution.ex.
+Return ONLY the file(s) you changed.
+
+=== FAILURE REPORT ===
+Compilation failed:
+  - UndefinedFunctionError: function VersionedApi.Plugs.ApiVersion.init/1 is undefined (module VersionedApi.Plugs.ApiVersion is not available)
+
+=== CURRENT FILES ===
+----- prompt.md -----
+Implement the private `send_json/3` helper function. It takes a `conn`, an HTTP
+`status` code, and a `body` term. It should set the response content type to
+`application/json`, then send the response with the given `status` and the `body`
+encoded to JSON via `Jason.encode!/1`. Return the resulting `conn`.
+
+```elixir
+defmodule VersionedApi.Router do
+  use Plug.Router
+
+  @users %{
+    "1" => %{
+      first_name: "Alice",
+      last_name: "Smith",
+      email: "alice@example.com",
+      created_at: "2024-01-15T10:30:00Z"
+    },
+    "2" => %{
+      first_name: "Bob",
+      last_name: "Jones",
+      email: "bob@example.com",
+      created_at: "2024-06-20T14:00:00Z"
+    }
+  }
+  plug(VersionedApi.Plugs.ApiVersion, supported: ["v1", "v2"], default: "v2")
+  plug(:match)
+  plug(:dispatch)
+
+  get "/api/users/:id" do
+    case Map.get(@users, id) do
+      nil ->
+        send_json(conn, 404, %{error: "not found"})
+
+      user ->
+        rendered = VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+        send_json(conn, 200, rendered)
+    end
+  end
+
+  match _ do
+    send_json(conn, 404, %{error: "not found"})
+  end
+
+  defp send_json(conn, status, body) do
+    # TODO
+  end
+end
+```
+
+----- solution.ex -----
+  defp send_json(conn, status, body) do
+    conn |> put_resp_content_type("application/json") |> send_resp(status, Jason.encode!(body))
+  end
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — only if the skeleton was wrong
+  - solution.ex — the corrected function
+
+
+01:59:41.467 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `send_json/3` helper function. It takes a `conn`, an HTTP
+`status` code, and a `body` term. It should set the response content type to
+`application/json`, then send the response with the given `status` and the `body`
+encoded to JSON via `Jason.encode!/1`. Return the resulting `conn`.
+
+```elixir
+defmodule VersionedApi.Plugs.ApiVersion do
+  import Plug.Conn
+
+  def init(opts), do: opts
+
+  def call(conn, opts) do
+    supported = Keyword.fetch!(opts, :supported)
+    default = Keyword.fetch!(opts, :default)
+
+    version =
+      case get_req_header(conn, "accept-version") do
+        [v | _] -> if v in supported, do: v, else: default
+        _ -> default
+      end
+
+    assign(conn, :api_version, version)
+  end
+end
+
+defmodule VersionedApi.Views.UserView do
+  def render("v1", user) do
+    %{name: "#{user.first_name} #{user.last_name}", email: user.email}
+  end
+
+  def render("v2", user) do
+    %{
+      first_name: user.first_name,
+      last_name: user.last_name,
+      email: user.email,
+      created_at: user.created_at
+    }
+  end
+end
+
+defmodule VersionedApi.Router do
+  use Plug.Router
+
+  @users %{
+    "1" => %{
+      first_name: "Alice",
+      last_name: "Smith",
+      email: "alice@example.com",
+      created_at: "2024-01-15T10:30:00Z"
+    },
+    "2" => %{
+      first_name: "Bob",
+      last_name: "Jones",
+      email: "bob@example.com",
+      created_at: "2024-06-20T14:00:00Z"
+    }
+  }
+  plug(VersionedApi.Plugs.ApiVersion, supported: ["v1", "v2"], default: "v2")
+  plug(:match)
+  plug(:dispatch)
+
+  get "/api/users/:id" do
+    case Map.get(@users, id) do
+      nil ->
+        send_json(conn, 404, %{error: "not found"})
+
+      user ->
+        rendered = VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+        send_json(conn, 200, rendered)
+    end
+  end
+
+  match _ do
+    send_json(conn, 404, %{error: "not found"})
+  end
+
+  defp send_json(conn, status, body) do
+    # TODO
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp send_json(conn, status, body) do
+    conn |> put_resp_content_type("application/json") |> send_resp(status, Jason.encode!(body))
+  end
+</file>
+01:59:41.467 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1333, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1333, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1333, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1333, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 1739, "type" => "message"}], "output_tokens" => 1739, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+01:59:41.486 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_021_001_versioned_api_with_content_negotiation_04/021_001_versioned_api_with_content_negotiation_04 solution.ex
+01:59:42.239 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":95,"mode":"fim","pipe_chain_count":2,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"021_001_versioned_api_with_content_negotiation_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":0.86,"reasons":["tests: 4/20 failed"],"tests":0.8},"shape":"fim","solution_file":".gen_staging/fim_021_001_versioned_api_with_content_negotiation_04/021_001_versioned_api_with_content_negotiation_04/solution.ex","task":"021_001_versioned_api_with_content_negotiation_04","test_failures":[{"message":"\n\nAssertion with == failed\ncode:  assert conn.status == 406\nleft:  200\nright: 406\n","module":"VersionedApi.RouterTest","test":"test unsupported version returns 406 Not Acceptable"},{"message":"\n\nAssertion with == failed\ncode:  assert conn.status == 406\nleft:  200\nright: 406\n","module":"VersionedApi.RouterTest","test":"test 406 response includes list of supported versions"},{"message":"\n\nAssertion with == failed\ncode:  assert conn.status == 406\nleft:  200\nright: 406\n","module":"VersionedApi.RouterTest","test":"test random gibberish version returns 406"},{"message":"\n\nAssertion with == failed\ncode:  assert conn.status == 406\nleft:  404\nright: 406\n","module":"VersionedApi.RouterTest","test":"test unsupported version returns 406 even for non-existent user"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-09T23:59:42.214875Z"}
+01:59:42.240 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+01:59:42.240 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit prompt.md and/or solution.ex.
+Return ONLY the file(s) you changed.
+
+=== FAILURE REPORT ===
+Tests failed (4 failed, 0 errors):
+  - test unsupported version returns 406 Not Acceptable (VersionedApi.RouterTest): 
+
+Assertion with == failed
+code:  assert conn.status == 406
+left:  200
+right: 406
+
+  - test 406 response includes list of supported versions (VersionedApi.RouterTest): 
+
+Assertion with == failed
+code:  assert conn.status == 406
+left:  200
+right: 406
+
+  - test random gibberish version returns 406 (VersionedApi.RouterTest): 
+
+Assertion with == failed
+code:  assert conn.status == 406
+left:  200
+right: 406
+
+  - test unsupported version returns 406 even for non-existent user (VersionedApi.RouterTest): 
+
+Assertion with == failed
+code:  assert conn.status == 406
+left:  404
+right: 406
+
+
+=== CURRENT FILES ===
+----- prompt.md -----
+Implement the private `send_json/3` helper function. It takes a `conn`, an HTTP
+`status` code, and a `body` term. It should set the response content type to
+`application/json`, then send the response with the given `status` and the `body`
+encoded to JSON via `Jason.encode!/1`. Return the resulting `conn`.
+
+```elixir
+defmodule VersionedApi.Plugs.ApiVersion do
+  import Plug.Conn
+
+  def init(opts), do: opts
+
+  def call(conn, opts) do
+    supported = Keyword.fetch!(opts, :supported)
+    default = Keyword.fetch!(opts, :default)
+
+    version =
+      case get_req_header(conn, "accept-version") do
+        [v | _] -> if v in supported, do: v, else: default
+        _ -> default
+      end
+
+    assign(conn, :api_version, version)
+  end
+end
+
+defmodule VersionedApi.Views.UserView do
+  def render("v1", user) do
+    %{name: "#{user.first_name} #{user.last_name}", email: user.email}
+  end
+
+  def render("v2", user) do
+    %{
+      first_name: user.first_name,
+      last_name: user.last_name,
+      email: user.email,
+      created_at: user.created_at
+    }
+  end
+end
+
+defmodule VersionedApi.Router do
+  use Plug.Router
+
+  @users %{
+    "1" => %{
+      first_name: "Alice",
+      last_name: "Smith",
+      email: "alice@example.com",
+      created_at: "2024-01-15T10:30:00Z"
+    },
+    "2" => %{
+      first_name: "Bob",
+      last_name: "Jones",
+      email: "bob@example.com",
+      created_at: "2024-06-20T14:00:00Z"
+    }
+  }
+  plug(VersionedApi.Plugs.ApiVersion, supported: ["v1", "v2"], default: "v2")
+  plug(:match)
+  plug(:dispatch)
+
+  get "/api/users/:id" do
+    case Map.get(@users, id) do
+      nil ->
+        send_json(conn, 404, %{error: "not found"})
+
+      user ->
+        rendered = VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+        send_json(conn, 200, rendered)
+    end
+  end
+
+  match _ do
+    send_json(conn, 404, %{error: "not found"})
+  end
+
+  defp send_json(conn, status, body) do
+    # TODO
+  end
+end
+```
+
+----- solution.ex -----
+  defp send_json(conn, status, body) do
+    conn |> put_resp_content_type("application/json") |> send_resp(status, Jason.encode!(body))
+  end
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — only if the skeleton was wrong
+  - solution.ex — the corrected function
+
+
+02:00:06.853 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `send_json/3` helper function. It takes a `conn`, an HTTP
+`status` code, and a `body` term. It should set the response content type to
+`application/json`, then send the response with the given `status` and the `body`
+encoded to JSON via `Jason.encode!/1`. Return the resulting `conn`.
+
+```elixir
+defmodule VersionedApi.Plugs.ApiVersion do
+  import Plug.Conn
+
+  def init(opts), do: opts
+
+  def call(conn, opts) do
+    supported = Keyword.fetch!(opts, :supported)
+    default = Keyword.fetch!(opts, :default)
+
+    case get_req_header(conn, "accept-version") do
+      [] ->
+        assign(conn, :api_version, default)
+
+      [v | _] ->
+        if v in supported do
+          assign(conn, :api_version, v)
+        else
+          conn
+          |> put_resp_content_type("application/json")
+          |> send_resp(
+            406,
+            Jason.encode!(%{error: "unsupported version", supported: supported})
+          )
+          |> halt()
+        end
+    end
+  end
+end
+
+defmodule VersionedApi.Views.UserView do
+  def render("v1", user) do
+    %{name: "#{user.first_name} #{user.last_name}", email: user.email}
+  end
+
+  def render("v2", user) do
+    %{
+      first_name: user.first_name,
+      last_name: user.last_name,
+      email: user.email,
+      created_at: user.created_at
+    }
+  end
+end
+
+defmodule VersionedApi.Router do
+  use Plug.Router
+
+  @users %{
+    "1" => %{
+      first_name: "Alice",
+      last_name: "Smith",
+      email: "alice@example.com",
+      created_at: "2024-01-15T10:30:00Z"
+    },
+    "2" => %{
+      first_name: "Bob",
+      last_name: "Jones",
+      email: "bob@example.com",
+      created_at: "2024-06-20T14:00:00Z"
+    }
+  }
+  plug(VersionedApi.Plugs.ApiVersion, supported: ["v1", "v2"], default: "v2")
+  plug(:match)
+  plug(:dispatch)
+
+  get "/api/users/:id" do
+    case Map.get(@users, id) do
+      nil ->
+        send_json(conn, 404, %{error: "not found"})
+
+      user ->
+        rendered = VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+        send_json(conn, 200, rendered)
+    end
+  end
+
+  match _ do
+    send_json(conn, 404, %{error: "not found"})
+  end
+
+  defp send_json(conn, status, body) do
+    # TODO
+  end
+end
+```
+</file>
+<file path="solution.ex">
+  defp send_json(conn, status, body) do
+    conn |> put_resp_content_type("application/json") |> send_resp(status, Jason.encode!(body))
+  end
+</file>
+02:00:06.853 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1842, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1842, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1842, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1842, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 2090, "type" => "message"}], "output_tokens" => 2090, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:00:06.871 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_021_001_versioned_api_with_content_negotiation_04/021_001_versioned_api_with_content_negotiation_04 solution.ex
+02:00:07.586 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":95,"mode":"fim","pipe_chain_count":2,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"021_001_versioned_api_with_content_negotiation_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_021_001_versioned_api_with_content_negotiation_04/021_001_versioned_api_with_content_negotiation_04/solution.ex","task":"021_001_versioned_api_with_content_negotiation_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-10T00:00:07.561358Z"}
+02:00:07.588 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_021_001_versioned_api_with_content_negotiation_04/021_001_versioned_api_with_content_negotiation_04 .gen_staging/fim_021_001_versioned_api_with_content_negotiation_04/mutant.ex
+02:00:08.328 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":37,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"parent":"021_001_versioned_api_with_content_negotiation_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.7,"mode":"fim","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 15/20 failed"],"tests":0.25},"shape":"fim","solution_file":".gen_staging/fim_021_001_versioned_api_with_content_negotiation_04/mutant.ex","task":"021_001_versioned_api_with_content_negotiation_04","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test v1 returns {name, email} shape"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test v1 name is first_name + last_name combined"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test v2 returns {first_name, last_name, email, created_at} shape"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test v2 returns correct field values"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test no Accept-Version header defaults to latest (v2)"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test default response is identical to explicit v2 request"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test returns 404 for a non-existent user with v1"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test returns 404 for a non-existent user with v2"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test returns 404 for a non-existent user with default version"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test all success responses have application/json content type"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test 404 response has application/json content type"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test v1 and v2 responses for the same user have different keys"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test second user is also accessible and correct in v2"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test second user is correct in v1"},{"message":"** (RuntimeError) MUTATION","module":"VersionedApi.RouterTest","test":"test unmatched route returns 404"}],"tests_errors":0,"tests_excluded":0,"tests_failed":15,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-10T00:00:08.304142Z"}
+02:00:08.328 [debug] fim mutation gate: killed
+02:00:08.330 [info] promoted 021_001_versioned_api_with_content_negotiation_04 -> tasks/021_001_versioned_api_with_content_negotiation_04

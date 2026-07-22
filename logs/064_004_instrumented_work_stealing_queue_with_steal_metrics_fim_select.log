@@ -1,0 +1,206 @@
+15:02:09.838 [info] FIM candidate-select for 064_004_instrumented_work_stealing_queue_with_steal_metrics_01 (up to 3)
+15:02:09.838 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+15:02:09.838 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `WorkStealQueue` that distributes work across N worker processes using a work-stealing algorithm and **reports instrumentation metrics** about the stealing that actually happened. On top of the results, I want to see how many steal operations each worker performed, how many items it stole, and how many it ultimately processed — plus I want to be able to tune the steal batch size.
+
+I need one primary public function:
+
+- `WorkStealQueue.run(items, worker_count, process_fn, opts \\ [])` — takes a list of items, a number of workers, a one-arity function, and an options keyword list. Returns a **map**:
+
+  ```
+  %{
+    results: [%{item: item, result: term, worker_id: non_neg_integer}, ...],
+    metrics: %{
+      processed: %{worker_id => count},
+      steals:    %{worker_id => count},   # number of successful steal operations
+      stolen:    %{worker_id => count}    # total number of items stolen
+    }
+  }
+  ```
+
+  Every worker id `0..worker_count - 1` must appear as a key in each metrics sub-map (with `0` where nothing happened). The `results` list has exactly one entry per input item.
+
+**Options:**
+- `:steal_batch` — either `:half` (default: steal half of the victim's remaining queue) or a positive integer `n` (steal up to `n` items per steal operation).
+
+**How it should work internally:**
+
+1. Partition the input list as evenly as possible across `worker_count` workers; each worker owns a local queue.
+2. Spawn all workers as `Task`s. Each worker processes its local queue sequentially with `process_fn`, tagging each result with its `worker_id`.
+3. When a worker empties its local queue it *steals* from the busiest worker (most items remaining), taking items from the back of the victim's queue according to `:steal_batch`. If no other worker has work, the stealing worker exits.
+4. Each worker counts its own successful steal operations, the number of items it stole, and the number it processed; these roll up into the returned `metrics` map.
+
+**Coordination requirements:**
+- Use a shared coordination mechanism (e.g. an `Agent` or `GenServer`) tracking each worker's remaining queue so steal attempts can find the busiest worker atomically. Failed steals (victim emptied first) should be retried or skipped gracefully — a skipped/empty steal must NOT count toward the `steals` metric.
+- `run/4` must be synchronous: block until every item is processed, then return the map.
+
+**Constraints:**
+- Use only OTP/stdlib — no external dependencies.
+- Must work correctly when `worker_count` is greater than `length(items)`.
+- `process_fn` may be slow or fast — faster workers should naturally pick up slack, which the metrics should make visible.
+
+Give me the complete implementation in a single file.
+
+=== MODULE ===
+```elixir
+defmodule WorkStealQueue do
+  @moduledoc """
+  Instrumented work-stealing task queue.
+
+  Distributes work across N worker `Task`s using a work-stealing algorithm and
+  returns, alongside the results, a `metrics` map describing how much stealing
+  actually occurred: successful steal operations per worker, items stolen per
+  worker, and items processed per worker.
+
+  The steal batch size is tunable via `:steal_batch` — `:half` (default) or a
+  positive integer. Coordination goes through an `Agent` holding
+  `%{worker_id => remaining_queue}`.
+
+  ## Example
+
+      WorkStealQueue.run(Enum.to_list(1..10), 3, &(&1 * 2), steal_batch: 2)
+      # => %{results: [...], metrics: %{processed: %{...}, steals: %{...}, stolen: %{...}}}
+  """
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Process every item across `worker_count` workers and return a map with the
+  `results` list and a `metrics` map. Blocks until all items are processed.
+
+  Options:
+    * `:steal_batch` — `:half` (default) or a positive integer.
+  """
+  @spec run(list(), pos_integer(), (any() -> any()), keyword()) :: %{
+          results: [%{item: any(), result: any(), worker_id: non_neg_integer()}],
+          metrics: %{
+            processed: %{non_neg_integer() => non_neg_integer()},
+            steals: %{non_neg_integer() => non_neg_integer()},
+            stolen: %{non_neg_integer() => non_neg_integer()}
+          }
+        }
+  def run(items, worker_count, process_fn, opts \\ [])
+      when is_list(items) and is_integer(worker_count) and worker_count > 0 and
+             is_function(process_fn, 1) and is_list(opts) do
+    batch = validate_batch(Keyword.get(opts, :steal_batch, :half))
+    partitions = partition(items, worker_count)
+
+    {:ok, coordinator} =
+      Agent.start_link(fn ->
+        partitions
+        |> Enum.with_index()
+        |> Map.new(fn {queue, id} -> {id, queue} end)
+      end)
+
+    worker_returns =
+      0..(worker_count - 1)
+      |> Enum.map(fn id ->
+        Task.async(fn -> run_worker(id, coordinator, process_fn, batch) end)
+      end)
+      |> Task.await_many(:infinity)
+
+    Agent.stop(coordinator)
+
+    %{
+      results: Enum.flat_map(worker_returns, & &1.results),
+      metrics: build_metrics(worker_returns, worker_count)
+    }
+  end
+
+  defp validate_batch(:half), do: :half
+  defp validate_batch(n) when is_integer(n) and n > 0, do: n
+
+  # ---------------------------------------------------------------------------
+  # Worker logic
+  # ---------------------------------------------------------------------------
+
+  defp run_worker(id, coordinator, process_fn, batch) do
+    loop(id, coordinator, process_fn, batch, %{
+      worker_id: id,
+      results: [],
+      steals: 0,
+      stolen: 0
+    })
+  end
+
+  defp loop(id, coordinator, process_fn, batch, acc) do
+    case pop_item(id, coordinator) do
+      {:ok, item} ->
+        entry = %{item: item, result: process_fn.(item), worker_id: id}
+        loop(id, coordinator, process_fn, batch, %{acc | results: [entry | acc.results]})
+
+      :empty ->
+        steal_phase(id, coordinator, process_fn, batch, acc)
+    end
+  end
+
+  defp steal_phase(id, coordinator, process_fn, batch, acc) do
+    case find_victim(id, coordinator) do
+      nil ->
+        acc
+
+      victim_id ->
+        case steal(victim_id, coordinator, batch) do
+          [] ->
+            # Victim emptied before we could take anything; a skipped steal must
+            # not count toward the metric. Re-scan.
+            steal_phase(id, coordinator, process_fn, batch, acc)
+
+          stolen ->
+            Agent.update(coordinator, fn state ->
+              Map.update(state, id, stolen, fn existing -> stolen ++ existing end)
+            end)
+
+            acc = %{acc | steals: acc.steals + 1, stolen: acc.stolen + length(stolen)}
+            loop(id, coordinator, process_fn, batch, acc)
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Coordinator operations
+  # ---------------------------------------------------------------------------
+
+  @spec pop_item(non_neg_integer(), pid()) :: {:ok, any()} | :empty
+  defp pop_item(id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      case Map.fetch!(state, id) do
+        [] -> {:empty, state}
+        [head | tail] -> {{:ok, head}, Map.put(state, id, tail)}
+      end
+    end)
+  end
+
+  @spec find_victim(non_neg_integer(), pid()) :: non_neg_integer() | nil
+  defp find_victim(thief_id, coordinator) do
+    Agent.get(coordinator, fn state ->
+      state
+      |> Enum.reject(fn {id, queue} -> id == thief_id or queue == [] end)
+      |> case do
+        [] ->
+          nil
+
+   (truncated)
+15:02:16.374 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+steal_phase/5
+steal/3
+partition/2
+</file>
+15:02:16.374 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4303, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4303, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4303, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4303, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 284, "type" => "message"}], "output_tokens" => 284, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

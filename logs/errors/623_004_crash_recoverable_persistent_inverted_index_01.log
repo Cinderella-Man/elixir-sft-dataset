@@ -1,0 +1,1163 @@
+08:26:06.362 [info] VARIATION 623_004_crash_recoverable_persistent_inverted_index_01: Crash-Recoverable Persistent Inverted Index
+08:26:06.362 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+08:26:06.362 [debug] claude -p USER prompt:
+Write me an Elixir module called `InvertedIndex` that implements a **crash-recoverable, disk-persistent** full-text search engine. Every mutation is durably recorded on disk before it is acknowledged, and the full index is rebuilt from disk when the process restarts — so a crash never loses an acknowledged write.
+
+I need these functions in the public API:
+
+- `InvertedIndex.start_link(opts)` to start the process. It must accept:
+  - `:dir` (**required**) — a filesystem directory the server uses for its persistence files. Create it if it does not exist.
+  - `:name` — for process registration.
+  - `:stop_words` — a `MapSet` of words to exclude during tokenization. If not provided, default to a built-in set containing at minimum: "the", "a", "an", "is", "are", "was", "were", "in", "on", "at", "to", "of", "and", "or", "it", "this", "that", "for", "with", "as", "by", "not", "be", "has", "had", "have", "do", "does", "did", "but", "if", "from".
+
+  On start, the server must **recover its in-memory state** from `:dir`: if a snapshot file is present, load it, and then replay every write-ahead-log (WAL) entry recorded after that snapshot, in order. After `start_link` returns, the index must reflect every previously acknowledged `index`/`remove` call for that directory.
+
+- `InvertedIndex.index(server, id, fields)` which indexes a document. `id` is a string, `fields` is a map of field names to text strings. Tokenization: lowercase everything, split on whitespace and punctuation via the regex `~r/[^a-z0-9]+/`, then remove stop words. The mutation must be **durably appended to the WAL (and flushed to disk) before the call returns**. Indexing the same `id` again must replace the previous version cleanly. Return `:ok`.
+
+- `InvertedIndex.remove(server, id)` which removes a document entirely. The mutation must be durably appended to the WAL before returning. After removal the document must not appear in results and must not contribute to the document count used for IDF. Return `:ok`. Removing a non-existent id must not raise.
+
+- `InvertedIndex.search(server, query, opts \\ [])` which tokenizes the query using the same pipeline as indexing, finds documents containing at least one query term, and returns them ranked by TF-IDF score descending. The scoring formula is `tf(term, field) · idf(term)` where `tf = count_of_term_in_field / total_tokens_in_field` and `idf = :math.log(total_documents / documents_containing_term)`; a term's score for a document is summed across all fields in which it appears, and scores of distinct query terms are summed. Return a list of `%{id: id, score: score}` maps sorted by score descending. Support `opts[:limit]` to cap the number of results.
+
+- `InvertedIndex.snapshot(server)` which writes the entire current index state to the snapshot file and then truncates the WAL (so subsequent recovery loads the snapshot and replays only WAL entries written after it). This compaction must not change any query results. Return `:ok`.
+
+- `InvertedIndex.suggest(server, prefix, limit \\ 10)` which returns up to `limit` vocabulary terms starting with the (lowercased) prefix, sorted by document frequency descending. Return a list of strings.
+
+- `InvertedIndex.stats(server)` which returns `%{document_count: integer, term_count: integer}`.
+
+Additional requirements:
+- Implement this as a GenServer. Use no external dependencies — only standard library and OTP (you may use `:erlang.term_to_binary/1`, `File`, and `:file.sync/1`).
+- Durability must not depend on a graceful shutdown: because each mutation is flushed to disk before acknowledgement, a hard kill of the process must still leave every acknowledged mutation recoverable on the next `start_link` with the same `:dir`.
+- Two servers using different directories must be completely independent.
+- All term storage and lookup must be case-insensitive.
+- The module must be in a single file called `inverted_index.ex`.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+08:28:56.510 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule InvertedIndex do
+  @moduledoc """
+  A crash-recoverable, disk-persistent full-text search engine.
+
+  `InvertedIndex` is a `GenServer` that maintains an in-memory inverted index
+  while durably recording every mutation on disk before acknowledging it. Two
+  files are kept inside the configured `:dir`:
+
+    * a write-ahead log (`wal.log`) — every `index`/`remove` mutation is
+      appended and flushed (`:file.sync/1`) before the call returns, so a hard
+      kill never loses an acknowledged write;
+    * a snapshot (`snapshot.bin`) — a compacted image of the whole index that
+      recovery loads first, after which only the WAL entries written since the
+      snapshot are replayed.
+
+  On start the server rebuilds its state from `:dir`: it loads the snapshot (if
+  any) and replays the WAL in order. Servers using different directories are
+  completely independent. All term storage and lookup are case-insensitive.
+  """
+
+  use GenServer
+
+  @default_stop_words MapSet.new([
+                        "the", "a", "an", "is", "are", "was", "were", "in",
+                        "on", "at", "to", "of", "and", "or", "it", "this",
+                        "that", "for", "with", "as", "by", "not", "be", "has",
+                        "had", "have", "do", "does", "did", "but", "if", "from"
+                      ])
+
+  @type score_entry :: %{id: String.t(), score: float()}
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the index server.
+
+  Options:
+
+    * `:dir` (required) — directory used for the WAL and snapshot files; it is
+      created if it does not exist. State is recovered from this directory.
+    * `:name` — optional process registration name.
+    * `:stop_words` — a `MapSet` of words excluded during tokenization; a
+      built-in default set is used when omitted.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Indexes `id` with `fields`, a map of field names to text strings.
+
+  The mutation is durably appended to the WAL (and flushed) before returning.
+  Re-indexing an existing `id` cleanly replaces the previous version.
+  """
+  @spec index(GenServer.server(), String.t(), map()) :: :ok
+  def index(server, id, fields) do
+    GenServer.call(server, {:index, id, fields})
+  end
+
+  @doc """
+  Removes the document `id` entirely.
+
+  The mutation is durably appended to the WAL before returning. Removing an
+  unknown id is a no-op and never raises.
+  """
+  @spec remove(GenServer.server(), String.t()) :: :ok
+  def remove(server, id) do
+    GenServer.call(server, {:remove, id})
+  end
+
+  @doc """
+  Searches for documents matching `query`, ranked by summed TF-IDF descending.
+
+  A document matches when it contains at least one query term. `opts[:limit]`
+  caps the number of returned results.
+  """
+  @spec search(GenServer.server(), String.t(), keyword()) :: [score_entry()]
+  def search(server, query, opts \\ []) do
+    GenServer.call(server, {:search, query, opts})
+  end
+
+  @doc """
+  Writes a fresh snapshot of the whole index and truncates the WAL.
+
+  Compaction never changes query results.
+  """
+  @spec snapshot(GenServer.server()) :: :ok
+  def snapshot(server) do
+    GenServer.call(server, :snapshot)
+  end
+
+  @doc """
+  Returns up to `limit` vocabulary terms starting with the lowercased `prefix`,
+  sorted by document frequency descending.
+  """
+  @spec suggest(GenServer.server(), String.t(), non_neg_integer()) :: [String.t()]
+  def suggest(server, prefix, limit \\ 10) do
+    GenServer.call(server, {:suggest, prefix, limit})
+  end
+
+  @doc """
+  Returns `%{document_count: integer, term_count: integer}` for the index.
+  """
+  @spec stats(GenServer.server()) ::
+          %{document_count: non_neg_integer(), term_count: non_neg_integer()}
+  def stats(server) do
+    GenServer.call(server, :stats)
+  end
+
+  # ── GenServer callbacks ───────────────────────────────────────────────────
+
+  @impl true
+  def init(opts) do
+    dir = Keyword.fetch!(opts, :dir)
+    File.mkdir_p!(dir)
+    stop_words = Keyword.get(opts, :stop_words, @default_stop_words)
+    snapshot_path = Path.join(dir, "snapshot.bin")
+    wal_path = Path.join(dir, "wal.log")
+
+    doc_index = load_snapshot(snapshot_path)
+    postings = build_postings(doc_index)
+
+    base = %{
+      dir: dir,
+      stop_words: stop_words,
+      snapshot_path: snapshot_path,
+      wal_path: wal_path,
+      doc_index: doc_index,
+      postings: postings,
+      wal: nil
+    }
+
+    base = replay_wal(read_wal(wal_path), base)
+    {:ok, wal} = :file.open(wal_path, [:append, :binary, :raw])
+    {:ok, %{base | wal: wal}}
+  end
+
+  @impl true
+  def handle_call({:index, id, fields}, _from, state) do
+    wal_append(state.wal, {:index, id, fields})
+    {:reply, :ok, apply_index(state, id, fields)}
+  end
+
+  def handle_call({:remove, id}, _from, state) do
+    wal_append(state.wal, {:remove, id})
+    {:reply, :ok, apply_remove(state, id)}
+  end
+
+  def handle_call({:search, query, opts}, _from, state) do
+    {:reply, do_search(state, query, opts), state}
+  end
+
+  def handle_call(:snapshot, _from, state) do
+    {:reply, :ok, do_snapshot(state)}
+  end
+
+  def handle_call({:suggest, prefix, limit}, _from, state) do
+    {:reply, do_suggest(state, prefix, limit), state}
+  end
+
+  def handle_call(:stats, _from, state) do
+    stats = %{
+      document_count: map_size(state.doc_index),
+      term_count: map_size(state.postings)
+    }
+
+    {:reply, stats, state}
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    if state.wal, do: :file.close(state.wal)
+    :ok
+  end
+
+  # ── Persistence helpers ───────────────────────────────────────────────────
+
+  @spec load_snapshot(String.t()) :: map()
+  defp load_snapshot(path) do
+    case File.read(path) do
+      {:ok, bin} when byte_size(bin) > 0 -> :erlang.binary_to_term(bin)
+      _ -> %{}
+    end
+  end
+
+  @spec read_wal(String.t()) :: binary()
+  defp read_wal(path) do
+    case File.read(path) do
+      {:ok, bin} -> bin
+      _ -> ""
+    end
+  end
+
+  @spec replay_wal(binary(), map()) :: map()
+  defp replay_wal(<<len::unsigned-big-integer-size(64), rest::binary>>, state)
+       when byte_size(rest) >= len do
+    <<payload::binary-size(len), tail::binary>> = rest
+    state = apply_entry(state, :erlang.binary_to_term(payload))
+    replay_wal(tail, state)
+  end
+
+  defp replay_wal(_rest, state), do: state
+
+  @spec apply_entry(map(), term()) :: map()
+  defp apply_entry(state, {:index, id, fields}), do: apply_index(state, id, fields)
+  defp apply_entry(state, {:remove, id}), do: apply_remove(state, id)
+
+  @spec wal_append(:file.io_device(), term()) :: :ok
+  defp wal_append(dev, entry) do
+    bin = :erlang.term_to_binary(entry)
+    frame = <<byte_size(bin)::unsigned-big-integer-size(64), bin::binary>>
+    :ok = :file.write(dev, frame)
+    :ok = :file.sync(dev)
+  end
+
+  @spec do_snapshot(map()) :: map()
+  defp do_snapshot(state) do
+    tmp = state.snapshot_path <> ".tmp"
+    bin = :erlang.term_to_binary(state.doc_index)
+    {:ok, dev} = :file.open(tmp, [:write, :binary, :raw])
+    :ok = :file.write(dev, bin)
+    :ok = :file.sync(dev)
+    :ok = :file.close(dev)
+    :ok = :file.rename(tmp, state.snapshot_path)
+
+    :ok = :file.close(state.wal)
+    {:ok, trunc_dev} = :file.open(state.wal_path, [:write, :binary, :raw])
+    :ok = :file.close(trunc_dev)
+    {:ok, wal} = :file.open(state.wal_path, [:append, :binary, :raw])
+    %{state | wal: wal}
+  end
+
+  # ── Index maintenance ──────────────────────────── (truncated)
+08:28:56.510 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5261, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5261, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5261, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5261, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 14566, "type" => "message"}], "output_tokens" => 14566, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:28:56.542 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_004_crash_recoverable_persistent_inverted_index_01 solution.ex
+08:28:57.821 [debug] grade JSON: {"analysis":{"defp_count":18,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":415,"lines_over_98":0,"max_line_length":86,"mode":"full","pipe_chain_count":9,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 1/18 failed"],"tests":0.94},"shape":"single","solution_file":".gen_staging/623_004_crash_recoverable_persistent_inverted_index_01/solution.ex","task":"623_004_crash_recoverable_persistent_inverted_index_01","test_failures":[{"message":"{:EXIT, #PID<0.241.0>}: :killed","module":"InvertedIndexTest","test":"test acknowledged writes survive a hard kill (no graceful shutdown)"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":18,"timestamp":"2026-07-11T06:28:57.795691Z"}
+08:28:57.822 [info] cycle 623_004_crash_recoverable_persistent_inverted_index_01: repairing — Tests failed (1 failed, 0 errors):
+  - test acknowledged writes survive a hard kill (no graceful shutdown) (InvertedIndexTest): {:EXIT, #PID<0.241.0>}: :killed
+08:28:57.822 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+08:28:57.822 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Tests failed (1 failed, 0 errors):
+  - test acknowledged writes survive a hard kill (no graceful shutdown) (InvertedIndexTest): {:EXIT, #PID<0.241.0>}: :killed
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `InvertedIndex` that implements a **crash-recoverable, disk-persistent** full-text search engine. Every mutation is durably recorded on disk before it is acknowledged, and the full index is rebuilt from disk when the process restarts — so a crash never loses an acknowledged write.
+
+I need these functions in the public API:
+
+- `InvertedIndex.start_link(opts)` to start the process. It must accept:
+  - `:dir` (**required**) — a filesystem directory the server uses for its persistence files. Create it if it does not exist.
+  - `:name` — for process registration.
+  - `:stop_words` — a `MapSet` of words to exclude during tokenization. If not provided, default to a built-in set containing at minimum: "the", "a", "an", "is", "are", "was", "were", "in", "on", "at", "to", "of", "and", "or", "it", "this", "that", "for", "with", "as", "by", "not", "be", "has", "had", "have", "do", "does", "did", "but", "if", "from".
+
+  On start, the server must **recover its in-memory state** from `:dir`: if a snapshot file is present, load it, and then replay every write-ahead-log (WAL) entry recorded after that snapshot, in order. After `start_link` returns, the index must reflect every previously acknowledged `index`/`remove` call for that directory.
+
+- `InvertedIndex.index(server, id, fields)` which indexes a document. `id` is a string, `fields` is a map of field names to text strings. Tokenization: lowercase everything, split on whitespace and punctuation via the regex `~r/[^a-z0-9]+/`, then remove stop words. The mutation must be **durably appended to the WAL (and flushed to disk) before the call returns**. Indexing the same `id` again must replace the previous version cleanly. Return `:ok`.
+
+- `InvertedIndex.remove(server, id)` which removes a document entirely. The mutation must be durably appended to the WAL before returning. After removal the document must not appear in results and must not contribute to the document count used for IDF. Return `:ok`. Removing a non-existent id must not raise.
+
+- `InvertedIndex.search(server, query, opts \\ [])` which tokenizes the query using the same pipeline as indexing, finds documents containing at least one query term, and returns them ranked by TF-IDF score descending. The scoring formula is `tf(term, field) · idf(term)` where `tf = count_of_term_in_field / total_tokens_in_field` and `idf = :math.log(total_documents / documents_containing_term)`; a term's score for a document is summed across all fields in which it appears, and scores of distinct query terms are summed. Return a list of `%{id: id, score: score}` maps sorted by score descending. Support `opts[:limit]` to cap the number of results.
+
+- `InvertedIndex.snapshot(server)` which writes the entire current index state to the snapshot file and then truncates the WAL (so subsequent recovery loads the snapshot and replays only WAL entries written after it). This compaction must not change any query results. Return `:ok`.
+
+- `InvertedIndex.suggest(server, prefix, limit \\ 10)` which returns up to `limit` vocabulary terms starting with the (lowercased) prefix, sorted by document frequency descending. Return a list of strings.
+
+- `InvertedIndex.stats(server)` which returns `%{document_count: integer, term_count: integer}`.
+
+Additional requirements:
+- Implement this as a GenServer. Use no external dependencies — only standard library and OTP (you may use `:erlang.term_to_binary/1`, `File`, and `:file.sync/1`).
+- Durability must not depend on a graceful shutdown: because each mutation is flushed to disk before acknowledgement, a hard kill of the process must still leave every acknowledged mutation recoverable on the next `start_link` with the same `:dir`.
+- Two servers using different directories must be completely independent.
+- All term storage and lookup must be case-insensitive.
+- The module must be in a single file called `inverted_index.ex`.
+
+----- solution.ex -----
+defmodule InvertedIndex do
+  @moduledoc """
+  A crash-recoverable, disk-persistent full-text search engine.
+
+  `InvertedIndex` is a `GenServer` that maintains an in-memory inverted index
+  while durably recording every mutation on disk before acknowledging it. Two
+  files are kept inside the configured `:dir`:
+
+    * a write-ahead log (`wal.log`) — every `index`/`remove` mutation is
+      appended and flushed (`:file.sync/1`) before the call returns, so a hard
+      kill never loses an acknowledged write;
+    * a snapshot (`snapshot.bin`) — a compacted image of the whole index that
+      recovery loads first, after which only the WAL entries written since the
+      snapshot are replayed.
+
+  On start the server rebuilds its state from `:dir`: it loads the snapshot (if
+  any) and replays the WAL in order. Servers using different directories are
+  completely independent. All term storage and lookup are case-insensitive.
+  """
+
+  use GenServer
+
+  @default_stop_words MapSet.new([
+                        "the",
+                        "a",
+                        "an",
+                        "is",
+                        "are",
+                        "was",
+                        "were",
+                        "in",
+                        "on",
+                        "at",
+                        "to",
+                        "of",
+                        "and",
+                        "or",
+                        "it",
+                        "this",
+                        "that",
+                        "for",
+                        "with",
+                        "as",
+                        "by",
+                        "not",
+                        "be",
+                        "has",
+                        "had",
+                        "have",
+                        "do",
+                        "does",
+                        "did",
+                        "but",
+                        "if",
+                        "from"
+                      ])
+
+  @type score_entry :: %{id: String.t(), score: float()}
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the index server.
+
+  Options:
+
+    * `:dir` (required) — directory used for the WAL and snapshot files; it is
+      created if it does not exist. State is recovered from this directory.
+    * `:name` — optional process registration name.
+    * `:stop_words` — a `MapSet` of words excluded during tokenization; a
+      built-in default set is used when omitted.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Indexes `id` with `fields`, a map of field names to text strings.
+
+  The mutation is durably appended to the WAL (and flushed) before returning.
+  Re-indexing an existing `id` cleanly replaces the previous version.
+  """
+  @spec index(GenServer.server(), St (truncated)
+08:30:05.975 [debug] claude -p RESULT (stop="end_turn"):
+The failure is a linking artifact, not a durability bug. `start_link` links the server to the test process. When the test does `Process.exit(pid, :kill)`, the untrappable `:killed` exit reason propagates across the link to the (non-trapping) test process, killing it — that's the `{:EXIT, #PID<...>}: :killed`. The recovery logic itself is fine. The fix is to `Process.unlink(pid)` before hard-killing it, so only the monitor observes the death.
+
+<file path="test_harness.exs">
+defmodule InvertedIndexTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "iidx_#{System.pid()}_#{System.unique_integer([:positive])}"
+      )
+
+    on_exit(fn -> File.rm_rf(dir) end)
+    %{dir: dir}
+  end
+
+  defp fresh_dir do
+    Path.join(
+      System.tmp_dir!(),
+      "iidx_#{System.pid()}_#{System.unique_integer([:positive])}"
+    )
+  end
+
+  # -------------------------------------------------------
+  # Basic behaviour
+  # -------------------------------------------------------
+
+  test "indexes documents and finds them by keyword", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+    :ok = InvertedIndex.index(pid, "doc1", %{body: "the quick brown fox"})
+    :ok = InvertedIndex.index(pid, "doc2", %{body: "the quick brown cat"})
+
+    results = InvertedIndex.search(pid, "fox")
+    assert length(results) == 1
+    assert hd(results).id == "doc1"
+    :ok = GenServer.stop(pid)
+  end
+
+  test "stats reflects document and term counts", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+    assert %{document_count: 0, term_count: 0} = InvertedIndex.stats(pid)
+
+    :ok = InvertedIndex.index(pid, "doc1", %{body: "alpha beta gamma"})
+    assert InvertedIndex.stats(pid).document_count == 1
+    assert InvertedIndex.stats(pid).term_count == 3
+    :ok = GenServer.stop(pid)
+  end
+
+  test "higher term frequency ranks first", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+    :ok = InvertedIndex.index(pid, "doc1", %{body: "data data data analysis"})
+    :ok = InvertedIndex.index(pid, "doc2", %{body: "data analysis report summary"})
+    :ok = InvertedIndex.index(pid, "doc3", %{body: "report summary overview"})
+
+    results = InvertedIndex.search(pid, "data")
+    assert length(results) == 2
+    assert hd(results).id == "doc1"
+    assert hd(results).score > List.last(results).score
+    :ok = GenServer.stop(pid)
+  end
+
+  test "stop words are not searchable", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+    :ok = InvertedIndex.index(pid, "doc1", %{body: "the cat is on the mat"})
+    assert InvertedIndex.search(pid, "the") == []
+    assert length(InvertedIndex.search(pid, "cat")) == 1
+    :ok = GenServer.stop(pid)
+  end
+
+  test "custom stop words override the defaults", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir, stop_words: MapSet.new(["foo", "bar"]))
+    :ok = InvertedIndex.index(pid, "doc1", %{body: "foo baz bar qux"})
+    :ok = InvertedIndex.index(pid, "doc2", %{body: "the quick brown"})
+
+    assert InvertedIndex.search(pid, "foo") == []
+    assert length(InvertedIndex.search(pid, "the")) == 1
+    :ok = GenServer.stop(pid)
+  end
+
+  test "limit caps the number of results", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+
+    for i <- 1..20 do
+      :ok = InvertedIndex.index(pid, "doc#{i}", %{body: "keyword variation#{i} text"})
+    end
+
+    assert length(InvertedIndex.search(pid, "keyword", limit: 5)) == 5
+    assert length(InvertedIndex.search(pid, "keyword")) == 20
+    :ok = GenServer.stop(pid)
+  end
+
+  test "removing non-existent doc does not raise", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+    assert :ok = InvertedIndex.remove(pid, "nope")
+    :ok = GenServer.stop(pid)
+  end
+
+  test "re-indexing replaces previous content", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+    :ok = InvertedIndex.index(pid, "doc1", %{body: "apple banana"})
+    assert length(InvertedIndex.search(pid, "apple")) == 1
+    :ok = InvertedIndex.index(pid, "doc1", %{body: "cherry date"})
+    assert InvertedIndex.search(pid, "apple") == []
+    assert hd(InvertedIndex.search(pid, "cherry")).id == "doc1"
+    assert InvertedIndex.stats(pid).document_count == 1
+    :ok = GenServer.stop(pid)
+  end
+
+  test "suggest returns prefix matches sorted by document frequency", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+    :ok = InvertedIndex.index(pid, "d1", %{body: "programming program problems"})
+    :ok = InvertedIndex.index(pid, "d2", %{body: "program productivity projects"})
+    :ok = InvertedIndex.index(pid, "d3", %{body: "testing productivity"})
+
+    suggestions = InvertedIndex.suggest(pid, "pro")
+    assert Enum.all?(suggestions, &String.starts_with?(&1, "pro"))
+    top_two = Enum.take(suggestions, 2)
+    assert "program" in top_two
+    assert "productivity" in top_two
+    assert length(InvertedIndex.suggest(pid, "pro", 2)) == 2
+    assert InvertedIndex.suggest(pid, "xyz") == []
+    :ok = GenServer.stop(pid)
+  end
+
+  test "search on empty index returns empty list", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+    assert InvertedIndex.search(pid, "anything") == []
+    :ok = GenServer.stop(pid)
+  end
+
+  # -------------------------------------------------------
+  # Durability and recovery
+  # -------------------------------------------------------
+
+  test "index survives a graceful restart", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+    :ok = InvertedIndex.index(pid, "d1", %{body: "alpha beta"})
+    :ok = InvertedIndex.index(pid, "d2", %{body: "beta gamma"})
+    :ok = GenServer.stop(pid)
+
+    {:ok, pid2} = InvertedIndex.start_link(dir: dir)
+    assert InvertedIndex.stats(pid2).document_count == 2
+    assert [%{id: "d1"}] = InvertedIndex.search(pid2, "alpha")
+    ids = InvertedIndex.search(pid2, "beta") |> Enum.map(& &1.id) |> Enum.sort()
+    assert ids == ["d1", "d2"]
+    :ok = GenServer.stop(pid2)
+  end
+
+  test "acknowledged writes survive a hard kill (no graceful shutdown)", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+    :ok = InvertedIndex.index(pid, "d1", %{body: "alpha beta"})
+    :ok = InvertedIndex.index(pid, "d2", %{body: "gamma delta"})
+
+    # `start_link` links the server to this test process; unlink before the hard
+    # kill so the untrappable `:killed` exit does not propagate and take the test
+    # process down with it. This still exercises a crash with no graceful shutdown.
+    ref = Process.monitor(pid)
+    Process.unlink(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+
+    {:ok, pid2} = InvertedIndex.start_link(dir: dir)
+    assert InvertedIndex.stats(pid2).document_count == 2
+    assert [%{id: "d1"}] = InvertedIndex.search(pid2, "alpha")
+    assert [%{id: "d2"}] = InvertedIndex.search(pid2, "gamma")
+    :ok = GenServer.stop(pid2)
+  end
+
+  test "removal survives a restart", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+    :ok = InvertedIndex.index(pid, "d1", %{body: "alpha beta"})
+    :ok = InvertedIndex.index(pid, "d2", %{body: "gamma delta"})
+    :ok = InvertedIndex.remove(pid, "d1")
+    :ok = GenServer.stop(pid)
+
+    {:ok, pid2} = InvertedIndex.start_link(dir: dir)
+    assert InvertedIndex.stats(pid2).document_count == 1
+    assert InvertedIndex.search(pid2, "alpha") == []
+    assert [%{id: "d2"}] = InvertedIndex.search(pid2, "gamma")
+    :ok = GenServer.stop(pid2)
+  end
+
+  test "snapshot compacts and state survives restart", %{dir: dir} do
+    {:ok, pid} = InvertedIndex.start_link(dir: dir)
+    :ok = InvertedIndex.index(pid, "d1", %{body: "alpha beta"})
+    :ok = InvertedIndex.snapshot(pid)
+    # a write after the snapshot lands only in the (truncated) WAL
+    :ok = InvertedIndex.index(pid, "d2", %{body: "gamma delta"})
+    :ok = GenServer.stop(pid)
+
+    {:ok, pid2} = InvertedIndex.start_link(dir: dir)
+    assert InvertedIndex.stats(pid2).document_count == 2
+    assert [%{id: "d1"}] = Inver (truncated)
+08:30:05.975 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 15202, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 15202, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 15202, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 15202, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 6330, "type" => "message"}], "output_tokens" => 6330, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:30:06.007 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_004_crash_recoverable_persistent_inverted_index_01 solution.ex
+08:30:07.275 [debug] grade JSON: {"analysis":{"defp_count":18,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":415,"lines_over_98":0,"max_line_length":86,"mode":"full","pipe_chain_count":9,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/623_004_crash_recoverable_persistent_inverted_index_01/solution.ex","task":"623_004_crash_recoverable_persistent_inverted_index_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":18,"timestamp":"2026-07-11T06:30:07.247030Z"}
+08:30:07.277 [info] cycle 623_004_crash_recoverable_persistent_inverted_index_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+08:30:07.277 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+08:30:07.278 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `InvertedIndex` that implements a **crash-recoverable, disk-persistent** full-text search engine. Every mutation is durably recorded on disk before it is acknowledged, and the full index is rebuilt from disk when the process restarts — so a crash never loses an acknowledged write.
+
+I need these functions in the public API:
+
+- `InvertedIndex.start_link(opts)` to start the process. It must accept:
+  - `:dir` (**required**) — a filesystem directory the server uses for its persistence files. Create it if it does not exist.
+  - `:name` — for process registration.
+  - `:stop_words` — a `MapSet` of words to exclude during tokenization. If not provided, default to a built-in set containing at minimum: "the", "a", "an", "is", "are", "was", "were", "in", "on", "at", "to", "of", "and", "or", "it", "this", "that", "for", "with", "as", "by", "not", "be", "has", "had", "have", "do", "does", "did", "but", "if", "from".
+
+  On start, the server must **recover its in-memory state** from `:dir`: if a snapshot file is present, load it, and then replay every write-ahead-log (WAL) entry recorded after that snapshot, in order. After `start_link` returns, the index must reflect every previously acknowledged `index`/`remove` call for that directory.
+
+- `InvertedIndex.index(server, id, fields)` which indexes a document. `id` is a string, `fields` is a map of field names to text strings. Tokenization: lowercase everything, split on whitespace and punctuation via the regex `~r/[^a-z0-9]+/`, then remove stop words. The mutation must be **durably appended to the WAL (and flushed to disk) before the call returns**. Indexing the same `id` again must replace the previous version cleanly. Return `:ok`.
+
+- `InvertedIndex.remove(server, id)` which removes a document entirely. The mutation must be durably appended to the WAL before returning. After removal the document must not appear in results and must not contribute to the document count used for IDF. Return `:ok`. Removing a non-existent id must not raise.
+
+- `InvertedIndex.search(server, query, opts \\ [])` which tokenizes the query using the same pipeline as indexing, finds documents containing at least one query term, and returns them ranked by TF-IDF score descending. The scoring formula is `tf(term, field) · idf(term)` where `tf = count_of_term_in_field / total_tokens_in_field` and `idf = :math.log(total_documents / documents_containing_term)`; a term's score for a document is summed across all fields in which it appears, and scores of distinct query terms are summed. Return a list of `%{id: id, score: score}` maps sorted by score descending. Support `opts[:limit]` to cap the number of results.
+
+- `InvertedIndex.snapshot(server)` which writes the entire current index state to the snapshot file and then truncates the WAL (so subsequent recovery loads the snapshot and replays only WAL entries written after it). This compaction must not change any query results. Return `:ok`.
+
+- `InvertedIndex.suggest(server, prefix, limit \\ 10)` which returns up to `limit` vocabulary terms starting with the (lowercased) prefix, sorted by document frequency descending. Return a list of strings.
+
+- `InvertedIndex.stats(server)` which returns `%{document_count: integer, term_count: integer}`.
+
+Additional requirements:
+- Implement this as a GenServer. Use no external dependencies — only standard library and OTP (you may use `:erlang.term_to_binary/1`, `File`, and `:file.sync/1`).
+- Durability must not depend on a graceful shutdown: because each mutation is flushed to disk before acknowledgement, a hard kill of the process must still leave every acknowledged mutation recoverable on the next `start_link` with the same `:dir`.
+- Two servers using different directories must be completely independent.
+- All term storage and lookup must be case-insensitive.
+- The module must be in a single file called `inverted_index.ex`.
+
+----- solution.ex -----
+defmodule InvertedIndex do
+  @moduledoc """
+  A crash-recoverable, disk-persistent full-text search engine.
+
+  `InvertedIndex` is a `GenServer` that maintains an in-memory inverted index
+  while durably recording every mutation on disk before acknowledging it. Two
+  files are kept inside the configured `:dir`:
+
+    * a write-ahead log (`wal.log`) — every `index`/`remove` mutation is
+      appended and flushed (`:file.sync/1`) before the call returns, so a hard
+      kill never loses an acknowledged write;
+    * a snapshot (`snapshot.bin`) — a compacted image of the whole index that
+      recovery loads first, after which only the WAL entries written since the
+      snapshot are replayed.
+
+  On start the server rebuilds its state from `:dir`: it loads the snapshot (if
+  any) and replays the WAL in order. Servers using different directories are
+  completely independent. All term storage and lookup are case-insensitive.
+  """
+
+  use GenServer
+
+  @default_stop_words MapSet.new([
+                        "the",
+                        "a",
+                        "an",
+                        "is",
+                        "are",
+                        "was",
+                        "were",
+                        "in",
+                        "on",
+                        "at",
+                        "to",
+                        "of",
+                        "and",
+                        "or",
+                        "it",
+                        "this",
+                        "that",
+                        "for",
+                        "with",
+                        "as",
+                        "by",
+                        "not",
+                        "be",
+                        "has",
+                        "had",
+                        "have",
+                        "do",
+                        "does",
+                        "did",
+                        "but",
+                        "if",
+                        "from"
+                      ])
+
+  @type score_entry :: %{id: String.t(), score: float()}
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the index server.
+
+  Options:
+
+    * `:dir` (required) — directory used for the WAL and snapshot files; it is
+      created if it does not exist. State is recovered from this directory.
+    * `:name` — optional process registration name.
+    * `:stop_words` — a `MapSet` of words excluded during tokenization; a
+      built-in default set is used when omitted.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Indexes ` (truncated)
+08:40:35.924 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the solution is functionally correct and passes tests, but the grader reports one compile warning. After careful analysis, the most likely warning sources are (a) values that can be `nil` flowing into functions that expect a map (`map_size/1`, `Map.fetch!/2` via `Access`), which the OTP 27+/newer-Elixir type checker flags, and (b) accumulator variables that shadow outer bindings in the nested `Enum.reduce/3` calls. I'll make behavior-preserving changes that eliminate both classes cleanly.
+
+<file path="solution.ex">
+defmodule InvertedIndex do
+  @moduledoc """
+  A crash-recoverable, disk-persistent full-text search engine.
+
+  `InvertedIndex` is a `GenServer` that maintains an in-memory inverted index
+  while durably recording every mutation on disk before acknowledging it. Two
+  files are kept inside the configured `:dir`:
+
+    * a write-ahead log (`wal.log`) — every `index`/`remove` mutation is
+      appended and flushed (`:file.sync/1`) before the call returns, so a hard
+      kill never loses an acknowledged write;
+    * a snapshot (`snapshot.bin`) — a compacted image of the whole index that
+      recovery loads first, after which only the WAL entries written since the
+      snapshot are replayed.
+
+  On start the server rebuilds its state from `:dir`: it loads the snapshot (if
+  any) and replays the WAL in order. Servers using different directories are
+  completely independent. All term storage and lookup are case-insensitive.
+  """
+
+  use GenServer
+
+  @default_stop_words MapSet.new([
+                        "the",
+                        "a",
+                        "an",
+                        "is",
+                        "are",
+                        "was",
+                        "were",
+                        "in",
+                        "on",
+                        "at",
+                        "to",
+                        "of",
+                        "and",
+                        "or",
+                        "it",
+                        "this",
+                        "that",
+                        "for",
+                        "with",
+                        "as",
+                        "by",
+                        "not",
+                        "be",
+                        "has",
+                        "had",
+                        "have",
+                        "do",
+                        "does",
+                        "did",
+                        "but",
+                        "if",
+                        "from"
+                      ])
+
+  @type score_entry :: %{id: String.t(), score: float()}
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the index server.
+
+  Options:
+
+    * `:dir` (required) — directory used for the WAL and snapshot files; it is
+      created if it does not exist. State is recovered from this directory.
+    * `:name` — optional process registration name.
+    * `:stop_words` — a `MapSet` of words excluded during tokenization; a
+      built-in default set is used when omitted.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Indexes `id` with `fields`, a map of field names to text strings.
+
+  The mutation is durably appended to the WAL (and flushed) before returning.
+  Re-indexing an existing `id` cleanly replaces the previous version.
+  """
+  @spec index(GenServer.server(), String.t(), map()) :: :ok
+  def index(server, id, fields) do
+    GenServer.call(server, {:index, id, fields})
+  end
+
+  @doc """
+  Removes the document `id` entirely.
+
+  The mutation is durably appended to the WAL before returning. Removing an
+  unknown id is a no-op and never raises.
+  """
+  @spec remove(GenServer.server(), String.t()) :: :ok
+  def remove(server, id) do
+    GenServer.call(server, {:remove, id})
+  end
+
+  @doc """
+  Searches for documents matching `query`, ranked by summed TF-IDF descending.
+
+  A document matches when it contains at least one query term. `opts[:limit]`
+  caps the number of returned results.
+  """
+  @spec search(GenServer.server(), String.t(), keyword()) :: [score_entry()]
+  def search(server, query, opts \\ []) do
+    GenServer.call(server, {:search, query, opts})
+  end
+
+  @doc """
+  Writes a fresh snapshot of the whole index and truncates the WAL.
+
+  Compaction never changes query results.
+  """
+  @spec snapshot(GenServer.server()) :: :ok
+  def snapshot(server) do
+    GenServer.call(server, :snapshot)
+  end
+
+  @doc """
+  Returns up to `limit` vocabulary terms starting with the lowercased `prefix`,
+  sorted by document frequency descending.
+  """
+  @spec suggest(GenServer.server(), String.t(), non_neg_integer()) :: [String.t()]
+  def suggest(server, prefix, limit \\ 10) do
+    GenServer.call(server, {:suggest, prefix, limit})
+  end
+
+  @doc """
+  Returns `%{document_count: integer, term_count: integer}` for the index.
+  """
+  @spec stats(GenServer.server()) ::
+          %{document_count: non_neg_integer(), term_count: non_neg_integer()}
+  def stats(server) do
+    GenServer.call(server, :stats)
+  end
+
+  # ── GenServer callbacks ───────────────────────────────────────────────────
+
+  @impl true
+  def init(opts) do
+    dir = Keyword.fetch!(opts, :dir)
+    File.mkdir_p!(dir)
+    stop_words = Keyword.get(opts, :stop_words, @default_stop_words)
+    snapshot_path = Path.join(dir, "snapshot.bin")
+    wal_path = Path.join(dir, "wal.log")
+
+    doc_index = load_snapshot(snapshot_path)
+    postings = build_postings(doc_index)
+
+    base = %{
+      dir: dir,
+      stop_words: stop_words,
+      snapshot_path: snapshot_path,
+      wal_path: wal_path,
+      doc_index: doc_index,
+      postings: postings,
+      wal: nil
+    }
+
+    base = replay_wal(read_wal(wal_path), base)
+    {:ok, wal} = :file.open(wal_path, [:append, :binary, :raw])
+    {:ok, %{base | wal: wal}}
+  end
+
+  @impl true
+  def handle_call({:index, id, fields}, _from, state) do
+    wal_append(state.wal, {:index, id, fields})
+    {:reply, :ok, apply_index(state, id, fields)}
+  end
+
+  def handle_call({:remove, id}, _from, state) do
+    wal_append(state.wal, {:remove, id})
+    {:reply, :ok, apply_remove(state, id)}
+  end
+
+  def handle_call({:search, query, opts}, _from, state) do
+    {:reply, do_search(state, query, opts), state}
+  end
+
+  def handle_call(:snapshot, _from, state) do
+    {:reply, :ok, do_snapshot(state)}
+  end
+
+  def handle_call({:suggest, prefix, limit}, _from, state) do
+    {:reply, do_suggest(state, prefix, limit), state}
+  end
+
+  def handle_call(:stats, _from, state) do
+    stats = %{
+      document_count: map_size(state.doc_index),
+      term_count: map_size(state.postings)
+    }
+
+    {:reply, stats, state}
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    if state.wal, do: :file.close(state.wal)
+    :ok
+  end
+
+  # ── Persistence helpers ───────────────────────────────────────────────────
+
+  @spec load_snapshot(String.t()) :: map()
+  defp load_snapshot(path) do
+    case File.read(path) do
+      {:ok, bin} when byte_size(bin) > 0 -> :erlang.binary_to_term(bin)
+      _ -> %{}
+    end
+  end
+
+  @spec read_wal(String.t()) :: binary()
+  defp read_wal(path) do
+    case File.read(path) do
+      {:ok, bin} -> bin
+      _ -> ""
+    end
+  end
+
+  @spec replay_wal(binary(), map()) :: map()
+  defp replay_wal(<<len::unsigned-big-integer-size(64), rest::binary>>, state)
+       when byte_size(rest) >= len do
+    <<payload::binary-size(len), tail::binary>> = rest
+    state = apply_entry(state, :erlang.binary_to_term(payload))
+    replay_wal(tail, state)
+  end
+
+  defp replay_wal(_rest, state (truncated)
+08:40:35.924 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 15343, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 15343, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 15343, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 15343, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 46937, "type" => "message"}], "output_tokens" => 46937, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:40:35.948 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/623_004_crash_recoverable_persistent_inverted_index_01 solution.ex
+08:40:37.229 [debug] grade JSON: {"analysis":{"defp_count":18,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":415,"lines_over_98":0,"max_line_length":90,"mode":"full","pipe_chain_count":11,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/623_004_crash_recoverable_persistent_inverted_index_01/solution.ex","task":"623_004_crash_recoverable_persistent_inverted_index_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":18,"timestamp":"2026-07-11T06:40:37.202813Z"}
+08:40:37.231 [info] cycle 623_004_crash_recoverable_persistent_inverted_index_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+08:40:37.232 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+08:40:37.232 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `InvertedIndex` that implements a **crash-recoverable, disk-persistent** full-text search engine. Every mutation is durably recorded on disk before it is acknowledged, and the full index is rebuilt from disk when the process restarts — so a crash never loses an acknowledged write.
+
+I need these functions in the public API:
+
+- `InvertedIndex.start_link(opts)` to start the process. It must accept:
+  - `:dir` (**required**) — a filesystem directory the server uses for its persistence files. Create it if it does not exist.
+  - `:name` — for process registration.
+  - `:stop_words` — a `MapSet` of words to exclude during tokenization. If not provided, default to a built-in set containing at minimum: "the", "a", "an", "is", "are", "was", "were", "in", "on", "at", "to", "of", "and", "or", "it", "this", "that", "for", "with", "as", "by", "not", "be", "has", "had", "have", "do", "does", "did", "but", "if", "from".
+
+  On start, the server must **recover its in-memory state** from `:dir`: if a snapshot file is present, load it, and then replay every write-ahead-log (WAL) entry recorded after that snapshot, in order. After `start_link` returns, the index must reflect every previously acknowledged `index`/`remove` call for that directory.
+
+- `InvertedIndex.index(server, id, fields)` which indexes a document. `id` is a string, `fields` is a map of field names to text strings. Tokenization: lowercase everything, split on whitespace and punctuation via the regex `~r/[^a-z0-9]+/`, then remove stop words. The mutation must be **durably appended to the WAL (and flushed to disk) before the call returns**. Indexing the same `id` again must replace the previous version cleanly. Return `:ok`.
+
+- `InvertedIndex.remove(server, id)` which removes a document entirely. The mutation must be durably appended to the WAL before returning. After removal the document must not appear in results and must not contribute to the document count used for IDF. Return `:ok`. Removing a non-existent id must not raise.
+
+- `InvertedIndex.search(server, query, opts \\ [])` which tokenizes the query using the same pipeline as indexing, finds documents containing at least one query term, and returns them ranked by TF-IDF score descending. The scoring formula is `tf(term, field) · idf(term)` where `tf = count_of_term_in_field / total_tokens_in_field` and `idf = :math.log(total_documents / documents_containing_term)`; a term's score for a document is summed across all fields in which it appears, and scores of distinct query terms are summed. Return a list of `%{id: id, score: score}` maps sorted by score descending. Support `opts[:limit]` to cap the number of results.
+
+- `InvertedIndex.snapshot(server)` which writes the entire current index state to the snapshot file and then truncates the WAL (so subsequent recovery loads the snapshot and replays only WAL entries written after it). This compaction must not change any query results. Return `:ok`.
+
+- `InvertedIndex.suggest(server, prefix, limit \\ 10)` which returns up to `limit` vocabulary terms starting with the (lowercased) prefix, sorted by document frequency descending. Return a list of strings.
+
+- `InvertedIndex.stats(server)` which returns `%{document_count: integer, term_count: integer}`.
+
+Additional requirements:
+- Implement this as a GenServer. Use no external dependencies — only standard library and OTP (you may use `:erlang.term_to_binary/1`, `File`, and `:file.sync/1`).
+- Durability must not depend on a graceful shutdown: because each mutation is flushed to disk before acknowledgement, a hard kill of the process must still leave every acknowledged mutation recoverable on the next `start_link` with the same `:dir`.
+- Two servers using different directories must be completely independent.
+- All term storage and lookup must be case-insensitive.
+- The module must be in a single file called `inverted_index.ex`.
+
+----- solution.ex -----
+defmodule InvertedIndex do
+  @moduledoc """
+  A crash-recoverable, disk-persistent full-text search engine.
+
+  `InvertedIndex` is a `GenServer` that maintains an in-memory inverted index
+  while durably recording every mutation on disk before acknowledging it. Two
+  files are kept inside the configured `:dir`:
+
+    * a write-ahead log (`wal.log`) — every `index`/`remove` mutation is
+      appended and flushed (`:file.sync/1`) before the call returns, so a hard
+      kill never loses an acknowledged write;
+    * a snapshot (`snapshot.bin`) — a compacted image of the whole index that
+      recovery loads first, after which only the WAL entries written since the
+      snapshot are replayed.
+
+  On start the server rebuilds its state from `:dir`: it loads the snapshot (if
+  any) and replays the WAL in order. Servers using different directories are
+  completely independent. All term storage and lookup are case-insensitive.
+  """
+
+  use GenServer
+
+  @default_stop_words MapSet.new([
+                        "the",
+                        "a",
+                        "an",
+                        "is",
+                        "are",
+                        "was",
+                        "were",
+                        "in",
+                        "on",
+                        "at",
+                        "to",
+                        "of",
+                        "and",
+                        "or",
+                        "it",
+                        "this",
+                        "that",
+                        "for",
+                        "with",
+                        "as",
+                        "by",
+                        "not",
+                        "be",
+                        "has",
+                        "had",
+                        "have",
+                        "do",
+                        "does",
+                        "did",
+                        "but",
+                        "if",
+                        "from"
+                      ])
+
+  @type score_entry :: %{id: String.t(), score: float()}
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the index server.
+
+  Options:
+
+    * `:dir` (required) — directory used for the WAL and snapshot files; it is
+      created if it does not exist. State is recovered from this directory.
+    * `:name` — optional process registration name.
+    * `:stop_words` — a `MapSet` of words excluded during tokenization; a
+      built-in default set is used when omitted.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Indexes ` (truncated)
+08:55:37.257 [warning] transient error (no JSON on stdout (exit 137)) on fix (623_004_crash_recoverable_persistent_inverted_index_01) — retry 1/5 after 2000ms
+09:10:39.284 [warning] transient error (no JSON on stdout (exit 137)) on fix (623_004_crash_recoverable_persistent_inverted_index_01) — retry 2/5 after 4000ms
+09:25:43.311 [warning] transient error (no JSON on stdout (exit 137)) on fix (623_004_crash_recoverable_persistent_inverted_index_01) — retry 3/5 after 8000ms
+09:40:13.736 [warning] usage limit / out of credits on fix (623_004_crash_recoverable_persistent_inverted_index_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+09:55:15.590 [warning] usage limit / out of credits on fix (623_004_crash_recoverable_persistent_inverted_index_01) — waiting 900000ms (attempt 2, ~15 min waited so far)
+10:10:18.370 [warning] usage limit / out of credits on fix (623_004_crash_recoverable_persistent_inverted_index_01) — waiting 900000ms (attempt 3, ~30 min waited so far)
+10:25:20.313 [warning] usage limit / out of credits on fix (623_004_crash_recoverable_persistent_inverted_index_01) — waiting 900000ms (attempt 4, ~45 min waited so far)
+10:40:22.701 [warning] usage limit / out of credits on fix (623_004_crash_recoverable_persistent_inverted_index_01) — waiting 900000ms (attempt 5, ~60 min waited so far)
+10:55:24.615 [warning] usage limit / out of credits on fix (623_004_crash_recoverable_persistent_inverted_index_01) — waiting 900000ms (attempt 6, ~75 min waited so far)
+11:10:27.836 [warning] usage limit / out of credits on fix (623_004_crash_recoverable_persistent_inverted_index_01) — waiting 900000ms (attempt 7, ~90 min waited so far)
+11:25:30.211 [warning] usage limit / out of credits on fix (623_004_crash_recoverable_persistent_inverted_index_01) — waiting 900000ms (attempt 8, ~105 min waited so far)
+11:40:31.969 [warning] usage limit / out of credits on fix (623_004_crash_recoverable_persistent_inverted_index_01) — waiting 900000ms (attempt 9, ~120 min waited so far)
+12:10:32.014 [warning] transient error (no JSON on stdout (exit 137)) on fix (623_004_crash_recoverable_persistent_inverted_index_01) — retry 4/5 after 16000ms
+12:25:48.045 [warning] transient error (no JSON on stdout (exit 137)) on fix (623_004_crash_recoverable_persistent_inverted_index_01) — retry 5/5 after 32000ms
+12:41:20.073 [error] cycle 623_004_crash_recoverable_persistent_inverted_index_01: fix call failed: {:transient, "no JSON on stdout (exit 137)"}

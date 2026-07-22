@@ -1,0 +1,55 @@
+08:25:31.523 [info] VARIATION 100_002_hotp_counter_based_otp_with_resynchronization_01: HOTP Counter-Based OTP with Resynchronization
+08:25:31.523 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+08:25:31.523 [debug] claude -p USER prompt:
+Write me an Elixir module called `HOTP` that implements **RFC 4226 HMAC-Based One-Time Passwords** (the event/counter-based cousin of TOTP) using only the OTP standard library — no external dependencies. Unlike time-based OTP, HOTP codes are driven by a monotonically increasing **counter** that the server persists per account, so the central challenge is *resynchronization*: the client's counter may run ahead of the server's, and validation must look ahead by a bounded number of steps and report the new counter value.
+
+I need these functions in the public API:
+
+- `HOTP.generate_secret()` returns a cryptographically random, base32-encoded secret string (160 bits / 20 bytes of entropy, no padding characters). It must use `:crypto.strong_rand_bytes/1`.
+
+- `HOTP.generate_code(secret, counter)` returns a 6-digit zero-padded string for the given non-negative integer `counter`. It must HMAC-SHA1 the counter (encoded as a big-endian 8-byte unsigned integer) with the base32-decoded secret, apply the RFC 4226 dynamic truncation, and take the result modulo 1_000_000.
+
+- `HOTP.valid?(secret, code, counter, opts \\ [])` validates a code (given as a string or an integer) against a starting `counter`, tolerating the client having advanced past the server. It accepts a `:look_ahead` option (a non-negative integer, default `3`) and checks every counter value in the inclusive range `counter..(counter + look_ahead)`. On the **first (lowest)** counter value in that range whose code matches, it returns `{:ok, next_counter}` where `next_counter` is that matched counter plus one (the next counter the server should expect). If no counter in the range matches, it returns `:error`. Code comparison must be constant-time.
+
+- `HOTP.provisioning_uri(secret, issuer, account_name, counter)` returns an `otpauth://hotp/` URI with the label `issuer:account_name` and query parameters `secret`, `issuer`, `algorithm=SHA1`, `digits=6`, and `counter=<counter>` — all properly URI-encoded.
+
+Requirements and constraints:
+- Base32 encoding/decoding must follow RFC 4648 (uppercase alphabet A–Z, 2–7). Implement it yourself rather than relying on a library.
+- HMAC-SHA1 must be done via Erlang's `:crypto.mac/4`.
+- Dynamic truncation: take the last byte of the HMAC, mask with `0x0F` to get the offset, then read 4 bytes from that offset, mask the top bit with `0x7F`, and take the result modulo 1_000_000.
+- The generated code must always be exactly 6 characters, left-padded with zeros if necessary.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+08:25:33.162 [warning] usage limit / out of credits on variation_blind_solve (100_002_hotp_counter_based_otp_with_resynchronization_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+08:40:34.930 [warning] usage limit / out of credits on variation_blind_solve (100_002_hotp_counter_based_otp_with_resynchronization_01) — waiting 900000ms (attempt 2, ~15 min waited so far)
+08:55:36.677 [warning] usage limit / out of credits on variation_blind_solve (100_002_hotp_counter_based_otp_with_resynchronization_01) — waiting 900000ms (attempt 3, ~30 min waited so far)
+09:10:38.495 [warning] usage limit / out of credits on variation_blind_solve (100_002_hotp_counter_based_otp_with_resynchronization_01) — waiting 900000ms (attempt 4, ~45 min waited so far)
+09:25:39.952 [warning] usage limit / out of credits on variation_blind_solve (100_002_hotp_counter_based_otp_with_resynchronization_01) — waiting 900000ms (attempt 5, ~60 min waited so far)
+09:40:41.503 [warning] usage limit / out of credits on variation_blind_solve (100_002_hotp_counter_based_otp_with_resynchronization_01) — waiting 900000ms (attempt 6, ~75 min waited so far)
+09:41:00.415 [notice] SIGTERM received - shutting down
+

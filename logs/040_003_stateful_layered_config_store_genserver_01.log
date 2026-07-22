@@ -1,0 +1,441 @@
+09:37:46.414 [info] VARIATION 040_003_stateful_layered_config_store_genserver_01: Stateful Layered Config Store GenServer
+09:37:46.415 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_003_stateful_layered_config_store_genserver_01 solution.ex
+09:37:47.032 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":false,"line_count":158,"lines_over_98":0,"max_line_length":96,"mode":"full","pipe_chain_count":2,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.63,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.92,"reasons":["analysis: @doc on public functions → 0/1 pts","analysis: @spec annotations present → 0/2 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/040_003_stateful_layered_config_store_genserver_01/solution.ex","task":"040_003_stateful_layered_config_store_genserver_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T07:37:47.010282Z"}
+09:37:47.033 [info] cycle 040_003_stateful_layered_config_store_genserver_01: repairing — The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+09:37:47.033 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+09:37:47.033 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ConfigStore` implemented as a **GenServer** that
+holds a base configuration plus a dynamic, ordered set of named override layers and
+computes the deep-merged effective configuration on demand.
+
+Public API:
+- `ConfigStore.start_link(opts)` — starts the server. Supported opts:
+  - `:base` — the base config map (default `%{}`).
+  - `:name` — optional GenServer name.
+  - `:list_strategy` — `:replace` (default) or `:append`, global list merge strategy.
+  - `:list_strategies` — a map of `key_path => :replace | :append` (paths as lists or
+    tuples of atoms) overriding the global strategy per path.
+  - `:locked` — a list of key-path tuples/lists that override layers must not change.
+- `ConfigStore.put_layer(server, layer_name, config_map)` — adds a named override
+  layer, or replaces an existing one **in place** (keeping its precedence position).
+  Returns `:ok`.
+- `ConfigStore.drop_layer(server, layer_name)` — removes a layer. Returns `:ok`.
+- `ConfigStore.layers(server)` — returns the list of layer names in precedence order
+  (lowest precedence first).
+- `ConfigStore.get_config(server)` — returns the deep-merged effective config: the
+  base with every layer applied in order, later layers winning.
+- `ConfigStore.get(server, key_path)` — returns the effective value at a key-path
+  (list of atoms), or `nil` if absent.
+
+Merge rules match a standard deep config merge:
+- Nested maps are deep-merged, not replaced wholesale.
+- Scalars from higher-precedence layers replace lower ones.
+- Lists follow the `:list_strategy` / `:list_strategies` options (`:append`
+  concatenates onto the accumulated list).
+- Locked key-paths keep the base value and cannot be changed by any layer.
+
+Layers apply in insertion order: the first `put_layer` is lowest precedence; a later
+`put_layer` with the same name updates the existing layer without changing its spot.
+
+Give me the complete module in a single file. Use only the Elixir standard library.
+
+----- solution.ex -----
+defmodule ConfigStore do
+  @moduledoc """
+  A GenServer that holds a base configuration plus a dynamic, ordered set of named
+  override layers and computes the deep-merged effective configuration on demand.
+
+  Layers apply in insertion order (lowest precedence first). Merge semantics match a
+  standard deep config merge: nested maps recurse, scalars from higher layers win,
+  lists follow `:list_strategy` / `:list_strategies`, and `:locked` paths keep the
+  base value.
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  def start_link(opts \\ []) do
+    {base, opts1} = Keyword.pop(opts, :base, %{})
+    {name, opts2} = Keyword.pop(opts1, :name)
+
+    resolved = resolve_opts(opts2)
+    state = %{base: base, layers: [], opts: resolved}
+
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, state, gen_opts)
+  end
+
+  def put_layer(server, layer_name, config_map) when is_map(config_map) do
+    GenServer.call(server, {:put_layer, layer_name, config_map})
+  end
+
+  def drop_layer(server, layer_name) do
+    GenServer.call(server, {:drop_layer, layer_name})
+  end
+
+  def layers(server), do: GenServer.call(server, :layers)
+
+  def get_config(server), do: GenServer.call(server, :get_config)
+
+  def get(server, key_path) when is_list(key_path) do
+    GenServer.call(server, {:get, key_path})
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:put_layer, name, map}, _from, state) do
+    layers =
+      if List.keymember?(state.layers, name, 0) do
+        List.keyreplace(state.layers, name, 0, {name, map})
+      else
+        state.layers ++ [{name, map}]
+      end
+
+    {:reply, :ok, %{state | layers: layers}}
+  end
+
+  def handle_call({:drop_layer, name}, _from, state) do
+    {:reply, :ok, %{state | layers: List.keydelete(state.layers, name, 0)}}
+  end
+
+  def handle_call(:layers, _from, state) do
+    {:reply, Enum.map(state.layers, fn {name, _map} -> name end), state}
+  end
+
+  def handle_call(:get_config, _from, state) do
+    {:reply, compute(state), state}
+  end
+
+  def handle_call({:get, key_path}, _from, state) do
+    {:reply, fetch_path(compute(state), key_path), state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Merge engine
+  # ---------------------------------------------------------------------------
+
+  defp compute(%{base: base, layers: layers, opts: opts}) do
+    Enum.reduce(layers, base, fn {_name, map}, acc -> do_merge(acc, map, [], opts) end)
+  end
+
+  defp do_merge(base, over, path, opts) when is_map(base) and is_map(over) do
+    keys = Enum.uniq(Map.keys(base) ++ Map.keys(over))
+
+    Map.new(keys, fn k ->
+      kpath = path ++ [k]
+
+      value =
+        cond do
+          not Map.has_key?(over, k) -> Map.fetch!(base, k)
+          not Map.has_key?(base, k) -> Map.fetch!(over, k)
+          locked?(kpath, opts) -> Map.fetch!(base, k)
+          true -> merge_value(Map.fetch!(base, k), Map.fetch!(over, k), kpath, opts)
+        end
+
+      {k, value}
+    end)
+  end
+
+  defp merge_value(bv, ov, kpath, opts) do
+    cond do
+      is_map(bv) and is_map(ov) ->
+        do_merge(bv, ov, kpath, opts)
+
+      is_list(bv) and is_list(ov) ->
+        case list_strategy_for(kpath, opts) do
+          :replace -> ov
+          :append -> bv ++ ov
+        end
+
+      true ->
+        ov
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Options + helpers
+  # ---------------------------------------------------------------------------
+
+  defp resolve_opts(opts) do
+    global = Keyword.get(opts, :list_strategy, :replace)
+
+    per_key =
+      opts
+      |> Keyword.get(:list_strategies, %{})
+      |> Map.new(fn {path, strat} -> {normalise_path(path), strat} end)
+
+    locked = Enum.map(Keyword.get(opts, :locked, []), &normalise_path/1)
+
+    %{global_list_strategy: global, per_key_strategies: per_key, locked_paths: locked}
+  end
+
+  defp normalise_path(path) when is_list(path), do: path
+  defp normalise_path(path) when is_tuple(path), do: Tuple.to_list(path)
+
+  defp locked?(kpath, %{locked_paths: locked}), do: kpath in locked
+
+  defp list_strategy_for(kpath, %{per_key_strategies: per_key, global_list_strategy: global}) do
+    Map.get(per_key, kpath, global)
+  end
+
+  defp fetch_path(map, []), do: map
+
+  defp fetch_path(map, [k | rest]) when is_map(map) do
+    case Map.fetch(map, k) do
+      {:ok, v} -> fetch_path(v, rest)
+      :error -> nil
+    end
+  end
+
+  defp fetch_path(_map, _path), do: nil
+end
+
+----- test_harness.exs -----
+defmodule ConfigStoreTest do
+  use ExUnit.Case, async: false
+
+  defp start(opts) do
+    {:ok, pid} = ConfigStore.start_link(opts)
+    pid
+  end
+
+  test "base-only config is returned when no layers added" do (truncated)
+09:38:14.926 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule ConfigStore do
+  @moduledoc """
+  A GenServer that holds a base configuration plus a dynamic, ordered set of named
+  override layers and computes the deep-merged effective configuration on demand.
+
+  Layers apply in insertion order (lowest precedence first). Merge semantics match a
+  standard deep config merge: nested maps recurse, scalars from higher layers win,
+  lists follow `:list_strategy` / `:list_strategies`, and `:locked` paths keep the
+  base value.
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the config store.
+
+  Supported options: `:base`, `:name`, `:list_strategy`, `:list_strategies` and
+  `:locked`. See the module documentation for their meaning.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {base, opts1} = Keyword.pop(opts, :base, %{})
+    {name, opts2} = Keyword.pop(opts1, :name)
+
+    resolved = resolve_opts(opts2)
+    state = %{base: base, layers: [], opts: resolved}
+
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, state, gen_opts)
+  end
+
+  @doc """
+  Adds a named override layer, or replaces an existing one in place, keeping its
+  precedence position. Returns `:ok`.
+  """
+  @spec put_layer(GenServer.server(), term(), map()) :: :ok
+  def put_layer(server, layer_name, config_map) when is_map(config_map) do
+    GenServer.call(server, {:put_layer, layer_name, config_map})
+  end
+
+  @doc """
+  Removes the layer named `layer_name`. Returns `:ok`.
+  """
+  @spec drop_layer(GenServer.server(), term()) :: :ok
+  def drop_layer(server, layer_name) do
+    GenServer.call(server, {:drop_layer, layer_name})
+  end
+
+  @doc """
+  Returns the list of layer names in precedence order (lowest precedence first).
+  """
+  @spec layers(GenServer.server()) :: [term()]
+  def layers(server), do: GenServer.call(server, :layers)
+
+  @doc """
+  Returns the deep-merged effective config: the base with every layer applied in
+  order, later layers winning.
+  """
+  @spec get_config(GenServer.server()) :: map()
+  def get_config(server), do: GenServer.call(server, :get_config)
+
+  @doc """
+  Returns the effective value at `key_path` (a list of atoms), or `nil` if absent.
+  """
+  @spec get(GenServer.server(), [atom()]) :: term()
+  def get(server, key_path) when is_list(key_path) do
+    GenServer.call(server, {:get, key_path})
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:put_layer, name, map}, _from, state) do
+    layers =
+      if List.keymember?(state.layers, name, 0) do
+        List.keyreplace(state.layers, name, 0, {name, map})
+      else
+        state.layers ++ [{name, map}]
+      end
+
+    {:reply, :ok, %{state | layers: layers}}
+  end
+
+  def handle_call({:drop_layer, name}, _from, state) do
+    {:reply, :ok, %{state | layers: List.keydelete(state.layers, name, 0)}}
+  end
+
+  def handle_call(:layers, _from, state) do
+    {:reply, Enum.map(state.layers, fn {name, _map} -> name end), state}
+  end
+
+  def handle_call(:get_config, _from, state) do
+    {:reply, compute(state), state}
+  end
+
+  def handle_call({:get, key_path}, _from, state) do
+    {:reply, fetch_path(compute(state), key_path), state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Merge engine
+  # ---------------------------------------------------------------------------
+
+  defp compute(%{base: base, layers: layers, opts: opts}) do
+    Enum.reduce(layers, base, fn {_name, map}, acc -> do_merge(acc, map, [], opts) end)
+  end
+
+  defp do_merge(base, over, path, opts) when is_map(base) and is_map(over) do
+    keys = Enum.uniq(Map.keys(base) ++ Map.keys(over))
+
+    Map.new(keys, fn k ->
+      kpath = path ++ [k]
+
+      value =
+        cond do
+          not Map.has_key?(over, k) -> Map.fetch!(base, k)
+          not Map.has_key?(base, k) -> Map.fetch!(over, k)
+          locked?(kpath, opts) -> Map.fetch!(base, k)
+          true -> merge_value(Map.fetch!(base, k), Map.fetch!(over, k), kpath, opts)
+        end
+
+      {k, value}
+    end)
+  end
+
+  defp merge_value(bv, ov, kpath, opts) do
+    cond do
+      is_map(bv) and is_map(ov) ->
+        do_merge(bv, ov, kpath, opts)
+
+      is_list(bv) and is_list(ov) ->
+        case list_strategy_for(kpath, opts) do
+          :replace -> ov
+          :append -> bv ++ ov
+        end
+
+      true ->
+        ov
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Options + helpers
+  # ---------------------------------------------------------------------------
+
+  defp resolve_opts(opts) do
+    global = Keyword.get(opts, :list_strategy, :replace)
+
+    per_key =
+      opts
+      |> Keyword.get(:list_strategies, %{})
+      |> Map.new(fn {path, strat} -> {normalise_path(path), strat} end)
+
+    locked = Enum.map(Keyword.get(opts, :locked, []), &normalise_path/1)
+
+    %{global_list_strategy: global, per_key_strategies: per_key, locked_paths: locked}
+  end
+
+  defp normalise_path(path) when is_list(path), do: path
+  defp normalise_path(path) when is_tuple(path), do: Tuple.to_list(path)
+
+  defp locked?(kpath, %{locked_paths: locked}), do: kpath in locked
+
+  defp list_strategy_for(kpath, %{per_key_strategies: per_key, global_list_strategy: global}) do
+    Map.get(per_key, kpath, global)
+  end
+
+  defp fetch_path(map, []), do: map
+
+  defp fetch_path(map, [k | rest]) when is_map(map) do
+    case Map.fetch(map, k) do
+      {:ok, v} -> fetch_path(v, rest)
+      :error -> nil
+    end
+  end
+
+  defp fetch_path(_map, _path), do: nil
+end
+</file>
+09:38:14.926 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5167, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5167, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5167, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5167, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 2658, "type" => "message"}], "output_tokens" => 2658, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+09:38:14.945 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_003_stateful_layered_config_store_genserver_01 solution.ex
+09:38:15.563 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":187,"lines_over_98":0,"max_line_length":96,"mode":"full","pipe_chain_count":2,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/040_003_stateful_layered_config_store_genserver_01/solution.ex","task":"040_003_stateful_layered_config_store_genserver_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T07:38:15.542109Z"}
+09:38:15.569 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_003_stateful_layered_config_store_genserver_01_mut solution.ex
+09:38:16.190 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":154,"lines_over_98":4,"max_line_length":441,"mode":"full","pipe_chain_count":2,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 11/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex","task":"040_003_stateful_layered_config_store_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"ConfigStoreTest","test":"test base-only config is returned when no layers added"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test put_layer overrides scalars from the base"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test nested maps are deep-merged across base and layers"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test later layer wins over earlier layer"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test replacing a layer keeps its precedence position"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test drop_layer removes a layer"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test get/2 fetches by key-path and returns nil when absent"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test append list strategy concatenates base and layer lists"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test per-key list strategy overrides the global strategy"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test locked key-path cannot be changed by any layer"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test named server can be addressed by its registered name"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T07:38:16.168036Z"}
+09:38:16.195 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_003_stateful_layered_config_store_genserver_01_mut solution.ex
+09:38:16.819 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":166,"lines_over_98":4,"max_line_length":441,"mode":"full","pipe_chain_count":2,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.32,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 10/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.09},"shape":"single","solution_file":".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex","task":"040_003_stateful_layered_config_store_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"ConfigStoreTest","test":"test put_layer overrides scalars from the base"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test nested maps are deep-merged across base and layers"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test later layer wins over earlier layer"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test replacing a layer keeps its precedence position"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test drop_layer removes a layer"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test get/2 fetches by key-path and returns nil when absent"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test append list strategy concatenates base and layer lists"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test per-key list strategy overrides the global strategy"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test locked key-path cannot be changed by any layer"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test named server can be addressed by its registered name"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T07:38:16.796410Z"}
+09:38:16.824 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_003_stateful_layered_config_store_genserver_01_mut solution.ex
+09:38:17.431 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":166,"lines_over_98":4,"max_line_length":441,"mode":"full","pipe_chain_count":2,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.89,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 1/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.91},"shape":"single","solution_file":".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex","task":"040_003_stateful_layered_config_store_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"ConfigStoreTest","test":"test drop_layer removes a layer"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T07:38:17.410058Z"}
+09:38:17.436 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_003_stateful_layered_config_store_genserver_01_mut solution.ex
+09:38:18.055 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":166,"lines_over_98":4,"max_line_length":441,"mode":"full","pipe_chain_count":2,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.65,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 5/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.55},"shape":"single","solution_file":".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex","task":"040_003_stateful_layered_config_store_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"ConfigStoreTest","test":"test base-only config is returned when no layers added"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test put_layer overrides scalars from the base"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test later layer wins over earlier layer"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test replacing a layer keeps its precedence position"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test drop_layer removes a layer"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T07:38:18.032136Z"}
+09:38:18.060 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_003_stateful_layered_config_store_genserver_01_mut solution.ex
+09:38:18.676 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":166,"lines_over_98":4,"max_line_length":441,"mode":"full","pipe_chain_count":2,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.39,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 9/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.18},"shape":"single","solution_file":".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex","task":"040_003_stateful_layered_config_store_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"ConfigStoreTest","test":"test base-only config is returned when no layers added"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test put_layer overrides scalars from the base"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test nested maps are deep-merged across base and layers"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test later layer wins over earlier layer"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test replacing a layer keeps its precedence position"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test drop_layer removes a layer"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test append list strategy concatenates base and layer lists"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test per-key list strategy overrides the global strategy"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test locked key-path cannot be changed by any layer"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T07:38:18.654677Z"}
+09:38:18.682 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_003_stateful_layered_config_store_genserver_01_mut solution.ex
+09:38:19.297 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":166,"lines_over_98":4,"max_line_length":441,"mode":"full","pipe_chain_count":2,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.84,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 2/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.82},"shape":"single","solution_file":".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex","task":"040_003_stateful_layered_config_store_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"ConfigStoreTest","test":"test get/2 fetches by key-path and returns nil when absent"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test named server can be addressed by its registered name"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T07:38:19.275160Z"}
+09:38:19.301 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_003_stateful_layered_config_store_genserver_01_mut solution.ex
+09:38:19.917 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":166,"lines_over_98":4,"max_line_length":441,"mode":"full","pipe_chain_count":2,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 11/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex","task":"040_003_stateful_layered_config_store_genserver_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :init, 1, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 55, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test base-only config is returned when no layers added"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :init, 1, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 55, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test put_layer overrides scalars from the base"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :init, 1, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 55, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test nested maps are deep-merged across base and layers"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :init, 1, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 55, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test later layer wins over earlier layer"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :init, 1, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 55, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test replacing a layer keeps its precedence position"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :init, 1, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 55, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test drop_layer removes a layer"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :init, 1, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 55, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test get/2 fetches by key-path and returns nil when absent"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :init, 1, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 55, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test append list strategy concatenates base and layer lists"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :init, 1, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 55, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test per-key list strategy overrides the global strategy"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :init, 1, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 55, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test locked key-path cannot be changed by any layer"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :init, 1, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 55, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test named server can be addressed by its registered name"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T07:38:19.896069Z"}
+09:38:19.921 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_003_stateful_layered_config_store_genserver_01_mut solution.ex
+09:38:20.547 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":4,"max_line_length":441,"mode":"full","pipe_chain_count":2,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":15,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.18,"reasons":["compilation: 15 warning(s) → -1.5 pts","tests: 11/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex","task":"040_003_stateful_layered_config_store_genserver_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :handle_call, 3, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 72, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test base-only config is returned when no layers added"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :handle_call, 3, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test put_layer overrides scalars from the base"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :handle_call, 3, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test nested maps are deep-merged across base and layers"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :handle_call, 3, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test later layer wins over earlier layer"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :handle_call, 3, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test replacing a layer keeps its precedence position"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :handle_call, 3, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test drop_layer removes a layer"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :handle_call, 3, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test get/2 fetches by key-path and returns nil when absent"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :handle_call, 3, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test append list strategy concatenates base and layer lists"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :handle_call, 3, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test per-key list strategy overrides the global strategy"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :handle_call, 3, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test locked key-path cannot be changed by any layer"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConfigStore, :handle_call, 3, [file: ~c\".gen_staging/040_003_stateful_layered_config_store_genserver_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConfigStoreTest","test":"test named server can be addressed by its registered name"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T07:38:20.526528Z"}
+09:38:20.548 [info] cycle 040_003_stateful_layered_config_store_genserver_01: ACCEPTED on attempt 1
+09:38:20.549 [info] promoted 040_003_stateful_layered_config_store_genserver_01 -> tasks/040_003_stateful_layered_config_store_genserver_01

@@ -1,0 +1,151 @@
+13:43:54.146 [info] FIM candidate-select for 625_002_versioned_object_store_with_delete_markers_01 (up to 3)
+13:43:54.146 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:43:54.146 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+# Versioned Object Store with Delete Markers
+
+Write me an Elixir GenServer module called `VersionedObjectStorage` that provides an S3-like object store where **every write keeps history** — like S3 bucket versioning. It is backed by the local filesystem so history survives a restart.
+
+## Public API
+
+- `VersionedObjectStorage.start_link(opts)` — start the process. Accepts a `:root_dir` option (base directory for all storage, default `"./versioned_object_storage_data"`) and a `:name` option for process registration.
+
+- `VersionedObjectStorage.create_bucket(server, name)` — create a bucket. Return `:ok`, or `{:error, :already_exists}` if it already exists. Bucket names must be non-empty strings containing only lowercase alphanumeric characters, hyphens, and dots — otherwise return `{:error, :invalid_name}`.
+
+- `VersionedObjectStorage.list_buckets(server)` — return `{:ok, [bucket_name]}`, a sorted list of bucket names.
+
+- `VersionedObjectStorage.put_object(server, bucket, key, data, metadata \\ %{})` — store a new **version** of an object. `data` is a binary; `metadata` is a map of arbitrary key-value pairs. Each call creates a brand-new version and never destroys earlier versions. Return `{:ok, version_id}` where `version_id` is a unique binary string, or `{:error, :bucket_not_found}` if the bucket does not exist.
+
+- `VersionedObjectStorage.get_object(server, bucket, key)` — retrieve the **latest** version of a key. Return `{:ok, %{data: binary, metadata: map, size: integer, version_id: string, last_modified: DateTime.t()}}`. Return `{:error, :bucket_not_found}` if the bucket is missing, or `{:error, :not_found}` if the key has no versions **or** its latest version is a delete marker (see below).
+
+- `VersionedObjectStorage.get_object_version(server, bucket, key, version_id)` — retrieve one specific version by its id. Return `{:ok, %{data: binary, metadata: map, size: integer, version_id: string, is_delete_marker: boolean, last_modified: DateTime.t()}}`. For a delete marker, `data` is the empty binary `""` and `is_delete_marker` is `true`. Return `{:error, :bucket_not_found}` or `{:error, :not_found}` (unknown version) on failure.
+
+- `VersionedObjectStorage.delete_object(server, bucket, key)` — perform a **soft delete** by appending a new *delete marker* version. This hides the object from `get_object` and `list_objects` but preserves all earlier versions. Return `{:ok, version_id}` (the delete marker's version id), or `{:error, :bucket_not_found}`.
+
+- `VersionedObjectStorage.list_versions(server, bucket, key)` — return `{:ok, [%{version_id: string, is_delete_marker: boolean, size: integer, last_modified: DateTime.t()}]}` ordered **newest first** (most recently written version at the head). Return `{:error, :bucket_not_found}`. If the key has no versions, return `{:ok, []}`.
+
+- `VersionedObjectStorage.delete_version(server, bucket, key, version_id)` — **permanently** remove one specific version by id. Return `:ok` (idempotent — succeed even if that version does not exist), or `{:error, :bucket_not_found}`. Permanently deleting the latest delete marker effectively *restores* the object: whatever version now has the highest recency becomes the latest again.
+
+- `VersionedObjectStorage.list_objects(server, bucket)` — return `{:ok, [%{key: string, size: integer, version_id: string, last_modified: DateTime.t()}]}` describing the **current** state of the bucket: only keys whose latest version is a real object (not a delete marker), sorted lexicographically by key. Return `{:error, :bucket_not_found}`.
+
+## Persistence
+
+Store everything under `root_dir`. Buckets, all object versions (data + metadata), and delete markers must survive a GenServer restart if the same `root_dir` is reused. You may use any internal layout and `:erlang.term_to_binary` / `:erlang.binary_to_term` for serialization.
+
+Give me the complete module in a single file. Use only the OTP standard library — no external dependencies.
+
+=== MODULE ===
+```elixir
+defmodule VersionedObjectStorage do
+  @moduledoc """
+  An S3-like, versioned object store backed by the local filesystem.
+
+  Every `put_object/5` call creates a brand-new immutable version of a key and
+  never destroys earlier versions, mirroring S3 bucket versioning. Deletes are
+  *soft*: `delete_object/3` appends a special *delete marker* version that hides
+  the object from `get_object/3` and `list_objects/2` while preserving all
+  earlier versions. Individual versions (including delete markers) can be
+  permanently removed with `delete_version/4`; removing the latest delete marker
+  effectively restores the object.
+
+  All state (buckets, versions, data, metadata, and delete markers) is persisted
+  under a configurable `:root_dir` so that history survives a restart of the
+  GenServer as long as the same directory is reused. One file per bucket is
+  written using `:erlang.term_to_binary/1` for serialization.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type version_summary :: %{
+          version_id: String.t(),
+          is_delete_marker: boolean(),
+          size: non_neg_integer(),
+          last_modified: DateTime.t()
+        }
+
+  @default_root "./versioned_object_storage_data"
+  @bucket_suffix ".bin"
+  @name_regex ~r/^[a-z0-9.\-]+$/
+
+  # ── Public API ──────────────────────────────────────────────────────────
+
+  @doc """
+  Start the storage process.
+
+  Options:
+
+    * `:root_dir` — base directory for all storage (default
+      `#{inspect(@default_root)}`).
+    * `:name` — optional name for process registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Create a bucket named `name`.
+
+  Returns `:ok`, `{:error, :already_exists}` if the bucket already exists, or
+  `{:error, :invalid_name}` if the name is not a non-empty string of lowercase
+  alphanumeric characters, hyphens, and dots.
+  """
+  @spec create_bucket(server(), String.t()) ::
+          :ok | {:error, :already_exists | :invalid_name}
+  def create_bucket(server, name) do
+    GenServer.call(server, {:create_bucket, name})
+  end
+
+  @doc """
+  Return `{:ok, buckets}` where `buckets` is a sorted list of bucket names.
+  """
+  @spec list_buckets(server()) :: {:ok, [String.t()]}
+  def list_buckets(server) do
+    GenServer.call(server, :list_buckets)
+  end
+
+  @doc """
+  Store a new version of `key` in `bucket` with binary `data` and `metadata`.
+
+  Each call creates a fresh version and never destroys earlier versions.
+  Returns `{:ok, version_id}` or `{:error, :bucket_not_found}`.
+  """
+  @spec put_object(server(), String.t(), String.t(), binary(), map()) ::
+          {:ok, String.t()} | {:error, :bucket_not_found}
+  def put_object(server, bucket, key, data, metadata \\ %{}) do
+    GenServer.call(server, {:put_object, bucket, key, data, metadata})
+  end
+
+  @doc """
+  Retrieve the latest version of `key` in `bucket`.
+
+  Returns `{:ok, object}` where `object` has `:data`, `:metadata`, `:size`,
+  `:version_id`, and `:last_modified`. Returns `{:error, :bucket_not_found}` if
+  the bucket is missing, or `{:error, :not_found}` if the key has no versions or
+  its latest version is a delete marker.
+  """
+  @spec get_object(server(), String.t(), String.t()) ::
+          {:ok, map()} | {:error, :bucket_not_found | : (truncated)
+13:44:00.883 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+current_objects/1
+latest_object/2
+with_bucket/3
+</file>
+13:44:00.883 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 11097, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 11097, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 11097, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 11097, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 342, "type" => "message"}], "output_tokens" => 342, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

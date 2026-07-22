@@ -1,0 +1,313 @@
+13:39:34.128 [info] VARIATION 625_004_conditional_write_object_store_with_etags_01: Conditional-Write Object Store with ETags
+13:39:34.128 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:39:34.128 [debug] claude -p USER prompt:
+# Conditional-Write Object Store with ETags
+
+Write me an Elixir GenServer module called `ConditionalObjectStorage` — an S3-like, **in-memory** object store that supports **optimistic concurrency** through conditional requests, exactly like S3's `If-Match` / `If-None-Match` preconditions. Every stored object carries an **ETag**, defined as the **lowercase hex-encoded SHA-256 of the object's data** (so identical data always yields the same ETag, and different data yields a different ETag).
+
+## Public API
+
+- `ConditionalObjectStorage.start_link(opts)` — start the process. Accepts a `:name` option for registration.
+
+- `ConditionalObjectStorage.create_bucket(server, name)` — create a bucket. Return `:ok`, or `{:error, :already_exists}`. Bucket names must be non-empty strings of lowercase alphanumeric characters, hyphens, and dots — otherwise `{:error, :invalid_name}`.
+
+- `ConditionalObjectStorage.list_buckets(server)` — return `{:ok, [bucket_name]}`, sorted.
+
+- `ConditionalObjectStorage.put_object(server, bucket, key, data, opts \\ [])` — store an object. `data` is a binary. `opts` may contain **at most one** precondition:
+  - `:if_none_match` with the value `"*"` — the write succeeds only if the key does **not** currently exist (a create-only / no-overwrite write). If the key already exists, return `{:error, :precondition_failed}` and leave the stored object unchanged.
+  - `:if_match` with an ETag string — the write succeeds only if the key currently exists **and** its ETag equals the given value (a compare-and-swap). If the key is absent or its ETag differs, return `{:error, :precondition_failed}` and leave any stored object unchanged.
+  - With no precondition, the write unconditionally creates or overwrites.
+
+  On success, return `{:ok, etag}` where `etag` is the new object's ETag. Return `{:error, :bucket_not_found}` if the bucket does not exist (preconditions are only evaluated for an existing bucket).
+
+- `ConditionalObjectStorage.get_object(server, bucket, key, opts \\ [])` — retrieve an object. Return `{:ok, %{data: binary, etag: string, size: integer, last_modified: DateTime.t()}}`. `opts` may contain `:if_none_match` with an ETag string: if the object's current ETag equals that value, return `{:error, :not_modified}` instead of the body (a cache-revalidation read). Return `{:error, :bucket_not_found}` or `{:error, :not_found}` on failure.
+
+- `ConditionalObjectStorage.delete_object(server, bucket, key, opts \\ [])` — remove an object. With no precondition this is an idempotent delete: return `:ok` even if the key does not exist. `opts` may contain `:if_match` with an ETag string — the delete then succeeds only if the key exists and its ETag matches; otherwise return `{:error, :precondition_failed}` and leave the object in place. Return `{:error, :bucket_not_found}` if the bucket is missing.
+
+- `ConditionalObjectStorage.list_objects(server, bucket)` — return `{:ok, [%{key: string, etag: string, size: integer, last_modified: DateTime.t()}]}` sorted lexicographically by key, or `{:error, :bucket_not_found}`.
+
+Storage is in memory only and does not need to survive a restart. Give me the complete module in a single file. Use only the OTP standard library — no external dependencies.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+13:40:24.338 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule ConditionalObjectStorage do
+  @moduledoc """
+  An S3-like, in-memory object store with optimistic concurrency control.
+
+  Objects are grouped into named buckets and stored entirely in process
+  memory (state is lost when the process stops). Every object carries an
+  **ETag** — the lowercase, hex-encoded SHA-256 digest of the object's
+  data. Identical data always produces the same ETag and different data
+  produces a different ETag.
+
+  Conditional requests mirror S3's `If-Match` / `If-None-Match`
+  preconditions, enabling create-only writes, compare-and-swap updates,
+  conditional deletes, and cache-revalidation reads.
+  """
+
+  use GenServer
+
+  @type bucket :: String.t()
+  @type key :: String.t()
+  @type etag :: String.t()
+
+  @typep object :: %{
+           data: binary(),
+           etag: etag(),
+           size: non_neg_integer(),
+           last_modified: DateTime.t()
+         }
+
+  @typep state :: %{buckets: %{optional(bucket()) => %{optional(key()) => object()}}}
+
+  @name_regex ~r/\A[a-z0-9.-]+\z/
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Start the object store process.
+
+  Accepts a `:name` option used to register the process; any other options
+  are passed through to `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, rest} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, rest, server_opts)
+  end
+
+  @doc """
+  Create a bucket.
+
+  Returns `:ok` on success, `{:error, :already_exists}` if the bucket is
+  already present, or `{:error, :invalid_name}` when `name` is not a
+  non-empty string of lowercase alphanumeric characters, hyphens, and dots.
+  """
+  @spec create_bucket(GenServer.server(), bucket()) ::
+          :ok | {:error, :already_exists | :invalid_name}
+  def create_bucket(server, name) do
+    GenServer.call(server, {:create_bucket, name})
+  end
+
+  @doc """
+  List all bucket names, sorted lexicographically.
+  """
+  @spec list_buckets(GenServer.server()) :: {:ok, [bucket()]}
+  def list_buckets(server) do
+    GenServer.call(server, :list_buckets)
+  end
+
+  @doc """
+  Store an object under `bucket`/`key`.
+
+  `data` must be a binary. `opts` may contain **at most one** precondition:
+
+    * `{:if_none_match, "*"}` — succeed only if the key does not exist.
+    * `{:if_match, etag}` — succeed only if the key exists and its ETag
+      equals `etag`.
+
+  With no precondition the write unconditionally creates or overwrites.
+
+  Returns `{:ok, etag}` on success, `{:error, :precondition_failed}` when a
+  precondition is not met (leaving any existing object unchanged), or
+  `{:error, :bucket_not_found}` when the bucket does not exist.
+  """
+  @spec put_object(GenServer.server(), bucket(), key(), binary(), keyword()) ::
+          {:ok, etag()} | {:error, :bucket_not_found | :precondition_failed}
+  def put_object(server, bucket, key, data, opts \\ []) when is_binary(data) do
+    GenServer.call(server, {:put_object, bucket, key, data, opts})
+  end
+
+  @doc """
+  Retrieve an object stored under `bucket`/`key`.
+
+  Returns `{:ok, %{data: binary, etag: string, size: integer,
+  last_modified: DateTime.t()}}` on success.
+
+  `opts` may contain `{:if_none_match, etag}`: if the object's current ETag
+  equals `etag`, `{:error, :not_modified}` is returned instead of the body.
+
+  Returns `{:error, :bucket_not_found}` or `{:error, :not_found}` on failure.
+  """
+  @spec get_object(GenServer.server(), bucket(), key(), keyword()) ::
+          {:ok, %{data: binary(), etag: etag(), size: non_neg_integer(),
+                  last_modified: DateTime.t()}}
+          | {:error, :bucket_not_found | :not_found | :not_modified}
+  def get_object(server, bucket, key, opts \\ []) do
+    GenServer.call(server, {:get_object, bucket, key, opts})
+  end
+
+  @doc """
+  Delete the object stored under `bucket`/`key`.
+
+  With no precondition this is an idempotent delete returning `:ok` even if
+  the key is absent. `opts` may contain `{:if_match, etag}`, in which case
+  the delete succeeds only if the key exists and its ETag matches;
+  otherwise `{:error, :precondition_failed}` is returned and the object is
+  left in place.
+
+  Returns `{:error, :bucket_not_found}` if the bucket does not exist.
+  """
+  @spec delete_object(GenServer.server(), bucket(), key(), keyword()) ::
+          :ok | {:error, :bucket_not_found | :precondition_failed}
+  def delete_object(server, bucket, key, opts \\ []) do
+    GenServer.call(server, {:delete_object, bucket, key, opts})
+  end
+
+  @doc """
+  List the objects in `bucket`, sorted lexicographically by key.
+
+  Each entry is `%{key: string, etag: string, size: integer,
+  last_modified: DateTime.t()}`. Returns `{:error, :bucket_not_found}` when
+  the bucket does not exist.
+  """
+  @spec list_objects(GenServer.server(), bucket()) ::
+          {:ok, [%{key: key(), etag: etag(), size: non_neg_integer(),
+                   last_modified: DateTime.t()}]}
+          | {:error, :bucket_not_found}
+  def list_objects(server, bucket) do
+    GenServer.call(server, {:list_objects, bucket})
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  @spec init(term()) :: {:ok, state()}
+  def init(_opts) do
+    {:ok, %{buckets: %{}}}
+  end
+
+  @impl true
+  def handle_call({:create_bucket, name}, _from, state) do
+    cond do
+      not valid_bucket_name?(name) ->
+        {:reply, {:error, :invalid_name}, state}
+
+      Map.has_key?(state.buckets, name) ->
+        {:reply, {:error, :already_exists}, state}
+
+      true ->
+        new_state = put_in(state.buckets[name], %{})
+        {:reply, :ok, new_state}
+    end
+  end
+
+  def handle_call(:list_buckets, _from, state) do
+    names = state.buckets |> Map.keys() |> Enum.sort()
+    {:reply, {:ok, names}, state}
+  end
+
+  def handle_call({:put_object, bucket, key, data, opts}, _from, state) do
+    case Map.fetch(state.buckets, bucket) do
+      :error ->
+        {:reply, {:error, :bucket_not_found}, state}
+
+      {:ok, objects} ->
+        do_put_object(state, bucket, objects, key, data, opts)
+    end
+  end
+
+  def handle_call({:get_object, bucket, key, opts}, _from, state) do
+    with {:ok, objects} <- fetch_bucket(state, bucket),
+         {:ok, object} <- fetch_object(objects, key) do
+      if Keyword.get(opts, :if_none_match) == object.etag do
+        {:reply, {:error, :not_modified}, state}
+      else
+        view = Map.take(object, [:data, :etag, :size, :last_modified])
+        {:reply, {:ok, view}, state}
+      end
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:delete_object, bucket, key, opts}, _from, state) do
+    case Map.fetch(state.buckets, bucket) do
+      :error ->
+        {:reply, {:error, :bucket_not_found}, state}
+
+      {:ok, objects} ->
+        do_delete_object(state, bucket, objects, key, opts)
+    end
+  end
+
+  def handle_call({:list_objects, bucket}, _from, state) do
+    case Map.fetch(state.buckets, bucket) do
+      :error ->
+        {:reply, {:error, :bucket_not_found}, state}
+
+      {:ok, objects} ->
+        entries =
+          objects
+          |> Enum.map(fn {key, object} ->
+            object
+            |> Map.take([:etag, :size, :last_modified])
+            |> Map.put(:key, key)
+          end)
+          |> Enum.sort_by(& &1.key)
+
+        {:reply, {:ok, entries}, state}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  @spec do_put_object(state(), bucket(), %{optional(key()) => object()}, key(), binary(),
+          keyword()) :: {:reply, {:ok, etag()} | {:error, :precondition_failed}, state()}
+  defp do_put_ (truncated)
+13:40:24.338 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5113, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5113, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5113, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5113, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 4741, "type" => "message"}], "output_tokens" => 4741, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:40:24.367 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_004_conditional_write_object_store_with_etags_01 solution.ex
+13:40:25.081 [debug] grade JSON: {"analysis":{"defp_count":9,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":332,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":8,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/625_004_conditional_write_object_store_with_etags_01/solution.ex","task":"625_004_conditional_write_object_store_with_etags_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-11T11:40:25.060928Z"}
+13:40:25.095 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_004_conditional_write_object_store_with_etags_01_mut solution.ex
+13:40:25.827 [debug] grade JSON: {"analysis":{"defp_count":9,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":233,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":8,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 16/16 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex","task":"625_004_conditional_write_object_store_with_etags_01_mut","test_failures":[{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test create, list, invalid and duplicate buckets"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test put returns the sha256 hex etag of the data"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test get returns data, etag, size and last_modified"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test identical data yields identical etag; different data differs"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_none_match * creates only when absent"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_match succeeds on a matching etag and returns the new etag"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_match fails on a stale etag and leaves the object unchanged"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_match on a missing key fails the precondition"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test put to a missing bucket returns bucket_not_found"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test get with if_none_match matching returns not_modified"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test get errors for missing bucket and missing key"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test delete is idempotent and reports bucket_not_found"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test delete with if_match succeeds only on a matching etag"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test delete with if_match on a missing key fails the precondition"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test list_objects returns sorted entries with etag and size"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test list_objects on a missing bucket errors"}],"tests_errors":0,"tests_excluded":0,"tests_failed":16,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-11T11:40:25.797671Z"}
+13:40:25.837 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_004_conditional_write_object_store_with_etags_01_mut solution.ex
+13:40:26.554 [debug] grade JSON: {"analysis":{"defp_count":9,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":242,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":8,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 14/16 failed"],"tests":0.13},"shape":"single","solution_file":".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex","task":"625_004_conditional_write_object_store_with_etags_01_mut","test_failures":[{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test create, list, invalid and duplicate buckets"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test put returns the sha256 hex etag of the data"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test get returns data, etag, size and last_modified"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test identical data yields identical etag; different data differs"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_none_match * creates only when absent"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_match succeeds on a matching etag and returns the new etag"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_match fails on a stale etag and leaves the object unchanged"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_match on a missing key fails the precondition"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test get with if_none_match matching returns not_modified"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test get errors for missing bucket and missing key"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test delete is idempotent and reports bucket_not_found"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test delete with if_match succeeds only on a matching etag"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test delete with if_match on a missing key fails the precondition"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test list_objects returns sorted entries with etag and size"}],"tests_errors":0,"tests_excluded":0,"tests_failed":14,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-11T11:40:26.529342Z"}
+13:40:26.561 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_004_conditional_write_object_store_with_etags_01_mut solution.ex
+13:40:27.280 [debug] grade JSON: {"analysis":{"defp_count":9,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":242,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":8,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 1/16 failed"],"tests":0.94},"shape":"single","solution_file":".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex","task":"625_004_conditional_write_object_store_with_etags_01_mut","test_failures":[{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test create, list, invalid and duplicate buckets"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-11T11:40:27.259957Z"}
+13:40:27.286 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_004_conditional_write_object_store_with_etags_01_mut solution.ex
+13:40:27.998 [debug] grade JSON: {"analysis":{"defp_count":9,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":242,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":8,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 11/16 failed"],"tests":0.31},"shape":"single","solution_file":".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex","task":"625_004_conditional_write_object_store_with_etags_01_mut","test_failures":[{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test put returns the sha256 hex etag of the data"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test get returns data, etag, size and last_modified"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test identical data yields identical etag; different data differs"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_none_match * creates only when absent"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_match succeeds on a matching etag and returns the new etag"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_match fails on a stale etag and leaves the object unchanged"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_match on a missing key fails the precondition"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test put to a missing bucket returns bucket_not_found"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test get with if_none_match matching returns not_modified"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test delete with if_match succeeds only on a matching etag"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test list_objects returns sorted entries with etag and size"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-11T11:40:27.974046Z"}
+13:40:28.006 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_004_conditional_write_object_store_with_etags_01_mut solution.ex
+13:40:28.697 [debug] grade JSON: {"analysis":{"defp_count":9,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":242,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":8,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 8/16 failed"],"tests":0.5},"shape":"single","solution_file":".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex","task":"625_004_conditional_write_object_store_with_etags_01_mut","test_failures":[{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test get returns data, etag, size and last_modified"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_none_match * creates only when absent"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_match succeeds on a matching etag and returns the new etag"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_match fails on a stale etag and leaves the object unchanged"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test if_match on a missing key fails the precondition"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test get with if_none_match matching returns not_modified"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test get errors for missing bucket and missing key"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test delete with if_match succeeds only on a matching etag"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-11T11:40:28.678266Z"}
+13:40:28.705 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_004_conditional_write_object_store_with_etags_01_mut solution.ex
+13:40:29.375 [debug] grade JSON: {"analysis":{"defp_count":9,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":242,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":8,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 3/16 failed"],"tests":0.81},"shape":"single","solution_file":".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex","task":"625_004_conditional_write_object_store_with_etags_01_mut","test_failures":[{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test delete is idempotent and reports bucket_not_found"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test delete with if_match succeeds only on a matching etag"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test delete with if_match on a missing key fails the precondition"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-11T11:40:29.354954Z"}
+13:40:29.382 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_004_conditional_write_object_store_with_etags_01_mut solution.ex
+13:40:30.072 [debug] grade JSON: {"analysis":{"defp_count":9,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":242,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":8,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 2/16 failed"],"tests":0.88},"shape":"single","solution_file":".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex","task":"625_004_conditional_write_object_store_with_etags_01_mut","test_failures":[{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test list_objects returns sorted entries with etag and size"},{"message":"MUTATION","module":"ConditionalObjectStorageTest","test":"test list_objects on a missing bucket errors"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-11T11:40:30.051726Z"}
+13:40:30.081 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_004_conditional_write_object_store_with_etags_01_mut solution.ex
+13:40:30.810 [debug] grade JSON: {"analysis":{"defp_count":9,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":242,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":8,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.3,"reasons":["tests: 16/16 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex","task":"625_004_conditional_write_object_store_with_etags_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test create, list, invalid and duplicate buckets"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test put returns the sha256 hex etag of the data"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test get returns data, etag, size and last_modified"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test identical data yields identical etag; different data differs"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test if_none_match * creates only when absent"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test if_match succeeds on a matching etag and returns the new etag"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test if_match fails on a stale etag and leaves the object unchanged"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test if_match on a missing key fails the precondition"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test put to a missing bucket returns bucket_not_found"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test get with if_none_match matching returns not_modified"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test get errors for missing bucket and missing key"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test delete is idempotent and reports bucket_not_found"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :init, 1, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 78, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test  (truncated)
+13:40:30.816 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_004_conditional_write_object_store_with_etags_01_mut solution.ex
+13:40:31.549 [debug] grade JSON: {"analysis":{"defp_count":9,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":202,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":2,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":26,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 26 warning(s) → hard fail (overall 0.0)","tests: 16/16 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex","task":"625_004_conditional_write_object_store_with_etags_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 83, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test create, list, invalid and duplicate buckets"},{"message":"{:EXIT, #PID<0.210.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 83, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test put returns the sha256 hex etag of the data"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 83, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test get returns data, etag, size and last_modified"},{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 83, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test identical data yields identical etag; different data differs"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 83, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test if_none_match * creates only when absent"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 83, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test if_match succeeds on a matching etag and returns the new etag"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 83, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test if_match fails on a stale etag and leaves the object unchanged"},{"message":"{:EXIT, #PID<0.228.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 83, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test if_match on a missing key fails the precondition"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test put to a missing bucket returns bucket_not_found"},{"message":"{:EXIT, #PID<0.234.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 83, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test get with if_none_match matching returns not_modified"},{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test get errors for missing bucket and missing key"},{"message":"{:EXIT, #PID<0.240.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 99, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConditionalObjectStorageTest","test":"test delete is idempotent and reports bucket_not_found"},{"message":"{:EXIT, #PID<0.243.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConditionalObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_004_conditional_write_object_store_with_etags_01_mut/solution.ex\", line: 83, error_info: %{module: E (truncated)
+13:40:31.549 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_004_conditional_write_object_store_with_etags_01 solution.ex (seed 1907746702)
+13:40:32.259 [debug] grade JSON: {"analysis":{"defp_count":9,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":332,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":8,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/625_004_conditional_write_object_store_with_etags_01/solution.ex","task":"625_004_conditional_write_object_store_with_etags_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-11T11:40:32.240178Z"}
+13:40:32.263 [info] cycle 625_004_conditional_write_object_store_with_etags_01: ACCEPTED on attempt 0
+13:40:32.264 [info] promoted 625_004_conditional_write_object_store_with_etags_01 -> tasks/625_004_conditional_write_object_store_with_etags_01

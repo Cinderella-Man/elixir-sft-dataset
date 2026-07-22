@@ -1,0 +1,242 @@
+Blind-solve screen: 54 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/54] 001_002_fixed_window_counter_01 ... GREEN
+[2/54] 001_004_penalty_escalation_01 ... RED (test cooldown elapses and normal requests resume: {:EXIT, #PID<0.223.0>}: {{:badmatch, {:cont, %{timestamps: [0, 0, 0], strikes: 1, last_strike_at: 0, cooldown_until: nil, window_ms: 1000}, 1500, 1000}}, [{PenaltyLimiter, :handle_call, 3, [file: ~c"/)
+[3/54] 002_001_circuit_breaker_01 ... RED (compile: /tmp/screen_2345136_8196.ex:150: type variable State is used only once. Type variables in typespecs must be referenced at least twice, otherwise it is equivalent to term())
+[4/54] 005_003_replayeventbus_01 ... RED (test event aged exactly TTL is retained; strictly older is dropped: 
+
+match (=) failed
+code:  assert [:edge] = ReplayEventBus.history(bus, "t")
+left:  [:edge]
+right: []
+)
+[5/54] 005_004_filteredeventbus_01 ... GREEN
+[6/54] 007_002_weightedmovingaverage_01 ... GREEN
+[7/54] 007_003_streamingpercentile_01 ... GREEN
+[8/54] 011_003_cancellable_worker_pool_01 ... GREEN
+[9/54] 012_004_task_tracker_event_sourced_aggregate_01 ... GREEN
+[10/54] 014_004_concurrent_priority_queue_with_configurable_parallelism_01 ... RED (test start_link rejects non-positive max_concurrency: {:EXIT, #PID<0.329.0>}: {:invalid_option, :max_concurrency})
+[11/54] 015_001_heartbeat_monitor_01 ... RED (test notification fires exactly once on transition to :down: 
+
+Assertion with == failed
+code:  assert Notifications.all() == [{"db", :timeout}]
+left:  []
+right: [{"db", :timeout}]
+)
+[12/54] 015_003_async_check_monitor_with_timeouts_01 ... RED (test service becomes :up after a successful async check: {:EXIT, #PID<0.237.0>}: {:noproc, {GenServer, :call, [AsyncMonitor.NoSupervisor, {:start_task, [{:nonode@nohost, #PID<0.242.0>, #PID<0.242.0>}, :monitor], :temporary, nil}, :infinity]}})
+[13/54] 015_004_monitor_with_maintenance_windows_and_pause_resume_01 ... RED (test maintenance can be resumed manually before expiry: 
+
+match (=) failed
+code:  assert {:ok, %{status: :pending}} = ManagedMonitor.status(mon, "db")
+left:  {:ok, %{status: :pending}}
+right: {:ok, %{status: :maintenance, health: :pending, last_check_at: n)
+[14/54] 016_001_paginated_list_endpoint_01 ... GREEN
+[15/54] 017_001_search_endpoint_with_filtering_and_sorting_01 ... 
+16:48:31.493 [warning] usage limit / out of credits on screen_blind (017_001_search_endpoint_with_filtering_and_sorting_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+
+17:03:33.342 [warning] usage limit / out of credits on screen_blind (017_001_search_endpoint_with_filtering_and_sorting_01) — waiting 900000ms (attempt 2, ~15 min waited so far)
+
+17:18:35.313 [warning] usage limit / out of credits on screen_blind (017_001_search_endpoint_with_filtering_and_sorting_01) — waiting 900000ms (attempt 3, ~30 min waited so far)
+
+17:33:37.488 [warning] usage limit / out of credits on screen_blind (017_001_search_endpoint_with_filtering_and_sorting_01) — waiting 900000ms (attempt 4, ~45 min waited so far)
+
+17:48:39.198 [warning] usage limit / out of credits on screen_blind (017_001_search_endpoint_with_filtering_and_sorting_01) — waiting 900000ms (attempt 5, ~60 min waited so far)
+
+18:03:41.195 [warning] usage limit / out of credits on screen_blind (017_001_search_endpoint_with_filtering_and_sorting_01) — waiting 900000ms (attempt 6, ~75 min waited so far)
+
+18:18:43.541 [warning] usage limit / out of credits on screen_blind (017_001_search_endpoint_with_filtering_and_sorting_01) — waiting 900000ms (attempt 7, ~90 min waited so far)
+
+18:33:45.450 [warning] usage limit / out of credits on screen_blind (017_001_search_endpoint_with_filtering_and_sorting_01) — waiting 900000ms (attempt 8, ~105 min waited so far)
+
+18:48:47.236 [warning] usage limit / out of credits on screen_blind (017_001_search_endpoint_with_filtering_and_sorting_01) — waiting 900000ms (attempt 9, ~120 min waited so far)
+
+19:03:48.973 [warning] usage limit / out of credits on screen_blind (017_001_search_endpoint_with_filtering_and_sorting_01) — waiting 900000ms (attempt 10, ~135 min waited so far)
+
+19:18:50.702 [warning] usage limit / out of credits on screen_blind (017_001_search_endpoint_with_filtering_and_sorting_01) — waiting 900000ms (attempt 11, ~150 min waited so far)
+
+19:33:52.865 [warning] usage limit / out of credits on screen_blind (017_001_search_endpoint_with_filtering_and_sorting_01) — waiting 900000ms (attempt 12, ~165 min waited so far)
+RED (compile: Postgres is required for this task but is not reachable at 127.0.0.1:5432 ("killed").
+
+Start it with `docker compose up -d db` from the repo root, then re-run. Override the connection with EVAL_PG_HOS)
+[16/54] 018_003_cascading_archive_tree_with_origin_aware_restore_01 ... GREEN
+[17/54] 019_001_bulk_create_endpoint_with_partial_failure_reporting_01 ... GREEN
+[18/54] 020_001_file_upload_with_validation_01 ... RED (compile: cannot pipe pad(b, 4) into binary_part(0, 0) <> _&, the :<> operator can only take two arguments)
+[19/54] 020_002_content_addressable_deduplicating_upload_01 ... RED (test store get returns error for unknown id: failed to start child with the spec {FileUpload.Store, [name: :lonely]}.
+Reason: bad child specification, got: {:already_started, #PID<0.280.0>})
+[20/54] 023_001_idempotent_post_endpoint_01 ... GREEN
+[21/54] 023_003_fingerprint_conflict_idempotent_payments_01 ... GREEN
+[22/54] 024_004_ordered_stream_webhook_receiver_with_gap_buffering_01 ... GREEN
+[23/54] 025_001_long_polling_endpoint_01 ... GREEN
+[24/54] 025_003_coalescing_batch_long_poll_with_linger_window_01 ... GREEN
+[25/54] 025_004_multi_channel_fan_in_long_poll_01 ... GREEN
+[26/54] 032_002_csv_to_ecto_batch_ingestion_with_changeset_validation_01 ... RED (test continues processing after a failed batch and reports failures: 
+
+Assertion with == failed
+code:  assert stats.failed == 5
+left:  15
+right: 5
+)
+[27/54] 037_002_path_addressed_nested_record_anonymizer_01 ... GREEN
+[28/54] 042_003_true_write_through_cache_with_backing_store_propagation_01 ... GREEN
+[29/54] 042_004_single_flight_non_blocking_write_through_cache_01 ... GREEN
+[30/54] 045_001_ets_based_feature_flag_store_01 ... GREEN
+[31/54] 045_002_multivariate_a_b_c_feature_flag_store_01 ... GREEN
+[32/54] 061_003_timeout_and_retry_parallel_map_01 ... GREEN
+[33/54] 063_004_bounded_concurrency_concurrent_fetcher_01 ... GREEN
+[34/54] 072_004_scripted_sequence_clock_01 ... RED (test :on_exhaust policies :raise blows up once the script is exhausted: 
+
+Expected exception RuntimeError but nothing was raised
+)
+[35/54] 073_001_database_cleaner_for_integration_tests_01 ... GREEN
+[36/54] 074_003_concurrency_and_message_assertion_helpers_01 ... GREEN
+[37/54] 075_002_recursive_json_value_generators_with_bounded_depth_01 ... GREEN
+[38/54] 075_003_stateful_command_sequence_generators_01 ... GREEN
+[39/54] 075_004_schema_driven_generator_interpreter_01 ... GREEN
+[40/54] 098_002_aead_sealed_confidential_token_01 ... GREEN
+[41/54] 098_003_attenuable_capability_token_with_chained_caveats_01 ... GREEN
+[42/54] 101_001_sliding_window_counter_01 ... GREEN
+[43/54] 103_002_backoff_scheduled_retry_dead_letter_queue_01 ... GREEN
+[44/54] 103_003_deduplicating_dead_letter_queue_01 ... GREEN
+[45/54] 105_003_max_wait_debouncer_with_flush_and_cancel_01 ... GREEN
+[46/54] 107_003_weighted_event_aggregator_with_byte_budget_01 ... GREEN
+[47/54] 108_004_priority_resolved_bimap_01 ... GREEN
+[48/54] 131_003_parallel_streaming_json_array_parser_01 ... warning: File.stream!(path, modes, line_or_byte) is deprecated, invoke File.stream!(path, line_or_bytes, modes) instead
+  (elixir 1.20.2) lib/file.ex:2256: File.stream!/3
+  /tmp/screen_2345136_18372.ex:67: ParallelJsonStreamer.process/3
+  tasks/131_003_parallel_streaming_json_array_parser_01/test_harness.exs:58: ParallelJsonStreamerTest."test processes every item in a well-formed file"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: File.stream!(path, modes, line_or_byte) is deprecated, invoke File.stream!(path, line_or_bytes, modes) instead
+  (elixir 1.20.2) lib/file.ex:2256: File.stream!/3
+  /tmp/screen_2345136_18372.ex:67: ParallelJsonStreamer.process/3
+  tasks/131_003_parallel_streaming_json_array_parser_01/test_harness.exs:69: ParallelJsonStreamerTest."test handler runs in file order despite concurrent decode"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: File.stream!(path, modes, line_or_byte) is deprecated, invoke File.stream!(path, line_or_bytes, modes) instead
+  (elixir 1.20.2) lib/file.ex:2256: File.stream!/3
+  /tmp/screen_2345136_18372.ex:67: ParallelJsonStreamer.process/3
+  tasks/131_003_parallel_streaming_json_array_parser_01/test_harness.exs:79: ParallelJsonStreamerTest."test reports the effective max_concurrency"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: File.stream!(path, modes, line_or_byte) is deprecated, invoke File.stream!(path, line_or_bytes, modes) instead
+  (elixir 1.20.2) lib/file.ex:2256: File.stream!/3
+  /tmp/screen_2345136_18372.ex:67: ParallelJsonStreamer.process/3
+  tasks/131_003_parallel_streaming_json_array_parser_01/test_harness.exs:84: ParallelJsonStreamerTest."test reports the effective max_concurrency"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: File.stream!(path, modes, line_or_byte) is deprecated, invoke File.stream!(path, line_or_bytes, modes) instead
+  (elixir 1.20.2) lib/file.ex:2256: File.stream!/3
+  /tmp/screen_2345136_18372.ex:67: ParallelJsonStreamer.process/3
+  tasks/131_003_parallel_streaming_json_array_parser_01/test_harness.exs:92: ParallelJsonStreamerTest."test works with max_concurrency: 1 and preserves order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: File.stream!(path, modes, line_or_byte) is deprecated, invoke File.stream!(path, line_or_bytes, modes) instead
+  (elixir 1.20.2) lib/file.ex:2256: File.stream!/3
+  /tmp/screen_2345136_18372.ex:67: ParallelJsonStreamer.process/3
+  tasks/131_003_parallel_streaming_json_array_parser_01/test_harness.exs:109: ParallelJsonStreamerTest."test decodes different JSON value shapes in order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: File.stream!(path, modes, line_or_byte) is deprecated, invoke File.stream!(path, line_or_bytes, modes) instead
+  (elixir 1.20.2) lib/file.ex:2256: File.stream!/3
+  /tmp/screen_2345136_18372.ex:67: ParallelJsonStreamer.process/3
+  tasks/131_003_parallel_streaming_json_array_parser_01/test_harness.exs:130: ParallelJsonStreamerTest."test empty array yields zero processed and zero errors"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: File.stream!(path, modes, line_or_byte) is deprecated, invoke File.stream!(path, line_or_bytes, modes) instead
+  (elixir 1.20.2) lib/file.ex:2256: File.stream!/3
+  /tmp/screen_2345136_18372.ex:67: ParallelJsonStreamer.process/3
+  tasks/131_003_parallel_streaming_json_array_parser_01/test_harness.exs:152: ParallelJsonStreamerTest."test skips malformed entries mid-stream and keeps order of the rest"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: File.stream!(path, modes, line_or_byte) is deprecated, invoke File.stream!(path, line_or_bytes, modes) instead
+  (elixir 1.20.2) lib/file.ex:2256: File.stream!/3
+  /tmp/screen_2345136_18372.ex:67: ParallelJsonStreamer.process/3
+  tasks/131_003_parallel_streaming_json_array_parser_01/test_harness.exs:169: ParallelJsonStreamerTest."test malformed entries never invoke the handler"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: File.stream!(path, modes, line_or_byte) is deprecated, invoke File.stream!(path, line_or_bytes, modes) instead
+  (elixir 1.20.2) lib/file.ex:2256: File.stream!/3
+  /tmp/screen_2345136_18372.ex:67: ParallelJsonStreamer.process/3
+  tasks/131_003_parallel_streaming_json_array_parser_01/test_harness.exs:184: ParallelJsonStreamerTest."test reports well-formed stats"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: File.stream!(path, modes, line_or_byte) is deprecated, invoke File.stream!(path, line_or_bytes, modes) instead
+  (elixir 1.20.2) lib/file.ex:2256: File.stream!/3
+  /tmp/screen_2345136_18372.ex:67: ParallelJsonStreamer.process/3
+  tasks/131_003_parallel_streaming_json_array_parser_01/test_harness.exs:226: ParallelJsonStreamerTest."test memory stays bounded while streaming a large file"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+GREEN
+[49/54] 623_001_mini_elasticsearch_like_inverted_index_01 ... GREEN
+[50/54] 623_002_boolean_phrase_query_inverted_index_01 ... GREEN
+[51/54] 623_004_fuzzy_edit_distance_inverted_index_01 ... GREEN
+[52/54] 624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_01 ... GREEN
+[53/54] 625_001_mini_s3_like_object_storage_01 ... GREEN
+[54/54] 625_004_conditional_write_object_store_with_etags_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 54   green: 42   RED: 12   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 001_004_penalty_escalation_01: test cooldown elapses and normal requests resume: {:EXIT, #PID<0.223.0>}: {{:badmatch, {:cont, %{timestamps: [0, 0, 0], strikes: 1, last_strike_at: 0, cooldown_until: nil, window_ms: 1000}, 1500, 1000}}, [{PenaltyLimiter, :handle_call, 3, [file: ~c"/
+    - 002_001_circuit_breaker_01: compile: /tmp/screen_2345136_8196.ex:150: type variable State is used only once. Type variables in typespecs must be referenced at least twice, otherwise it is equivalent to term()
+    - 005_003_replayeventbus_01: test event aged exactly TTL is retained; strictly older is dropped: 
+
+match (=) failed
+code:  assert [:edge] = ReplayEventBus.history(bus, "t")
+left:  [:edge]
+right: []
+
+    - 014_004_concurrent_priority_queue_with_configurable_parallelism_01: test start_link rejects non-positive max_concurrency: {:EXIT, #PID<0.329.0>}: {:invalid_option, :max_concurrency}
+    - 015_001_heartbeat_monitor_01: test notification fires exactly once on transition to :down: 
+
+Assertion with == failed
+code:  assert Notifications.all() == [{"db", :timeout}]
+left:  []
+right: [{"db", :timeout}]
+
+    - 015_003_async_check_monitor_with_timeouts_01: test service becomes :up after a successful async check: {:EXIT, #PID<0.237.0>}: {:noproc, {GenServer, :call, [AsyncMonitor.NoSupervisor, {:start_task, [{:nonode@nohost, #PID<0.242.0>, #PID<0.242.0>}, :monitor], :temporary, nil}, :infinity]}}
+    - 015_004_monitor_with_maintenance_windows_and_pause_resume_01: test maintenance can be resumed manually before expiry: 
+
+match (=) failed
+code:  assert {:ok, %{status: :pending}} = ManagedMonitor.status(mon, "db")
+left:  {:ok, %{status: :pending}}
+right: {:ok, %{status: :maintenance, health: :pending, last_check_at: n
+    - 017_001_search_endpoint_with_filtering_and_sorting_01: compile: Postgres is required for this task but is not reachable at 127.0.0.1:5432 ("killed").
+
+Start it with `docker compose up -d db` from the repo root, then re-run. Override the connection with EVAL_PG_HOS
+    - 020_001_file_upload_with_validation_01: compile: cannot pipe pad(b, 4) into binary_part(0, 0) <> _&, the :<> operator can only take two arguments
+    - 020_002_content_addressable_deduplicating_upload_01: test store get returns error for unknown id: failed to start child with the spec {FileUpload.Store, [name: :lonely]}.
+Reason: bad child specification, got: {:already_started, #PID<0.280.0>}
+    - 032_002_csv_to_ecto_batch_ingestion_with_changeset_validation_01: test continues processing after a failed batch and reports failures: 
+
+Assertion with == failed
+code:  assert stats.failed == 5
+left:  15
+right: 5
+
+    - 072_004_scripted_sequence_clock_01: test :on_exhaust policies :raise blows up once the script is exhausted: 
+
+Expected exception RuntimeError but nothing was raised
+

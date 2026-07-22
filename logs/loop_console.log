@@ -1,0 +1,24 @@
+nohup: ignoring input
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 130 needing top-up → next: 001_003_hierarchical_limiter_01, 004_004_calendarscheduler_01, 012_001_event_sourced_aggregate_01, …
+  2. new bases:      490 → next: 135_001_data_quality_scorer_01, 136_001_xml_to_map_parser_with_namespace_handling_01, 137_001_delta_diff_synchronization_01, …
+=============================================
+
+
+Backfill: 130 seed(s) needing derivatives.
+[  1/130] 001_003_hierarchical_limiter_01 (backfill) ...
+[  2/130] 004_004_calendarscheduler_01 (backfill) ...
+[  3/130] 012_001_event_sourced_aggregate_01 (backfill) ...
+[  4/130] 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01 (backfill) ...
+[  5/130] 016_001_paginated_list_endpoint_01 (backfill) ...
+
+20:00:18.267 [warning] backfill seed 016_001_paginated_list_endpoint_01: its own harness does NOT kill a mutant (the tests still pass after every function body is replaced by `raise`) — deriving anyway
+    error: module PaginatedListWeb.ConnCase is not loaded and could not be found
+    │
+  2 │   use PaginatedListWeb.ConnCase, async: true
+    │   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    │
+    └─ .gen_staging/fim_016_001_paginated_list_endpoint_02/016_001_paginated_list_endpoint_01/test_harness.exs:2: PaginatedListWeb.ItemControllerTest (module)
+

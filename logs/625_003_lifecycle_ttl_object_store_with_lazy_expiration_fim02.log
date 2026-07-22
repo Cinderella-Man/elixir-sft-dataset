@@ -1,0 +1,368 @@
+13:21:39.697 [info] FIM 625_003_lifecycle_ttl_object_store_with_lazy_expiration_fim02 → 625_003_lifecycle_ttl_object_store_with_lazy_expiration_04: target handle_call/3 ({:get_object, bucket, key} clause)
+13:21:39.697 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:21:39.697 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `handle_call/3 ({:get_object, bucket, key} clause)`.
+
+Generate a prompt describing how to implement `handle_call/3 ({:get_object, bucket, key} clause)` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `handle_call/3 ({:get_object, bucket, key} clause)` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `handle_call/3 ({:get_object, bucket, key} clause)` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `handle_call/3 ({:get_object, bucket, key} clause)` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Lifecycle TTL Object Store with Lazy Expiration
+
+Write me an Elixir GenServer module called `TtlObjectStorage` — an S3-like, **in-memory** object store where objects can carry a time-to-live and expire automatically, similar to an S3 lifecycle expiration rule. Expiration is **lazy**: an expired object is treated as absent and is removed the moment it is next touched, and there is also an explicit sweep to reclaim expired objects in bulk. Storage is in memory only and does **not** need to survive a restart.
+
+All TTLs are expressed in **milliseconds** and are measured from the moment of the `put_object` (or `set_ttl`) call. A TTL may also be the atom `:infinity`, meaning the object never expires. An object is considered *expired* once at least its TTL milliseconds have elapsed since it was written or last had its TTL set.
+
+## Public API
+
+- `TtlObjectStorage.start_link(opts)` — start the process. Accepts a `:name` option for registration and a `:default_ttl_ms` option (a positive integer number of milliseconds, or `:infinity`; default `:infinity`) used for any `put_object` that does not specify its own TTL.
+
+- `TtlObjectStorage.create_bucket(server, name)` — create a bucket. Return `:ok`, or `{:error, :already_exists}`. Bucket names must be non-empty strings of lowercase alphanumeric characters, hyphens, and dots — otherwise `{:error, :invalid_name}`.
+
+- `TtlObjectStorage.list_buckets(server)` — return `{:ok, [bucket_name]}`, sorted.
+
+- `TtlObjectStorage.delete_bucket(server, name)` — delete a bucket, but only if it holds no **live** (unexpired) objects; expired objects are ignored and do not block deletion. Return `:ok`, `{:error, :not_found}` if the bucket does not exist, or `{:error, :not_empty}` if the bucket still contains at least one live object.
+
+- `TtlObjectStorage.put_object(server, bucket, key, data, opts \\ [])` — store an object, overwriting any existing object under the same key (which also resets its TTL). `data` is a binary. `opts` may include `:ttl_ms` (a positive integer, or `:infinity`); if omitted, the server's `:default_ttl_ms` applies. Return `:ok`, or `{:error, :bucket_not_found}`.
+
+- `TtlObjectStorage.get_object(server, bucket, key)` — retrieve a live object. Return `{:ok, %{data: binary, size: integer, last_modified: DateTime.t()}}`. Return `{:error, :bucket_not_found}` if the bucket is missing, or `{:error, :not_found}` if the key does not exist **or** has expired. If the key exists but has expired, this call also removes it (lazy expiration).
+
+- `TtlObjectStorage.delete_object(server, bucket, key)` — remove an object. Return `:ok` (idempotent — succeed even if the key does not exist), or `{:error, :bucket_not_found}`.
+
+- `TtlObjectStorage.list_objects(server, bucket)` — return `{:ok, [%{key: string, size: integer, last_modified: DateTime.t()}]}` for the **live** objects only (expired objects are excluded), sorted lexicographically by key. Return `{:error, :bucket_not_found}`.
+
+- `TtlObjectStorage.set_ttl(server, bucket, key, ttl_ms)` — reset the TTL of an existing live object; `ttl_ms` is a positive integer or `:infinity`, measured from now. Return `:ok`, `{:error, :bucket_not_found}` if the bucket is missing, or `{:error, :not_found}` if the key does not exist or has already expired.
+
+- `TtlObjectStorage.purge_expired(server)` — sweep every bucket and permanently remove all currently-expired objects. Return `{:ok, count}` where `count` is the number of objects removed.
+
+Give me the complete module in a single file. Use only the OTP standard library — no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule TtlObjectStorage do
+  @moduledoc """
+  An S3-like, in-memory object store with lifecycle time-to-live (TTL) expiration.
+
+  Objects may carry a TTL expressed in milliseconds (or the atom `:infinity`),
+  measured from the moment of the `put_object/5` or `set_ttl/4` call. Once at
+  least its TTL has elapsed, an object is considered *expired*.
+
+  Expiration is **lazy**: an expired object is treated as absent and is removed
+  the moment it is next touched (e.g. via `get_object/3`). In addition,
+  `purge_expired/1` provides an explicit bulk sweep that reclaims all currently
+  expired objects across every bucket.
+
+  Storage lives entirely in process memory and does not survive a restart.
+
+  ## State
+
+  Internally the server keeps a map of bucket name to a map of key to object.
+  Each object records its binary `data`, its `size`, a `last_modified`
+  `DateTime`, and an `expires_at` deadline expressed on the monotonic clock
+  (or `:infinity`). The monotonic clock is used for expiration decisions so
+  that wall-clock adjustments cannot affect TTL semantics.
+  """
+
+  use GenServer
+
+  @typedoc "A registered process name or pid used to address the server."
+  @type server :: GenServer.server()
+
+  @typedoc "A time-to-live in milliseconds, or `:infinity` to never expire."
+  @type ttl :: pos_integer() | :infinity
+
+  @name_regex ~r/^[a-z0-9.-]+$/
+
+  ## Public API
+
+  @doc """
+  Start the object store process.
+
+  Options:
+
+    * `:name` — an optional name under which to register the process.
+    * `:default_ttl_ms` — a positive integer number of milliseconds, or
+      `:infinity` (the default), applied to any `put_object/5` that does not
+      specify its own `:ttl_ms`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    default_ttl = Keyword.get(opts, :default_ttl_ms, :infinity)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, %{default_ttl_ms: default_ttl}, gen_opts)
+  end
+
+  @doc """
+  Create a bucket named `name`.
+
+  Returns `:ok` on success, `{:error, :already_exists}` if the bucket already
+  exists, or `{:error, :invalid_name}` if `name` is not a non-empty string of
+  lowercase alphanumeric characters, hyphens, and dots.
+  """
+  @spec create_bucket(server(), String.t()) ::
+          :ok | {:error, :already_exists | :invalid_name}
+  def create_bucket(server, name) do
+    GenServer.call(server, {:create_bucket, name})
+  end
+
+  @doc """
+  List all bucket names, sorted lexicographically.
+  """
+  @spec list_buckets(server()) :: {:ok, [String.t()]}
+  def list_buckets(server) do
+    GenServer.call(server, :list_buckets)
+  end
+
+  @doc """
+  Delete the bucket named `name`.
+
+  The bucket is deleted only if it holds no live (unexpired) objects; expired
+  objects are ignored and do not block deletion. Returns `:ok`,
+  `{:error, :not_found}` if the bucket does not exist, or
+  `{:error, :not_empty}` if it still contains at least one live object.
+  """
+  @spec delete_bucket(server(), String.t()) ::
+          :ok | {:error, :not_found | :not_empty}
+  def delete_bucket(server, name) do
+    GenServer.call(server, {:delete_b (truncated)
+13:22:26.881 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Lifecycle TTL Object Store with Lazy Expiration — implement the `{:get_object, bucket, key}` clause of `handle_call/3`
+
+Below is a complete `TtlObjectStorage` module — an S3-like, in-memory object store
+with lifecycle TTL expiration — with the body of one function removed.
+
+Implement the `handle_call/3` clause that handles the `{:get_object, bucket, key}`
+message. It should look the bucket up in `state.buckets`. If the bucket does not
+exist, reply `{:error, :bucket_not_found}` and leave the state unchanged. If the
+bucket exists, look the key up in that bucket's object map:
+
+  * If the key is absent, reply `{:error, :not_found}` with the state unchanged.
+  * If the key is present but the object has expired (use the `expired?/2` helper
+    against the current monotonic time from `now_ms/0`), apply lazy expiration:
+    delete the object from the bucket, reply `{:error, :not_found}`, and return the
+    updated state (use the `put_bucket/3` helper to write the bucket back).
+  * If the key is present and the object is live, reply
+    `{:ok, %{data: binary, size: integer, last_modified: DateTime.t()}}` — that is,
+    the object map with only the `:data`, `:size`, and `:last_modified` fields, with
+    the internal `:expires_at` deadline stripped out — leaving the state unchanged.
+
+```elixir
+defmodule TtlObjectStorage do
+  @moduledoc """
+  An S3-like, in-memory object store with lifecycle time-to-live (TTL) expiration.
+
+  Objects may carry a TTL expressed in milliseconds (or the atom `:infinity`),
+  measured from the moment of the `put_object/5` or `set_ttl/4` call. Once at
+  least its TTL has elapsed, an object is considered *expired*.
+
+  Expiration is **lazy**: an expired object is treated as absent and is removed
+  the moment it is next touched (e.g. via `get_object/3`). In addition,
+  `purge_expired/1` provides an explicit bulk sweep that reclaims all currently
+  expired objects across every bucket.
+
+  Storage lives entirely in process memory and does not survive a restart.
+
+  ## State
+
+  Internally the server keeps a map of bucket name to a map of key to object.
+  Each object records its binary `data`, its `size`, a `last_modified`
+  `DateTime`, and an `expires_at` deadline expressed on the monotonic clock
+  (or `:infinity`). The monotonic clock is used for expiration decisions so
+  that wall-clock adjustments cannot affect TTL semantics.
+  """
+
+  use GenServer
+
+  @typedoc "A registered process name or pid used to address the server."
+  @type server :: GenServer.server()
+
+  @typedoc "A time-to-live in milliseconds, or `:infinity` to never expire."
+  @type ttl :: pos_integer() | :infinity
+
+  @name_regex ~r/^[a-z0-9.-]+$/
+
+  ## Public API
+
+  @doc """
+  Start the object store process.
+
+  Options:
+
+    * `:name` — an optional name under which to register the process.
+    * `:default_ttl_ms` — a positive integer number of milliseconds, or
+      `:infinity` (the default), applied to any `put_object/5` that does not
+      specify its own `:ttl_ms`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    default_ttl = Keyword.get(opts, :default_ttl_ms, :infinity)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, %{default_ttl_ms: default_ttl}, gen_opts)
+  end
+
+  @doc """
+  Create a bucket named `name`.
+
+  Returns `:ok` on success, `{:error, :already_exists}` if the bucket already
+  exists, or `{:error, :invalid_name}` if `name` is not a non-empty string of
+  lowercase alphanumeric characters, hyphens, and dots.
+  """
+  @spec create_bucket(server(), String.t()) ::
+          :ok | {:error, :already_exists | :invalid_name}
+  def create_bucket(server, name) do
+    GenServer.call(server, {:create_bucket, name})
+  end
+
+  @doc """
+  List all bucket names, sorted lexicographically.
+  """
+  @spec list_buckets(server()) :: {:ok, [String.t()]}
+  def list_buckets(server) do
+    GenServer.call(server, :list_buckets)
+  end
+
+  @doc """
+  Delete the bucket named `name`.
+
+  The bucket is deleted only if it holds no live (unexpired) objects; expired
+  objects are ignored and do not block deletion. Returns `:ok`,
+  `{:error, :not_found}` if the bucket does not exist, or
+  `{:error, :not_empty}` if it still contains at least one live object.
+  """
+  @spec delete_bucket(server(), String.t()) ::
+          :ok | {:error, :not_found | :not_empty}
+  def delete_bucket(server, name) do
+    GenServer.call(server, {:delete_bucket, name})
+  end
+
+  @doc """
+  Store `data` (a binary) under `key` in `bucket`, overwriting any existing
+  object with the same key and resetting its TTL.
+
+  Options:
+
+    * `:ttl_ms` — a positive integer, or `:infinity`. If omitted, the server's
+      `:default_ttl_ms` applies.
+
+  Returns `:ok`, or `{:error, :bucket_not_found}`.
+  """
+  @spec put_object(server(), String.t(), String.t(), binary(), keyword()) ::
+          :ok | {:error, :bucket_not_found}
+  def put_object(server, bucket, key, data, opts \\ []) when is_binary(data) do
+    GenServer.call(server, {:put_object, bucket, key, data, opts})
+  end
+
+  @doc """
+  Retrieve the live object stored under `key` in `bucket`.
+
+  Returns `{:ok, %{data: binary, size: integer, last_modified: DateTime.t()}}`,
+  `{:error, :bucket_not_found}` if the bucket is missing, or
+  `{:error, :not_found}` if the key does not exist or has expired. An expired
+  object is removed as part of this call (lazy expiration).
+  """
+  @spec get_object(server(), String.t(), String.t()) ::
+          {:ok, %{data: binary(), size: non_neg_integer(), last_modified: DateTime.t()}}
+          | {:error, :bucket_not_found | :not_found}
+  def get_object(server, bucket, key) do
+    GenServer.call(server, {:get_object, bucket, key})
+  end
+
+  @doc """
+  Remove the object stored under `key` in `bucket`.
+
+  Idempotent: returns `:ok` even if the key does not exist. Returns
+  `{:error, :bucket_not_found}` if the bucket is missing.
+  """
+  @spec delete_object(server(), String.t(), String.t()) ::
+          :ok | {:error, :bucket_not_found}
+  def delete_object(server, bucket, key) do
+    GenServer.call(server, {:delete_object, bucket, key})
+  end
+
+  @doc """
+  List the live objects in `bucket`, excluding expired ones, sorted
+  lexicographically by key.
+
+  Returns `{:ok, [%{key: string, size: integer, last_modified: DateTime.t()}]}`,
+  or `{:error, :bucket_not_found}`.
+  """
+  @spec list_objects(server(), String.t()) ::
+          {:ok, [%{key: String.t(), size: non_neg_integer(), last_modified: DateTime.t()}]}
+          | {:error, :bucket_not_found}
+  def list_objects(server, bucket) do
+    GenServer.call(server, {:list_objects, bucket})
+  end
+
+  @doc """
+  Reset the TTL of an existing live object under `key` in `bucket`.
+
+  `ttl_ms` is a positive integer or `:infinity`, measured from now. Returns
+  `:ok`, `{:error, :bucket_not_found}` if the bucket is missing, or
+  `{:error, :not_found}` if the key does not exist or has already expired.
+  """
+  @spec set_ttl(server(), String.t(), String.t(), ttl()) ::
+          :ok | {:error, :bucket_not_found | :not_found}
+  def set_ttl(server, bucket, key, ttl_ms) do
+    GenServer.call(server, {:set_ttl, bucket, key, ttl_ms})
+  end
+
+  @doc """
+  Sweep every bucket and permanently remove all currently expired objects.
+
+  Returns `{:ok, count}` where `count` is the number of objects removed.
+  """
+  @spec purge_expired(server()) :: {:ok, non_neg_integer()}
+  def purge_expired(server) do
+    GenServer.call(server, :purge_expired)
+  end
+
+  ## GenServer callbacks
+
+  @impl true
+  @spec init(map()) :: {:ok, map()}
+  def init(%{default_ttl_ms: default_ttl}) do
+    {:ok, %{default_ttl_ms: default_ttl, buckets: %{}}}
+  end
+
+  @impl true
+  def handle_call({:create_bucket, name}, _from, state) do
+    cond do
+      not valid_name?(name) ->
+        {:reply, {:error, :invalid_name}, state}
+
+      Map.has_key?(state.buckets, name) ->
+        {:reply, {:error, :already_exists}, state}
+
+      true ->
+        buckets = Map.put(state.buckets, name, %{} (truncated)
+13:22:26.882 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10384, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10384, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10384, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10384, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 5432, "type" => "message"}], "output_tokens" => 5432, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:22:26.899 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_625_003_lifecycle_ttl_object_store_with_lazy_expiration_04/625_003_lifecycle_ttl_object_store_with_lazy_expiration_04 solution.ex
+13:22:29.320 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":23,"lines_over_98":0,"max_line_length":78,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"625_003_lifecycle_ttl_object_store_with_lazy_expiration_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_625_003_lifecycle_ttl_object_store_with_lazy_expiration_04/625_003_lifecycle_ttl_object_store_with_lazy_expiration_04/solution.ex","task":"625_003_lifecycle_ttl_object_store_with_lazy_expiration_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":27,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-12T11:22:29.298384Z"}
+13:22:29.321 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_625_003_lifecycle_ttl_object_store_with_lazy_expiration_04/625_003_lifecycle_ttl_object_store_with_lazy_expiration_04 .gen_staging/fim_625_003_lifecycle_ttl_object_store_with_lazy_expiration_04/mutant.ex
+13:22:31.747 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":60,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"parent":"625_003_lifecycle_ttl_object_store_with_lazy_expiration_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.7,"mode":"fim","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 14/27 failed"],"tests":0.48},"shape":"fim","solution_file":".gen_staging/fim_625_003_lifecycle_ttl_object_store_with_lazy_expiration_04/mutant.ex","task":"625_003_lifecycle_ttl_object_store_with_lazy_expiration_04","test_failures":[{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test put and get with default (infinite) ttl"},{"message":"{:EXIT, #PID<0.226.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test put to a missing bucket and get errors"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test an object with a live ttl is still readable"},{"message":"{:EXIT, #PID<0.232.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test put and get an empty binary reports a zero size"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test an expired object reads as not_found"},{"message":"{:EXIT, #PID<0.238.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test reading an expired object removes it lazily"},{"message":"{:EXIT, #PID<0.259.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test set_ttl extends the life of an object"},{"message":"{:EXIT, #PID<0.262.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test set_ttl can shorten an object's life"},{"message":"{:EXIT, #PID<0.265.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test set_ttl to infinity keeps a previously expiring object alive"},{"message":"{:EXIT, #PID<0.274.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test overwriting an object resets its ttl"},{"message":"{:EXIT, #PID<0.277.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test delete_object is idempotent and reports bucket_not_found"},{"message":"{:EXIT, #PID<0.280.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test server default_ttl_ms applies when no per-object ttl is given"},{"message":"{:EXIT, #PID<0.284.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test a per-object ttl overrides the server default_ttl_ms"},{"message":"{:EXIT, #PID<0.288.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TtlObjectStorage, :handle_call, 3, [file: ~c\"/tmp/evalfim_493798_2626.ex\", line: 236, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TtlObjectStorageTest","test":"test the server can be registered and addressed by name"}],"tests_errors":0,"t (truncated)
+13:22:31.747 [debug] fim mutation gate: killed
+13:22:31.748 [info] promoted 625_003_lifecycle_ttl_object_store_with_lazy_expiration_04 -> tasks/625_003_lifecycle_ttl_object_store_with_lazy_expiration_04

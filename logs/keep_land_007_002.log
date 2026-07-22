@@ -1,0 +1,16 @@
+keep_land: 007_002_weightedmovingaverage_01 — blind-verifying the candidate prompt (1 solver call)
+  RED — test WMA with full window is correctly weighted: 
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "For a window of N values `[v_newest, v2, ..., v_oldest]`, WMA = `(N*v_newest + (N-1)*v2 + ... + 1*v_oldest) / (N + (N-1) + ... + 1)`. The denominator is `N*(N+1)/2`."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/007_002_weightedmovingaverage_01
+  To land: mix run scripts/keep_land.exs -- --approve 007_002_weightedmovingaverage_01
+
+LANDED as a Kamil keep (resolution row appended). Run the cascade + commit:
+  mix run scripts/resync_embeds.exs -- --wt-all --apply
+  mix run scripts/resync_bugfix_embeds.exs -- --apply
+  mix run scripts/resync_tfim_embeds.exs -- --apply
+  mix run scripts/resync_adapt_embeds.exs -- --apply
+  mix run scripts/resync_dedoc_embeds.exs -- --apply
+  elixir scripts/check_embeds.exs
+

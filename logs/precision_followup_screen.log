@@ -1,0 +1,31 @@
+Blind-solve screen: 11 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/11] 007_001_moving_average_calculator_01 ... GREEN
+[2/11] 012_001_event_sourced_aggregate_01 ... GREEN
+[3/11] 024_002_replay_protected_timestamped_webhook_receiver_01 ... GREEN
+[4/11] 025_001_long_polling_endpoint_01 ... RED (test returns a notification published mid-poll: {:EXIT, #PID<0.213.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: "user:1"}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cook)
+[5/11] 025_003_coalescing_batch_long_poll_with_linger_window_01 ... GREEN
+[6/11] 041_003_sharded_lru_cache_with_consistent_key_routing_01 ... GREEN
+[7/11] 045_001_ets_based_feature_flag_store_01 ... GREEN
+[8/11] 064_004_instrumented_work_stealing_queue_with_steal_metrics_01 ... GREEN
+[9/11] 072_004_scripted_sequence_clock_01 ... GREEN
+[10/11] 073_001_database_cleaner_for_integration_tests_01 ... GREEN
+[11/11] 624_002_merge_commit_dag_with_topological_log_and_merge_base_01 ... RED (test log walks a linear chain newest-to-oldest: 
+
+Assertion with == failed
+code:  assert hd(log).hash == c3
+left:  "ec7a5ffd5934ee525d862b9918fd2f036d0b9159"
+right: "a5b3273e60b862180a6909df48be403276a2926e"
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 11   green: 9   RED: 2   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 025_001_long_polling_endpoint_01: test returns a notification published mid-poll: {:EXIT, #PID<0.213.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: "user:1"}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cook
+    - 624_002_merge_commit_dag_with_topological_log_and_merge_base_01: test log walks a linear chain newest-to-oldest: 
+
+Assertion with == failed
+code:  assert hd(log).hash == c3
+left:  "ec7a5ffd5934ee525d862b9918fd2f036d0b9159"
+right: "a5b3273e60b862180a6909df48be403276a2926e"
+

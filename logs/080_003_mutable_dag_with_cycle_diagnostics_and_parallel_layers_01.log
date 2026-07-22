@@ -1,0 +1,459 @@
+[22m03:19:46.720 [info] VARIATION 080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01: Mutable DAG with Cycle Diagnostics and Parallel Layers[0m
+[36m03:19:46.721 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01 solution.ex[0m
+[36m03:19:47.391 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":true,"line_count":202,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":11,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.97,"reasons":["analysis: @doc on public functions → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01/solution.ex","task":"080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:19:47.368828Z"}[0m
+[22m03:19:47.392 [info] cycle 080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01: repairing — The solution is green but does not meet the house style: no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m03:19:47.392 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m03:19:47.392 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `MutableDAG` that implements a Directed Acyclic Graph supporting **mutation** (edge and vertex removal), **cycle diagnostics** (reporting the actual offending cycle path), and **parallel-execution layers**. It should be a pure data structure (no GenServer), where each function takes and returns a `MutableDAG` struct (or a result tuple).
+
+I need these functions in the public API:
+- `MutableDAG.new()` — returns an empty DAG.
+- `MutableDAG.add_vertex(dag, vertex)` — adds a vertex; if it already exists, return the dag unchanged. Vertices can be any term.
+- `MutableDAG.add_edge(dag, from, to)` — adds a directed edge. Both vertices must exist. If the edge would create a cycle, return `{:error, {:cycle, path}}` where `path` is the list of vertices forming the cycle, **starting and ending with `from`** (e.g. adding `c -> a` when `a -> b -> c` already exists returns `{:error, {:cycle, [c, a, b, c]}}`). A self-loop `add_edge(dag, a, a)` returns `{:error, {:cycle, [a, a]}}`. On success return `{:ok, new_dag}`. Detection must be eager (DFS path search).
+- `MutableDAG.remove_edge(dag, from, to)` — removes the directed edge if present; if the edge or either vertex is absent, return the dag unchanged.
+- `MutableDAG.remove_vertex(dag, vertex)` — removes the vertex and every edge incident to it (both incoming and outgoing); if absent, return the dag unchanged.
+- `MutableDAG.topological_sort(dag)` — returns `{:ok, ordering}`, a flat list of all vertices in a valid topological order. `{:ok, []}` for an empty graph.
+- `MutableDAG.topological_layers(dag)` — returns `{:ok, layers}` where `layers` is a list of lists. Layer 0 contains every vertex with no predecessors; each subsequent layer contains the vertices whose predecessors have all appeared in earlier layers. This groups vertices into "waves" that could execute in parallel. Sort the vertices **within each layer** by term ordering for determinism. `{:ok, []}` for an empty graph.
+- `MutableDAG.predecessors(dag, vertex)` / `MutableDAG.successors(dag, vertex)` — direct incoming / outgoing neighbours.
+
+Give me the complete module in a single file. Use only the Elixir/Erlang standard library, no external dependencies.
+
+----- solution.ex -----
+defmodule MutableDAG do
+  @moduledoc """
+  A mutable Directed Acyclic Graph.
+
+  Beyond building and sorting, this variant supports:
+    * edge and vertex **removal**;
+    * **cycle diagnostics** — a rejected edge reports the actual offending
+      cycle path (starting and ending with the `from` vertex);
+    * **parallel-execution layers** — `topological_layers/1` groups vertices
+      into dependency "waves" that could run concurrently.
+
+  Internally the struct holds:
+    * `vertices`  – a `MapSet` of all vertices (any term).
+    * `out_edges` – `%{vertex => MapSet of successors}` (forward adjacency).
+    * `in_edges`  – `%{vertex => MapSet of predecessors}` (reverse adjacency).
+  """
+
+  defstruct vertices: MapSet.new(), out_edges: %{}, in_edges: %{}
+
+  @type vertex :: term()
+  @type t :: %__MODULE__{
+          vertices: MapSet.t(),
+          out_edges: %{vertex() => MapSet.t()},
+          in_edges: %{vertex() => MapSet.t()}
+        }
+
+  # ---------------------------------------------------------------------------
+  # Construction / mutation
+  # ---------------------------------------------------------------------------
+
+  @spec new() :: t()
+  def new, do: %__MODULE__{}
+
+  @spec add_vertex(t(), vertex()) :: t()
+  def add_vertex(%__MODULE__{} = dag, vertex) do
+    if MapSet.member?(dag.vertices, vertex) do
+      dag
+    else
+      %{
+        dag
+        | vertices: MapSet.put(dag.vertices, vertex),
+          out_edges: Map.put_new(dag.out_edges, vertex, MapSet.new()),
+          in_edges: Map.put_new(dag.in_edges, vertex, MapSet.new())
+      }
+    end
+  end
+
+  @spec add_edge(t(), vertex(), vertex()) ::
+          {:ok, t()} | {:error, {:cycle, [vertex()]}} | {:error, :vertex_not_found}
+  def add_edge(%__MODULE__{} = dag, from, to) do
+    with :ok <- require_vertex(dag, from),
+         :ok <- require_vertex(dag, to) do
+      cond do
+        from == to ->
+          {:error, {:cycle, [from, from]}}
+
+        true ->
+          # Adding from->to closes a cycle iff `from` is already reachable
+          # from `to`. reach_path returns [to, ..., from] when such a path
+          # exists; prefixing `from` yields the full loop [from, to, ..., from].
+          case reach_path(dag.out_edges, to, from) do
+            nil ->
+              new_dag = %{
+                dag
+                | out_edges: Map.update!(dag.out_edges, from, &MapSet.put(&1, to)),
+                  in_edges: Map.update!(dag.in_edges, to, &MapSet.put(&1, from))
+              }
+
+              {:ok, new_dag}
+
+            path ->
+              {:error, {:cycle, [from | path]}}
+          end
+      end
+    end
+  end
+
+  @spec remove_edge(t(), vertex(), vertex()) :: t()
+  def remove_edge(%__MODULE__{} = dag, from, to) do
+    if MapSet.member?(dag.vertices, from) and MapSet.member?(dag.vertices, to) do
+      %{
+        dag
+        | out_edges: Map.update(dag.out_edges, from, MapSet.new(), &MapSet.delete(&1, to)),
+          in_edges: Map.update(dag.in_edges, to, MapSet.new(), &MapSet.delete(&1, from))
+      }
+    else
+      dag
+    end
+  end
+
+  @spec remove_vertex(t(), vertex()) :: t()
+  def remove_vertex(%__MODULE__{} = dag, vertex) do
+    if MapSet.member?(dag.vertices, vertex) do
+      successors = Map.get(dag.out_edges, vertex, MapSet.new())
+      predecessors = Map.get(dag.in_edges, vertex, MapSet.new())
+
+      in_edges =
+        Enum.reduce(successors, dag.in_edges, fn s, acc ->
+          Map.update(acc, s, MapSet.new(), &MapSet.delete(&1, vertex))
+        end)
+
+      out_edges =
+        Enum.reduce(predecessors, dag.out_edges, fn p, acc ->
+          Map.update(acc, p, MapSet.new(), &MapSet.delete(&1, vertex))
+        end)
+
+      %{
+        dag
+        | vertices: MapSet.delete(dag.vertices, vertex),
+          out_edges: Map.delete(out_edges, vertex),
+          in_edges: Map.delete(in_edges, vertex)
+      }
+    else
+      dag
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Queries
+  # ---------------------------------------------------------------------------
+
+  @spec predecessors(t(), vertex()) :: [vertex()]
+  def predecessors(%__MODULE__{} = dag, vertex) do
+    dag.in_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list()
+  end
+
+  @spec successors(t(), vertex()) :: [vertex()]
+  def successors(%__MODULE__{} = dag, vertex) do
+    dag.out_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list()
+  end
+
+  @spec topological_layers(t()) :: {:ok, [[vertex()]]}
+  def topological_layers(%__MODULE__{} = dag) do
+    in_degree =
+      Map.new(dag.vertices, fn v -> {v, MapSet.size(Map.fetch!(dag.in_edges, v))} end)
+
+    {:ok, build_layers(in_degree, dag.out_edges, [])}
+  end
+
+  @spec topological_sort(t()) :: {:ok, [vertex()]}
+  def topological_sort(%__MODULE__{} = dag) do
+    {:ok, layers} = topological_layers(dag)
+    {:ok, Enum.concat(layers)}
+  end
+
+  # -------------------- (truncated)[0m
+[36m03:20:25.690 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule MutableDAG do
+  @moduledoc """
+  A mutable Directed Acyclic Graph.
+
+  Beyond building and sorting, this variant supports:
+    * edge and vertex **removal**;
+    * **cycle diagnostics** — a rejected edge reports the actual offending
+      cycle path (starting and ending with the `from` vertex);
+    * **parallel-execution layers** — `topological_layers/1` groups vertices
+      into dependency "waves" that could run concurrently.
+
+  Internally the struct holds:
+    * `vertices`  – a `MapSet` of all vertices (any term).
+    * `out_edges` – `%{vertex => MapSet of successors}` (forward adjacency).
+    * `in_edges`  – `%{vertex => MapSet of predecessors}` (reverse adjacency).
+  """
+
+  defstruct vertices: MapSet.new(), out_edges: %{}, in_edges: %{}
+
+  @type vertex :: term()
+  @type t :: %__MODULE__{
+          vertices: MapSet.t(),
+          out_edges: %{vertex() => MapSet.t()},
+          in_edges: %{vertex() => MapSet.t()}
+        }
+
+  # ---------------------------------------------------------------------------
+  # Construction / mutation
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns a new, empty `MutableDAG`.
+  """
+  @spec new() :: t()
+  def new, do: %__MODULE__{}
+
+  @doc """
+  Adds `vertex` to `dag`.
+
+  Vertices can be any term. If the vertex already exists the `dag` is
+  returned unchanged.
+  """
+  @spec add_vertex(t(), vertex()) :: t()
+  def add_vertex(%__MODULE__{} = dag, vertex) do
+    if MapSet.member?(dag.vertices, vertex) do
+      dag
+    else
+      %{
+        dag
+        | vertices: MapSet.put(dag.vertices, vertex),
+          out_edges: Map.put_new(dag.out_edges, vertex, MapSet.new()),
+          in_edges: Map.put_new(dag.in_edges, vertex, MapSet.new())
+      }
+    end
+  end
+
+  @doc """
+  Adds a directed edge `from -> to`.
+
+  Both vertices must already exist, otherwise `{:error, :vertex_not_found}`
+  is returned. When the edge would introduce a cycle, returns
+  `{:error, {:cycle, path}}` where `path` lists the vertices of the cycle,
+  starting and ending with `from`. On success returns `{:ok, new_dag}`.
+  """
+  @spec add_edge(t(), vertex(), vertex()) ::
+          {:ok, t()} | {:error, {:cycle, [vertex()]}} | {:error, :vertex_not_found}
+  def add_edge(%__MODULE__{} = dag, from, to) do
+    with :ok <- require_vertex(dag, from),
+         :ok <- require_vertex(dag, to) do
+      cond do
+        from == to ->
+          {:error, {:cycle, [from, from]}}
+
+        true ->
+          # Adding from->to closes a cycle iff `from` is already reachable
+          # from `to`. reach_path returns [to, ..., from] when such a path
+          # exists; prefixing `from` yields the full loop [from, to, ..., from].
+          case reach_path(dag.out_edges, to, from) do
+            nil ->
+              new_dag = %{
+                dag
+                | out_edges: Map.update!(dag.out_edges, from, &MapSet.put(&1, to)),
+                  in_edges: Map.update!(dag.in_edges, to, &MapSet.put(&1, from))
+              }
+
+              {:ok, new_dag}
+
+            path ->
+              {:error, {:cycle, [from | path]}}
+          end
+      end
+    end
+  end
+
+  @doc """
+  Removes the directed edge `from -> to` if present.
+
+  If the edge or either vertex is absent, `dag` is returned unchanged.
+  """
+  @spec remove_edge(t(), vertex(), vertex()) :: t()
+  def remove_edge(%__MODULE__{} = dag, from, to) do
+    if MapSet.member?(dag.vertices, from) and MapSet.member?(dag.vertices, to) do
+      %{
+        dag
+        | out_edges: Map.update(dag.out_edges, from, MapSet.new(), &MapSet.delete(&1, to)),
+          in_edges: Map.update(dag.in_edges, to, MapSet.new(), &MapSet.delete(&1, from))
+      }
+    else
+      dag
+    end
+  end
+
+  @doc """
+  Removes `vertex` and every edge incident to it (incoming and outgoing).
+
+  If the vertex is absent, `dag` is returned unchanged.
+  """
+  @spec remove_vertex(t(), vertex()) :: t()
+  def remove_vertex(%__MODULE__{} = dag, vertex) do
+    if MapSet.member?(dag.vertices, vertex) do
+      successors = Map.get(dag.out_edges, vertex, MapSet.new())
+      predecessors = Map.get(dag.in_edges, vertex, MapSet.new())
+
+      in_edges =
+        Enum.reduce(successors, dag.in_edges, fn s, acc ->
+          Map.update(acc, s, MapSet.new(), &MapSet.delete(&1, vertex))
+        end)
+
+      out_edges =
+        Enum.reduce(predecessors, dag.out_edges, fn p, acc ->
+          Map.update(acc, p, MapSet.new(), &MapSet.delete(&1, vertex))
+        end)
+
+      %{
+        dag
+        | vertices: MapSet.delete(dag.vertices, vertex),
+          out_edges: Map.delete(out_edges, vertex),
+          in_edges: Map.delete(in_edges, vertex)
+      }
+    else
+      dag
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Queries
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns the direct predecessors (incoming neighbours) of `vertex`.
+  """
+  @spec predecessors(t(), vertex()) :: [vertex()]
+  def predecessors(%__MODULE__{} = dag, vertex) do
+    dag.in_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list()
+  end
+
+  @doc """
+  Returns the direct successors (outgoing neighbours) of `vertex`.
+  """
+  @spec successors(t(), vertex()) :: [vertex()]
+  def successors(%__MODULE__{} = dag, vertex) do
+    dag.out_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list()
+  end
+
+  @doc """
+  Groups every vertex into topological layers ("parallel waves").
+
+  Layer 0 holds all vertices with no predecessors; each subsequent layer
+  holds vertices whose predecessors have all appeared in earlier layers.
+  Vertices within a layer are sorted by term ordering for determinism.
+  Returns `{:ok, layers}`; an empty graph yields `{:ok, []}`.
+  """
+  @spec topological_layers(t()) :: {:ok, [[vertex()]]}
+  def topological_layers(%__MODULE__{} = dag) do
+    in_degree =
+      Map.new(dag.vertices, fn v -> {v, MapSet.size(Map.fetch!(dag.in_edges, v))} end)
+
+    {:ok, build_layers(in_degree, dag.out_edges, [])}
+  end
+
+  @doc """
+  Returns `{:ok, ordering}`, a flat list of all vertices in a valid
+  topological order. An empty graph yields `{:ok, []}`.
+  """
+  @spec topological_sort(t()) :: {:ok, [vertex()]}
+  def topological_sort(%__MODULE__{} = dag) do
+    {:ok, layers} = topological_layers(dag)
+    {:ok, Enum.concat(layers)}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internals
+  # ---------------------------------------------------------------------------
+
+  defp build_layers(in_degree, out_edges, acc) do
+    if map_size(in_degree) == 0 do
+      Enum.reverse(acc)
+    else
+      layer =
+        in_degree
+        |> Enum.filter(fn {_v, d} -> d == 0 end)
+        |> Enum.map(&elem(&1, 0))
+        |> Enum.sort()
+
+      remaining = Map.drop(in_degree, layer)
+
+      new_in_degree =
+        Enum.reduce(layer, remaining, fn v, deg ->
+          Enum.reduce(Map.get(out_edges, v, MapSet.new()), deg, fn s, d ->
+            Map.update!(d, s, &(&1 - 1))
+          end)
+        end)
+
+      build_layers(new_in_degree, out_edges, [layer | acc])
+    end
+  end
+
+  defp require_vertex(dag, vertex) do
+    if MapSet.member?(dag.vertices, vertex), do: :ok, else: {:error, :vertex_not_found}
+  end
+
+  # Returns a path [current, ..., target] following out_edges, or nil.
+  defp reach_path(out_edges, current, target) do
+    do_reach(out_edges, current, target, MapSet.new(), [])
+  end
+
+  defp do_reach(out_edges, current, target, visited, acc) do
+    cond do
+      current == target ->
+        Enum.reverse([current | acc])
+
+      MapSet.member?(visited, current) ->
+        nil
+
+      true ->
+        visited = MapSet.put(visited, current)
+
+        out_edges
+        |> Map.get(current, MapSet.new())
+        |> MapSet.to_list()
+        |> Enum.sort()
+        |> Enum.find_value(fn neighbor ->
+          do_reach(out_edges, neighbor, target, visited, [current | acc])
+        end)
+    end
+  end
+end
+</file>[0m
+[36m03:20:25.691 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6598, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6598, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6598, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6598, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 3555, "type" => "message"}], "output_tokens" => 3555, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m03:20:25.710 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01 solution.ex[0m
+[36m03:20:26.357 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":247,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":11,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01/solution.ex","task":"080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:20:26.337053Z"}[0m
+[36m03:20:26.364 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut solution.ex[0m
+[36m03:20:27.020 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":182,"lines_over_98":7,"max_line_length":655,"mode":"full","pipe_chain_count":11,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 14/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut/solution.ex","task":"080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut","test_failures":[{"message":"MUTATION","module":"MutableDAGTest","test":"test empty graph"},{"message":"MUTATION","module":"MutableDAGTest","test":"test duplicate vertices are ignored"},{"message":"MUTATION","module":"MutableDAGTest","test":"test self-loop reports [a, a]"},{"message":"MUTATION","module":"MutableDAGTest","test":"test cycle-forming edge reports the offending path from->...->from"},{"message":"MUTATION","module":"MutableDAGTest","test":"test direct back edge reports two-hop cycle"},{"message":"MUTATION","module":"MutableDAGTest","test":"test missing vertex is rejected"},{"message":"MUTATION","module":"MutableDAGTest","test":"test diamond graph groups into parallel waves"},{"message":"MUTATION","module":"MutableDAGTest","test":"test isolated vertices sit in layer 0"},{"message":"MUTATION","module":"MutableDAGTest","test":"test flat topological sort is consistent with edges"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge detaches a dependency"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge of absent edge is a no-op"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge lets a previously-cyclic edge succeed"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex drops incident edges"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex of absent vertex is a no-op"}],"tests_errors":0,"tests_excluded":0,"tests_failed":14,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:20:26.997512Z"}[0m
+[36m03:20:27.025 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut solution.ex[0m
+[36m03:20:27.652 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":173,"lines_over_98":7,"max_line_length":655,"mode":"full","pipe_chain_count":11,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.31,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 13/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.07},"shape":"single","solution_file":".gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut/solution.ex","task":"080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut","test_failures":[{"message":"MUTATION","module":"MutableDAGTest","test":"test duplicate vertices are ignored"},{"message":"MUTATION","module":"MutableDAGTest","test":"test self-loop reports [a, a]"},{"message":"MUTATION","module":"MutableDAGTest","test":"test cycle-forming edge reports the offending path from->...->from"},{"message":"MUTATION","module":"MutableDAGTest","test":"test direct back edge reports two-hop cycle"},{"message":"MUTATION","module":"MutableDAGTest","test":"test missing vertex is rejected"},{"message":"MUTATION","module":"MutableDAGTest","test":"test diamond graph groups into parallel waves"},{"message":"MUTATION","module":"MutableDAGTest","test":"test isolated vertices sit in layer 0"},{"message":"MUTATION","module":"MutableDAGTest","test":"test flat topological sort is consistent with edges"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge detaches a dependency"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge of absent edge is a no-op"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge lets a previously-cyclic edge succeed"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex drops incident edges"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex of absent vertex is a no-op"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:20:27.632399Z"}[0m
+[36m03:20:27.656 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut solution.ex[0m
+[36m03:20:28.282 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":161,"lines_over_98":7,"max_line_length":655,"mode":"full","pipe_chain_count":11,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.32,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 12/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.14},"shape":"single","solution_file":".gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut/solution.ex","task":"080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut","test_failures":[{"message":"MUTATION","module":"MutableDAGTest","test":"test self-loop reports [a, a]"},{"message":"MUTATION","module":"MutableDAGTest","test":"test cycle-forming edge reports the offending path from->...->from"},{"message":"MUTATION","module":"MutableDAGTest","test":"test direct back edge reports two-hop cycle"},{"message":"MUTATION","module":"MutableDAGTest","test":"test missing vertex is rejected"},{"message":"MUTATION","module":"MutableDAGTest","test":"test diamond graph groups into parallel waves"},{"message":"MUTATION","module":"MutableDAGTest","test":"test isolated vertices sit in layer 0"},{"message":"MUTATION","module":"MutableDAGTest","test":"test flat topological sort is consistent with edges"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge detaches a dependency"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge of absent edge is a no-op"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge lets a previously-cyclic edge succeed"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex drops incident edges"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex of absent vertex is a no-op"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:20:28.262095Z"}[0m
+[36m03:20:28.285 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut solution.ex[0m
+[36m03:20:28.922 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":174,"lines_over_98":7,"max_line_length":655,"mode":"full","pipe_chain_count":11,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.79,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 3/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.79},"shape":"single","solution_file":".gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut/solution.ex","task":"080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut","test_failures":[{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge detaches a dependency"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge of absent edge is a no-op"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge lets a previously-cyclic edge succeed"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:20:28.900506Z"}[0m
+[36m03:20:28.926 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut solution.ex[0m
+[36m03:20:29.540 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":160,"lines_over_98":7,"max_line_length":655,"mode":"full","pipe_chain_count":11,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.85,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 2/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.86},"shape":"single","solution_file":".gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut/solution.ex","task":"080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut","test_failures":[{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex drops incident edges"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex of absent vertex is a no-op"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:20:29.520945Z"}[0m
+[36m03:20:29.545 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut solution.ex[0m
+[36m03:20:30.199 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":182,"lines_over_98":7,"max_line_length":655,"mode":"full","pipe_chain_count":9,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.85,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 2/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.86},"shape":"single","solution_file":".gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut/solution.ex","task":"080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut","test_failures":[{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge detaches a dependency"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex drops incident edges"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:20:30.176302Z"}[0m
+[36m03:20:30.203 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut solution.ex[0m
+[36m03:20:30.851 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":182,"lines_over_98":7,"max_line_length":655,"mode":"full","pipe_chain_count":9,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.8,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 3/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.79},"shape":"single","solution_file":".gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut/solution.ex","task":"080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut","test_failures":[{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge detaches a dependency"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge of absent edge is a no-op"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex drops incident edges"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:20:30.830695Z"}[0m
+[36m03:20:30.855 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut solution.ex[0m
+[36m03:20:31.480 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":7,"max_line_length":655,"mode":"full","pipe_chain_count":11,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.54,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 8/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.43},"shape":"single","solution_file":".gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut/solution.ex","task":"080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut","test_failures":[{"message":"MUTATION","module":"MutableDAGTest","test":"test empty graph"},{"message":"MUTATION","module":"MutableDAGTest","test":"test duplicate vertices are ignored"},{"message":"MUTATION","module":"MutableDAGTest","test":"test diamond graph groups into parallel waves"},{"message":"MUTATION","module":"MutableDAGTest","test":"test isolated vertices sit in layer 0"},{"message":"MUTATION","module":"MutableDAGTest","test":"test flat topological sort is consistent with edges"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_edge detaches a dependency"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex drops incident edges"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex of absent vertex is a no-op"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:20:31.462271Z"}[0m
+[36m03:20:31.484 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut solution.ex[0m
+[36m03:20:32.137 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":7,"max_line_length":655,"mode":"full","pipe_chain_count":11,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.71,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 5/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.64},"shape":"single","solution_file":".gen_staging/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut/solution.ex","task":"080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01_mut","test_failures":[{"message":"MUTATION","module":"MutableDAGTest","test":"test empty graph"},{"message":"MUTATION","module":"MutableDAGTest","test":"test duplicate vertices are ignored"},{"message":"MUTATION","module":"MutableDAGTest","test":"test flat topological sort is consistent with edges"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex drops incident edges"},{"message":"MUTATION","module":"MutableDAGTest","test":"test remove_vertex of absent vertex is a no-op"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:20:32.113961Z"}[0m
+[22m03:20:32.138 [info] cycle 080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01: ACCEPTED on attempt 1[0m
+[22m03:20:32.139 [info] promoted 080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01 -> tasks/080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01[0m

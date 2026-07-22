@@ -1,0 +1,387 @@
+16:08:19.138 [info] FIM 015_004_hysteresis_flapping_suppression_monitor_fim02 → 015_004_hysteresis_flapping_suppression_monitor_03: target handle_ok/2
+16:08:19.138 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+16:08:19.139 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `handle_ok/2`.
+
+Generate a prompt describing how to implement `handle_ok/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `handle_ok/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `handle_ok/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `handle_ok/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Hysteresis Flapping-Suppression Monitor
+
+Write me an Elixir module called `StabilityMonitor` — a `GenServer` that supervises
+registered services by calling a check function for each one on a periodic interval,
+and reports a **confirmed** `:up`/`:down` state that changes only after the service
+has been consistently failing (or consistently recovering) for a configured number
+of checks. This hysteresis suppresses "flapping" — a service that alternates between
+success and failure never changes its confirmed state. Use only the OTP standard
+library, no external dependencies, and give me the complete module in a single file.
+
+## The singleton and its lifecycle
+
+`StabilityMonitor` is a singleton process. The convenience functions below
+(`watch`, `force_check`, `state`, `states`, `unwatch`) take **no server argument** —
+they operate on the process registered under the module name `StabilityMonitor`.
+
+- `StabilityMonitor.start_link(opts \\ [])` starts and links the process and returns
+  the usual `GenServer.on_start()` result. `opts` is a keyword list defaulting to
+  `[]`. The process must be registered under the name `StabilityMonitor` (i.e.
+  `__MODULE__`) so the no-argument convenience API can find it. A `:name` option may
+  override the registered name, but the convenience functions always target
+  `StabilityMonitor`.
+- Starting the server does no monitoring work; a freshly started server tracks zero
+  services, and `StabilityMonitor.states()` returns `%{}`.
+
+## Registering services
+
+`StabilityMonitor.watch(name, check_func, interval_ms, opts \\ [])`
+
+- `name` is any term used as the key (strings, atoms, tuples all work and are
+  compared by value).
+- `check_func` is a **zero-arity** function returning either `:ok` (healthy) or
+  `{:error, reason}` (unhealthy), where `reason` is any term.
+- `interval_ms` is a **positive integer**: how often, in milliseconds, the monitor
+  calls `check_func` after registration.
+- `opts` is a keyword list:
+  - `:fail_confirm` — a **positive integer** `F`: the number of **consecutive**
+    failures required to confirm a transition to `:down`. Defaults to `3`.
+  - `:ok_confirm` — a **positive integer** `K`: the number of **consecutive**
+    successes required to confirm a transition back to `:up`. Defaults to `2`.
+  - `:on_transition` — a **three-arity** function
+    `on_transition.(name, from_state, to_state)` invoked whenever the confirmed
+    state changes (see below). Defaults to a no-op.
+
+`watch/4` returns `:ok`.
+
+Guards: `check_func` must be a zero-arity function and `interval_ms` must be a
+positive integer. Calling `watch` with a non-positive or non-integer `interval_ms`,
+or a check function of the wrong arity, is outside the contract and raises
+`FunctionClauseError`; guard the public function accordingly.
+
+On registration:
+
+- The service's confirmed state starts as `:up`, with a failure streak of `0` and a
+  success streak of `0`.
+- Registration itself does **not** run the check function. The first check happens
+  one `interval_ms` later, then repeats every `interval_ms` thereafter (implemented
+  with `Process.send_after/3`, re-scheduling itself after each check).
+
+Re-watching an already-registered `name` **replaces** its configuration (check
+function, interval, confirmations, on_transition) and **resets** its confirmed state
+to `:up` with both streaks at `0`.
+
+### Lifecycle rule for re-watching (important)
+
+When a service is re-watched, the **previous registration's scheduled checks must
+never run again**. After a re-watch:
+
+- The old check function is never called again by any leftover/previously-scheduled
+  timer.
+- Checks for that service happen only at the **new** interval, calling the **new**
+  check function.
+
+Superseded timer chains are dead. (A robust way to achieve this is to tag each
+registration with a generation token and ignore scheduled check messages whose token
+no longer matches the current registration.)
+
+## Performing a check
+
+Each check — whether triggered by the periodic timer or by `force_check/1` below —
+calls `check_func.()` exactly once and then updates the service using two counters,
+a failure streak and a success streak:
+
+- On `:ok`:
+  - The failure streak is reset to `0`.
+  - If the confirmed state is currently `:down`, the success streak is incremented
+    by one. If it then **reaches** `ok_confirm`, the confirmed state transitions to
+    `:up`, `on_transition.(name, :down, :up)` is called **exactly once**, and the
+    success streak is reset to `0`. Otherwise the confirmed state stays `:down`.
+  - If the confirmed state is currently `:up`, the success streak is reset to `0`
+    (a healthy check simply keeps a healthy service up; no callback fires).
+
+- On `{:error, _reason}`:
+  - The success streak is reset to `0`.
+  - If the confirmed state is currently `:up`, the failure streak is incremented by
+    one. If it then **reaches** `fail_confirm`, the confirmed state transitions to
+    `:down`, `on_transition.(name, :up, :down)` is called **exactly once**, and the
+    failure streak is reset to `0`. Otherwise the confirmed state stays `:up`.
+  - If the confirmed state is currently `:down`, the failure streak is reset to `0`
+    (a failing check simply keeps a down service down; no callback fires).
+
+Because a result opposite to the current confirmed state resets the streak that was
+building toward the current state, **alternating** results (a failure, then a
+success, then a failure, …) never accumulate enough in a row to confirm a transition:
+the confirmed state stays put and `on_transition` never fires. A confirmed transition
+fires `on_transition` exactly once, and going down, then up, then down again fires it
+once per confirmed change.
+
+## Deterministic single check
+
+`StabilityMonitor.force_check(name)` synchronously performs **one** check for the
+named service immediately — identical work to a scheduled interval tick (calling the
+check function, updating the streaks and confirmed state, and firing `on_transition`
+on a confirmed change). It returns `{:ok, state}` where `state` is the resulting
+confirmed state (`:up` or `:down`), or `{:error, :not_found}` if no such service is
+registered. `force_check/1` does not alter or reschedule the periodic timer.
+
+## Querying and removing
+
+- `StabilityMonitor.state(name)` returns the confirmed state `:up` or `:down` for a
+  registered service, or `{:error, :not_found}` if the service is unknown.
+- `StabilityMonitor.states()` returns a map `%{name => state}` containing every
+  currently registered service and its confirmed `:up`/`:down` state. With no
+  services registered it returns `%{}`.
+- `StabilityMonitor.unwatch(name)` removes a service. It returns `:ok` if the service
+  existed (after removal it no longer appears in `states/0` and `state/1` returns
+  `{:error, :not_found}`), or `{:error, :not_found}` if no such service was
+  registered. After removal the service's scheduled checks must never run again — its
+  timer chain is dead.
+
+## Robus (truncated)
+16:09:06.713 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `handle_ok/2`
+
+Implement the private `handle_ok/2` function of the `StabilityMonitor` module below.
+It is called (via `run_check/2`) when a service's check function returns `:ok`, and it
+returns the updated service map. Its job is to apply the "healthy result" half of the
+hysteresis rules.
+
+`handle_ok/2` receives the service `name` and its current `service` map (which carries
+the confirmed `state`, the `ok_streak` and `fail_streak` counters, the `ok_confirm`
+threshold, and the `on_transition` callback). It must:
+
+- Always reset the failure streak (`fail_streak`) to `0`, since a success breaks any
+  run of failures.
+- If the confirmed `state` is currently `:down`, increment the success streak
+  (`ok_streak`) by one. If the incremented streak **reaches** `ok_confirm`, the
+  service recovers: transition the confirmed `state` to `:up`, invoke
+  `on_transition.(name, :down, :up)` **exactly once**, and reset `ok_streak` to `0`
+  (and `fail_streak` to `0`). Otherwise the service stays `:down` with the newly
+  incremented `ok_streak` and `fail_streak` at `0`; no callback fires.
+- If the confirmed `state` is currently `:up`, the service simply stays up: reset
+  `ok_streak` to `0` (and `fail_streak` to `0`) and fire no callback.
+
+The function returns the updated `service` map in every case.
+
+```elixir
+defmodule StabilityMonitor do
+  @moduledoc """
+  A singleton `GenServer` that supervises registered services by periodically
+  calling a zero-arity check function for each one, and reports a *confirmed*
+  `:up`/`:down` state that changes only after the service has been consistently
+  failing (or consistently recovering) for a configured number of checks.
+
+  This hysteresis suppresses "flapping": a service that alternates between success
+  and failure never changes its confirmed state, because a result opposite to the
+  current confirmed state resets the streak that was building toward a transition.
+
+  Each service tracks:
+
+    * a confirmed `state` (`:up` or `:down`), starting at `:up`;
+    * a `fail_streak` counter of consecutive failures while `:up`;
+    * an `ok_streak` counter of consecutive successes while `:down`.
+
+  A confirmed transition invokes the service's `:on_transition` callback exactly
+  once. Services are fully independent of one another.
+
+  Only the OTP standard library is used.
+  """
+
+  use GenServer
+
+  @default_fail_confirm 3
+  @default_ok_confirm 2
+  @noop_transition &StabilityMonitor.__noop_transition__/3
+
+  @typedoc "Confirmed service state."
+  @type confirmed_state :: :up | :down
+
+  @typedoc "A zero-arity health check returning `:ok` or `{:error, reason}`."
+  @type check_func :: (-> :ok | {:error, term()})
+
+  @typedoc "Callback invoked on a confirmed transition."
+  @type on_transition :: (term(), confirmed_state(), confirmed_state() -> any())
+
+  ## Public API
+
+  @doc """
+  Starts and links the monitor process.
+
+  The process is registered under the name `StabilityMonitor` (overridable with the
+  `:name` option, though the convenience functions always target `StabilityMonitor`).
+  A freshly started server tracks zero services.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  @doc """
+  Registers (or re-registers) a service to be watched.
+
+  `name` is any term used as the key. `check_func` is a zero-arity function returning
+  `:ok` or `{:error, reason}`. `interval_ms` is a positive integer giving the check
+  period in milliseconds; the first check runs one interval after registration.
+
+  Options:
+
+    * `:fail_confirm` — positive integer, consecutive failures to confirm `:down`
+      (default `3`);
+    * `:ok_confirm` — positive integer, consecutive successes to confirm `:up`
+      (default `2`);
+    * `:on_transition` — three-arity `fun.(name, from, to)` fired on each confirmed
+      transition (default no-op).
+
+  Re-watching an existing `name` replaces its configuration and resets its confirmed
+  state to `:up` with both streaks at `0`; any previously scheduled checks for it are
+  discarded. Returns `:ok`.
+  """
+  @spec watch(term(), check_func(), pos_integer(), keyword()) :: :ok
+  def watch(name, check_func, interval_ms, opts \\ [])
+      when is_function(check_func, 0) and is_integer(interval_ms) and interval_ms > 0 do
+    GenServer.call(__MODULE__, {:watch, name, check_func, interval_ms, opts})
+  end
+
+  @doc """
+  Synchronously performs exactly one check for `name`, identical to a scheduled tick.
+
+  Returns `{:ok, state}` with the resulting confirmed state, or `{:error, :not_found}`
+  if the service is not registered. Does not alter or reschedule the periodic timer.
+  """
+  @spec force_check(term()) :: {:ok, confirmed_state()} | {:error, :not_found}
+  def force_check(name) do
+    GenServer.call(__MODULE__, {:force_check, name})
+  end
+
+  @doc """
+  Returns the confirmed state (`:up` or `:down`) for `name`, or `{:error, :not_found}`
+  if the service is unknown.
+  """
+  @spec state(term()) :: confirmed_state() | {:error, :not_found}
+  def state(name) do
+    GenServer.call(__MODULE__, {:state, name})
+  end
+
+  @doc """
+  Returns a map of `%{name => state}` for every currently registered service.
+
+  Returns `%{}` when no services are registered.
+  """
+  @spec states() :: %{optional(term()) => confirmed_state()}
+  def states do
+    GenServer.call(__MODULE__, :states)
+  end
+
+  @doc """
+  Removes the service `name`.
+
+  Returns `:ok` if it existed (its scheduled checks will never run again), or
+  `{:error, :not_found}` if no such service was registered.
+  """
+  @spec unwatch(term()) :: :ok | {:error, :not_found}
+  def unwatch(name) do
+    GenServer.call(__MODULE__, {:unwatch, name})
+  end
+
+  @doc false
+  @spec __noop_transition__(term(), confirmed_state(), confirmed_state()) :: :ok
+  def __noop_transition__(_name, _from, _to), do: :ok
+
+  ## GenServer callbacks
+
+  @impl true
+  @spec init(keyword()) :: {:ok, %{services: map()}}
+  def init(_opts) do
+    {:ok, %{services: %{}}}
+  end
+
+  @impl true
+  def handle_call({:watch, name, check_func, interval_ms, opts}, _from, state) do
+    service = %{
+      check_func: check_func,
+      interval_ms: interval_ms,
+      fail_confirm: get_pos_int(opts, :fail_confirm, @default_fail_confirm),
+      ok_confirm: get_pos_int(opts, :ok_confirm, @default_ok_confirm),
+      on_transition: get_transition(opts),
+      state: :up,
+      fail_streak: 0,
+      ok_streak: 0,
+      generation: make_ref()
+    }
+
+    schedule_check(name, service.interval_ms, service.generation)
+    services = Map.put(state.services, name, service)
+    {:reply, :ok, %{state | services: services}}
+  end
+
+  def handle_call({:force_check, name}, _from, state) do
+    case Map.fetch(state.services, name) do
+      {:ok, service} ->
+        updated = run_check(name, service)
+        services = Map.put(state.services, name, updated)
+        {:reply, {:ok, updated.state}, %{state | services: services}}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:state, name}, _from, state) do
+    case Map.fetch(state.services, name) do
+      {:ok, service} -> {:reply, service.state, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call(:states, _from, state) do
+    reply = Map.new(state.services, fn {name, service} -> {name, service.state} end)
+    {:reply, reply, state}
+  end
+
+  def handle_call({:unwatch, name}, _from, state) do
+    case Map.pop(state.services, name) do
+      {nil, _services} ->
+        {:reply, {:error, :not_found}, state}
+
+      {_service, services} ->
+        {:reply, :ok, %{state | services: services}}
+    end
+  end
+
+  @impl true
+  def handle_info({:check, name, generation}, state) do
+    case Map.fetch(state.services, name) do
+      {:ok, %{generation: ^generation} = service} ->
+        updated = run_check(name, service)
+        schedule_check(name, updated.interval_ms, updated.generation)
+        serv (truncated)
+16:09:06.714 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10444, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10444, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10444, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10444, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 4628, "type" => "message"}], "output_tokens" => 4628, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+16:09:06.742 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_015_004_hysteresis_flapping_suppression_monitor_03/015_004_hysteresis_flapping_suppression_monitor_03 solution.ex
+16:09:08.346 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":15,"lines_over_98":0,"max_line_length":59,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"015_004_hysteresis_flapping_suppression_monitor_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_015_004_hysteresis_flapping_suppression_monitor_03/015_004_hysteresis_flapping_suppression_monitor_03/solution.ex","task":"015_004_hysteresis_flapping_suppression_monitor_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-15T14:09:08.319849Z","warning_details":[]}
+16:09:08.364 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_015_004_hysteresis_flapping_suppression_monitor_03/015_004_hysteresis_flapping_suppression_monitor_03 .gen_staging/fim_015_004_hysteresis_flapping_suppression_monitor_03/mutant.ex
+16:09:11.442 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":8,"lines_over_98":0,"max_line_length":50,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"parent":"015_004_hysteresis_flapping_suppression_monitor_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.7,"mode":"fim","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 9/19 failed"],"tests":0.53},"shape":"fim","solution_file":".gen_staging/fim_015_004_hysteresis_flapping_suppression_monitor_03/mutant.ex","task":"015_004_hysteresis_flapping_suppression_monitor_03","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{StabilityMonitor, :handle_ok, 2, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 221, error_info: %{module: Exception}]}, {StabilityMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [StabilityMonitor, {:force_check, \"svc\"}, 5000]}}","module":"StabilityMonitorTest","test":"test the default confirmations are fail_confirm 3 and ok_confirm 2"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{StabilityMonitor, :handle_ok, 2, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 221, error_info: %{module: Exception}]}, {StabilityMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [StabilityMonitor, {:force_check, \"svc\"}, 5000]}}","module":"StabilityMonitorTest","test":"test recovery requires ok_confirm consecutive successes"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{StabilityMonitor, :handle_ok, 2, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 225, error_info: %{module: Exception}]}, {StabilityMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [StabilityMonitor, {:force_check, \"svc\"}, 5000]}}","module":"StabilityMonitorTest","test":"test alternating results are suppressed and never confirm a transition"},{"message":"\n\nAssertion failed, no matching message after 1000ms\n     The process mailbox is empty.\ncode: assert_receive {:probe, :a}\n","module":"StabilityMonitorTest","test":"test re-watching kills the previous schedule"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{StabilityMonitor, :handle_ok, 2, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 225, error_info: %{module: Exception}]}, {StabilityMonitor, :handle_info, 2, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 190]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [StabilityMonitor, {:unwatch, \"svc\"}, 5000]}}","module":"StabilityMonitorTest","test":"test unwatch removes a service and kills its schedule"},{"message":"\n\nAssertion failed, no matching message after 1000ms\n     The process mailbox is empty.\ncode: assert_receive {:probe, :a}\n","module":"StabilityMonitorTest","test":"test periodic checks run at the configured interval"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{StabilityMonitor, :handle_ok, 2, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 225, error_info: %{module: Exception}]}, {StabilityMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [StabilityMonitor, {:force_check, \"b\"}, 5000]}}","module":"StabilityMonitorTest","test":"test services are independent"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{StabilityMonitor, :handle_ok, 2, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 221, error_info: %{module: Exception}]}, {StabilityMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [StabilityMonitor, {:force_check, \"svc\"}, 5000]}}","module":"StabilityMonitorTest","test":"test a down-up-down cycle fires on_transition once per confirmed change"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{StabilityMonitor, :handle_ok, 2, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 225, error_info: %{module: Exception}]}, {StabilityMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3063722_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [StabilityMonitor, {:force_check, \"svc\"}, 5000]}}","module":"StabilityMonitorTest","test":"test force_check calls the check function exactly once"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-15T14:09:11.392834Z","warning_details":["evalfim_3063722_2629.ex: line 220: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","evalfim_3063722_2629.ex: line 220: variable \"service\" is unused (if the variable is not meant to be used, prefix it with an underscore)","evalfim_3063722_2629.ex: line 224: variable \"service\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+16:09:11.444 [debug] fim mutation gate: killed
+16:09:11.465 [info] promoted 015_004_hysteresis_flapping_suppression_monitor_03 -> tasks/015_004_hysteresis_flapping_suppression_monitor_03

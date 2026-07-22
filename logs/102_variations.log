@@ -1,0 +1,380 @@
+04:23:30.644 [info] VARIATIONS gen for 102_001_genserver_based_state_machine_with_persistence_01 (3 slot(s))
+04:23:30.645 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+04:23:30.645 [debug] claude -p USER prompt:
+I have this SFT task (idea #102 — "genserver based state machine with persistence"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings;
+process-unique temp paths via `System.pid()` + `System.unique_integer/1`; every
+assertion justified by an explicit statement in that variation's prompt.md — a
+solver reading ONLY the prompt must be able to pass every test, so never assert
+internal state or undocumented option values).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 102 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir GenServer module called `StateMachine` that manages the lifecycle of
+stateful entities, persists every state transition to a database, and recovers state on restart.
+
+## State Machine Definition
+
+Use the following order-processing lifecycle:
+
+States: `:pending`, `:confirmed`, `:shipped`, `:delivered`, `:cancelled`
+
+Valid transitions (current_state + event → next_state):
+  - :pending    + :confirm  → :confirmed
+  - :confirmed  + :ship     → :shipped
+  - :shipped    + :deliver  → :delivered
+  - :pending    + :cancel   → :cancelled
+  - :confirmed  + :cancel   → :cancelled
+
+Any other (state, event) combination is invalid.
+
+## Public API
+
+- `StateMachine.start_link(opts)` — starts the GenServer. Accepts a `:repo` option (an Ecto
+  repo module) and a `:name` option for process registration.
+
+- `StateMachine.start(server, entity_id)` — loads the latest persisted state for the given
+  entity from the database. If no record exists, the entity starts in the `:pending` state.
+  Returns `{:ok, current_state}`.
+
+- `StateMachine.get_state(server, entity_id)` — returns `{:ok, current_state}` for a
+  previously started entity, or `{:error, :not_found}` if the entity has never been started
+  in this server session.
+
+- `StateMachine.transition(server, entity_id, event)` — attempts to transition the entity.
+  - If valid: persists the new state + the event to the DB, updates in-memory state,
+    returns `{:ok, new_state}`.
+  - If the (state, event) pair is not a valid transition: returns
+    `{:error, :invalid_transition}` and writes nothing to the DB.
+  - If the entity has not been started yet: returns `{:error, :not_found}`.
+
+- `StateMachine.history(server, entity_id)` — returns `{:ok, list}` where list is every
+  recorded transition for that entity in chronological order. Each entry is a map with keys
+  `:event`, `:from_state`, `:to_state`, and `:inserted_at`.
+
+## Persistence
+
+Use Ecto. Assume the caller supplies a configured Ecto repo. The relevant table is
+`entity_transitions` with these columns:
+
+  - `id` — bigint primary key (auto-increment)
+  - `entity_id` — string, non-null, indexed
+  - `event` — string (the atom serialised as a string), non-null
+  - `from_state` — string, non-null
+  - `to_state` — string, non-null
+  - `inserted_at` — utc_datetime_usec, non-null
+
+Provide:
+  1. The `EntityTransition` Ecto schema module.
+  2. An Ecto migration file that creates the table.
+  3. The `StateMachine` GenServer module.
+
+The GenServer must keep an in-memory map of `%{entity_id => current_state}` as its state.
+On `start/2`, it queries the DB for the most recent `to_state` for that entity. On restart,
+the in-memory map is empty, so the next `start/2` call re-hydrates from the DB.
+
+## Concurrency
+
+`transition/3` must be implemented as a `call` (not a cast) so that concurrent callers
+serialize through the GenServer and there are no race conditions. The in-memory update and
+the DB write must both happen inside the `handle_call` callback before the reply is sent.
+
+## Error Handling
+
+- DB write failures in `transition/3` should return `{:error, {:db_error, reason}}` and
+  must NOT update the in-memory state.
+- Use `Ecto.Multi` or a plain `Repo.insert` wrapped in a try/rescue; your choice.
+
+## Deliverables
+
+Give me all three modules/files in a single code block or clearly separated blocks. Use only
+Ecto (plus its adapters) as the external dependency — no additional libraries.
+## Additional interface contract
+
+- The test environment provides a real, already-configured SQLite Ecto repo and injects it into your GenServer via the `repo:` option — do NOT define a repo module or any repo configuration. Your migration file must be at a `priv/repo/migrations/<name>.exs` path: it is executed against that repo before the tests run, so the schema/migration must be valid for SQLite (plain `Ecto.Migration`, no database-specific SQL).
+
+
+=== BASE solution.ex ===
+<file path="priv/repo/migrations/YYYYMMDDHHMMSS_create_entity_transitions.exs">
+defmodule Repo.Migrations.CreateEntityTransitions do
+  use Ecto.Migration
+
+  def change do
+    create table(:entity_transitions) do
+      add(:entity_id, :string, null: false)
+      add(:event, :string, null: false)
+      add(:from_state, :string, null: false)
+      add(:to_state, :string, null: false)
+      add(:inserted_at, :utc_datetime_usec, null: false)
+    end
+
+    create(index(:entity_transitions, [:entity_id]))
+    create(index(:entity_transitions, [:entity_id, :inserted_at]))
+  end
+end
+</file>
+
+<file path="lib/entity_transition.ex">
+defmodule EntityTransition do
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  @moduledoc """
+  Persisted record of a single state-machine transition for one entity.
+
+  Fields
+  ------
+  entity_id   – domain ID of the tracked entity
+  event       – the triggering event atom serialised as a string ("confirm", …)
+  from_state  – state before the transition ("pending", …)
+  to_state    – state after the transition ("confirmed", …)
+  inserted_at – microsecond-precision UTC timestamp, set by the repo on insert
+  """
+
+  # Suppress updated_at; we only need a single insertion timestamp.
+  @timestamps_opts [type: :utc_datetime_usec, updated_at: false]
+
+  schema "entity_transitions" do
+    field(:entity_id, :string)
+    field(:event, :string)
+    field(:from_state, :string)
+    field(:to_state, :string)
+
+    timestamps()
+  end
+
+  @required [:entity_id, :event, :from_state, :to_state]
+
+  @doc "Validates and wraps insertion attrs in a changeset."
+  def changeset(transition \\ %__MODULE__{}, attrs) do
+    transition
+    |> cast(attrs, @required)
+    |> validate_required(@required)
+    |> validate_length(:entity_id, min: 1)
+  end
+end
+</file>
+
+<file path="lib/state_machine.ex">
+defmodule StateMachine do
+  use GenServer
+  require Logger
+
+  import Ecto.Query, only: [from: 2]
+
+  @moduledoc """
+  GenServer that manages the in-memory lifecycle state of entities and
+  durably persists every valid transition to an Ecto-backed database.
+
+  ## State machine
+
+      :pending    + :confirm  → :confirmed
+      :confirmed  + :ship     → :shipped
+      :shipped    + :deliver  → :delivered
+      :pending    + :cancel   → :cancelled
+      :confirmed  + :cancel   → :cancelled
+
+  Any other (state, event) pair is rejected as `:invalid_transition`.
+
+  ## Example
+
+      {:ok, pid} = StateMachine.start_link(repo: MyRepo, name: :orders)
+
+      {:ok, :pending}   = StateMachine.start(pid, "order-1")
+      {:ok, :confirmed} = StateMachine.transition(pid, "order-1", :confirm)
+      {:ok, :shipped}   = StateMachine.transition(pid, "order-1", :ship)
+      {:ok, history}    = StateMachine.history(pid, "order-1")
+  """
+
+  # ---------------------------------------------------------------------------
+  # Transition table — pure data (truncated)
+04:30:09.389 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir GenServer module called `StateMachine` that manages the lifecycle of
+stateful entities, persists every state transition to a database, and adds **optimistic
+concurrency control**: every entity carries a monotonically increasing version number, and
+each `transition` must present the version it expects to be operating on. A transition whose
+expected version does not match the entity's current version is rejected as a stale write and
+nothing is persisted.
+
+## State Machine Definition
+
+Use the following order-processing lifecycle:
+
+States: `:pending`, `:confirmed`, `:shipped`, `:delivered`, `:cancelled`
+
+Valid transitions (current_state + event → next_state):
+  - :pending    + :confirm  → :confirmed
+  - :confirmed  + :ship     → :shipped
+  - :shipped    + :deliver  → :delivered
+  - :pending    + :cancel   → :cancelled
+  - :confirmed  + :cancel   → :cancelled
+
+Any other (state, event) combination is invalid.
+
+## Versioning
+
+Every entity has a version number. A brand-new entity (no persisted history) starts in the
+`:pending` state at **version 0**. Each successful transition increments the version by 1, so
+after N successful transitions the entity is at version N. The version after a transition is
+persisted alongside that transition.
+
+## Public API
+
+- `StateMachine.start_link(opts)` — starts the GenServer. Accepts a `:repo` option (an Ecto
+  repo module) and an optional `:name` option for process registration.
+
+- `StateMachine.start(server, entity_id)` — loads the latest persisted state **and version**
+  for the given entity from the database. If no record exists, the entity starts in the
+  `:pending` state at version 0. Returns `{:ok, current_state, current_version}`.
+
+- `StateMachine.get_state(server, entity_id)` — returns `{:ok, current_state, current_version}`
+  for a previously started entity, or `{:error, :not_found}` if the entity has never been
+  started in this server session.
+
+- `StateMachine.transition(server, entity_id, event, expected_version)` — attempts to
+  transition the entity. The four checks are applied **in this exact order**:
+
+  1. If the entity has not been started yet in this session: returns `{:error, :not_found}`
+     and writes nothing.
+  2. Otherwise, if `expected_version` does not equal the entity's current version: returns
+     `{:error, {:stale_version, current_version}}` and writes nothing.
+  3. Otherwise, if the (state, event) pair is not a valid transition: returns
+     `{:error, :invalid_transition}` and writes nothing.
+  4. Otherwise the transition is valid: persists the new state + event + new version to the DB,
+     updates in-memory state, and returns `{:ok, new_state, new_version}` where
+     `new_version == current_version + 1`.
+
+  Note that the version check happens *before* the validity check, so a caller presenting a
+  stale version always receives `{:error, {:stale_version, current_version}}` even if the event
+  would also have been an invalid transition.
+
+- `StateMachine.history(server, entity_id)` — returns `{:ok, list}` where list is every recorded
+  transition for that entity in chronological (insertion) order. Each entry is a map with keys
+  `:event`, `:from_state`, `:to_state`, `:version`, and `:inserted_at`.
+
+## Persistence
+
+Use Ecto. Assume the caller supplies a configured Ecto repo. The relevant table is
+`entity_transitions` with these columns:
+
+  - `id` — bigint primary key (auto-increment)
+  - `entity_id` — string, non-null, indexed
+  - `event` — string (the atom serialised as a string), non-null
+  - `from_state` — string, non-null
+  - `to_state` — string, non-null
+  - `version` — integer, non-null (the entity's version *after* this transition)
+  - `inserted_at` — utc_datetime_usec, non-null
+
+Provide:
+  1. The `EntityTransition` Ecto schema module.
+  2. An Ecto migration file that creates the table.
+  3. The `StateMachine` GenServer module.
+
+The GenServer keeps an in-memory map of `%{entity_id => {current_state, current_version}}` as
+its state. On `start/2`, it queries the DB for the most recent row for that entity and derives
+both the current `to_state` and the current version. On restart, the in-memory map is empty, so
+the next `start/2` call re-hydrates from the DB.
+
+## Concurrency
+
+`transition/4` must be implemented as a `call` (not a cast) so that concurrent callers serialize
+through the GenServer. Because the version is checked inside `handle_call`, when many callers
+race to apply the same event at the same expected version, exactly one succeeds and every other
+caller observes the now-incremented current version and receives
+`{:error, {:stale_version, current_version}}`.
+
+## Error Handling
+
+- DB write failures in `transition/4` should return `{:error, {:db_error, reason}}` and must NOT
+  update the in-memory state or version.
+
+## Deliverables
+
+Give me all three modules/files in clearly separated blocks. Use only Ecto (plus its adapters)
+as the external dependency — no additional libraries.
+
+## Additional interface contract
+
+- The test environment provides a real, already-configured SQLite Ecto repo and injects it into
+  your GenServer via the `repo:` option — do NOT define a repo module or any repo configuration.
+  Your migration file must be at a `priv/repo/migrations/<name>.exs` path: it is executed against
+  that repo before the tests run, so the schema/migration must be valid for SQLite (plain
+  `Ecto.Migration`, no database-specific SQL).
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule StateMachineTest do
+  use ExUnit.Case, async: false
+
+  # ---------------------------------------------------------------------------
+  # Real repo: the test environment provides StateMachine.Repo (SQLite),
+  # already configured, with this bundle's migration applied.
+  # ---------------------------------------------------------------------------
+
+  setup do
+    owner = Ecto.Adapters.SQL.Sandbox.start_owner!(StateMachine.Repo, shared: true)
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(owner) end)
+    {:ok, pid} = StateMachine.start_link(repo: StateMachine.Repo)
+    %{sm: pid}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Starting entities / versions
+  # ---------------------------------------------------------------------------
+
+  test "start/2 returns :pending at version 0 for a brand-new entity", %{sm: sm} do
+    assert {:ok, :pending, 0} = StateMachine.start(sm, "order:1")
+  end
+
+  test "start/2 twice returns the same state and version", %{sm: sm} do
+    {:ok, :pending, 0} = StateMachine.start(sm, "order:1")
+    assert {:ok, :pending, 0} = StateMachine.start(sm, "order:1")
+  end
+
+  test "get_state/2 returns :not_found for unknown entity", %{sm: sm} do
+    assert {:error, :not_found} = StateMachine.get_state(sm, "order:nope")
+  end
+
+  test "get_state/2 reflects current state and version", %{sm: sm} do
+    {:ok, :pending, 0} = StateMachine.start(sm, "order:1")
+    {:ok, :confirmed, 1} = StateMachine.transition(sm, "order:1", :confirm, 0)
+    assert {:ok, :confirmed, 1} = StateMachine.get_state(sm, "order:1")
+  end
+
+  # ---------------------------------------------------------------------------
+  # Happy-path transitions increment the version
+  # ---------------------------------------------------------------------------
+
+  test "full happy path increments version each step", %{sm: sm} do
+    {:ok, :pending, 0} = StateMachine.start(sm, "order:1")
+
+    assert {:ok, :confirmed, 1} = StateMachine.transition(sm, "order:1", :confirm, 0)
+    assert {:ok, :shipped, 2} = StateMachine.transition(sm, "order:1", :ship, 1)
+    assert {:ok, :delivered, 3} = StateMachine.transition(sm, "order:1", :deliver, 2)
+
+    assert {:ok, :delivered, 3} = StateMachine.get_state(sm, "order:1")
+  end
+
+  test "cancellation from :pending and from :confirmed", %{sm: sm} do
+    {:ok, :pending, 0} = StateMachine.start(sm, "order:2")
+    assert {:ok, :cancelled, 1} = StateMachine.transition(sm, "order:2", :cancel, 0)
+
+    {:ok, :pending, 0} = StateMachine.s (truncated)
+04:30:09.389 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 33911, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 33911, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 33911, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 33911, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 36110, "type" => "message"}], "output_tokens" => 36110, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

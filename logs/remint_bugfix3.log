@@ -1,0 +1,23 @@
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 3 needing top-up → next: 015_001_heartbeat_monitor_01, 040_001_configuration_merger_with_override_rules_01, 104_003_overflow_connection_pool_01
+  2. new bases:      skipped (GEN_ONLY=backfill)
+=============================================
+
+
+Backfill: 3 seed(s) needing derivatives.
+[1/3] 015_001_heartbeat_monitor_01 (backfill) ...
+      bugfix_015_001_heartbeat_monitor_01 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_015_001_heartbeat_monitor_01 (bugfix) ... ACCEPTED (21 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_015_001_heartbeat_monitor_02 (bugfix) ... ACCEPTED (21 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_015_001_heartbeat_monitor_03 (bugfix) ... ACCEPTED (21 passed, mutant killed (semantic_killed), 1 attempt(s))
+[2/3] 040_001_configuration_merger_with_override_rules_01 (backfill) ...
+      bugfix_040_001_configuration_merger_with_override_rules_02 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+[3/3] 104_003_overflow_connection_pool_01 (backfill) ...
+      tfim_104_003_overflow_connection_pool_11 (tfim) ... ACCEPTED (10 passed, mutant killed (isolation), 1 attempt(s))
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 745 | mintable (rejected → accepted) pairs: 100 | minted: %{exists: 17, unverified: 83}
+
+Done.

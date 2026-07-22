@@ -1,0 +1,434 @@
+19:24:16.013 [info] FIM 075_001_property_based_test_generators_fim01 → 075_001_property_based_test_generators_02: target date_range/0
+19:24:16.013 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+19:24:16.013 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `date_range/0`.
+
+Generate a prompt describing how to implement `date_range/0` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `date_range/0` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `date_range/0` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `date_range/0` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Generators` that provides reusable `StreamData` generators for common domain models, intended for use with property-based testing via the `StreamData` and `ExUnitProperties` libraries.
+
+I need these generators in the public API:
+
+- `Generators.user()` — produces maps with the following keys: `:id` (positive integer), `:name` (non-empty string, letters only, max 50 chars), `:email` (string in the format `"<local>@<domain>.<tld>"` where each part is a non-empty lowercase alphanumeric string), `:age` (integer between 18 and 120), and `:role` (one of `:admin`, `:editor`, `:viewer`).
+- `Generators.money()` — produces `%{amount: amount, currency: currency}` maps where `amount` is a non-negative integer (representing cents, 0 to 10_000_000) and `currency` is one of `"USD"`, `"EUR"`, `"GBP"`, `"JPY"`, `"CHF"`.
+- `Generators.date_range()` — produces `%{start_date: start, end_date: end_}` maps where both values are `Date` structs in the range `~D[2000-01-01]` to `~D[2100-12-31]`, and `start_date` is always less than or equal to `end_date`.
+- `Generators.non_empty_list(generator)` — a combinator that takes any other generator and produces a list of 1 to 20 elements drawn from it.
+- `Generators.one_of_weighted(weighted_list)` — takes a list of `{weight, generator}` tuples and produces values from the generators proportional to their weights.
+
+Each generator must be composable with standard `StreamData` combinators (i.e., they return `%StreamData{}` structs). All constraints must be enforced within the generator itself — consumers should never need to filter or reject generated values.
+
+Give me the complete module in a single file. Use only `stream_data` as an external dependency, no others.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Generators do
+  @moduledoc """
+  Reusable `StreamData` generators for common domain models, intended for use
+  with property-based testing via the `StreamData` and `ExUnitProperties` libraries.
+
+  ## Usage
+
+      use ExUnitProperties
+
+      property "users have valid roles" do
+        check all user <- Generators.user() do
+          assert user.role in [:admin, :editor, :viewer]
+        end
+      end
+
+  All generators return `%StreamData{}` structs and are fully composable with
+  the standard `StreamData` combinator API (`StreamData.map/2`,
+  `StreamData.bind/2`, `StreamData.filter/2`, etc.).
+  """
+
+  # Qualify every call explicitly rather than bulk-importing StreamData.
+  # A bare `import StreamData` pulls in dozens of functions and can produce
+  # hard-to-diagnose compile errors when any of their arities clash with
+  # auto-imported Kernel functions — particularly on older OTP releases.
+  alias StreamData, as: SD
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Produces maps representing a user domain model.
+
+  ## Shape
+
+      %{
+        id:    pos_integer(),
+        name:  String.t(),   # letters only, 1–50 chars
+        email: String.t(),   # "<local>@<domain>.<tld>"
+        age:   integer(),    # 18–120
+        role:  :admin | :editor | :viewer
+      }
+
+  All constraints are enforced inside the generator; consumers never need to
+  call `StreamData.filter/2` to discard values.
+  """
+  @spec user() :: StreamData.t(map())
+  def user do
+    SD.fixed_map(%{
+      id:    SD.positive_integer(),
+      name:  user_name(),
+      email: email(),
+      age:   SD.integer(18..120),
+      role:  SD.member_of([:admin, :editor, :viewer])
+    })
+  end
+
+  @doc """
+  Produces maps representing a monetary value.
+
+  ## Shape
+
+      %{
+        amount:   non_neg_integer(),  # cents, 0–10_000_000
+        currency: String.t()          # "USD" | "EUR" | "GBP" | "JPY" | "CHF"
+      }
+  """
+  @spec money() :: StreamData.t(map())
+  def money do
+    SD.fixed_map(%{
+      amount:   SD.integer(0..10_000_000),
+      currency: SD.member_of(["USD", "EUR", "GBP", "JPY", "CHF"])
+    })
+  end
+
+  @doc """
+  Produces maps representing an inclusive date range.
+
+  ## Shape
+
+      %{
+        start_date: Date.t(),  # within 2000-01-01..2100-12-31
+        end_date:   Date.t()   # >= start_date, within the same bounds
+      }
+
+  The guarantee `start_date <= end_date` is enforced structurally: the
+  end-day range opens at `start_day`, so rejection-filtering is never needed.
+  """
+  @spec date_range() :: StreamData.t(map())
+  def date_range do
+    min_day = Date.to_gregorian_days(~D[2000-01-01])
+    max_day = Date.to_gregorian_days(~D[2100-12-31])
+
+    SD.bind(SD.integer(min_day..max_day), fn start_day ->
+      # Use one_of to split between two explicit branches:
+      #   1. same-day (start == end) — guaranteed to appear in every test run
+      #   2. any valid end-day in [start_day, max_day] — covers multi-day ranges
+      # Relying on bias alone (e.g. integer(0..36524) happening to pick 0) is
+      # too probabilistic; with 100 default runs it fails intermittently.
+      same_day = SD.constant(start_day)
+      any_day  = SD.integer(start_day..max_day)
+
+      SD.bind(SD.one_of([same_day, any_day]), fn end_day ->
+        SD.constant(%{
+          start_date: Date.from_gregorian_days(start_day),
+          end_date:   Date.from_gregorian_days(end_day)
+        })
+      end)
+    end)
+  end
+
+  @doc """
+  A combinator that wraps any generator and produces non-empty lists of 1–20
+  elements drawn from it.
+
+  ## Example
+
+      Generators.non_empty_list(StreamData.integer())
+      # => [3, -1, 42, 7]  (between 1 and 20 elements)
+
+      Generators.non_empty_list(Generators.user())
+      # => [%{id: 1, name: "Alice", ...}, ...]
+  """
+  @spec non_empty_list(StreamData.t(a)) :: StreamData.t(nonempty_list(a)) when a: term()
+  def non_empty_list(generator) do
+    SD.bind(SD.integer(1..20), fn size ->
+      SD.list_of(generator, length: size)
+    end)
+  end
+
+  @doc """
+  A combinator that accepts a list of `{weight, generator}` tuples and produces
+  values from the generators with probability proportional to each weight.
+
+  Weights must be positive integers. The likelihood of a value being drawn from
+  a particular generator equals `weight / sum(all_weights)`.
+
+  ## Example
+
+      Generators.one_of_weighted([
+        {10, StreamData.constant(:common)},
+        {1,  StreamData.constant(:rare)}
+      ])
+      # => :common roughly 10× more often than :rare
+  """
+  @spec one_of_weighted([{pos_integer(), StreamData.t(a)}]) :: StreamData.t(a) when a: term()
+  def one_of_weighted(weighted_list) when is_list(weighted_list) and weighted_list != [] do
+    # Expand each {weight, gen} pair into `weight` copies of `gen`, then hand
+    # off to `StreamData.one_of/1` for uniform selection. This keeps the
+    # implementation a single pipeline with no custom sampling math, and
+    # correctly propagates shrinking through the underlying generators.
+    expanded =
+      Enum.flat_map(weighted_list, fn {weight, gen}
+          (truncated)
+19:24:50.843 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `date_range/0` function. It should return a `%StreamData{}`
+generator that produces maps of the shape `%{start_date: Date.t(), end_date: Date.t()}`
+where both dates fall within the inclusive bounds `~D[2000-01-01]..~D[2100-12-31]`
+and `start_date` is always less than or equal to `end_date`.
+
+Work in terms of Gregorian day counts: compute `min_day` and `max_day` by calling
+`Date.to_gregorian_days/1` on the two boundary dates. First bind over an integer in
+`min_day..max_day` to pick `start_day`. Then, to guarantee the `start_date <= end_date`
+invariant structurally (never by filtering), select `end_day` from a `one_of` of two
+explicit branches: a `constant(start_day)` branch (so same-day ranges reliably appear)
+and an `integer(start_day..max_day)` branch (for multi-day ranges). Finally, bind over
+that choice and return a `constant/1` map built with `Date.from_gregorian_days/1` for
+both `start_date` and `end_date`. Qualify all `StreamData` calls through the `SD` alias.
+
+```elixir
+defmodule Generators do
+  @moduledoc """
+  Reusable `StreamData` generators for common domain models, intended for use
+  with property-based testing via the `StreamData` and `ExUnitProperties` libraries.
+
+  ## Usage
+
+      use ExUnitProperties
+
+      property "users have valid roles" do
+        check all user <- Generators.user() do
+          assert user.role in [:admin, :editor, :viewer]
+        end
+      end
+
+  All generators return `%StreamData{}` structs and are fully composable with
+  the standard `StreamData` combinator API (`StreamData.map/2`,
+  `StreamData.bind/2`, `StreamData.filter/2`, etc.).
+  """
+
+  # Qualify every call explicitly rather than bulk-importing StreamData.
+  # A bare `import StreamData` pulls in dozens of functions and can produce
+  # hard-to-diagnose compile errors when any of their arities clash with
+  # auto-imported Kernel functions — particularly on older OTP releases.
+  alias StreamData, as: SD
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Produces maps representing a user domain model.
+
+  ## Shape
+
+      %{
+        id:    pos_integer(),
+        name:  String.t(),   # letters only, 1–50 chars
+        email: String.t(),   # "<local>@<domain>.<tld>"
+        age:   integer(),    # 18–120
+        role:  :admin | :editor | :viewer
+      }
+
+  All constraints are enforced inside the generator; consumers never need to
+  call `StreamData.filter/2` to discard values.
+  """
+  @spec user() :: StreamData.t(map())
+  def user do
+    SD.fixed_map(%{
+      id:    SD.positive_integer(),
+      name:  user_name(),
+      email: email(),
+      age:   SD.integer(18..120),
+      role:  SD.member_of([:admin, :editor, :viewer])
+    })
+  end
+
+  @doc """
+  Produces maps representing a monetary value.
+
+  ## Shape
+
+      %{
+        amount:   non_neg_integer(),  # cents, 0–10_000_000
+        currency: String.t()          # "USD" | "EUR" | "GBP" | "JPY" | "CHF"
+      }
+  """
+  @spec money() :: StreamData.t(map())
+  def money do
+    SD.fixed_map(%{
+      amount:   SD.integer(0..10_000_000),
+      currency: SD.member_of(["USD", "EUR", "GBP", "JPY", "CHF"])
+    })
+  end
+
+  @doc """
+  Produces maps representing an inclusive date range.
+
+  ## Shape
+
+      %{
+        start_date: Date.t(),  # within 2000-01-01..2100-12-31
+        end_date:   Date.t()   # >= start_date, within the same bounds
+      }
+
+  The guarantee `start_date <= end_date` is enforced structurally: the
+  end-day range opens at `start_day`, so rejection-filtering is never needed.
+  """
+  @spec date_range() :: StreamData.t(map())
+  def date_range do
+    # TODO
+  end
+
+  @doc """
+  A combinator that wraps any generator and produces non-empty lists of 1–20
+  elements drawn from it.
+
+  ## Example
+
+      Generators.non_empty_list(StreamData.integer())
+      # => [3, -1, 42, 7]  (between 1 and 20 elements)
+
+      Generators.non_empty_list(Generators.user())
+      # => [%{id: 1, name: "Alice", ...}, ...]
+  """
+  @spec non_empty_list(StreamData.t(a)) :: StreamData.t(nonempty_list(a)) when a: term()
+  def non_empty_list(generator) do
+    SD.bind(SD.integer(1..20), fn size ->
+      SD.list_of(generator, length: size)
+    end)
+  end
+
+  @doc """
+  A combinator that accepts a list of `{weight, generator}` tuples and produces
+  values from the generators with probability proportional to each weight.
+
+  Weights must be positive integers. The likelihood of a value being drawn from
+  a particular generator equals `weight / sum(all_weights)`.
+
+  ## Example
+
+      Generators.one_of_weighted([
+        {10, StreamData.constant(:common)},
+        {1,  StreamData.constant(:rare)}
+      ])
+      # => :common roughly 10× more often than :rare
+  """
+  @spec one_of_weighted([{pos_integer(), StreamData.t(a)}]) :: StreamData.t(a) when a: term()
+  def one_of_weighted(weighted_list) when is_list(weighted_list) and weighted_list != [] do
+    # Expand each {weight, gen} pair into `weight` copies of `gen`, then hand
+    # off to `StreamData.one_of/1` for uniform selection. This keeps the
+    # implementation a single pipeline with no custom sampling math, and
+    # correctly propagates shrinking through the underlying generators.
+    expanded =
+      Enum.flat_map(weighted_list, fn {weight, gen}
+          when is_integer(weight) and weight >= 0 ->
+        # weight 0 → List.duplicate returns [] → generator is never selected
+        List.duplicate(gen, weight)
+      end)
+
+    SD.one_of(expanded)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Produces a non-empty, letters-only string of at most 50 characters.
+  # Draws a length first, then fills exactly that many codepoints from the
+  # union of a–z and A–Z, so empty strings and digits are structurally
+  # impossible — no filter step required.
+  defp user_name do
+    letter = SD.member_of(Enum.concat(?a..?z, ?A..?Z))
+
+    SD.bind(SD.integer(1..50), fn length ->
+      SD.bind(SD.list_of(letter, length: length), fn codepoints ->
+        SD.constant(List.to_string(codepoints))
+      end)
+    end)
+  end
+
+  # Produces a string in the format "<local>@<domain>.<tld>" where each
+  # segment is a non-empty lowercase alphanumeric string (1–20 chars).
+  defp email do
+    SD.bind(alnum_segment(), fn local ->
+      SD.bind(alnum_segment(), fn domain ->
+        SD.bind(alnum_segment(), fn tld ->
+          SD.constant("#{local}@#{domain}.#{tld}")
+        end)
+      end)
+    end)
+  end
+
+  # Produces a non-empty lowercase alphanumeric string of 1–20 characters.
+  defp alnum_segment do
+    lowercase_alnum = SD.member_of(Enum.concat(?a..?z, ?0..?9))
+
+    SD.bind(SD.integer(1..20), fn length ->
+      SD.bind(SD.list_of(lowercase_alnum, length: length), fn codepoints ->
+        SD.constant(List.to_string(codepoints))
+      end)
+    end)
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  def date_range do
+    min_day = Date.to_gregorian_days(~D[2000-01-01])
+    max_day = Date.to_gregorian_days(~D[2100-12-31])
+
+    SD.bind(SD.integer(min_day..max_day), fn start_day ->
+      # Use one_of to split between two explicit branches:
+      #   1. same-day (start == end) — guaranteed to appear in every test run
+      #   2. any valid end-day in [start_day, max_day] — covers multi-day ranges
+      # Relying on bias alone (e.g. integer(0..36524) happening to pick 0) is
+      # too probabilistic; with 100 default runs it fails intermittently.
+      same_day = SD.constant(start_day)
+      any_day  = SD.integer(start_day..max_day)
+
+      SD.bind(SD.one_of([same_day, any_day]), fn end_day ->
+        SD.constant(%{
+          start_date: Date.from_gregorian_days(start_day),
+          end_date:   Date.from_gregorian_days(end_day)
+        })
+      end)
+    end)
+  end
+</file>
+19:24:50.843 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4168, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4168, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4168, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4168, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3352, "type" => "message"}], "output_tokens" => 3352, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+19:24:50.863 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_075_001_property_based_test_generators_02/075_001_property_based_test_generators_02 solution.ex
+19:24:52.167 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":21,"lines_over_98":0,"max_line_length":80,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"075_001_property_based_test_generators_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_075_001_property_based_test_generators_02/075_001_property_based_test_generators_02/solution.ex","task":"075_001_property_based_test_generators_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":29,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-04T17:24:52.144245Z"}
+19:24:52.168 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_075_001_property_based_test_generators_02/075_001_property_based_test_generators_02 .gen_staging/fim_075_001_property_based_test_generators_02/mutant.ex
+19:24:53.496 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":18,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"075_001_property_based_test_generators_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":0.86,"reasons":["tests: 6/29 failed"],"tests":0.79},"shape":"fim","solution_file":".gen_staging/fim_075_001_property_based_test_generators_02/mutant.ex","task":"075_001_property_based_test_generators_02","test_failures":[{"message":"MUTATION","module":"GeneratorsTest","test":"property Generators.date_range/0 always produces a map with :start_date and :end_date"},{"message":"MUTATION","module":"GeneratorsTest","test":"property Generators.date_range/0 start_date and end_date are always Date structs"},{"message":"MUTATION","module":"GeneratorsTest","test":"property Generators.date_range/0 start_date is always <= end_date"},{"message":"MUTATION","module":"GeneratorsTest","test":"property Generators.date_range/0 dates are always within the allowed range"},{"message":"MUTATION","module":"GeneratorsTest","test":"property Generators.date_range/0 produces same-day ranges (start == end) and multi-day ranges"},{"message":"MUTATION","module":"GeneratorsTest","test":"property composability with StreamData date_range can be used inside a list_of"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-04T17:24:53.472713Z"}
+19:24:53.496 [debug] fim mutation gate: killed
+19:24:53.497 [info] promoted 075_001_property_based_test_generators_02 -> tasks/075_001_property_based_test_generators_02

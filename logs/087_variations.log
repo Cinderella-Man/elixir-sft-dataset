@@ -1,0 +1,429 @@
+[22m06:27:17.055 [info] VARIATIONS gen for 087_001_permission_system_with_role_based_access_01 (3 slot(s))[0m
+[36m06:27:17.056 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m06:27:17.056 [debug] claude -p USER prompt:
+I have this SFT task (idea #87 — "Permission System with Role-Based Access"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 87 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `Permissions` that implements a role-based access control system with hierarchical roles and owner-based overrides.
+
+The role hierarchy, from least to most privileged, is: `:viewer < :editor < :manager < :admin`. A user with a higher role automatically inherits all permissions of lower roles.
+
+Permissions are defined as a map of the shape `%{resource => %{action => required_role}}`, for example:
+```elixir
+%{
+  posts: %{read: :viewer, create: :editor, update: :editor, delete: :manager},
+  settings: %{read: :manager, update: :admin}
+}
+```
+
+I need the following in the public API:
+
+- `Permissions.can?(role, resource, action, rules)` — returns `true` if the given role is at or above the role required by `rules` for `resource` + `action`, and `false` otherwise. Return `false` for unknown resources or actions rather than raising.
+- `Permissions.can?(role, resource, action, rules, opts)` — same as above but accepts an `opts` keyword list. When `opts` includes `[owner_id: id, user_id: id]` and the resource+action rule is the atom `:owner`, grant access if and only if `owner_id == user_id`, regardless of role. If the rule is `:owner` but no `opts` are provided (or the ids don't match), deny access.
+
+The `:admin` role must be able to do everything that any lower role can do. The `:owner` special-case should be composable — a resource action can require `:owner` while other actions on the same resource require normal roles.
+
+Give me the complete module in a single file with no external dependencies.
+
+=== BASE solution.ex ===
+defmodule Permissions do
+  @moduledoc """
+  Role-based access control with hierarchical roles and owner-based overrides.
+
+  ## Role Hierarchy (least → most privileged)
+
+      :viewer < :editor < :manager < :admin
+
+  ## Rules Map Shape
+
+      %{
+        resource => %{
+          action => required_role | :owner
+        }
+      }
+
+  ## Owner Override
+
+  When a rule is set to `:owner`, access is granted if and only if the
+  `owner_id` and `user_id` supplied in `opts` are equal (and non-nil).
+  The caller's role is irrelevant for `:owner`-gated actions.
+  """
+
+  # ---------------------------------------------------------------------------
+  # Role hierarchy
+  # ---------------------------------------------------------------------------
+
+  @role_rank %{viewer: 0, editor: 1, manager: 2, admin: 3}
+
+  @roles Map.keys(@role_rank)
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns `true` when `role` satisfies the rule for `{resource, action}` in
+  `rules`, `false` otherwise (including unknown resources / actions).
+
+  Equivalent to `can?(role, resource, action, rules, [])`.
+  """
+  @spec can?(atom(), atom(), atom(), map()) :: boolean()
+  def can?(role, resource, action, rules) do
+    can?(role, resource, action, rules, [])
+  end
+
+  @doc """
+  Same as `can?/4` but accepts an `opts` keyword list.
+
+  ## Options
+
+  * `:owner_id` – the ID of whoever owns the resource.
+  * `:user_id`  – the ID of the user requesting access.
+
+  When the rule for `{resource, action}` is the atom `:owner`, access is
+  granted if and only if `owner_id == user_id` (both must be present and
+  equal). The caller's role plays no part in this decision.
+
+  For all other rule values the options are ignored and normal role
+  comparison applies.
+  """
+  @spec can?(atom(), atom(), atom(), map(), keyword()) :: boolean()
+  def can?(role, resource, action, rules, opts) do
+    with {:ok, action_rules} <- fetch_resource(rules, resource),
+         {:ok, rule} <- fetch_action(action_rules, action) do
+      check(rule, role, opts)
+    else
+      :error -> false
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Retrieve the action-rule map for a resource, returning :error when absent.
+  defp fetch_resource(rules, resource) do
+    case Map.fetch(rules, resource) do
+      {:ok, action_rules} when is_map(action_rules) -> {:ok, action_rules}
+      _ -> :error
+    end
+  end
+
+  # Retrieve the rule for a single action, returning :error when absent.
+  defp fetch_action(action_rules, action) do
+    Map.fetch(action_rules, action)
+  end
+
+  # `:owner` rule — identity check only, role is irrelevant.
+  defp check(:owner, _role, opts) do
+    owner_id = Keyword.get(opts, :owner_id)
+    user_id = Keyword.get(opts, :user_id)
+
+    not is_nil(owner_id) and not is_nil(user_id) and owner_id == user_id
+  end
+
+  # Normal role rule — compare ranks, ignore opts.
+  defp check(required_role, role, _opts)
+       when required_role in @roles and role in @roles do
+    rank(role) >= rank(required_role)
+  end
+
+  # Unknown role or required_role value — deny.
+  defp check(_required_role, _role, _opts), do: false
+
+  defp rank(role), do: Map.fetch!(@role_rank, role)
+end
+
+
+=== BASE test_harness.exs ===
+defmodule PermissionsTest do
+  use ExUnit.Case, async: true
+
+  # ---------------------------------------------------------------------------
+  # Shared rules fixture
+  # ---------------------------------------------------------------------------
+
+  @rules %{
+    posts: %{
+      read: :viewer,
+      create: :editor,
+      update: :editor,
+      delete: :manager,
+      publish: :admin
+    },
+    settings: %{
+      read: :manager,
+      update: :admin
+    },
+    profile: %{
+      read: :viewer,
+      update: :owner
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Viewer permissions
+  # ---------------------------------------------------------------------------
+
+  describe "viewer role" do
+    test "can read posts" do
+      assert Permissions.can?(:viewer, :posts, :read, @rules)
+    end
+
+    test "cannot create posts" do
+      refute Permissions.can?(:viewer, :posts, :create, @rules)
+    end
+
+    test "cannot delete posts" do
+      refute Permissions.can?(:viewer, :posts, :delete, @rules)
+    end
+
+    test "cannot read settings" do
+      refute Permissions.can?(:viewer, :settings, :read, @rules)
+    end
+
+    test "cannot publish posts" do
+      refute Permissions.can?(:viewer, :posts, :publish, @rules)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Editor permissions
+  # ---------------------------------------------------------------------------
+
+  describe "editor role" do
+    test "can read posts (inherited from viewer)" do
+      assert Permissions.can?(:editor, :posts, :read, @rules)
+    end
+
+    test "can create posts" do
+      assert Permissions.can?(:editor, :posts, :create, @rules)
+    end
+
+    test "can update posts" do
+      assert Permissions.can?(:editor, :posts, :update, @rules)
+    end
+
+    test "cannot delete posts" do
+      refute Permissions.can?(:editor, :posts, :delete, @rules)
+    end
+
+    test "cannot publish posts" do
+      refute Permissions.can?(:editor, :posts, :publish, @rules)
+    end
+
+    test "cannot read sett (truncated)[0m
+[36m06:30:43.249 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `AccessPolicy` that evaluates authorization requests against an **ordered-independent list of policy statements** using **explicit-deny precedence** (deny always overrides allow).
+
+Unlike a simple role-hierarchy check, there is no notion of one role being "higher" than another here. Authorization is decided purely by matching policy statements. A policy is a plain list of statement maps of this shape:
+
+```elixir
+[
+  %{effect: :allow, roles: :any,             resource: :posts,    action: :read},
+  %{effect: :allow, roles: [:editor, :admin], resource: :posts,    action: :write},
+  %{effect: :deny,  roles: [:editor],         resource: :posts,    action: :delete},
+  %{effect: :allow, roles: [:admin],          resource: :any,      action: :any},
+  %{effect: :deny,  roles: :any,              resource: :settings, action: :delete}
+]
+```
+
+Each statement has:
+
+- `:effect` — `:allow` or `:deny` (default to `:allow` if the key is missing).
+- `:roles` — a single role atom, a list of role atoms, or the atom `:any` (matches every role). Defaults to `:any` if missing.
+- `:resource` — a single resource atom, a list of resource atoms, or `:any`. Defaults to `:any`.
+- `:action` — a single action atom, a list of action atoms, or `:any`. Defaults to `:any`.
+
+A statement **matches** a request `(role, resource, action)` when the role matches the statement's `:roles`, the resource matches its `:resource`, and the action matches its `:action` (where `:any` matches everything, and a list matches when the value is a member).
+
+I need the following public API:
+
+- `AccessPolicy.evaluate(role, resource, action, policies)` — returns `:deny` if **any** matching statement has effect `:deny`; otherwise returns `:allow` if **any** matching statement has effect `:allow`; otherwise (nothing matches) returns `:deny` (default deny). Explicit deny must win over allow regardless of statement order in the list.
+- `AccessPolicy.authorized?(role, resource, action, policies)` — convenience wrapper returning `true` when `evaluate/4` is `:allow`, else `false`.
+
+Give me the complete module in a single file with no external dependencies.
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule AccessPolicyTest do
+  use ExUnit.Case, async: false
+
+  @policies [
+    %{effect: :allow, roles: :any, resource: :posts, action: :read},
+    %{effect: :allow, roles: [:editor, :admin], resource: :posts, action: :write},
+    %{effect: :deny, roles: [:editor], resource: :posts, action: :delete},
+    %{effect: :allow, roles: [:admin], resource: :any, action: :any},
+    %{effect: :deny, roles: :any, resource: :settings, action: :delete}
+  ]
+
+  describe "basic matching" do
+    test "allows when a matching allow statement exists" do
+      assert AccessPolicy.authorized?(:viewer, :posts, :read, @policies)
+    end
+
+    test "default-denies when nothing matches" do
+      refute AccessPolicy.authorized?(:viewer, :posts, :write, @policies)
+      assert AccessPolicy.evaluate(:viewer, :posts, :write, @policies) == :deny
+    end
+
+    test "list membership in roles field" do
+      assert AccessPolicy.authorized?(:editor, :posts, :write, @policies)
+      assert AccessPolicy.authorized?(:admin, :posts, :write, @policies)
+    end
+  end
+
+  describe "explicit-deny precedence" do
+    test "deny overrides a would-be allow" do
+      # editor delete: matched by deny statement, no allow -> deny
+      refute AccessPolicy.authorized?(:editor, :posts, :delete, @policies)
+    end
+
+    test "deny overrides a wildcard admin allow" do
+      # admin :any/:any allows, but settings:delete deny wins
+      assert AccessPolicy.authorized?(:admin, :settings, :read, @policies)
+      refute AccessPolicy.authorized?(:admin, :settings, :delete, @policies)
+    end
+
+    test "order of statements does not matter" do
+      reversed = Enum.reverse(@policies)
+      assert AccessPolicy.evaluate(:admin, :settings, :delete, @policies) ==
+               AccessPolicy.evaluate(:admin, :settings, :delete, reversed)
+
+      assert AccessPolicy.evaluate(:admin, :settings, :delete, reversed) == :deny
+    end
+  end
+
+  describe "wildcard :any semantics" do
+    test "admin wildcard allow grants unrelated resources" do
+      assert AccessPolicy.authorized?(:admin, :posts, :delete, @policies)
+      assert AccessPolicy.authorized?(:admin, :reports, :export, @policies)
+    end
+
+    test ":any roles matches every role" do
+      for role <- [:viewer, :editor, :manager, :admin] do
+        assert AccessPolicy.authorized?(role, :posts, :read, @policies),
+               "expected #{role} to read posts via :any roles"
+      end
+    end
+  end
+
+  describe "defaults for missing keys" do
+    test "missing effect defaults to allow" do
+      policies = [%{roles: [:viewer], resource: :docs, action: :read}]
+      assert AccessPolicy.authorized?(:viewer, :docs, :read, policies)
+    end
+
+    test "missing roles/resource/action default to :any" do
+      policies = [%{effect: :allow}]
+      assert AccessPolicy.authorized?(:whoever, :whatever, :whenever, policies)
+    end
+
+    test "missing keys still respect deny precedence" do
+      policies = [
+        %{effect: :allow},
+        %{effect: :deny, action: :delete}
+      ]
+
+      assert AccessPolicy.authorized?(:viewer, :posts, :read, policies)
+      refute AccessPolicy.authorized?(:viewer, :posts, :delete, policies)
+    end
+  end
+
+  describe "empty policy list" do
+    test "default deny with no statements" do
+      assert AccessPolicy.evaluate(:admin, :posts, :read, []) == :deny
+      refute AccessPolicy.authorized?(:admin, :posts, :read, [])
+    end
+  end
+end
+</file>
+
+<file path="v1/solution.ex">
+defmodule AccessPolicy do
+  @moduledoc """
+  Policy-statement authorization with explicit-deny precedence.
+
+  Authorization is decided by matching a request `{role, resource, action}`
+  against a flat, order-independent list of statement maps. There is no role
+  hierarchy: a request is `:allow`ed only when a matching allow statement
+  exists and no matching deny statement exists.
+
+  ## Statement shape
+
+      %{
+        effect:   :allow | :deny,          # default :allow
+        roles:    atom | [atom] | :any,    # default :any
+        resource: atom | [atom] | :any,    # default :any
+        action:   atom | [atom] | :any     # default :any
+      }
+
+  ## Decision procedure
+
+    1. If any matching statement has effect `:deny` -> `:deny`.
+    2. Else if any matching statement has effect `:allow` -> `:allow`.
+    3. Else (no match) -> `:deny` (default deny).
+
+  Explicit deny always wins over allow, independent of list order.
+  """
+
+  @type effect :: :allow | :deny
+  @type statement :: map()
+
+  @doc """
+  Evaluates a request against `policies`, returning `:allow` or `:deny`.
+  """
+  @spec evaluate(atom(), atom(), atom(), [statement()]) :: effect()
+  def evaluate(role, resource, action, policies) when is_list(policies) do
+    matching = Enum.filter(policies, &matches?(&1, role, resource, action))
+
+    cond do
+      Enum.any?(matching, &(effect_of(&1) == :deny)) -> :deny
+      Enum.any?(matching, &(effect_of(&1) == :allow)) -> :allow
+      true -> :deny
+    end
+  end
+
+  @doc """
+  Returns `true` when `evaluate/4` yields `:allow`, `false` otherwise.
+  """
+  @spec authorized?(atom(), atom(), atom(), [statement()]) :: boolean()
+  def authorized?(role, resource, action, policies) do
+    evaluate(role, resource, action, policies) == :allow
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp matches?(stmt, role, resource, action) do
+    field_match?(Map.get(stmt, :roles, :any), role) and
+      field_match?(Map.get(stmt, :resource, :any), resource) and
+      field_match?(Map.get(stmt, :action, :any), action)
+  end
+
+  defp effect_of(stmt), do: Map.get(stmt, :effect, :allow)
+
+  defp field_match?(:any, _value), do: true
+  defp field_match?(expected, value) when is_list(expected), do: value in expected
+  defp field_mat (truncated)[0m
+[36m06:30:43.249 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 24652, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 24652, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 24652, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 24652, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 18939, "type" => "message"}], "output_tokens" => 18939, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m

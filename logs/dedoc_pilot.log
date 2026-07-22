@@ -1,0 +1,585 @@
+=== dedoc pilot: idea 108 2026-07-18T15:15:59+02:00
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 4 needing top-up → next: 108_001_bidirectional_map_genserver_01, 108_002_bidirectional_multimap_many_to_many_01, 108_003_capacity_bounded_bimap_with_lru_eviction_01, …
+  2. new bases:      skipped (GEN_ONLY=backfill)
+=============================================
+
+
+Backfill: 4 seed(s) needing derivatives.
+[1/4] 108_001_bidirectional_map_genserver_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] put/3 gutted to raise ... killed
+      mutant [3/7] get_by_key/2 gutted to raise ... killed
+      mutant [4/7] get_by_value/2 gutted to raise ... killed
+      mutant [5/7] delete/2 gutted to raise ... killed
+      mutant [6/7] init/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+
+15:16:46.760 [error] dedoc dedoc_108_001_bidirectional_map_genserver crashed: ** (KeyError) key :dedoc not found in:
+
+    %{
+      base: [
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      fim: [
+        skeleton: "deterministic skeleton integrity (hole matches the parent; candidate locatable)",
+        green_nowarn: "reconstructed module green vs the parent harness + zero warnings",
+        candidate_mutant: "gutted-candidate mutant must make the parent harness fail",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      bugfix: [
+        killed_by_tests: "seeded semantic mutant is killed by the parent harness (real failing report)",
+        reference_green: "gold reference green vs its own staged harness",
+        one_line_diff: "buggy module differs from the gold by exactly one line",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      adapt: [
+        red_gate: "base gold grades RED under the variation harness (adaptation is non-trivial)",
+        gold_green: "variation gold green vs the embedded harness copy",
+        zero_warnings: "staged pair compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      tfim: [
+        carvable: "target test block is carvable (top-level, parsable, not covered/rejected)",
+        reconstruction: "reconstructed harness (gold block re-inserted) green + zero warnings",
+        isolation_kill: "isolated target block kills >=1 raise-mutant of the module",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      variation: [
+        distinctness: "public-function set differs from the base and every accepted sibling",
+        blind_solve: "independent blind solve — the graded solution never saw the harness",
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; variations included — F17-9)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      wtest: [
+        parent_gradable: "parent grades on this machine (not a Postgres-tier skip)",
+        green_vs_module: "gold harness green vs the module (coverage inherited from the parent gate)",
+        zero_warnings: "gold harness compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ]
+    }
+
+    (erts 17.0.3) :erlang.map_get(:dedoc, %{base: [autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)", green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)", quality: "house style + harness standard", mutation: "raise-mutant coverage (each public function; whole-module for bundles)", stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)", semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)", promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)", blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], fim: [skeleton: "deterministic skeleton integrity (hole matches the parent; candidate locatable)", green_nowarn: "reconstructed module green vs the parent harness + zero warnings", candidate_mutant: "gutted-candidate mutant must make the parent harness fail", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], bugfix: [killed_by_tests: "seeded semantic mutant is killed by the parent harness (real failing report)", reference_green: "gold reference green vs its own staged harness", one_line_diff: "buggy module differs from the gold by exactly one line", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], adapt: [red_gate: "base gold grades RED under the variation harness (adaptation is non-trivial)", gold_green: "variation gold green vs the embedded harness copy", zero_warnings: "staged pair compiles with zero warnings", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], tfim: [carvable: "target test block is carvable (top-level, parsable, not covered/rejected)", reconstruction: "reconstructed harness (gold block re-inserted) green + zero warnings", isolation_kill: "isolated target block kills >=1 raise-mutant of the module", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], variation: [distinctness: "public-function set differs from the base and every accepted sibling", blind_solve: "independent blind solve — the graded solution never saw the harness", autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)", green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)", quality: "house style + harness standard", mutation: "raise-mutant coverage (each public function; whole-module for bundles)", stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)", semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)", promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)", blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; variations included — F17-9)", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], wtest: [parent_gradable: "parent grades on this machine (not a Postgres-tier skip)", green_vs_module: "gold harness green vs the module (coverage inherited from the parent gate)", zero_warnings: "gold harness compiles with zero warnings", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"]})
+    (elixir_benchmark 0.1.0) lib/gen_task/gate_log.ex:103: GenTask.GateLog.manifest/1
+    (elixir_benchmark 0.1.0) lib/gen_task/gate_log.ex:182: GenTask.GateLog.locate!/2
+    (elixir_benchmark 0.1.0) lib/gen_task/gate_log.ex:165: GenTask.GateLog.log/6
+    (elixir_benchmark 0.1.0) lib/gen_task/cycle.ex:648: GenTask.Cycle.promote/4
+    (elixir_benchmark 0.1.0) lib/gen_task/dedoc.ex:152: GenTask.Dedoc.do_mint/6
+    (elixir_benchmark 0.1.0) lib/gen_task/dedoc.ex:75: GenTask.Dedoc.run/2
+    (elixir_benchmark 0.1.0) lib/gen_task/cli.ex:377: anonymous fn/4 in GenTask.CLI.run_derived_works/2
+
+      dedoc_108_001_bidirectional_map_genserver (dedoc) ... ERROR (key :dedoc not found in:
+
+    %{
+      base: [
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      fim: [
+        skeleton: "deterministic skeleton integrity (hole matches the parent; candidate locatable)",
+        green_nowarn: "reconstructed module green vs the parent harness + zero warnings",
+        candidate_mutant: "gutted-candidate mutant must make the parent harness fail",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      bugfix: [
+        killed_by_tests: "seeded semantic mutant is killed by the parent harness (real failing report)",
+        reference_green: "gold reference green vs its own staged harness",
+        one_line_diff: "buggy module differs from the gold by exactly one line",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      adapt: [
+        red_gate: "base gold grades RED under the variation harness (adaptation is non-trivial)",
+        gold_green: "variation gold green vs the embedded harness copy",
+        zero_warnings: "staged pair compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      tfim: [
+        carvable: "target test block is carvable (top-level, parsable, not covered/rejected)",
+        reconstruction: "reconstructed harness (gold block re-inserted) green + zero warnings",
+        isolation_kill: "isolated target block kills >=1 raise-mutant of the module",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      variation: [
+        distinctness: "public-function set differs from the base and every accepted sibling",
+        blind_solve: "independent blind solve — the graded solution never saw the harness",
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; variations included — F17-9)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      wtest: [
+        parent_gradable: "parent grades on this machine (not a Postgres-tier skip)",
+        green_vs_module: "gold harness green vs the module (coverage inherited from the parent gate)",
+        zero_warnings: "gold harness compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ]
+    }
+)
+[2/4] 108_002_bidirectional_multimap_many_to_many_01 (backfill) ...
+      mutant [1/10] start_link/1 gutted to raise ... killed
+      mutant [2/10] put/3 gutted to raise ... killed
+      mutant [3/10] member?/3 gutted to raise ... killed
+      mutant [4/10] get_by_key/2 gutted to raise ... killed
+      mutant [5/10] get_by_value/2 gutted to raise ... killed
+      mutant [6/10] delete/3 gutted to raise ... killed
+      mutant [7/10] delete_key/2 gutted to raise ... killed
+      mutant [8/10] delete_value/2 gutted to raise ... killed
+      mutant [9/10] init/1 gutted to raise ... killed
+      mutant [10/10] handle_call/3 gutted to raise ... killed
+
+15:16:56.570 [error] dedoc dedoc_108_002_bidirectional_multimap_many_to_many crashed: ** (KeyError) key :dedoc not found in:
+
+    %{
+      base: [
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      fim: [
+        skeleton: "deterministic skeleton integrity (hole matches the parent; candidate locatable)",
+        green_nowarn: "reconstructed module green vs the parent harness + zero warnings",
+        candidate_mutant: "gutted-candidate mutant must make the parent harness fail",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      bugfix: [
+        killed_by_tests: "seeded semantic mutant is killed by the parent harness (real failing report)",
+        reference_green: "gold reference green vs its own staged harness",
+        one_line_diff: "buggy module differs from the gold by exactly one line",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      adapt: [
+        red_gate: "base gold grades RED under the variation harness (adaptation is non-trivial)",
+        gold_green: "variation gold green vs the embedded harness copy",
+        zero_warnings: "staged pair compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      tfim: [
+        carvable: "target test block is carvable (top-level, parsable, not covered/rejected)",
+        reconstruction: "reconstructed harness (gold block re-inserted) green + zero warnings",
+        isolation_kill: "isolated target block kills >=1 raise-mutant of the module",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      variation: [
+        distinctness: "public-function set differs from the base and every accepted sibling",
+        blind_solve: "independent blind solve — the graded solution never saw the harness",
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; variations included — F17-9)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      wtest: [
+        parent_gradable: "parent grades on this machine (not a Postgres-tier skip)",
+        green_vs_module: "gold harness green vs the module (coverage inherited from the parent gate)",
+        zero_warnings: "gold harness compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ]
+    }
+
+    (erts 17.0.3) :erlang.map_get(:dedoc, %{base: [autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)", green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)", quality: "house style + harness standard", mutation: "raise-mutant coverage (each public function; whole-module for bundles)", stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)", semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)", promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)", blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], fim: [skeleton: "deterministic skeleton integrity (hole matches the parent; candidate locatable)", green_nowarn: "reconstructed module green vs the parent harness + zero warnings", candidate_mutant: "gutted-candidate mutant must make the parent harness fail", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], bugfix: [killed_by_tests: "seeded semantic mutant is killed by the parent harness (real failing report)", reference_green: "gold reference green vs its own staged harness", one_line_diff: "buggy module differs from the gold by exactly one line", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], adapt: [red_gate: "base gold grades RED under the variation harness (adaptation is non-trivial)", gold_green: "variation gold green vs the embedded harness copy", zero_warnings: "staged pair compiles with zero warnings", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], tfim: [carvable: "target test block is carvable (top-level, parsable, not covered/rejected)", reconstruction: "reconstructed harness (gold block re-inserted) green + zero warnings", isolation_kill: "isolated target block kills >=1 raise-mutant of the module", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], variation: [distinctness: "public-function set differs from the base and every accepted sibling", blind_solve: "independent blind solve — the graded solution never saw the harness", autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)", green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)", quality: "house style + harness standard", mutation: "raise-mutant coverage (each public function; whole-module for bundles)", stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)", semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)", promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)", blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; variations included — F17-9)", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], wtest: [parent_gradable: "parent grades on this machine (not a Postgres-tier skip)", green_vs_module: "gold harness green vs the module (coverage inherited from the parent gate)", zero_warnings: "gold harness compiles with zero warnings", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"]})
+    (elixir_benchmark 0.1.0) lib/gen_task/gate_log.ex:103: GenTask.GateLog.manifest/1
+    (elixir_benchmark 0.1.0) lib/gen_task/gate_log.ex:182: GenTask.GateLog.locate!/2
+    (elixir_benchmark 0.1.0) lib/gen_task/gate_log.ex:165: GenTask.GateLog.log/6
+    (elixir_benchmark 0.1.0) lib/gen_task/cycle.ex:648: GenTask.Cycle.promote/4
+    (elixir_benchmark 0.1.0) lib/gen_task/dedoc.ex:152: GenTask.Dedoc.do_mint/6
+    (elixir_benchmark 0.1.0) lib/gen_task/dedoc.ex:75: GenTask.Dedoc.run/2
+    (elixir_benchmark 0.1.0) lib/gen_task/cli.ex:377: anonymous fn/4 in GenTask.CLI.run_derived_works/2
+
+      dedoc_108_002_bidirectional_multimap_many_to_many (dedoc) ... ERROR (key :dedoc not found in:
+
+    %{
+      base: [
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      fim: [
+        skeleton: "deterministic skeleton integrity (hole matches the parent; candidate locatable)",
+        green_nowarn: "reconstructed module green vs the parent harness + zero warnings",
+        candidate_mutant: "gutted-candidate mutant must make the parent harness fail",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      bugfix: [
+        killed_by_tests: "seeded semantic mutant is killed by the parent harness (real failing report)",
+        reference_green: "gold reference green vs its own staged harness",
+        one_line_diff: "buggy module differs from the gold by exactly one line",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      adapt: [
+        red_gate: "base gold grades RED under the variation harness (adaptation is non-trivial)",
+        gold_green: "variation gold green vs the embedded harness copy",
+        zero_warnings: "staged pair compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      tfim: [
+        carvable: "target test block is carvable (top-level, parsable, not covered/rejected)",
+        reconstruction: "reconstructed harness (gold block re-inserted) green + zero warnings",
+        isolation_kill: "isolated target block kills >=1 raise-mutant of the module",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      variation: [
+        distinctness: "public-function set differs from the base and every accepted sibling",
+        blind_solve: "independent blind solve — the graded solution never saw the harness",
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; variations included — F17-9)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      wtest: [
+        parent_gradable: "parent grades on this machine (not a Postgres-tier skip)",
+        green_vs_module: "gold harness green vs the module (coverage inherited from the parent gate)",
+        zero_warnings: "gold harness compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ]
+    }
+)
+[3/4] 108_003_capacity_bounded_bimap_with_lru_eviction_01 (backfill) ...
+
+15:16:58.106 [error] dedoc dedoc_108_003_capacity_bounded_bimap_with_lru_eviction crashed: ** (KeyError) key :dedoc not found in:
+
+    %{
+      base: [
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      fim: [
+        skeleton: "deterministic skeleton integrity (hole matches the parent; candidate locatable)",
+        green_nowarn: "reconstructed module green vs the parent harness + zero warnings",
+        candidate_mutant: "gutted-candidate mutant must make the parent harness fail",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      bugfix: [
+        killed_by_tests: "seeded semantic mutant is killed by the parent harness (real failing report)",
+        reference_green: "gold reference green vs its own staged harness",
+        one_line_diff: "buggy module differs from the gold by exactly one line",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      adapt: [
+        red_gate: "base gold grades RED under the variation harness (adaptation is non-trivial)",
+        gold_green: "variation gold green vs the embedded harness copy",
+        zero_warnings: "staged pair compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      tfim: [
+        carvable: "target test block is carvable (top-level, parsable, not covered/rejected)",
+        reconstruction: "reconstructed harness (gold block re-inserted) green + zero warnings",
+        isolation_kill: "isolated target block kills >=1 raise-mutant of the module",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      variation: [
+        distinctness: "public-function set differs from the base and every accepted sibling",
+        blind_solve: "independent blind solve — the graded solution never saw the harness",
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; variations included — F17-9)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      wtest: [
+        parent_gradable: "parent grades on this machine (not a Postgres-tier skip)",
+        green_vs_module: "gold harness green vs the module (coverage inherited from the parent gate)",
+        zero_warnings: "gold harness compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ]
+    }
+
+    (erts 17.0.3) :erlang.map_get(:dedoc, %{base: [autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)", green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)", quality: "house style + harness standard", mutation: "raise-mutant coverage (each public function; whole-module for bundles)", stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)", semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)", promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)", blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], fim: [skeleton: "deterministic skeleton integrity (hole matches the parent; candidate locatable)", green_nowarn: "reconstructed module green vs the parent harness + zero warnings", candidate_mutant: "gutted-candidate mutant must make the parent harness fail", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], bugfix: [killed_by_tests: "seeded semantic mutant is killed by the parent harness (real failing report)", reference_green: "gold reference green vs its own staged harness", one_line_diff: "buggy module differs from the gold by exactly one line", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], adapt: [red_gate: "base gold grades RED under the variation harness (adaptation is non-trivial)", gold_green: "variation gold green vs the embedded harness copy", zero_warnings: "staged pair compiles with zero warnings", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], tfim: [carvable: "target test block is carvable (top-level, parsable, not covered/rejected)", reconstruction: "reconstructed harness (gold block re-inserted) green + zero warnings", isolation_kill: "isolated target block kills >=1 raise-mutant of the module", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], variation: [distinctness: "public-function set differs from the base and every accepted sibling", blind_solve: "independent blind solve — the graded solution never saw the harness", autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)", green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)", quality: "house style + harness standard", mutation: "raise-mutant coverage (each public function; whole-module for bundles)", stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)", semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)", promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)", blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; variations included — F17-9)", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], wtest: [parent_gradable: "parent grades on this machine (not a Postgres-tier skip)", green_vs_module: "gold harness green vs the module (coverage inherited from the parent gate)", zero_warnings: "gold harness compiles with zero warnings", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"]})
+    (elixir_benchmark 0.1.0) lib/gen_task/gate_log.ex:103: GenTask.GateLog.manifest/1
+    (elixir_benchmark 0.1.0) lib/gen_task/gate_log.ex:182: GenTask.GateLog.locate!/2
+    (elixir_benchmark 0.1.0) lib/gen_task/gate_log.ex:165: GenTask.GateLog.log/6
+    (elixir_benchmark 0.1.0) lib/gen_task/cycle.ex:648: GenTask.Cycle.promote/4
+    (elixir_benchmark 0.1.0) lib/gen_task/dedoc.ex:152: GenTask.Dedoc.do_mint/6
+    (elixir_benchmark 0.1.0) lib/gen_task/dedoc.ex:75: GenTask.Dedoc.run/2
+    (elixir_benchmark 0.1.0) lib/gen_task/cli.ex:377: anonymous fn/4 in GenTask.CLI.run_derived_works/2
+
+      dedoc_108_003_capacity_bounded_bimap_with_lru_eviction (dedoc) ... ERROR (key :dedoc not found in:
+
+    %{
+      base: [
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      fim: [
+        skeleton: "deterministic skeleton integrity (hole matches the parent; candidate locatable)",
+        green_nowarn: "reconstructed module green vs the parent harness + zero warnings",
+        candidate_mutant: "gutted-candidate mutant must make the parent harness fail",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      bugfix: [
+        killed_by_tests: "seeded semantic mutant is killed by the parent harness (real failing report)",
+        reference_green: "gold reference green vs its own staged harness",
+        one_line_diff: "buggy module differs from the gold by exactly one line",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      adapt: [
+        red_gate: "base gold grades RED under the variation harness (adaptation is non-trivial)",
+        gold_green: "variation gold green vs the embedded harness copy",
+        zero_warnings: "staged pair compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      tfim: [
+        carvable: "target test block is carvable (top-level, parsable, not covered/rejected)",
+        reconstruction: "reconstructed harness (gold block re-inserted) green + zero warnings",
+        isolation_kill: "isolated target block kills >=1 raise-mutant of the module",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      variation: [
+        distinctness: "public-function set differs from the base and every accepted sibling",
+        blind_solve: "independent blind solve — the graded solution never saw the harness",
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; variations included — F17-9)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      wtest: [
+        parent_gradable: "parent grades on this machine (not a Postgres-tier skip)",
+        green_vs_module: "gold harness green vs the module (coverage inherited from the parent gate)",
+        zero_warnings: "gold harness compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ]
+    }
+)
+[4/4] 108_004_priority_resolved_bimap_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] put/4 gutted to raise ... killed
+      mutant [3/8] get_by_key/2 gutted to raise ... killed
+      mutant [4/8] get_by_value/2 gutted to raise ... killed
+      mutant [5/8] priority/2 gutted to raise ... killed
+      mutant [6/8] delete/2 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+
+15:17:06.109 [error] dedoc dedoc_108_004_priority_resolved_bimap crashed: ** (KeyError) key :dedoc not found in:
+
+    %{
+      base: [
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      fim: [
+        skeleton: "deterministic skeleton integrity (hole matches the parent; candidate locatable)",
+        green_nowarn: "reconstructed module green vs the parent harness + zero warnings",
+        candidate_mutant: "gutted-candidate mutant must make the parent harness fail",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      bugfix: [
+        killed_by_tests: "seeded semantic mutant is killed by the parent harness (real failing report)",
+        reference_green: "gold reference green vs its own staged harness",
+        one_line_diff: "buggy module differs from the gold by exactly one line",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      adapt: [
+        red_gate: "base gold grades RED under the variation harness (adaptation is non-trivial)",
+        gold_green: "variation gold green vs the embedded harness copy",
+        zero_warnings: "staged pair compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      tfim: [
+        carvable: "target test block is carvable (top-level, parsable, not covered/rejected)",
+        reconstruction: "reconstructed harness (gold block re-inserted) green + zero warnings",
+        isolation_kill: "isolated target block kills >=1 raise-mutant of the module",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      variation: [
+        distinctness: "public-function set differs from the base and every accepted sibling",
+        blind_solve: "independent blind solve — the graded solution never saw the harness",
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; variations included — F17-9)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      wtest: [
+        parent_gradable: "parent grades on this machine (not a Postgres-tier skip)",
+        green_vs_module: "gold harness green vs the module (coverage inherited from the parent gate)",
+        zero_warnings: "gold harness compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ]
+    }
+
+    (erts 17.0.3) :erlang.map_get(:dedoc, %{base: [autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)", green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)", quality: "house style + harness standard", mutation: "raise-mutant coverage (each public function; whole-module for bundles)", stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)", semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)", promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)", blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], fim: [skeleton: "deterministic skeleton integrity (hole matches the parent; candidate locatable)", green_nowarn: "reconstructed module green vs the parent harness + zero warnings", candidate_mutant: "gutted-candidate mutant must make the parent harness fail", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], bugfix: [killed_by_tests: "seeded semantic mutant is killed by the parent harness (real failing report)", reference_green: "gold reference green vs its own staged harness", one_line_diff: "buggy module differs from the gold by exactly one line", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], adapt: [red_gate: "base gold grades RED under the variation harness (adaptation is non-trivial)", gold_green: "variation gold green vs the embedded harness copy", zero_warnings: "staged pair compiles with zero warnings", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], tfim: [carvable: "target test block is carvable (top-level, parsable, not covered/rejected)", reconstruction: "reconstructed harness (gold block re-inserted) green + zero warnings", isolation_kill: "isolated target block kills >=1 raise-mutant of the module", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], variation: [distinctness: "public-function set differs from the base and every accepted sibling", blind_solve: "independent blind solve — the graded solution never saw the harness", autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)", green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)", quality: "house style + harness standard", mutation: "raise-mutant coverage (each public function; whole-module for bundles)", stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)", semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)", promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)", blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; variations included — F17-9)", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"], wtest: [parent_gradable: "parent grades on this machine (not a Postgres-tier skip)", green_vs_module: "gold harness green vs the module (coverage inherited from the parent gate)", zero_warnings: "gold harness compiles with zero warnings", promote_guard: "promotion safety (refuse if the target dir exists; path containment)"]})
+    (elixir_benchmark 0.1.0) lib/gen_task/gate_log.ex:103: GenTask.GateLog.manifest/1
+    (elixir_benchmark 0.1.0) lib/gen_task/gate_log.ex:182: GenTask.GateLog.locate!/2
+    (elixir_benchmark 0.1.0) lib/gen_task/gate_log.ex:165: GenTask.GateLog.log/6
+    (elixir_benchmark 0.1.0) lib/gen_task/cycle.ex:648: GenTask.Cycle.promote/4
+    (elixir_benchmark 0.1.0) lib/gen_task/dedoc.ex:152: GenTask.Dedoc.do_mint/6
+    (elixir_benchmark 0.1.0) lib/gen_task/dedoc.ex:75: GenTask.Dedoc.run/2
+    (elixir_benchmark 0.1.0) lib/gen_task/cli.ex:377: anonymous fn/4 in GenTask.CLI.run_derived_works/2
+
+      dedoc_108_004_priority_resolved_bimap (dedoc) ... ERROR (key :dedoc not found in:
+
+    %{
+      base: [
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      fim: [
+        skeleton: "deterministic skeleton integrity (hole matches the parent; candidate locatable)",
+        green_nowarn: "reconstructed module green vs the parent harness + zero warnings",
+        candidate_mutant: "gutted-candidate mutant must make the parent harness fail",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      bugfix: [
+        killed_by_tests: "seeded semantic mutant is killed by the parent harness (real failing report)",
+        reference_green: "gold reference green vs its own staged harness",
+        one_line_diff: "buggy module differs from the gold by exactly one line",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      adapt: [
+        red_gate: "base gold grades RED under the variation harness (adaptation is non-trivial)",
+        gold_green: "variation gold green vs the embedded harness copy",
+        zero_warnings: "staged pair compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      tfim: [
+        carvable: "target test block is carvable (top-level, parsable, not covered/rejected)",
+        reconstruction: "reconstructed harness (gold block re-inserted) green + zero warnings",
+        isolation_kill: "isolated target block kills >=1 raise-mutant of the module",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      variation: [
+        distinctness: "public-function set differs from the base and every accepted sibling",
+        blind_solve: "independent blind solve — the graded solution never saw the harness",
+        autoformat: "canonical formatting (graded bytes are exactly the promoted bytes)",
+        green: "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)",
+        quality: "house style + harness standard",
+        mutation: "raise-mutant coverage (each public function; whole-module for bundles)",
+        stability: "stability re-grade at a derived nonzero ExUnit seed (flake filter)",
+        semantic_floor: "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)",
+        promise_audit: "promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT)",
+        blind_rescreen: "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; variations included — F17-9)",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ],
+      wtest: [
+        parent_gradable: "parent grades on this machine (not a Postgres-tier skip)",
+        green_vs_module: "gold harness green vs the module (coverage inherited from the parent gate)",
+        zero_warnings: "gold harness compiles with zero warnings",
+        promote_guard: "promotion safety (refuse if the target dir exists; path containment)"
+      ]
+    }
+)
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 1098 | mintable (rejected → accepted) pairs: 222 | minted: %{exists: 88, unverified: 133, minted: 1}
+
+Done.
+=== rc=0
+=== dedoc pilot: idea 108 2026-07-18T15:23:05+02:00
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 4 needing top-up → next: 108_001_bidirectional_map_genserver_01, 108_002_bidirectional_multimap_many_to_many_01, 108_003_capacity_bounded_bimap_with_lru_eviction_01, …
+  2. new bases:      skipped (GEN_ONLY=backfill)
+=============================================
+
+
+Backfill: 4 seed(s) needing derivatives.
+[1/4] 108_001_bidirectional_map_genserver_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_108_001_bidirectional_map_genserver
+      dedoc_108_001_bidirectional_map_genserver (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[2/4] 108_002_bidirectional_multimap_many_to_many_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_108_002_bidirectional_multimap_many_to_many
+      dedoc_108_002_bidirectional_multimap_many_to_many (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[3/4] 108_003_capacity_bounded_bimap_with_lru_eviction_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_108_003_capacity_bounded_bimap_with_lru_eviction
+      dedoc_108_003_capacity_bounded_bimap_with_lru_eviction (dedoc) ... ACCEPTED (11 passed, inherited coverage, 1 attempt(s))
+[4/4] 108_004_priority_resolved_bimap_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_108_004_priority_resolved_bimap
+      dedoc_108_004_priority_resolved_bimap (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 1098 | mintable (rejected → accepted) pairs: 222 | minted: %{exists: 89, unverified: 133}
+
+Done.
+=== rc=0

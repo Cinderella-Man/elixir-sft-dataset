@@ -1,0 +1,168 @@
+13:14:13.995 [info] FIM candidate-select for 624_002_merge_commit_dag_with_topological_log_and_merge_base_01 (up to 3)
+13:14:13.995 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:14:13.995 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer module called `ObjectStore` that implements a content-addressable object store whose commit history is a **directed acyclic graph (DAG)** — commits may have any number of parents, including two or more for merge commits. This is the key difference from a plain linear-history store: `log` must walk a graph, not a single chain, and there is a `merge_base` operation for finding a common ancestor of two commits.
+
+I need these functions in the public API:
+
+- `ObjectStore.start_link(opts)` to start the process. It should accept a `:name` option for process registration. Internal state is an in-memory map of SHA-1 hex digest → stored binary content.
+
+- `ObjectStore.store(server, content)` which takes an arbitrary binary/string, computes its SHA-1 hash (lowercase hex), persists the raw content keyed by that hash, and returns `{:ok, hash}`. Storing the same content twice must be idempotent — it returns the same hash and does not duplicate data.
+
+- `ObjectStore.retrieve(server, hash)` which looks up a hash and returns `{:ok, content}` if found, or `{:error, :not_found}` if the hash does not exist.
+
+- `ObjectStore.commit(server, tree_hash, parents, message, author)` which creates a commit object. `tree_hash` is a SHA-1 string of any already-stored object. `parents` is a **list** of parent commit hashes: use `[]` for a root commit, a single-element list for an ordinary commit, and a two-or-more-element list for a merge commit. `message` and `author` are strings. Build a deterministic text representation containing all fields, store it as an object, and return `{:ok, commit_hash}`. Serialization is deterministic: the same `tree_hash`, the same list of `parents` in the same order, the same `message`, and the same `author` always yield the same commit hash. Different parents produce a different hash.
+
+- `ObjectStore.log(server, commit_hash)` which returns `{:ok, entries}` where `entries` is a list of maps describing every commit **reachable** from `commit_hash` by transitively following parent links (the starting commit and all of its ancestors). Each map contains `:hash`, `:tree`, `:parents` (the list of parent hashes), `:author`, and `:message`. The list is ordered newest-to-oldest: the starting commit is always the first element, and every commit appears **before** all of its ancestors (a reverse-topological ordering). If the starting hash is not found, return `{:error, :not_found}`.
+
+- `ObjectStore.merge_base(server, hash_a, hash_b)` which returns `{:ok, base_hash}` where `base_hash` is a lowest common ancestor of the two commits — a commit that is an ancestor of both `hash_a` and `hash_b` and that is not itself a proper ancestor of any other common ancestor. A commit counts as an ancestor of itself. If either `hash_a` or `hash_b` is not found, return `{:error, :not_found}`. If the two commits share no common ancestor at all, return `{:error, :no_merge_base}`.
+
+Implementation requirements:
+- Use `:crypto.hash(:sha, content)` and `Base.encode16(hash, case: :lower)` for SHA-1 hashing.
+- All stored objects (blobs and commits) live in the same flat hash map — there is no type distinction at the storage layer.
+
+Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+=== MODULE ===
+```elixir
+defmodule ObjectStore do
+  @moduledoc """
+  A content-addressable object store with a directed-acyclic-graph (DAG)
+  commit history.
+
+  Every object — whether a blob of arbitrary content or a serialized commit —
+  is stored in a single flat map keyed by the lowercase hexadecimal SHA-1
+  digest of its raw bytes. Because the key is derived from the content,
+  storing identical content twice is idempotent.
+
+  Commits may have any number of parents:
+
+    * `[]` for a root commit,
+    * a single parent for an ordinary commit,
+    * two or more parents for a merge commit.
+
+  This makes the commit history a DAG rather than a linear chain, so `log/2`
+  performs a graph walk (reverse-topological order) and `merge_base/3` finds a
+  lowest common ancestor of two commits.
+  """
+
+  use GenServer
+
+  @typedoc "A GenServer reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  @typedoc "A lowercase hexadecimal SHA-1 digest."
+  @type hash :: String.t()
+
+  @typedoc "A single commit description returned by `log/2`."
+  @type entry :: %{
+          hash: hash(),
+          tree: hash(),
+          parents: [hash()],
+          author: String.t(),
+          message: String.t()
+        }
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the object store process.
+
+  Accepts a `:name` option for process registration; any other options are
+  ignored. The internal state is an in-memory map of SHA-1 hex digest to the
+  stored raw binary content.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    gen_opts =
+      case Keyword.get(opts, :name) do
+        nil -> []
+        name -> [name: name]
+      end
+
+    GenServer.start_link(__MODULE__, %{}, gen_opts)
+  end
+
+  @doc """
+  Stores `content`, returning `{:ok, hash}`.
+
+  The hash is the lowercase hexadecimal SHA-1 digest of `content`. Storing the
+  same content again returns the same hash without duplicating data.
+  """
+  @spec store(server(), binary()) :: {:ok, hash()}
+  def store(server, content) when is_binary(content) do
+    GenServer.call(server, {:store, content})
+  end
+
+  @doc """
+  Retrieves the content stored under `hash`.
+
+  Returns `{:ok, content}` if present, otherwise `{:error, :not_found}`.
+  """
+  @spec retrieve(server(), hash()) :: {:ok, binary()} | {:error, :not_found}
+  def retrieve(server, hash) when is_binary(hash) do
+    GenServer.call(server, {:retrieve, hash})
+  end
+
+  @doc """
+  Creates a commit object and stores it, returning `{:ok, commit_hash}`.
+
+  `tree_hash` references an already-stored object. `parents` is a list of
+  parent commit hashes (`[]` for a root commit, one element for an ordinary
+  commit, two or more for a merge commit). `message` and `author` are strings.
+
+  Serialization is deterministic: identical `tree_hash`, `parents` (in the same
+  order), `message`, and `author` always yield the same commit hash, and any
+  difference — including different parents — yields a different hash.
+  """
+  @spec commit(server(), hash(), [hash()], String.t(), String.t()) :: {:ok, hash()}
+  def commit(server, tree_hash, parents, message, author)
+      when is_binary(tree_hash) and is_list(parents) and is_binary(message) and
+             is_binary(author) do
+    GenServer.call(server, {:commit, tree_hash, parents, message, author})
+  end
+
+  @doc """
+  Returns `{:ok, entries}` describing every commit reachable from `commit_hash`
+  by transitively following parent links, or `{:error, :not_found}` if the
+  starting hash is unknown.
+
+  Each entry is a map with `:hash`, `:tree`, `:parents`, `:author`, and
+  `:message`. The list is ordered newest-to-oldest: the starting commit is
+  first and every commit appears before all of its ancestors (a
+  reverse-topological ordering).
+  """
+  @spec log(server(), hash()) :: {:ok, [entry()]} | {:error, :not_found}
+  def log(server, commit_hash) when is_binary(commit_hash) do
+    GenServer.call(server, {:log, commit_hash})
+  end
+
+  @doc """
+  Returns `{:ok, base_hash}` where `base_hash` is a lowest common ancestor of
+  `hash_a` and `hash_b`.
+
+  A commit counts as an ancestor of itself. The returned base is an ancestor of
+  (truncated)
+13:14:20.793 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+lowest_common/2
+dfs_post/4
+ancestors_walk/3
+</file>
+13:14:20.793 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9242, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9242, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9242, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9242, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 320, "type" => "message"}], "output_tokens" => 320, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

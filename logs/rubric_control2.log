@@ -1,0 +1,66 @@
+
+01:28:38.232 [warning] transient error (error_max_turns ) on rubric_judge (prefix_control2:control_095_003) — retry 1/5 after 2000ms
+{
+  "task": "prefix_control2:control_095_003",
+  "era": "control",
+  "judges": [
+    {
+      "issues": [
+        {
+          "axis": "logical_correctness",
+          "evidence": "    base = div(amount, n)\n    remainder = rem(amount, n)\n\n    Enum.map(0..(n - 1), fn i ->\n      cents = if i < remainder, do: base + 1, else: base",
+          "file": "solution.ex",
+          "severity": "medium",
+          "why": "For negative amounts `rem/2` is negative (e.g. amount -1000, n 3 gives base -333, remainder -1), so `i < remainder` is never true and every share equals base: [-333, -333, -333] sums to -999, not -1000 — directly violating the prompt's guarantee that \"the shares always sum back to the original amount\" for amounts the prompt says \"may be negative\"."
+        },
+        {
+          "axis": "edge_case_consideration",
+          "evidence": "    for amount <- [0, 1, 7, 100, 101, 999, 12_345], n <- 1..9 do\n      parts = Money.split(Money.new(amount, :USD), n)\n      assert Enum.sum(Enum.map(parts, & &1.amount)) == amount",
+          "file": "test_harness.exs",
+          "severity": "medium",
+          "why": "The sum-back property is only pinned for non-negative amounts, so the harness never exercises negative splits where the gold silently loses a minor unit, leaving the broken boundary undetected."
+        }
+      ],
+      "model": "opus",
+      "scores": {
+        "edge_case_consideration": 3,
+        "logical_correctness": 3,
+        "requirement_conformance": 5
+      }
+    },
+    {
+      "issues": [
+        {
+          "axis": "logical_correctness",
+          "evidence": "base = div(amount, n)\n    remainder = rem(amount, n)\n\n    Enum.map(0..(n - 1), fn i ->\n      cents = if i < remainder, do: base + 1, else: base",
+          "file": "solution.ex",
+          "severity": "high",
+          "why": "For a negative amount, Elixir's rem/2 returns a result with the same sign as the dividend (e.g. rem(-1000, 3) == -1), so `remainder` is negative and `i < remainder` is false for every i in 0..(n-1); no share ever receives the +1 adjustment, so e.g. Money.split(Money.new(-1000, :JPY), 3) yields three shares of -333 that sum to -999, not -1000, directly violating the prompt's 'the shares always sum back to the original amount' requirement for a value the struct explicitly allows (amount 'may be negative')."
+        },
+        {
+          "axis": "edge_case_consideration",
+          "evidence": "test \"split/2 always sums back to the original amount\" do\n    for amount <- [0, 1, 7, 100, 101, 999, 12_345], n <- 1..9 do",
+          "file": "test_harness.exs",
+          "severity": "medium",
+          "why": "The sum-back invariant is only exercised with non-negative amounts, so the harness never exercises the negative-amount case where the gold's remainder distribution silently breaks the invariant, letting the bug ship undetected."
+        }
+      ],
+      "model": "sonnet",
+      "scores": {
+        "edge_case_consideration": 2,
+        "logical_correctness": 3,
+        "requirement_conformance": 3
+      }
+    }
+  ],
+  "prompt_sha": "e14bd0095a873a18c7d48014d2fd802fef048ec0b783bf519451a221694c2566",
+  "solution_sha": "ac2bb18d168e1bfc082f2f1d11a395a14758e53161fcfbf2d01d729702ae0560",
+  "harness_sha": "56fd4ee168b013280d890ff4128205c63e91ecab4ae03da01154e97c5deb0d1c",
+  "rubric_sha": "e966b856a132493f2e695fac7557dfcf97a8325132e94d9de63ab68cfdeb4213",
+  "agreement": {
+    "edge_case_consideration": true,
+    "logical_correctness": true,
+    "requirement_conformance": false
+  },
+  "ts": "2026-07-14T23:30:01.765530Z"
+}

@@ -1,0 +1,350 @@
+03:30:40.758 [info] FIM 626_003_reset_aware_counter_time_series_db_fim01 → 626_003_reset_aware_counter_time_series_db_03: target insert_by_ts/3
+03:30:40.758 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+03:30:40.758 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `insert_by_ts/3`.
+
+Generate a prompt describing how to implement `insert_by_ts/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `insert_by_ts/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `insert_by_ts/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `insert_by_ts/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer module called `CounterTSDB` that implements a time-series storage engine specialized for **monotonic counters** (values that normally only increase, like `http_requests_total`). Unlike a plain gauge store, its range queries must be **reset-aware**: when a counter is observed to drop, that drop is interpreted as a counter reset (the process restarted and the counter went back toward zero), not as a negative change.
+
+## Public API
+
+- `CounterTSDB.start_link(opts)` to start the process. It should accept:
+  - `:chunk_duration_ms` — the duration of each storage chunk in milliseconds (default `60_000`). Every unique series (metric name + exact label set) gets one chunk per time window.
+  - `:clock` — a zero-arity function returning the current time in milliseconds. Default to `fn -> System.monotonic_time(:millisecond) end`.
+  - `:name` — optional process registration name.
+  - `:retention_ms` — how long to keep chunks before they are eligible for cleanup (default `3_600_000`).
+  - `:cleanup_interval_ms` — how often to run automatic cleanup of expired chunks via `Process.send_after` (default `60_000`). Accept `:infinity` to disable.
+
+- `CounterTSDB.insert(server, metric_name, labels, timestamp, value)` where:
+  - `metric_name` is a string; `labels` is a map like `%{"instance" => "a"}`; `timestamp` is an integer in milliseconds; `value` is a number.
+  - The function should return `:ok`.
+  - The point is stored into the chunk identified by `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms`. A series is identified by `{metric_name, sorted_labels}` where `sorted_labels = Enum.sort(Map.to_list(labels))`, so label ordering never creates duplicate series. Within each chunk, data points must be stored sorted by timestamp.
+
+- `CounterTSDB.query(server, metric_name, label_matchers, {start_ts, end_ts})` returns raw samples:
+  - `label_matchers` is a map; a series matches if it contains **all** the specified key-value pairs (it may have additional labels). An empty map `%{}` matches all series with that metric name.
+  - Returns a list of `{labels, points}` tuples, where `points` is the list of `{timestamp, value}` tuples for that series sorted ascending by timestamp and filtered to `start_ts <= timestamp <= end_ts`.
+  - A series that matches but has NO point in `[start_ts, end_ts]` must be omitted entirely — never returned as `{labels, []}`. When nothing matches, the result is `[]`.
+
+- `CounterTSDB.query_range(server, metric_name, label_matchers, {start_ts, end_ts}, function, step_ms)` where:
+  - `function` is one of `:increase` or `:rate`.
+  - `step_ms` is the width of each window.
+  - The time range `[start_ts, end_ts)` is divided into non-overlapping windows of `step_ms` milliseconds: `[start_ts, start_ts + step_ms)`, `[start_ts + step_ms, start_ts + 2*step_ms)`, etc.
+  - For each matched series and each window, take the points whose timestamps fall in `[window_start, window_start + step_ms)`, sorted ascending by timestamp. Then:
+    - `:increase` — the total increase across the window, computed reset-aware. Walk consecutive point pairs `(prev_value, cur_value)` in timestamp order; for each pair the contributed delta is `cur_value - prev_value` when `cur_value >= prev_value`, otherwise (a reset is detected) the contributed delta is `cur_value` (treat it as having climbed from zero to `cur_value`). The window's increase is the sum of these deltas. If the window has fewer than 2 points, the window is omitted.
+    - `:rate` — the reset-aware increase (computed exactly as above) divided by the elapsed seconds across the window: `increase / ((last_timestamp - first_timestamp) / 1000)`, where `first_timestamp`/`last_timestamp` are the smallest and largest timestamps of the points in that window. If the window has fewer than 2 points, or if `last_timestamp == first_timestamp`, the window is omitted.
+  - The return value is a list of `{labels, range_points}` tuples, where `range_points` is a list of `{window_start, computed_value}` tuples sorted by window start. A matched series whose windows are all omitted is left out of the result entirely.
+
+## Cleanup
+
+Handle a `:cleanup` info message that removes any chunk whose `chunk_start + chunk_duration_ms` is less than or equal to `now - retention_ms` (where `now` comes from `:clock`). A series left with zero chunks is removed entirely. Also schedule this periodically using `Process.send_after` based on `:cleanup_interval_ms`.
+
+## Constraints
+
+- Use only OTP standard library — no external dependencies.
+- Give me the complete module in a single file.
+- All operations go through the GenServer (`call`/`cast`) — no ETS, no separate processes.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule CounterTSDB do
+  @moduledoc """
+  A GenServer-based time-series storage engine specialized for **monotonic
+  counters** — values that normally only increase (for example
+  `http_requests_total`).
+
+  Points are stored per *series*, where a series is identified by a metric name
+  together with an exact label set. Each series buckets its points into
+  fixed-width time chunks. All state lives inside the GenServer; there is no
+  ETS and there are no helper processes.
+
+  Range queries (`increase`/`rate`) are **reset-aware**: when a counter is
+  observed to drop between two consecutive samples, the drop is interpreted as a
+  counter reset (the underlying process restarted and the counter climbed again
+  from zero) rather than as a negative change.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type labels :: %{optional(String.t()) => term()}
+  @type point :: {integer(), number()}
+  @type range :: {integer(), integer()}
+  @type function_kind :: :increase | :rate
+
+  @default_chunk_duration_ms 60_000
+  @default_retention_ms 3_600_000
+  @default_cleanup_interval_ms 60_000
+
+  # --------------------------------------------------------------------------
+  # Public API
+  # --------------------------------------------------------------------------
+
+  @doc """
+  Starts the storage engine.
+
+  Options:
+
+    * `:chunk_duration_ms` — width of each storage chunk (default `60_000`).
+    * `:clock` — zero-arity function returning the current time in
+      milliseconds (default `System.monotonic_time(:millisecond)`).
+    * `:name` — optional process registration name.
+    * `:retention_ms` — how long chunks are kept (default `3_600_000`).
+    * `:cleanup_interval_ms` — how often automatic cleanup runs, or `:infinity`
+      to disable (default `60_000`).
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Inserts a single sample for the given metric and label set.
+
+  The point is stored into the chunk identified by
+  `div(timestamp, chunk_duration_ms) * chunk_duration_ms` and kept sorted  (truncated)
+03:31:32.653 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `insert_by_ts/3` function. It inserts a data point into a
+chunk's list of points while keeping that list sorted ascending by timestamp.
+The function receives the current list of `{timestamp, value}` points, the
+integer timestamp `ts` of the point being inserted, and the point itself
+(`{ts, value}`). It must return a new list with the point inserted at the
+correct position so the list stays sorted by timestamp. When one or more
+existing points share the same timestamp as the new point, the new point is
+placed *after* them (i.e. an existing head whose timestamp is `<= ts` is kept
+ahead of the new point, and the insertion recurses into the tail). Inserting
+into an empty list yields a single-element list. Do not sort the whole list;
+walk it and splice the point in.
+
+```elixir
+defmodule CounterTSDB do
+  @moduledoc """
+  A GenServer-based time-series storage engine specialized for **monotonic
+  counters** — values that normally only increase (for example
+  `http_requests_total`).
+
+  Points are stored per *series*, where a series is identified by a metric name
+  together with an exact label set. Each series buckets its points into
+  fixed-width time chunks. All state lives inside the GenServer; there is no
+  ETS and there are no helper processes.
+
+  Range queries (`increase`/`rate`) are **reset-aware**: when a counter is
+  observed to drop between two consecutive samples, the drop is interpreted as a
+  counter reset (the underlying process restarted and the counter climbed again
+  from zero) rather than as a negative change.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type labels :: %{optional(String.t()) => term()}
+  @type point :: {integer(), number()}
+  @type range :: {integer(), integer()}
+  @type function_kind :: :increase | :rate
+
+  @default_chunk_duration_ms 60_000
+  @default_retention_ms 3_600_000
+  @default_cleanup_interval_ms 60_000
+
+  # --------------------------------------------------------------------------
+  # Public API
+  # --------------------------------------------------------------------------
+
+  @doc """
+  Starts the storage engine.
+
+  Options:
+
+    * `:chunk_duration_ms` — width of each storage chunk (default `60_000`).
+    * `:clock` — zero-arity function returning the current time in
+      milliseconds (default `System.monotonic_time(:millisecond)`).
+    * `:name` — optional process registration name.
+    * `:retention_ms` — how long chunks are kept (default `3_600_000`).
+    * `:cleanup_interval_ms` — how often automatic cleanup runs, or `:infinity`
+      to disable (default `60_000`).
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Inserts a single sample for the given metric and label set.
+
+  The point is stored into the chunk identified by
+  `div(timestamp, chunk_duration_ms) * chunk_duration_ms` and kept sorted by
+  timestamp within that chunk. Always returns `:ok`.
+  """
+  @spec insert(server(), String.t(), labels(), integer(), number()) :: :ok
+  def insert(server, metric_name, labels, timestamp, value) do
+    GenServer.call(server, {:insert, metric_name, labels, timestamp, value})
+  end
+
+  @doc """
+  Returns raw samples for series matching `metric_name` and `label_matchers`.
+
+  A series matches when it contains all key/value pairs in `label_matchers`
+  (extra labels are allowed); an empty map matches every series with the metric
+  name. The result is a list of `{labels, points}` tuples where `points` is
+  sorted ascending by timestamp and filtered to `start_ts <= ts <= end_ts`.
+  Series with no point in range are omitted.
+  """
+  @spec query(server(), String.t(), labels(), range()) :: [{labels(), [point()]}]
+  def query(server, metric_name, label_matchers, {start_ts, end_ts}) do
+    GenServer.call(server, {:query, metric_name, label_matchers, {start_ts, end_ts}})
+  end
+
+  @doc """
+  Computes reset-aware `:increase` or `:rate` over stepped windows.
+
+  The range `[start_ts, end_ts)` is split into non-overlapping windows of
+  `step_ms`. For each matched series and window, the points in
+  `[window_start, window_start + step_ms)` are used to compute the value.
+  Returns a list of `{labels, range_points}` tuples; series whose windows are
+  all omitted are excluded.
+  """
+  @spec query_range(server(), String.t(), labels(), range(), function_kind(), pos_integer()) ::
+          [{labels(), [{integer(), number()}]}]
+  def query_range(server, metric_name, label_matchers, {start_ts, end_ts}, function, step_ms) do
+    request =
+      {:query_range, metric_name, label_matchers, {start_ts, end_ts}, function, step_ms}
+
+    GenServer.call(server, request)
+  end
+
+  # --------------------------------------------------------------------------
+  # GenServer callbacks
+  # --------------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    default_clock = fn -> System.monotonic_time(:millisecond) end
+
+    state = %{
+      chunk_duration_ms: Keyword.get(opts, :chunk_duration_ms, @default_chunk_duration_ms),
+      clock: Keyword.get(opts, :clock, default_clock),
+      retention_ms: Keyword.get(opts, :retention_ms, @default_retention_ms),
+      cleanup_interval_ms: Keyword.get(opts, :cleanup_interval_ms, @default_cleanup_interval_ms),
+      series: %{}
+    }
+
+    schedule_cleanup(state.cleanup_interval_ms)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:insert, metric, labels, ts, value}, _from, state) do
+    key = series_key(metric, labels)
+    chunk_start = div(ts, state.chunk_duration_ms) * state.chunk_duration_ms
+
+    entry = Map.get(state.series, key, %{labels: labels, chunks: %{}})
+    chunk = Map.get(entry.chunks, chunk_start, [])
+    chunk = insert_by_ts(chunk, ts, {ts, value})
+    entry = %{entry | chunks: Map.put(entry.chunks, chunk_start, chunk)}
+
+    {:reply, :ok, %{state | series: Map.put(state.series, key, entry)}}
+  end
+
+  def handle_call({:query, metric, matchers, range}, _from, state) do
+    {start_ts, end_ts} = range
+
+    result =
+      state
+      |> matching_series(metric, matchers)
+      |> Enum.map(fn entry ->
+        points =
+          entry
+          |> series_points()
+          |> Enum.filter(fn {ts, _v} -> ts >= start_ts and ts <= end_ts end)
+
+        {entry.labels, points}
+      end)
+      |> Enum.reject(fn {_labels, points} -> points == [] end)
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:query_range, metric, matchers, range, fun, step}, _from, state) do
+    {start_ts, end_ts} = range
+    wins = windows(start_ts, end_ts, step)
+
+    result =
+      state
+      |> matching_series(metric, matchers)
+      |> Enum.map(fn entry ->
+        all_points = series_points(entry)
+
+        range_points =
+          Enum.flat_map(wins, fn window_start ->
+            window_end = window_start + step
+
+            points =
+              Enum.filter(all_points, fn {ts, _v} ->
+                ts >= window_start and ts < window_end
+              end)
+
+            case compute(fun, points) do
+              :omit -> []
+              {:ok, value} -> [{window_start, value}]
+            end
+          end)
+
+        {entry.labels, range_points}
+      end)
+      |> Enum.reject(fn {_labels, range_points} -> range_points == [] end)
+
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_info(:cleanup, state) do
+    new_state = cleanup(state)
+    schedule_cleanup(state.cleanup_interval_ms)
+    {:noreply, new_state}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  # --------------------------------------------------------------------------
+  # Internal helpers
+  # --------------------------------------------------------------------------
+
+  @spec series_key(String.t(), labels()) :: {String.t(), [{term(), term()}]}
+  defp series_key(metric, labels), do: {metric, Enum.sort(Map.to_list(labels))}
+
+  @spec insert_by_ts([point()], integer(), point()) :: [point (truncated)
+03:31:32.653 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10123, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10123, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10123, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10123, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 4935, "type" => "message"}], "output_tokens" => 4935, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+03:31:32.673 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_626_003_reset_aware_counter_time_series_db_03/626_003_reset_aware_counter_time_series_db_03 solution.ex
+03:31:33.360 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":7,"lines_over_98":0,"max_line_length":83,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"626_003_reset_aware_counter_time_series_db_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_626_003_reset_aware_counter_time_series_db_03/626_003_reset_aware_counter_time_series_db_03/solution.ex","task":"626_003_reset_aware_counter_time_series_db_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-12T01:31:33.336136Z"}
+03:31:33.361 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_626_003_reset_aware_counter_time_series_db_03/626_003_reset_aware_counter_time_series_db_03 .gen_staging/fim_626_003_reset_aware_counter_time_series_db_03/mutant.ex
+03:31:34.084 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":11,"lines_over_98":0,"max_line_length":81,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"parent":"626_003_reset_aware_counter_time_series_db_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.3,"mode":"fim","overall":0.0,"reasons":["compilation: 7 warning(s) → hard fail (overall 0.0)","tests: 14/14 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_626_003_reset_aware_counter_time_series_db_03/mutant.ex","task":"626_003_reset_aware_counter_time_series_db_03","test_failures":[{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 200, error_info: %{module: Exception}]}, {CounterTSDB, :handle_call, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 125]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CounterTSDBTest","test":"test insert and query returns sorted points within inclusive range"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 200, error_info: %{module: Exception}]}, {CounterTSDB, :handle_call, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 125]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CounterTSDBTest","test":"test query omits series with no points in range"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 200, error_info: %{module: Exception}]}, {CounterTSDB, :handle_call, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 125]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CounterTSDBTest","test":"test increase over a monotonic window is the difference"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 200, error_info: %{module: Exception}]}, {CounterTSDB, :handle_call, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 125]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CounterTSDBTest","test":"test increase treats a mid-window drop as a counter reset"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 200, error_info: %{module: Exception}]}, {CounterTSDB, :handle_call, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 125]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CounterTSDBTest","test":"test increase omits windows with fewer than 2 points"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 200, error_info: %{module: Exception}]}, {CounterTSDB, :handle_call, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 125]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CounterTSDBTest","test":"test increase buckets points into separate windows"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 200, error_info: %{module: Exception}]}, {CounterTSDB, :handle_call, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 125]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CounterTSDBTest","test":"test rate is per-second reset-aware increase"},{"message":"{:EXIT, #PID<0.239.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 200, error_info: %{module: Exception}]}, {CounterTSDB, :handle_call, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 125]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CounterTSDBTest","test":"test rate accounts for a reset within the window"},{"message":"{:EXIT, #PID<0.243.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 200, error_info: %{module: Exception}]}, {CounterTSDB, :handle_call, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 125]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CounterTSDBTest","test":"test rate omits windows with fewer than 2 points"},{"message":"{:EXIT, #PID<0.247.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 200, error_info: %{module: Exception}]}, {CounterTSDB, :handle_call, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 125]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CounterTSDBTest","test":"test range query returns separate results per matched series"},{"message":"{:EXIT, #PID<0.251.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 200, error_info: %{module: Exception}]}, {CounterTSDB, :handle_call, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 125]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CounterTSDBTest","test":"test label matchers select series containing all specified labels"},{"message":"{:EXIT, #PID<0.255.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 200, error_info: %{module: Exception}]}, {CounterTSDB, :handle_call, 3, [file: ~c\"/tmp/evalfim_114596_2627.ex\", line: 125]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CounterTSDBTest","test":"test label order does not create duplicate series"},{"message":"{:EXIT, #PID<0.259.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CounterTSDB, :insert_by_ts, 3, [file: ~c\"/tmp/evalfim_114596 (truncated)
+03:31:34.084 [debug] fim mutation gate: killed
+03:31:34.085 [info] promoted 626_003_reset_aware_counter_time_series_db_03 -> tasks/626_003_reset_aware_counter_time_series_db_03

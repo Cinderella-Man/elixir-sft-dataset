@@ -1,0 +1,373 @@
+13:55:16.667 [info] FIM 045_002_multivariate_a_b_c_feature_flag_store_fim03 → 045_002_multivariate_a_b_c_feature_flag_store_03: target variant_for/2
+13:55:16.667 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:55:16.667 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `variant_for/2`.
+
+Generate a prompt describing how to implement `variant_for/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `variant_for/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `variant_for/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `variant_for/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `FeatureFlags` that manages **multivariate** feature flags (A/B/C-style experiments) using ETS for fast reads, backed by a GenServer for writes.
+
+Unlike a plain on/off flag, a multivariate flag deterministically assigns each user to one of several named **variants** according to a weighted split, so you can run experiments where (say) 50% of users see variant `:a`, 30% see `:b`, and 20% see `:c`.
+
+I need these functions in the public API:
+
+- `FeatureFlags.start_link(opts)` to start the process. It should accept an optional `:table_name` for the ETS table (default `:feature_flags`), and an optional `:name` for process registration (pass `nil` to skip registration).
+- `FeatureFlags.enable(flag_name)` — sets the flag globally on (`:on`).
+- `FeatureFlags.disable(flag_name)` — sets the flag globally off (`:off`).
+- `FeatureFlags.set_variants(flag_name, variants)` — puts the flag into multivariate mode. `variants` is a list of `{variant_name, weight}` tuples, where `variant_name` is an atom and `weight` is a non-negative integer. The weights **must sum to exactly 100**; otherwise raise an `ArgumentError`. A variant with weight `0` receives no users.
+- `FeatureFlags.enabled?(flag_name)` — returns `true` only when the flag is globally `:on`. Variant flags and `:off`/unknown flags return `false`.
+- `FeatureFlags.variant_for(flag_name, user_id)` — returns the atom the user is assigned to:
+  - `:on` flags return `:on`.
+  - `:off` and unknown flags return `:off`.
+  - variant flags return the assigned variant atom. The assignment must be **deterministic**: the same `{flag_name, user_id}` pair always yields the same variant. Compute `bucket = :erlang.phash2({flag_name, user_id}, 100)` (a 0–99 value) and walk the variants in the order given, accumulating weights, returning the variant whose cumulative range contains the bucket (variant 1 owns `0..w1-1`, variant 2 owns `w1..w1+w2-1`, etc.).
+- `FeatureFlags.enabled_for?(flag_name, user_id)` — returns `true` when `variant_for/2` is anything other than `:off`.
+
+Implementation requirements:
+- ETS table should be of type `:set`, with `read_concurrency: true`, owned by the GenServer, and named so any process can read directly (for `enabled?`, `variant_for`, `enabled_for?`) without going through the GenServer.
+- All writes (`enable`, `disable`, `set_variants`) must go through the GenServer via `call` to serialise updates.
+- The ETS table must be created in `init/1`.
+
+Give me the complete module in a single file. Use only the OTP standard library, no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule FeatureFlags do
+  @moduledoc """
+  Multivariate (A/B/C) feature flags backed by ETS for concurrent reads and a
+  GenServer for serialised writes.
+
+  A flag is in one of three states:
+
+  - `{:on}`  — globally enabled; every user is assigned `:on`.
+  - `{:off}` — globally disabled; every user is assigned `:off`.
+  - `{:variants, [{name, weight}, ...]}` — users are deterministically split
+    across variants by weight. `:erlang.phash2({flag, user}, 100)` yields a
+    0–99 bucket which is matched against the cumulative weight ranges.
+  """
+
+  use GenServer
+
+  @default_table :feature_flags
+  @default_name __MODULE__
+
+  @pt_server {__MODULE__, :server}
+  @pt_table {__MODULE__, :table_name}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    table_name = Keyword.get(opts, :table_name, @default_table)
+    name = Keyword.get(opts, :name, @default_name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, %{table_name: table_name}, gen_opts)
+  end
+
+  @doc "Enables `flag_name` globally (`:on`)."
+  @spec enable(atom()) :: :ok
+  def enable(flag_name), do: GenServer.call(server(), {:set, flag_name, {:on}})
+
+  @doc "Disables `flag_name` globally (`:off`)."
+  @spec disable(atom()) :: :ok
+  def disable(flag_name), do: GenServer.call(server(), {:set, flag_name, {:off}})
+
+  @doc """
+  Puts `flag_name` into multivariate mode.
+
+  `variants` is a list of `{variant_atom, weight_integer}` tuples whose weights
+  must sum to exactly 100. Raises `ArgumentError` otherwise.
+  """
+  @spec set_variants(atom(), [{atom(), non_neg_integer()}]) :: :ok
+  def set_variants(flag_name, variants) when is_list(variants) do
+    validated = validate_variants(variants)
+    GenServer.call(server(), {:set, flag_name, {:variants, validated}})
+  end
+
+  @doc "Returns `true` only when `flag_name` is globally `:on`."
+  @spec enabled?(atom()) :: boolean()
+  def enabled?(flag_name) do
+    case lookup(flag_name) do
+      {:on} -> true
+      _ -> false
+    end
+  end
+
+  @doc """
+  Returns the variant `user_id` is assigned to for `flag_name`.
+
+  `:on` flags return `:on`; `:off`/unknown flags return `:off`; variant flags
+  return the deterministically assigned variant atom.
+  """
+  @spec variant_for(atom(), term()) :: atom()
+  def variant_for(flag_name, user_id) do
+    case lookup(flag_name) do
+      {:on} -> :on
+      {:off} -> :off
+      {:variants, variants} -> pick_variant(flag_name, user_id, variants)
+      nil -> :off
+    end
+  end
+
+  @doc "Returns `true` when `variant_for/2` is anything other than `:off`."
+  @spec enabled_for?(atom(), term()) :: boolean()
+  def enabled_for?(flag_name, user_id), do: variant_for(flag_name, user_id) != :off
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp validate_variants(variants) do
+    Enum.each(variants, fn
+      {name, weight} when is_atom(name) and is_integer(weight) and weight >= 0 ->
+        :ok
+
+      other ->
+        raise ArgumentError, "invalid variant spec: #{inspect(other)}"
+    end)
+
+    total = Enum.reduce(variants, 0, fn {_name, weight}, acc -> acc + weight end)
+
+    unless total == 100 do
+      raise ArgumentError, "variant weights must sum to 100, got #{total}"
+    end
+
+    variants
+  end
+
+  defp pick_variant(flag_name, user_id, variants) do
+    bucket = :erlang.phash2({flag_name, user_id}, 100)
+    select(variants, bucket, 0)
+  end
+
+  defp select([{name, weight} | rest], bucket, acc) do
+    upper = acc + weight
+    if bucket < upper, do: name, else: select(rest, bucket, upper)
+  end
+
+  defp select([], _bucket, _acc), do: :off
+
+  defp server, do: :persistent_term.get(@pt_server)
+
+  defp lookup(flag_name) do
+    table = :persistent_term.get(@pt_table, @default_table)
+
+    case :ets.lookup(table, flag_name) do
+      [{^flag_name, value}] -> value
+      [] -> nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(%{tab (truncated)
+13:55:43.347 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `variant_for/2` function. It takes a `flag_name` and a
+`user_id` and returns the atom the user is assigned to. Look the flag up in ETS
+(via the private `lookup/1` helper) and branch on its stored value:
+
+- an `{:on}` flag returns `:on` (every user is enabled);
+- an `{:off}` flag returns `:off`;
+- an unknown flag (`lookup/1` returns `nil`) also returns `:off`;
+- a `{:variants, variants}` flag returns the deterministically assigned variant
+  atom by delegating to the private `pick_variant/3` helper, passing
+  `flag_name`, `user_id`, and the `variants` list.
+
+The assignment for variant flags must be deterministic: the same
+`{flag_name, user_id}` pair always yields the same variant (this determinism is
+provided by `pick_variant/3`, which hashes the pair into a 0–99 bucket and walks
+the cumulative weight ranges). `variant_for/2` itself is just the dispatch on
+the flag's stored shape.
+
+```elixir
+defmodule FeatureFlags do
+  @moduledoc """
+  Multivariate (A/B/C) feature flags backed by ETS for concurrent reads and a
+  GenServer for serialised writes.
+
+  A flag is in one of three states:
+
+  - `{:on}`  — globally enabled; every user is assigned `:on`.
+  - `{:off}` — globally disabled; every user is assigned `:off`.
+  - `{:variants, [{name, weight}, ...]}` — users are deterministically split
+    across variants by weight. `:erlang.phash2({flag, user}, 100)` yields a
+    0–99 bucket which is matched against the cumulative weight ranges.
+  """
+
+  use GenServer
+
+  @default_table :feature_flags
+  @default_name __MODULE__
+
+  @pt_server {__MODULE__, :server}
+  @pt_table {__MODULE__, :table_name}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    table_name = Keyword.get(opts, :table_name, @default_table)
+    name = Keyword.get(opts, :name, @default_name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, %{table_name: table_name}, gen_opts)
+  end
+
+  @doc "Enables `flag_name` globally (`:on`)."
+  @spec enable(atom()) :: :ok
+  def enable(flag_name), do: GenServer.call(server(), {:set, flag_name, {:on}})
+
+  @doc "Disables `flag_name` globally (`:off`)."
+  @spec disable(atom()) :: :ok
+  def disable(flag_name), do: GenServer.call(server(), {:set, flag_name, {:off}})
+
+  @doc """
+  Puts `flag_name` into multivariate mode.
+
+  `variants` is a list of `{variant_atom, weight_integer}` tuples whose weights
+  must sum to exactly 100. Raises `ArgumentError` otherwise.
+  """
+  @spec set_variants(atom(), [{atom(), non_neg_integer()}]) :: :ok
+  def set_variants(flag_name, variants) when is_list(variants) do
+    validated = validate_variants(variants)
+    GenServer.call(server(), {:set, flag_name, {:variants, validated}})
+  end
+
+  @doc "Returns `true` only when `flag_name` is globally `:on`."
+  @spec enabled?(atom()) :: boolean()
+  def enabled?(flag_name) do
+    case lookup(flag_name) do
+      {:on} -> true
+      _ -> false
+    end
+  end
+
+  @doc """
+  Returns the variant `user_id` is assigned to for `flag_name`.
+
+  `:on` flags return `:on`; `:off`/unknown flags return `:off`; variant flags
+  return the deterministically assigned variant atom.
+  """
+  @spec variant_for(atom(), term()) :: atom()
+  def variant_for(flag_name, user_id) do
+    # TODO
+  end
+
+  @doc "Returns `true` when `variant_for/2` is anything other than `:off`."
+  @spec enabled_for?(atom(), term()) :: boolean()
+  def enabled_for?(flag_name, user_id), do: variant_for(flag_name, user_id) != :off
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp validate_variants(variants) do
+    Enum.each(variants, fn
+      {name, weight} when is_atom(name) and is_integer(weight) and weight >= 0 ->
+        :ok
+
+      other ->
+        raise ArgumentError, "invalid variant spec: #{inspect(other)}"
+    end)
+
+    total = Enum.reduce(variants, 0, fn {_name, weight}, acc -> acc + weight end)
+
+    unless total == 100 do
+      raise ArgumentError, "variant weights must sum to 100, got #{total}"
+    end
+
+    variants
+  end
+
+  defp pick_variant(flag_name, user_id, variants) do
+    bucket = :erlang.phash2({flag_name, user_id}, 100)
+    select(variants, bucket, 0)
+  end
+
+  defp select([{name, weight} | rest], bucket, acc) do
+    upper = acc + weight
+    if bucket < upper, do: name, else: select(rest, bucket, upper)
+  end
+
+  defp select([], _bucket, _acc), do: :off
+
+  defp server, do: :persistent_term.get(@pt_server)
+
+  defp lookup(flag_name) do
+    table = :persistent_term.get(@pt_table, @default_table)
+
+    case :ets.lookup(table, flag_name) do
+      [{^flag_name, value}] -> value
+      [] -> nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(%{table_name: table_name}) do
+    table =
+      :ets.new(table_name, [:set, :named_table, :public, read_concurrency: true])
+
+    :persistent_term.put(@pt_server, self())
+    :persistent_term.put(@pt_table, table)
+    {:ok, %{table: table}}
+  end
+
+  @impl true
+  def handle_call({:set, flag_name, value}, _from, %{table: table} = state) do
+    :ets.insert(table, {flag_name, value})
+    {:reply, :ok, state}
+  end
+end
+```
+</file>
+<file path="solution.ex">
+  @spec variant_for(atom(), term()) :: atom()
+  def variant_for(flag_name, user_id) do
+    case lookup(flag_name) do
+      {:on} -> :on
+      {:off} -> :off
+      {:variants, variants} -> pick_variant(flag_name, user_id, variants)
+      nil -> :off
+    end
+  end
+</file>
+13:55:43.347 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3744, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3744, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3744, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3744, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2539, "type" => "message"}], "output_tokens" => 2539, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:55:43.366 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_045_002_multivariate_a_b_c_feature_flag_store_03/045_002_multivariate_a_b_c_feature_flag_store_03 solution.ex
+13:55:44.011 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":9,"lines_over_98":0,"max_line_length":73,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"045_002_multivariate_a_b_c_feature_flag_store_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_045_002_multivariate_a_b_c_feature_flag_store_03/045_002_multivariate_a_b_c_feature_flag_store_03/solution.ex","task":"045_002_multivariate_a_b_c_feature_flag_store_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T11:55:43.986863Z"}
+13:55:44.012 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_045_002_multivariate_a_b_c_feature_flag_store_03/045_002_multivariate_a_b_c_feature_flag_store_03 .gen_staging/fim_045_002_multivariate_a_b_c_feature_flag_store_03/mutant.ex
+13:55:44.668 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":43,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"parent":"045_002_multivariate_a_b_c_feature_flag_store_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.5,"mode":"fim","overall":0.37,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 10/12 failed"],"tests":0.17},"shape":"fim","solution_file":".gen_staging/fim_045_002_multivariate_a_b_c_feature_flag_store_03/mutant.ex","task":"045_002_multivariate_a_b_c_feature_flag_store_03","test_failures":[{"message":"MUTATION","module":"FeatureFlagsTest","test":"test unknown flag has :off variant and is not enabled"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test enable makes flag :on for everyone"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test disable sets :off"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test assignment is deterministic across calls"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test assignment matches the cumulative-bucket formula"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test distribution roughly matches weights"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test zero-weight variant receives no users"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test updating variants takes effect immediately"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test flags are independent"},{"message":"{:EXIT, #PID<0.230.0>}: {%RuntimeError{message: \"MUTATION\"}, [{FeatureFlags, :variant_for, 2, [file: ~c\"/tmp/evalfim_746236_2626.ex\", line: 73, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FeatureFlagsTest","test":"test concurrent reads are consistent"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T11:55:44.644417Z"}
+13:55:44.668 [debug] fim mutation gate: killed
+13:55:44.669 [info] promoted 045_002_multivariate_a_b_c_feature_flag_store_03 -> tasks/045_002_multivariate_a_b_c_feature_flag_store_03

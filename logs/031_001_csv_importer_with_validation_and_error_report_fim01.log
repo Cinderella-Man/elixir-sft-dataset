@@ -1,0 +1,435 @@
+02:57:04.821 [info] FIM 031_001_csv_importer_with_validation_and_error_report_fim01 → 031_001_csv_importer_with_validation_and_error_report_04: target process_parsed/2
+02:57:04.821 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+02:57:04.821 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `process_parsed/2`.
+
+Generate a prompt describing how to implement `process_parsed/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `process_parsed/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `process_parsed/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `process_parsed/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `CsvImporter` that reads a CSV file, validates each row against a provided schema, and returns a structured result splitting valid rows from errors.
+
+I need these functions in the public API:
+
+- `CsvImporter.import_file(file_path, schema)` which reads the CSV file at the given path and validates every data row against the schema. It should return `{:ok, valid_rows, error_report}` where `valid_rows` is a list of maps (field name => string value) for rows that passed all validations, and `error_report` is a list of `{row_number, field_name, error_message}` tuples describing every validation failure. Row numbers should be 1-based counting only data rows (the header row is row 0 / not counted). If the file doesn't exist, return `{:error, :file_not_found}`. If the file is empty (zero bytes), return `{:error, :empty_file}`.
+
+- `CsvImporter.import_string(csv_string, schema)` which does the same thing but accepts the CSV content as a binary string instead of a file path. This is useful for testing.
+
+The schema should be a list of field definitions, where each field is a map with these keys:
+- `:name` (required) — the column header name as a string
+- `:required` (optional, default `true`) — if true, the field must be present and non-empty
+- `:type` (optional, default `:string`) — one of `:string`, `:integer`, `:float`, `:boolean`
+- `:format` (optional) — a regex that the field value must match. For convenience, also accept the atom `:email` which should use a reasonable email regex pattern.
+
+Validation rules:
+- Required fields that are empty or whitespace-only should produce an error `"is required"`.
+- Type checks: `:integer` values must be parseable by `String.to_integer/1`, `:float` by `String.to_float/1` (also accept integer-formatted strings like `"42"` as valid floats), `:boolean` must be one of `"true"`, `"false"`, `"1"`, `"0"` (case-insensitive). Type errors should read `"must be a valid <type>"`.
+- Format checks should produce `"does not match expected format"`.
+- A single field can have multiple errors — report all of them, not just the first.
+- If a row has more columns than the header, ignore the extras silently. If a row has fewer columns than the header, treat the missing columns as empty strings.
+
+Edge cases to handle:
+- UTF-8 BOM (`\xEF\xBB\xBF`) at the start of the file — strip it before parsing.
+- File with only a header row and no data rows — return `{:ok, [], []}`.
+- Completely empty fields (adjacent commas) and fields wrapped in double quotes with commas or newlines inside them.
+- Whitespace around field values should be trimmed.
+
+Use the NimbleCSV library for parsing (`:nimble_csv` hex package). Do not use any other external dependencies. Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule CsvImporter do
+  @moduledoc """
+  Reads CSV data (from a file or string), validates each row against a provided
+  schema, and returns structured results splitting valid rows from errors.
+
+  ## Schema
+
+  A schema is a list of field definition maps:
+
+      [
+        %{name: "email", required: true, type: :string, format: :email},
+        %{name: "age",   required: true, type: :integer},
+        %{name: "score", required: false, type: :float},
+        %{name: "active", type: :boolean}
+      ]
+
+  Each field map supports:
+    - `:name`     (required) — column header name (string)
+    - `:required` (optional, default `true`) — whether the field must be non-empty
+    - `:type`     (optional, default `:string`) — `:string | :integer | :float | :boolean`
+    - `:format`   (optional) — a `Regex` or the atom `:email`
+  """
+
+  # ---------------------------------------------------------------------------
+  # CSV parser definition (NimbleCSV)
+  # ---------------------------------------------------------------------------
+  NimbleCSV.define(CsvImporter.Parser, separator: ",", escape: "\"")
+
+  # A reasonable email regex — intentionally permissive.
+  @email_regex ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+  # Accepted boolean literals (lowercased for comparison).
+  @boolean_values ~w(true false 1 0)
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Import a CSV file at `file_path`, validate every data row against `schema`.
+
+  Returns:
+    - `{:ok, valid_rows, error_report}` on success
+    - `{:error, :file_not_found}` if the file does not exist
+    - `{:error, :empty_file}` if the file is zero bytes
+  """
+  @spec import_file(String.t(), [map()]) ::
+          {:ok, [map()], [{pos_integer(), String.t(), String.t()}]}
+          | {:error, :file_not_found | :empty_file}
+  def import_file(file_path, schema) do
+    case File.read(file_path) do
+      {:ok, ""} ->
+        {:error, :empty_file}
+
+      {:ok, contents} ->
+        import_string(contents, schema)
+
+      {:error, :enoent} ->
+        {:error, :file_not_found}
+    end
+  end
+
+  @doc """
+  Import CSV content given directly as a binary string.
+
+  Returns `{:ok, valid_rows, error_report}`.
+  """
+  @spec import_string(String.t(), [map()]) ::
+          {:ok, [map()], [{pos_integer(), String.t(), String.t()}]}
+  def import_string(csv_string, schema) do
+    stripped = strip_bom(csv_string)
+
+    if String.trim(stripped) == "" do
+      {:error, :empty_file}
+    else
+      stripped
+      |> parse_csv()
+      |> process_parsed(schema)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internals
+  # ---------------------------------------------------------------------------
+
+  # Strip a UTF-8 BOM if present.
+  defp strip_bom(<<0xEF, 0xBB, 0xBF, rest::binary>>), do: rest
+  defp strip_bom(other), do: other
+
+  # Parse the raw CSV text into {headers, rows}.
+  # Returns {headers :: [String.t()], rows :: [[String.t()]]}.
+  defp parse_csv(text) do
+    # NimbleCSV.parse_string/2 raises on completely empty input, so guard.
+    lines =
+      text
+      |> String.trim_trailing()
+      |> String.split(~r/\r?\n/, parts: 2)
+
+    case lines do
+      [""] ->
+        # Only whitespace / effectively empty — but import_string won't
+        # receive truly empty strings from import_file (caught earlier).
+        {[], []}
+
+      [header_line] ->
+        # Header only, no data rows.
+        headers = parse_header(header_line)
+        {headers, []}
+
+      [_header_line | _rest] ->
+        # At least one data row. Use NimbleCSV for proper RFC 4180 parsing.
+        [headers | rows] = CsvImporter.Parser.parse_string(text, skip_headers: false)
+        trimmed_headers = Enum.map(headers, &String.trim/1)
+        {trimmed_headers, rows}
+    end
+  end
+
+  # Fallback header parser for the single-line case (no data rows).
+  defp parse_header(line) do
+    [row] = CsvImporter.Parser.parse_string(line <> "\n", skip_headers: false)
+    Enum.map(row, &String.trim/1)
+  end
+
+  # With parsed header (truncated)
+02:57:49.632 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `process_parsed/2` function. It receives a `{headers, rows}`
+tuple (as produced by `parse_csv/1`) and the `schema`, and turns the parsed CSV into
+the final `{:ok, valid_rows, error_report}` result.
+
+Behaviour:
+
+- If there are no data rows (the tuple is `{_headers, []}`), return `{:ok, [], []}`
+  immediately — no valid rows and no errors.
+- Otherwise, validate every data row:
+  - Compute the header count and build a `schema_by_name` lookup map from the schema
+    (keyed by each field's `:name`).
+  - Walk the rows with a 1-based index (data rows only; the header is not counted),
+    accumulating a `{valid_rows, error_report}` pair.
+  - For each raw row, build a `%{header => trimmed_value}` map with `build_row_map/3`
+    and collect its validation errors with `validate_row/3`.
+  - If the row has no errors, keep only the schema fields whose `:name` appears in the
+    CSV headers, mapping each to its value from the row map (defaulting to `""`), and
+    prepend that map to the valid-rows accumulator.
+  - If the row has errors, tag each `{field_name, message}` with the row number to
+    produce `{row_number, field_name, message}` tuples and append them to the error
+    report (so the report stays in row/field order).
+- Return `{:ok, valid_rows, error_report}` with the valid rows in their original
+  (top-to-bottom) order.
+
+```elixir
+defmodule CsvImporter do
+  @moduledoc """
+  Reads CSV data (from a file or string), validates each row against a provided
+  schema, and returns structured results splitting valid rows from errors.
+
+  ## Schema
+
+  A schema is a list of field definition maps:
+
+      [
+        %{name: "email", required: true, type: :string, format: :email},
+        %{name: "age",   required: true, type: :integer},
+        %{name: "score", required: false, type: :float},
+        %{name: "active", type: :boolean}
+      ]
+
+  Each field map supports:
+    - `:name`     (required) — column header name (string)
+    - `:required` (optional, default `true`) — whether the field must be non-empty
+    - `:type`     (optional, default `:string`) — `:string | :integer | :float | :boolean`
+    - `:format`   (optional) — a `Regex` or the atom `:email`
+  """
+
+  # ---------------------------------------------------------------------------
+  # CSV parser definition (NimbleCSV)
+  # ---------------------------------------------------------------------------
+  NimbleCSV.define(CsvImporter.Parser, separator: ",", escape: "\"")
+
+  # A reasonable email regex — intentionally permissive.
+  @email_regex ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+  # Accepted boolean literals (lowercased for comparison).
+  @boolean_values ~w(true false 1 0)
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Import a CSV file at `file_path`, validate every data row against `schema`.
+
+  Returns:
+    - `{:ok, valid_rows, error_report}` on success
+    - `{:error, :file_not_found}` if the file does not exist
+    - `{:error, :empty_file}` if the file is zero bytes
+  """
+  @spec import_file(String.t(), [map()]) ::
+          {:ok, [map()], [{pos_integer(), String.t(), String.t()}]}
+          | {:error, :file_not_found | :empty_file}
+  def import_file(file_path, schema) do
+    case File.read(file_path) do
+      {:ok, ""} ->
+        {:error, :empty_file}
+
+      {:ok, contents} ->
+        import_string(contents, schema)
+
+      {:error, :enoent} ->
+        {:error, :file_not_found}
+    end
+  end
+
+  @doc """
+  Import CSV content given directly as a binary string.
+
+  Returns `{:ok, valid_rows, error_report}`.
+  """
+  @spec import_string(String.t(), [map()]) ::
+          {:ok, [map()], [{pos_integer(), String.t(), String.t()}]}
+  def import_string(csv_string, schema) do
+    stripped = strip_bom(csv_string)
+
+    if String.trim(stripped) == "" do
+      {:error, :empty_file}
+    else
+      stripped
+      |> parse_csv()
+      |> process_parsed(schema)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internals
+  # ---------------------------------------------------------------------------
+
+  # Strip a UTF-8 BOM if present.
+  defp strip_bom(<<0xEF, 0xBB, 0xBF, rest::binary>>), do: rest
+  defp strip_bom(other), do: other
+
+  # Parse the raw CSV text into {headers, rows}.
+  # Returns {headers :: [String.t()], rows :: [[String.t()]]}.
+  defp parse_csv(text) do
+    # NimbleCSV.parse_string/2 raises on completely empty input, so guard.
+    lines =
+      text
+      |> String.trim_trailing()
+      |> String.split(~r/\r?\n/, parts: 2)
+
+    case lines do
+      [""] ->
+        # Only whitespace / effectively empty — but import_string won't
+        # receive truly empty strings from import_file (caught earlier).
+        {[], []}
+
+      [header_line] ->
+        # Header only, no data rows.
+        headers = parse_header(header_line)
+        {headers, []}
+
+      [_header_line | _rest] ->
+        # At least one data row. Use NimbleCSV for proper RFC 4180 parsing.
+        [headers | rows] = CsvImporter.Parser.parse_string(text, skip_headers: false)
+        trimmed_headers = Enum.map(headers, &String.trim/1)
+        {trimmed_headers, rows}
+    end
+  end
+
+  # Fallback header parser for the single-line case (no data rows).
+  defp parse_header(line) do
+    [row] = CsvImporter.Parser.parse_string(line <> "\n", skip_headers: false)
+    Enum.map(row, &String.trim/1)
+  end
+
+  # With parsed headers and rows, run validation.
+  defp process_parsed(parsed, schema) do
+    # TODO
+  end
+
+  # Build a map of %{header_name => trimmed_value} for one row.
+  # Extra columns beyond the header count are silently ignored.
+  # Missing columns are filled with "".
+  defp build_row_map(headers, raw_row, header_count) do
+    padded =
+      if length(raw_row) < header_count do
+        raw_row ++ List.duplicate("", header_count - length(raw_row))
+      else
+        Enum.take(raw_row, header_count)
+      end
+
+    headers
+    |> Enum.zip(padded)
+    |> Map.new(fn {h, v} -> {h, String.trim(v)} end)
+  end
+
+  # Validate a single row map against the full schema.
+  # Returns a list of {field_name, error_message} tuples (empty if valid).
+  defp validate_row(row_map, schema, _schema_by_name) do
+    Enum.flat_map(schema, fn field ->
+      value = Map.get(row_map, field.name, "")
+      validate_field(value, field)
+    end)
+  end
+
+  # Validate a single field value against its field definition.
+  # Returns a list of {field_name, message} tuples.
+  defp validate_field(value, field) do
+    required? = Map.get(field, :required, true)
+    type = Map.get(field, :type, :string)
+    format = Map.get(field, :format, nil)
+    empty? = value == ""
+
+    required_errors =
+      if required? and empty? do
+        [{field.name, "is required"}]
+      else
+        []
+      end
+
+    # Type and format checks only apply to non-empty values.
+    type_errors =
+      if not empty? do
+        check_type(value, type, field.name)
+      else
+        []
+      end
+
+    format_errors =
+      if not empty? and format != nil do
+        check_format(value, format, field.name)
+      else
+        []
+      end
+
+    required_errors ++ type_errors ++ format_errors
+  end
+
+  # Type checkers -------------------------------------------------------
+
+  defp check_type(_value, :string, _name), do: []
+
+  defp check_type(value, :integer, name) do
+    case Integer.parse(value) do
+      {_int, ""} -> []
+      _ -> [{name, "must be a valid integer"}]
+    end
+  end
+
+  defp check_type(value, :float, name) do
+    cond do
+      # Try float first ("3.14")
+      match?({_f, ""}, Float.parse(value)) -> []
+      # Accept plain integers as valid floats ("42")
+      match?({_i, ""}, Integer.parse(value)) -> []
+      true -> [{name, "must be a valid float"}]
+    end
+  end
+
+  defp check_type(value, :boolean, name) do
+    if String.downcase(value) in @boolean_values do
+      []
+    else
+      [{name, "must be a valid boolean"}]
+    end
+  end
+
+  # Format chec (truncated)
+02:57:49.632 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4853, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4853, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4853, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4853, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 4263, "type" => "message"}], "output_tokens" => 4263, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:57:49.652 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_031_001_csv_importer_with_validation_and_error_report_04/031_001_csv_importer_with_validation_and_error_report_04 solution.ex
+02:57:50.486 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":35,"lines_over_98":0,"max_line_length":89,"mode":"fim","pipe_chain_count":5,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"031_001_csv_importer_with_validation_and_error_report_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_031_001_csv_importer_with_validation_and_error_report_04/031_001_csv_importer_with_validation_and_error_report_04/solution.ex","task":"031_001_csv_importer_with_validation_and_error_report_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":28,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-04T00:57:50.462620Z"}
+02:57:50.487 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_031_001_csv_importer_with_validation_and_error_report_04/031_001_csv_importer_with_validation_and_error_report_04 .gen_staging/fim_031_001_csv_importer_with_validation_and_error_report_04/mutant.ex
+02:57:51.323 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":7,"lines_over_98":0,"max_line_length":57,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":8,"compiled":true,"parent":"031_001_csv_importer_with_validation_and_error_report_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.2,"mode":"fim","overall":0.3,"reasons":["compilation: 8 warning(s) → -0.8 pts","tests: 25/28 failed"],"tests":0.11},"shape":"fim","solution_file":".gen_staging/fim_031_001_csv_importer_with_validation_and_error_report_04/mutant.ex","task":"031_001_csv_importer_with_validation_and_error_report_04","test_failures":[{"message":"MUTATION","module":"CsvImporterTest","test":"test imports a fully valid CSV"},{"message":"MUTATION","module":"CsvImporterTest","test":"test valid rows are returned as maps keyed by header names"},{"message":"MUTATION","module":"CsvImporterTest","test":"test required field that is empty produces an error"},{"message":"MUTATION","module":"CsvImporterTest","test":"test required field that is whitespace-only produces an error"},{"message":"MUTATION","module":"CsvImporterTest","test":"test optional field that is empty does NOT produce an error"},{"message":"MUTATION","module":"CsvImporterTest","test":"test invalid integer produces a type error"},{"message":"MUTATION","module":"CsvImporterTest","test":"test valid integer passes"},{"message":"MUTATION","module":"CsvImporterTest","test":"test float field accepts integer-formatted strings"},{"message":"MUTATION","module":"CsvImporterTest","test":"test invalid float produces a type error"},{"message":"MUTATION","module":"CsvImporterTest","test":"test boolean field accepts true, false, 1, 0 case-insensitively"},{"message":"MUTATION","module":"CsvImporterTest","test":"test invalid boolean produces a type error"},{"message":"MUTATION","module":"CsvImporterTest","test":"test invalid email format produces a format error"},{"message":"MUTATION","module":"CsvImporterTest","test":"test custom regex format works"},{"message":"MUTATION","module":"CsvImporterTest","test":"test a single field can produce multiple errors"},{"message":"MUTATION","module":"CsvImporterTest","test":"test multiple rows can each have different errors"},{"message":"MUTATION","module":"CsvImporterTest","test":"test row numbers are 1-based for data rows (header is not counted)"},{"message":"MUTATION","module":"CsvImporterTest","test":"test row with fewer columns than header treats missing as empty"},{"message":"MUTATION","module":"CsvImporterTest","test":"test row with extra columns silently ignores extras"},{"message":"MUTATION","module":"CsvImporterTest","test":"test file with only headers returns ok with empty lists"},{"message":"MUTATION","module":"CsvImporterTest","test":"test BOM characters at start of file are stripped"},{"message":"MUTATION","module":"CsvImporterTest","test":"test leading and trailing whitespace is trimmed from values"},{"message":"MUTATION","module":"CsvImporterTest","test":"test quoted fields with commas are handled correctly"},{"message":"MUTATION","module":"CsvImporterTest","test":"test import_file reads and validates a real file"},{"message":"MUTATION","module":"CsvImporterTest","test":"test all-optional schema with empty values produces no errors"},{"message":"MUTATION","module":"CsvImporterTest","test":"test handles 500 rows correctly"}],"tests_errors":0,"tests_excluded":0,"tests_failed":25,"tests_passed":3,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-04T00:57:51.296868Z"}
+02:57:51.323 [debug] fim mutation gate: killed
+02:57:51.324 [info] promoted 031_001_csv_importer_with_validation_and_error_report_04 -> tasks/031_001_csv_importer_with_validation_and_error_report_04

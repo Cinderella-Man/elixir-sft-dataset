@@ -1,0 +1,68 @@
+[pre-push] mix format --check-formatted && mix compile --warnings-as-errors && mix test
+     warning: a struct for GenTask.Config is expected on struct update:
+
+         %GenTask.Config{ctx.cfg | dry_run: true}
+
+     but got type:
+
+         dynamic()
+
+     where "ctx" was given the type:
+
+         # type: dynamic(%{..., cfg: term()})
+         # from: test/gen_task/force_test.exs:142:13
+         %GenTask.Config{...}
+
+     you must assign "ctx.cfg" to variable and pattern match on "%GenTask.Config{}"
+
+     type warning found at:
+     │
+ 142 │       cfg = %Config{ctx.cfg | dry_run: true}
+     │             ~
+     │
+     └─ test/gen_task/force_test.exs:142:13: GenTask.ForceTest."test wipe!/2 dry-run prints the plan and deletes nothing"/1
+
+     warning: a struct for GenTask.Config is expected on struct update:
+
+         %GenTask.Config{ctx.cfg | only_idea: nil}
+
+     but got type:
+
+         dynamic()
+
+     where "ctx" was given the type:
+
+         # type: dynamic(%{..., cfg: term()})
+         # from: test/gen_task/force_test.exs:159:13
+         %GenTask.Config{...}
+
+     you must assign "ctx.cfg" to variable and pattern match on "%GenTask.Config{}"
+
+     type warning found at:
+     │
+ 159 │       cfg = %Config{ctx.cfg | only_idea: nil}
+     │             ~
+     │
+     └─ test/gen_task/force_test.exs:159:13: GenTask.ForceTest."test wipe!/2 refuses to run without a single positional idea number"/1
+
+[pre-push] validate touched families: *010_004*,*012_002*,*013_002*,*013_003*,*014_004*,*015_001*,*015_002*,*015_003*,*015_004*,*016_002*,*016_003*,*017_002*,*019_002*,*019_004*,*024_001*,*025_001*,*025_002*,*031_002*,*031_003*,*031_004*
+ALL PERFECT ✓ (every task scores 1.0)
+ALL HARNESSES KILL THEIR MUTANT ✓
+[pre-push] format check on touched families
+total: 0 deviating, 0 errors — GATE (--check: exits 1 when anything deviates; --apply to rewrite)
+[pre-push] bugfix embed staleness check on touched families
+bugfix embeds: %{unchanged: 60} (report only)
+[pre-push] temp-path lint (parallel-eval collisions)
+temp-path lint: 92 shared-path harness(es), 0 violations ✓
+[pre-push] S6 freshness (blind verdicts must match current harnesses)
+screen freshness over 332 root(s): fresh=310, fresh_legacy=6, fresh_via_strengthen=16
+screen freshness: OK ✓ (every root has fresh blind evidence)
+[pre-push] wt_ spec/harness staleness check (all wt_ dirs)
+resync_embeds over 331 dirs: %{unchanged: 331} (report only)
+[pre-push] tfim embed staleness check on touched families
+tfim embeds: %{unchanged: 198} (report only)
+[pre-push] adapt_ embed staleness check on touched families
+adapt embeds: %{unchanged: 17} (report only)
+[pre-push] OK
+To github.com:Cinderella-Man/elixir-sft-dataset.git
+   0de3692e..b0e88438  main -> main

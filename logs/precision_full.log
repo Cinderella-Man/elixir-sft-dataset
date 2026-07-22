@@ -1,0 +1,1057 @@
+prompt precision: 324 root(s) to edit, 2 already done at this content+gate, 6 bundle-skipped
+
+=== 001_001_rate_limiter_01
+  unchanged — already precise
+
+=== 001_002_fixed_window_counter_01
+  IMPROVED — blind solve green (12/12)
+
+=== 001_003_hierarchical_limiter_01
+  IMPROVED — blind solve green (12/12)
+
+=== 001_004_penalty_escalation_01
+  IMPROVED — blind solve green (18/18)
+
+=== 002_001_circuit_breaker_01
+  IMPROVED — blind solve green (21/21)
+
+=== 002_002_rolling_window_error_rate_cb_01
+  unchanged — already precise
+
+=== 002_003_progressive_recovery_cb_01
+  IMPROVED — blind solve green (25/25)
+
+=== 002_004_leaky_bucket_failure_cb_01
+  IMPROVED — blind solve green (24/24)
+
+=== 003_001_leaky_bucket_token_dispenser_01
+  unchanged — already precise
+
+=== 003_002_gcra_01
+  unchanged — already precise
+
+=== 003_003_lease_based_bucket_01
+  IMPROVED — blind solve green (15/15)
+
+=== 003_004_shared_pool_bucket_01
+  IMPROVED — blind solve green (23/23)
+
+=== 004_001_job_scheduler_with_cron_like_expressions_01
+  IMPROVED — blind solve green (51/51)
+
+=== 004_002_intervalscheduler_01
+  unchanged — already precise
+
+=== 004_003_retryscheduler_01
+  IMPROVED — blind solve green (27/27)
+
+=== 004_004_calendarscheduler_01
+  unchanged — already precise
+
+=== 005_001_pubsub_event_bus_01
+  unchanged — already precise
+
+=== 005_002_priorityeventbus_01
+
+17:57:11.698 [warning] usage limit / out of credits on precision_verify (005_002_priorityeventbus_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+
+18:12:13.587 [warning] usage limit / out of credits on precision_verify (005_002_priorityeventbus_01) — waiting 900000ms (attempt 2, ~15 min waited so far)
+
+18:27:16.020 [warning] usage limit / out of credits on precision_verify (005_002_priorityeventbus_01) — waiting 900000ms (attempt 3, ~30 min waited so far)
+
+18:42:17.877 [warning] usage limit / out of credits on precision_verify (005_002_priorityeventbus_01) — waiting 900000ms (attempt 4, ~45 min waited so far)
+  IMPROVED — blind solve green (15/15)
+
+=== 005_003_replayeventbus_01
+  IMPROVED — blind solve green (25/25)
+
+=== 005_004_filteredeventbus_01
+  IMPROVED — blind solve green (20/20)
+
+=== 006_001_ttl_cache_with_lazy_expiration_01
+  IMPROVED — blind solve green (22/22)
+
+=== 006_002_lrucache_01
+  unchanged — already precise
+
+=== 006_003_refreshaheadcache_01
+  unchanged — already precise
+
+=== 006_004_swrcache_01
+  IMPROVED — blind solve green (16/16)
+
+=== 007_001_moving_average_calculator_01
+  REJECTED (blind red): test SMA with different periods on the same stream
+
+=== 007_002_weightedmovingaverage_01
+  REJECTED (blind red): test larger period grows max_period and retains more history
+
+=== 007_003_streamingpercentile_01
+  IMPROVED — blind solve green (17/17)
+
+=== 008_001_distributed_counter_with_crdt_style_merge_01
+  IMPROVED — blind solve green (28/28)
+
+=== 008_002_lww_element_set_crdt_01
+  IMPROVED — blind solve green (32/32)
+
+=== 008_003_two_phase_set_crdt_01
+  unchanged — already precise
+
+=== 008_004_observed_remove_set_crdt_01
+  IMPROVED — blind solve green (32/32)
+
+=== 009_001_request_deduplicator_coalescer_01
+  unchanged — already precise
+
+=== 009_002_write_behind_batch_coalescer_01
+  unchanged — already precise
+
+=== 009_003_retry_aware_request_deduplicator_01
+  REJECTED (blind red): test GenServer is not blocked during retries
+
+=== 009_004_per_key_bounded_concurrency_pool_01
+  IMPROVED — blind solve green (22/22)
+
+=== 010_002_one_time_token_store_with_absolute_expiration_01
+  unchanged — already precise
+
+=== 010_003_exclusive_lease_manager_with_ownership_01
+  IMPROVED — blind solve green (29/29)
+
+=== 010_004_rolling_window_quota_tracker_01
+  IMPROVED — blind solve green (27/27)
+
+=== 011_001_bounded_mailbox_worker_pool_01
+  unchanged — already precise
+
+=== 011_002_priority_worker_pool_with_starvation_prevention_01
+  IMPROVED — blind solve green (24/24)
+
+=== 011_003_cancellable_worker_pool_01
+  IMPROVED — blind solve green (24/24)
+
+=== 011_004_worker_pool_with_per_task_timeouts_and_retry_01
+  IMPROVED — blind solve green (23/23)
+
+=== 012_001_event_sourced_aggregate_01
+  REJECTED (blind red): not green
+
+=== 012_002_subscription_lifecycle_event_sourced_aggregate_01
+  IMPROVED — blind solve green (25/25)
+
+=== 012_003_inventory_stock_event_sourced_aggregate_01
+  IMPROVED — blind solve green (26/26)
+
+=== 012_004_task_tracker_event_sourced_aggregate_01
+  IMPROVED — blind solve green (26/26)
+
+=== 013_001_exponential_backoff_retry_worker_01
+  unchanged — already precise
+
+=== 013_002_timeout_guarded_retry_worker_01
+  IMPROVED — blind solve green (24/24)
+
+=== 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01
+  REJECTED (structure): dropped API tokens: Process.send_after
+
+=== 013_004_classified_error_retry_worker_with_on_retry_callback_01
+  IMPROVED — blind solve green (20/20)
+
+=== 014_001_priority_queue_processor_01
+  REJECTED (structure): dropped API tokens: spawn_monitor/1
+
+=== 014_002_expiring_priority_queue_with_per_task_ttl_01
+  IMPROVED — blind solve green (22/22)
+
+=== 014_003_cancellable_priority_queue_with_numeric_priorities_01
+  IMPROVED — blind solve green (23/23)
+
+=== 014_004_concurrent_priority_queue_with_configurable_parallelism_01
+  IMPROVED — blind solve green (21/21)
+
+=== 015_001_heartbeat_monitor_01
+  unchanged — already precise
+
+=== 015_002_rolling_window_failure_rate_monitor_01
+  unchanged — already precise
+
+=== 015_003_async_check_monitor_with_timeouts_01
+  unchanged — already precise
+
+=== 015_004_monitor_with_maintenance_windows_and_pause_resume_01
+  unchanged — already precise
+
+=== 016_002_cursor_based_list_pagination_01
+  IMPROVED — blind solve green (15/15)
+
+=== 016_003_validated_sortable_filterable_list_pagination_01
+  IMPROVED — blind solve green (17/17)
+
+=== 016_004_concurrent_ets_backed_list_pagination_with_page_clamping_01
+  unchanged — already precise
+
+=== 017_002_keyset_cursor_pagination_search_01
+  IMPROVED — blind solve green (17/17)
+
+=== 017_003_faceted_search_with_facet_counts_01
+  unchanged — already precise
+
+=== 017_004_relevance_ranked_full_text_search_01
+  unchanged — already precise
+
+=== 018_002_trash_and_purge_soft_delete_with_retention_window_01
+  unchanged — already precise
+
+=== 018_003_cascading_archive_tree_with_origin_aware_restore_01
+  unchanged — already precise
+
+=== 018_004_optimistic_concurrency_soft_delete_with_version_guards_01
+  IMPROVED — blind solve green (27/27)
+
+=== 019_002_dependency_ordered_bulk_create_with_cascade_skip_01
+  IMPROVED — blind solve green (17/17)
+
+=== 019_003_bulk_upsert_with_conflict_resolution_policies_01
+  IMPROVED — blind solve green (11/11)
+
+=== 019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01
+  unchanged — already precise
+
+=== 020_001_file_upload_with_validation_01
+  IMPROVED — blind solve green (29/29)
+
+=== 020_002_content_addressable_deduplicating_upload_01
+  unchanged — already precise
+
+=== 020_003_per_tenant_quota_enforced_upload_01
+  unchanged — already precise
+
+=== 020_004_asynchronous_validation_pipeline_upload_01
+  unchanged — already precise
+
+=== 021_002_media_type_content_negotiation_with_quality_values_01
+  IMPROVED — blind solve green (24/24)
+
+=== 021_003_url_path_versioning_with_downgrade_migration_chain_01
+  IMPROVED — blind solve green (19/19)
+
+=== 021_004_versioned_api_with_deprecation_sunset_lifecycle_01
+  unchanged — already precise
+
+=== 022_001_nested_resource_endpoint_with_authorization_01
+  IMPROVED — blind solve green (29/29)
+
+=== 022_002_role_scoped_nested_membership_endpoint_01
+  IMPROVED — blind solve green (33/33)
+
+=== 022_003_etag_versioned_nested_membership_with_optimistic_concurrency_01
+  unchanged — already precise
+
+=== 022_004_invitation_accept_decline_nested_membership_workflow_01
+  unchanged — already precise
+
+=== 023_001_idempotent_post_endpoint_01
+
+20:59:10.175 [warning] usage limit / out of credits on prompt_precision (023_001_idempotent_post_endpoint_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+
+21:14:12.104 [warning] usage limit / out of credits on prompt_precision (023_001_idempotent_post_endpoint_01) — waiting 900000ms (attempt 2, ~15 min waited so far)
+
+21:29:14.006 [warning] usage limit / out of credits on prompt_precision (023_001_idempotent_post_endpoint_01) — waiting 900000ms (attempt 3, ~30 min waited so far)
+
+21:44:16.039 [warning] usage limit / out of credits on prompt_precision (023_001_idempotent_post_endpoint_01) — waiting 900000ms (attempt 4, ~45 min waited so far)
+
+21:59:17.924 [warning] usage limit / out of credits on prompt_precision (023_001_idempotent_post_endpoint_01) — waiting 900000ms (attempt 5, ~60 min waited so far)
+
+22:14:19.749 [warning] usage limit / out of credits on prompt_precision (023_001_idempotent_post_endpoint_01) — waiting 900000ms (attempt 6, ~75 min waited so far)
+
+22:29:22.365 [warning] usage limit / out of credits on prompt_precision (023_001_idempotent_post_endpoint_01) — waiting 900000ms (attempt 7, ~90 min waited so far)
+
+22:44:24.255 [warning] usage limit / out of credits on prompt_precision (023_001_idempotent_post_endpoint_01) — waiting 900000ms (attempt 8, ~105 min waited so far)
+
+22:59:25.993 [warning] usage limit / out of credits on prompt_precision (023_001_idempotent_post_endpoint_01) — waiting 900000ms (attempt 9, ~120 min waited so far)
+
+23:14:28.087 [warning] usage limit / out of credits on prompt_precision (023_001_idempotent_post_endpoint_01) — waiting 900000ms (attempt 10, ~135 min waited so far)
+
+23:29:29.981 [warning] usage limit / out of credits on prompt_precision (023_001_idempotent_post_endpoint_01) — waiting 900000ms (attempt 11, ~150 min waited so far)
+
+23:44:31.875 [warning] usage limit / out of credits on prompt_precision (023_001_idempotent_post_endpoint_01) — waiting 900000ms (attempt 12, ~165 min waited so far)
+  IMPROVED — blind solve green (24/24)
+
+=== 023_002_in_flight_coalescing_idempotent_payments_01
+  unchanged — already precise
+
+=== 023_003_fingerprint_conflict_idempotent_payments_01
+  IMPROVED — blind solve green (19/19)
+
+=== 023_004_lru_bounded_idempotent_payments_01
+  unchanged — already precise
+
+=== 024_001_webhook_receiver_with_signature_verification_01
+  IMPROVED — blind solve green (18/18)
+
+=== 024_002_replay_protected_timestamped_webhook_receiver_01
+  REJECTED (blind red): test valid, in-window signature stores event
+
+=== 024_003_multi_provider_webhook_receiver_with_key_rotation_01
+  unchanged — already precise
+
+=== 024_004_ordered_stream_webhook_receiver_with_gap_buffering_01
+  unchanged — already precise
+
+=== 025_001_long_polling_endpoint_01
+  REJECTED (blind red): test returns a notification published mid-poll
+
+=== 025_002_cursor_resumable_gap_free_long_poll_01
+  unchanged — already precise
+
+=== 025_003_coalescing_batch_long_poll_with_linger_window_01
+  REJECTED (blind red): test coalesces a burst into one batched response
+
+=== 025_004_multi_channel_fan_in_long_poll_01
+  IMPROVED — blind solve green (16/16)
+
+=== 031_001_csv_importer_with_validation_and_error_report_01
+  unchanged — already precise
+
+=== 031_002_jsonl_importer_with_schema_validation_01
+  IMPROVED — blind solve green (40/40)
+
+=== 031_003_csv_loader_with_type_coercion_and_enriched_schema_01
+  IMPROVED — blind solve green (36/36)
+
+=== 031_004_logfmt_record_validator_with_hand_written_parser_01
+  IMPROVED — blind solve green (33/33)
+
+=== 032_001_json_to_ecto_bulk_ingestion_pipeline_01
+  IMPROVED — blind solve green (10/10)
+
+=== 032_002_csv_to_ecto_batch_ingestion_with_changeset_validation_01
+  IMPROVED — blind solve green (8/8)
+
+=== 032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_01
+  IMPROVED — blind solve green (8/8)
+
+=== 032_004_multi_table_json_ingestion_with_type_discriminator_routing_01
+  unchanged — already precise
+
+=== 033_001_log_file_analyzer_01
+  IMPROVED — blind solve green (19/19)
+
+=== 033_002_metrics_file_aggregator_01
+  unchanged — already precise
+
+=== 033_003_http_access_log_analyzer_01
+  unchanged — already precise
+
+=== 033_004_financial_transaction_analyzer_01
+  unchanged — already precise
+
+=== 034_001_data_reconciliation_engine_01
+  IMPROVED — blind solve green (26/26)
+
+=== 034_002_cardinality_classifying_multi_key_reconciler_01
+  unchanged — already precise
+
+=== 034_003_rule_driven_tolerant_reconciler_with_compiled_config_01
+  unchanged — already precise
+
+=== 034_004_incremental_streaming_reconciler_genserver_01
+  unchanged — already precise
+
+=== 035_001_time_series_resampler_01
+  IMPROVED — blind solve green (23/23)
+
+=== 035_002_multi_series_aligned_resampler_01
+  IMPROVED — blind solve green (26/26)
+
+=== 035_003_streaming_watermark_resampler_01
+  IMPROVED — blind solve green (17/17)
+
+=== 035_004_counter_rate_resampler_01
+  unchanged — already precise
+
+=== 036_001_markdown_to_structured_data_parser_01
+  IMPROVED — blind solve green (21/21)
+
+=== 036_002_hierarchical_heading_outline_parser_01
+  IMPROVED — blind solve green (18/18)
+
+=== 036_003_error_reporting_markdown_parser_with_line_diagnostics_01
+  IMPROVED — blind solve green (17/17)
+
+=== 036_004_gfm_table_parser_to_row_maps_01
+  IMPROVED — blind solve green (17/17)
+
+=== 037_001_data_anonymizer_01
+  IMPROVED — blind solve green (21/21)
+
+=== 037_002_path_addressed_nested_record_anonymizer_01
+  IMPROVED — blind solve green (14/14)
+
+=== 037_003_reversible_tokenization_vault_anonymizer_01
+  unchanged — already precise
+
+=== 037_004_stateful_concurrent_consistent_pseudonymizer_01
+  IMPROVED — blind solve green (14/14)
+
+=== 038_001_tree_structure_builder_from_flat_list_01
+  IMPROVED — blind solve green (28/28)
+
+=== 038_002_materialized_path_tree_annotator_01
+  unchanged — already precise
+
+=== 038_003_incremental_streaming_tree_builder_01
+  IMPROVED — blind solve green (18/18)
+
+=== 038_004_diagnostic_tree_validator_with_best_effort_repair_01
+  unchanged — already precise
+
+=== 039_001_diff_generator_for_record_lists_01
+  IMPROVED — blind solve green (15/15)
+
+=== 039_002_nested_path_addressed_record_diff_01
+  unchanged — already precise
+
+=== 039_003_ordered_record_diff_with_move_detection_01
+  IMPROVED — blind solve green (17/17)
+
+=== 039_004_three_way_record_merge_with_conflict_detection_01
+  unchanged — already precise
+
+=== 040_001_configuration_merger_with_override_rules_01
+  IMPROVED — blind solve green (26/26)
+
+=== 040_002_provenance_tracking_layered_config_merger_01
+  IMPROVED — blind solve green (19/19)
+
+=== 040_003_stateful_layered_config_store_genserver_01
+  IMPROVED — blind solve green (17/17)
+
+=== 040_004_conflict_detecting_strict_config_merger_01
+  unchanged — already precise
+
+=== 041_001_lru_cache_backed_by_ets_01
+  IMPROVED — blind solve green (28/28)
+
+=== 041_002_lfu_cache_backed_by_ets_01
+  unchanged — already precise
+
+=== 041_003_sharded_lru_cache_with_consistent_key_routing_01
+  REJECTED (blind red): test a missing required option fails loudly instead of defaulting
+
+=== 041_004_weight_aware_cost_bounded_lru_cache_01
+  unchanged — already precise
+
+=== 042_001_ets_based_write_through_cache_layer_01
+  IMPROVED — blind solve green (12/12)
+
+=== 042_002_failure_aware_write_through_cache_with_negative_caching_01
+  unchanged — already precise
+
+=== 042_003_true_write_through_cache_with_backing_store_propagation_01
+  unchanged — already precise
+
+=== 042_004_single_flight_non_blocking_write_through_cache_01
+  IMPROVED — blind solve green (18/18)
+
+=== 043_001_ets_based_leaderboard_01
+  IMPROVED — blind solve green (25/25)
+
+=== 043_002_cumulative_points_leaderboard_with_atomic_counters_01
+  IMPROVED — blind solve green (17/17)
+
+=== 043_003_sliding_window_time_decayed_leaderboard_01
+  IMPROVED — blind solve green (19/19)
+
+=== 043_004_ordered_set_leaderboard_with_deterministic_tie_breaking_01
+  unchanged — already precise
+
+=== 044_001_ets_based_metrics_collector_01
+  REJECTED (structure): dropped API tokens: Metrics.increment/2
+
+=== 044_002_histogram_metrics_collector_01
+  IMPROVED — blind solve green (11/11)
+
+=== 044_003_labeled_dimensional_metrics_collector_01
+  IMPROVED — blind solve green (23/23)
+
+=== 044_004_sliding_window_rate_metrics_collector_01
+  IMPROVED — blind solve green (21/21)
+
+=== 045_001_ets_based_feature_flag_store_01
+  REJECTED (blind red): test enable sets the flag on for everyone
+
+=== 045_002_multivariate_a_b_c_feature_flag_store_01
+  IMPROVED — blind solve green (21/21)
+
+=== 045_003_versioned_feature_flag_store_with_rollback_01
+  unchanged — already precise
+
+=== 045_004_dependency_aware_feature_flag_store_01
+  IMPROVED — blind solve green (10/10)
+
+=== 061_001_parallel_map_with_concurrency_limit_01
+  REJECTED (blind red): test never exceeds max_concurrency=3 simultaneous tasks
+
+=== 061_002_fail_fast_parallel_map_with_cancellation_01
+  unchanged — already precise
+
+=== 061_003_timeout_and_retry_parallel_map_01
+  unchanged — already precise
+
+=== 061_004_weight_budget_parallel_map_01
+  IMPROVED — blind solve green (17/17)
+
+=== 062_001_pipeline_processor_with_stages_01
+  IMPROVED — blind solve green (21/21)
+
+=== 062_002_retryable_pipeline_with_per_stage_retry_policies_01
+  IMPROVED — blind solve green (19/19)
+
+=== 062_003_fan_out_map_pipeline_with_bounded_concurrency_01
+  IMPROVED — blind solve green (16/16)
+
+=== 062_004_batch_pipeline_with_error_collection_01
+  IMPROVED — blind solve green (15/15)
+
+=== 063_001_concurrent_data_fetcher_with_timeout_01
+  unchanged — already precise
+
+=== 063_002_quorum_first_n_concurrent_fetcher_01
+  unchanged — already precise
+
+=== 063_003_fallback_chain_concurrent_fetcher_01
+  unchanged — already precise
+
+=== 063_004_bounded_concurrency_concurrent_fetcher_01
+  IMPROVED — blind solve green (13/13)
+
+=== 064_001_work_stealing_task_queue_01
+  IMPROVED — blind solve green (11/11)
+
+=== 064_002_fault_tolerant_result_tagged_work_stealing_queue_01
+  IMPROVED — blind solve green (18/18)
+
+=== 064_003_priority_aware_work_stealing_queue_01
+  IMPROVED — blind solve green (9/9)
+
+=== 064_004_instrumented_work_stealing_queue_with_steal_metrics_01
+  REJECTED (blind red): test default steal batch takes half of the victim's remaining queue per steal
+
+=== 065_001_saga_compensating_transaction_coordinator_01
+  unchanged — already precise
+
+=== 065_002_retrying_saga_coordinator_01
+  unchanged — already precise
+
+=== 065_003_parallel_stage_saga_coordinator_01
+  unchanged — already precise
+
+=== 065_004_policy_driven_saga_coordinator_01
+  unchanged — already precise
+
+=== 070_001_saga_compensating_transaction_coordinator_01
+  unchanged — already precise
+
+=== 070_002_pivot_step_saga_with_forward_recovery_01
+  IMPROVED — blind solve green (16/16)
+
+=== 070_003_nested_sub_saga_composition_01
+  IMPROVED — blind solve green (16/16)
+
+=== 070_004_resumable_journaled_saga_01
+  unchanged — already precise
+
+=== 071_001_factory_module_for_test_data_generation_01
+
+02:28:24.990 [warning] usage limit / out of credits on prompt_precision (071_001_factory_module_for_test_data_generation_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+
+02:43:26.629 [warning] usage limit / out of credits on prompt_precision (071_001_factory_module_for_test_data_generation_01) — waiting 900000ms (attempt 2, ~15 min waited so far)
+
+02:58:28.314 [warning] usage limit / out of credits on prompt_precision (071_001_factory_module_for_test_data_generation_01) — waiting 900000ms (attempt 3, ~30 min waited so far)
+
+03:13:30.080 [warning] usage limit / out of credits on prompt_precision (071_001_factory_module_for_test_data_generation_01) — waiting 900000ms (attempt 4, ~45 min waited so far)
+
+03:28:32.048 [warning] usage limit / out of credits on prompt_precision (071_001_factory_module_for_test_data_generation_01) — waiting 900000ms (attempt 5, ~60 min waited so far)
+
+03:43:33.752 [warning] usage limit / out of credits on prompt_precision (071_001_factory_module_for_test_data_generation_01) — waiting 900000ms (attempt 6, ~75 min waited so far)
+
+03:58:35.449 [warning] usage limit / out of credits on prompt_precision (071_001_factory_module_for_test_data_generation_01) — waiting 900000ms (attempt 7, ~90 min waited so far)
+
+04:13:37.183 [warning] usage limit / out of credits on prompt_precision (071_001_factory_module_for_test_data_generation_01) — waiting 900000ms (attempt 8, ~105 min waited so far)
+
+04:28:39.261 [warning] usage limit / out of credits on prompt_precision (071_001_factory_module_for_test_data_generation_01) — waiting 900000ms (attempt 9, ~120 min waited so far)
+
+04:43:41.150 [warning] usage limit / out of credits on prompt_precision (071_001_factory_module_for_test_data_generation_01) — waiting 900000ms (attempt 10, ~135 min waited so far)
+  IMPROVED — blind solve green (14/14)
+
+=== 071_002_trait_composable_factory_01
+  IMPROVED — blind solve green (16/16)
+
+=== 071_003_bulk_list_factory_with_concurrent_insertion_01
+  unchanged — already precise
+
+=== 071_004_validation_aware_factory_with_compensating_rollback_01
+  unchanged — already precise
+
+=== 072_001_test_helper_for_time_dependent_code_01
+  IMPROVED — blind solve green (21/21)
+
+=== 072_002_deferred_timer_virtual_clock_01
+  unchanged — already precise
+
+=== 072_003_monotonic_measurement_clock_01
+  unchanged — already precise
+
+=== 072_004_scripted_sequence_clock_01
+  REJECTED (blind red): test :on_exhaust policies :raise blows up once the script is exhausted
+
+=== 073_001_database_cleaner_for_integration_tests_01
+  REJECTED (blind red): test a failed transaction start/2 still replaces prior truncation state (no TRUNCATE on clean)
+
+=== 073_002_savepoint_stack_nested_transaction_cleaner_01
+  unchanged — already precise
+
+=== 073_003_sandbox_ownership_cleaner_for_async_tests_01
+  IMPROVED — blind solve green (16/16)
+
+=== 073_004_fk_dependency_ordered_deletion_cleaner_01
+  IMPROVED — blind solve green (10/10)
+
+=== 074_001_custom_exunit_assertion_helpers_01
+  IMPROVED — blind solve green (25/25)
+
+=== 074_002_collection_and_structural_assertion_helpers_01
+  unchanged — already precise
+
+=== 074_003_concurrency_and_message_assertion_helpers_01
+  unchanged — already precise
+
+=== 074_004_numeric_tolerance_and_exception_assertion_helpers_01
+  IMPROVED — blind solve green (15/15)
+
+=== 075_001_property_based_test_generators_01
+  unchanged — already precise
+
+=== 075_002_recursive_json_value_generators_with_bounded_depth_01
+  unchanged — already precise
+
+=== 075_003_stateful_command_sequence_generators_01
+  IMPROVED — blind solve green (22/22)
+
+=== 075_004_schema_driven_generator_interpreter_01
+  unchanged — already precise
+
+=== 076_001_trie_01
+  IMPROVED — blind solve green (25/25)
+
+=== 076_002_compressed_radix_trie_with_path_compression_01
+  IMPROVED — blind solve green (21/21)
+
+=== 076_003_weighted_autocomplete_trie_with_top_k_ranking_01
+  IMPROVED — blind solve green (23/23)
+
+=== 076_004_wildcard_pattern_matching_trie_01
+  IMPROVED — blind solve green (25/25)
+
+=== 077_001_interval_tree_for_overlapping_range_queries_01
+  unchanged — already precise
+
+=== 077_002_deletable_interval_tree_01
+  unchanged — already precise
+
+=== 077_003_concurrent_interval_registry_01
+  IMPROVED — blind solve green (25/25)
+
+=== 077_004_max_overlap_interval_tree_01
+  unchanged — already precise
+
+=== 078_001_ring_buffer_01
+  unchanged — already precise
+
+=== 078_002_reject_when_full_bounded_fifo_queue_01
+  IMPROVED — blind solve green (17/17)
+
+=== 078_003_double_ended_ring_buffer_deque_01
+  unchanged — already precise
+
+=== 078_004_concurrent_ring_buffer_sink_genserver_01
+  unchanged — already precise
+
+=== 079_001_bloom_filter_01
+  unchanged — already precise
+
+=== 079_002_counting_bloom_filter_01
+  unchanged — already precise
+
+=== 079_003_scalable_bloom_filter_01
+  IMPROVED — blind solve green (9/9)
+
+=== 079_004_concurrent_bloom_filter_01
+  unchanged — already precise
+
+=== 080_001_directed_acyclic_graph_with_topological_sort_01
+  IMPROVED — blind solve green (19/19)
+
+=== 080_002_weighted_critical_path_dag_scheduler_01
+  unchanged — already precise
+
+=== 080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01
+  unchanged — already precise
+
+=== 080_004_concurrent_dag_registry_genserver_01
+  unchanged — already precise
+
+=== 086_001_shopping_cart_with_price_calculations_01
+  IMPROVED — blind solve green (25/25)
+
+=== 086_002_tiered_bracket_cart_with_shipping_thresholds_01
+  unchanged — already precise
+
+=== 086_003_coupon_stacking_cart_with_order_level_discounts_01
+  IMPROVED — blind solve green (16/16)
+
+=== 086_004_concurrent_genserver_backed_cart_01
+  IMPROVED — blind solve green (14/14)
+
+=== 087_001_permission_system_with_role_based_access_01
+  unchanged — already precise
+
+=== 087_002_deny_override_policy_list_access_control_01
+  unchanged — already precise
+
+=== 087_003_multi_role_grant_with_wildcard_permissions_01
+  IMPROVED — blind solve green (19/19)
+
+=== 087_004_genserver_role_graph_registry_with_runtime_grants_01
+  unchanged — already precise
+
+=== 089_001_promo_code_system_01
+  unchanged — already precise
+
+=== 089_002_stackable_promo_code_system_01
+  unchanged — already precise
+
+=== 089_003_tiered_promo_code_system_01
+  unchanged — already precise
+
+=== 089_004_budget_capped_promo_code_system_01
+  unchanged — already precise
+
+=== 091_001_workflow_state_machine_01
+  unchanged — already precise
+
+=== 091_002_reversible_order_workflow_with_undo_history_01
+  unchanged — already precise
+
+=== 091_003_data_driven_finite_state_machine_engine_01
+  unchanged — already precise
+
+=== 091_004_effectful_workflow_with_event_payloads_01
+  unchanged — already precise
+
+=== 092_001_scoring_ranking_algorithm_01
+  unchanged — already precise
+
+=== 092_002_reddit_style_logarithmic_hot_ranking_01
+  unchanged — already precise
+
+=== 092_003_wilson_lower_bound_confidence_ranking_01
+  unchanged — already precise
+
+=== 092_004_bayesian_weighted_rating_ranking_01
+  IMPROVED — blind solve green (20/20)
+
+=== 095_001_multi_currency_money_module_01
+  IMPROVED — blind solve green (34/34)
+
+=== 095_002_weighted_allocation_money_module_01
+  unchanged — already precise
+
+=== 095_003_currency_precision_money_module_01
+  unchanged — already precise
+
+=== 095_004_multi_currency_money_with_fx_conversion_01
+  IMPROVED — blind solve green (27/27)
+
+=== 096_001_input_sanitizer_module_01
+  IMPROVED — blind solve green (25/25)
+
+=== 096_002_schema_driven_nested_params_sanitizer_01
+  unchanged — already precise
+
+=== 096_003_stateful_sanitizer_server_with_policy_and_metrics_01
+  IMPROVED — blind solve green (12/12)
+
+=== 096_004_reporting_sanitizer_with_strict_and_lenient_modes_01
+  IMPROVED — blind solve green (24/24)
+
+=== 097_001_password_policy_enforcer_01
+  IMPROVED — blind solve green (23/23)
+
+=== 097_002_weighted_strength_score_password_policy_01
+  unchanged — already precise
+
+=== 097_003_severity_classified_password_audit_with_strict_mode_01
+  IMPROVED — blind solve green (10/10)
+
+=== 097_004_stateful_password_policy_server_with_reuse_history_01
+  unchanged — already precise
+
+=== 098_001_token_generator_and_validator_01
+  unchanged — already precise
+
+=== 098_002_aead_sealed_confidential_token_01
+  unchanged — already precise
+
+=== 098_003_attenuable_capability_token_with_chained_caveats_01
+  unchanged — already precise
+
+=== 098_004_replay_protected_single_use_token_01
+  unchanged — already precise
+
+=== 099_001_data_masking_for_logs_01
+  IMPROVED — blind solve green (27/27)
+
+=== 099_002_redaction_with_match_count_reporting_01
+  unchanged — already precise
+
+=== 099_003_per_field_masking_strategies_01
+  IMPROVED — blind solve green (23/23)
+
+=== 099_004_concurrent_masking_server_with_runtime_patterns_01
+  unchanged — already precise
+
+=== 100_001_totp_time_based_one_time_password_implementation_01
+  unchanged — already precise
+
+=== 100_002_provisioning_uri_driven_multi_algorithm_totp_verifier_01
+  unchanged — already precise
+
+=== 100_003_counter_based_hotp_with_resynchronization_window_01
+  IMPROVED — blind solve green (16/16)
+
+=== 100_004_stateful_totp_vault_genserver_with_replay_protection_01
+  unchanged — already precise
+
+=== 101_001_sliding_window_counter_01
+  unchanged — already precise
+
+=== 101_002_sliding_window_distinct_cardinality_counter_01
+  IMPROVED — blind solve green (29/29)
+
+=== 101_003_weighted_sliding_sum_counter_01
+  unchanged — already precise
+
+=== 101_004_sliding_window_threshold_alerter_01
+  unchanged — already precise
+
+=== 102_002_optimistic_concurrency_persisted_state_machine_01
+  IMPROVED — blind solve green (16/16)
+
+=== 102_003_auto_expiring_persisted_state_machine_01
+  unchanged — already precise
+
+=== 102_004_threshold_approval_persisted_state_machine_01
+  IMPROVED — blind solve green (18/18)
+
+=== 103_001_dead_letter_queue_01
+  IMPROVED — blind solve green (22/22)
+
+=== 103_002_backoff_scheduled_retry_dead_letter_queue_01
+  unchanged — already precise
+
+=== 103_003_deduplicating_dead_letter_queue_01
+  IMPROVED — blind solve green (19/19)
+
+=== 103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01
+  unchanged — already precise
+
+=== 104_001_connection_pool_manager_01
+  unchanged — already precise
+
+=== 104_002_health_validated_connection_pool_01
+  unchanged — already precise
+
+=== 104_003_overflow_connection_pool_01
+  IMPROVED — blind solve green (16/16)
+
+=== 104_004_usage_recycling_connection_pool_01
+  IMPROVED — blind solve green (17/17)
+
+=== 105_001_genserver_based_debouncer_01
+  unchanged — already precise
+
+=== 105_002_leading_trailing_edge_debouncer_01
+  unchanged — already precise
+
+=== 105_003_max_wait_debouncer_with_flush_and_cancel_01
+  IMPROVED — blind solve green (20/20)
+
+=== 105_004_accumulating_batch_debouncer_01
+  IMPROVED — blind solve green (14/14)
+
+=== 106_001_watchdog_timer_genserver_01
+  unchanged — already precise
+
+=== 106_002_grace_count_watchdog_timer_01
+  unchanged — already precise
+
+=== 106_003_recurring_watchdog_timer_01
+  unchanged — already precise
+
+=== 106_004_escalating_warn_then_timeout_watchdog_01
+  unchanged — already precise
+
+=== 107_001_event_aggregator_with_flushing_01
+  unchanged — already precise
+
+=== 107_002_keyed_event_aggregator_with_per_key_batching_01
+  IMPROVED — blind solve green (17/17)
+
+=== 107_003_weighted_event_aggregator_with_byte_budget_01
+  unchanged — already precise
+
+=== 107_004_debounced_event_aggregator_with_max_wait_01
+  unchanged — already precise
+
+=== 108_001_bidirectional_map_genserver_01
+  unchanged — already precise
+
+=== 108_002_bidirectional_multimap_many_to_many_01
+  unchanged — already precise
+
+=== 108_003_capacity_bounded_bimap_with_lru_eviction_01
+  unchanged — already precise
+
+=== 108_004_priority_resolved_bimap_01
+  unchanged — already precise
+
+=== 109_001_task_dependency_resolver_and_executor_01
+  unchanged — already precise
+
+=== 109_002_data_flow_task_runner_01
+  unchanged — already precise
+
+=== 109_003_fail_fast_task_runner_with_skip_propagation_01
+  unchanged — already precise
+
+=== 109_004_bounded_concurrency_task_scheduler_01
+  IMPROVED — blind solve green (18/18)
+
+=== 110_001_rolling_percentile_calculator_01
+  unchanged — already precise
+
+=== 110_002_histogram_based_approximate_rolling_percentile_01
+  unchanged — already precise
+
+=== 110_003_sla_percentile_monitor_with_inverse_queries_01
+  unchanged — already precise
+
+=== 110_004_time_decay_weighted_rolling_percentile_01
+  unchanged — already precise
+
+=== 131_001_streaming_json_parser_for_large_files_01
+  unchanged — already precise
+
+=== 131_002_lazy_streaming_ndjson_parser_01
+  IMPROVED — blind solve green (11/11)
+
+=== 131_003_parallel_streaming_json_array_parser_01
+  unchanged — already precise
+
+=== 131_004_resumable_streaming_json_array_parser_with_error_budget_01
+  unchanged — already precise
+
+=== 134_001_schema_inference_from_csv_01
+  unchanged — already precise
+
+=== 134_002_nullable_unique_column_profiler_01
+  unchanged — already precise
+
+=== 134_003_chunked_merge_based_schema_inference_01
+  unchanged — already precise
+
+=== 134_004_widening_lattice_schema_inference_01
+  unchanged — already precise
+
+=== 623_001_mini_elasticsearch_like_inverted_index_01
+  IMPROVED — blind solve green (32/32)
+
+=== 623_002_boolean_phrase_query_inverted_index_01
+  unchanged — already precise
+
+=== 623_003_bm25_ranked_inverted_index_01
+  IMPROVED — blind solve green (28/28)
+
+=== 623_004_fuzzy_edit_distance_inverted_index_01
+  IMPROVED — blind solve green (25/25)
+
+=== 624_001_mini_git_like_object_store_01
+
+07:16:37.295 [warning] usage limit / out of credits on precision_verify (624_001_mini_git_like_object_store_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+
+07:31:39.417 [warning] usage limit / out of credits on precision_verify (624_001_mini_git_like_object_store_01) — waiting 900000ms (attempt 2, ~15 min waited so far)
+
+07:46:41.098 [warning] usage limit / out of credits on precision_verify (624_001_mini_git_like_object_store_01) — waiting 900000ms (attempt 3, ~30 min waited so far)
+
+08:01:42.892 [warning] usage limit / out of credits on precision_verify (624_001_mini_git_like_object_store_01) — waiting 900000ms (attempt 4, ~45 min waited so far)
+
+08:16:44.738 [warning] usage limit / out of credits on precision_verify (624_001_mini_git_like_object_store_01) — waiting 900000ms (attempt 5, ~60 min waited so far)
+
+08:31:46.555 [warning] usage limit / out of credits on precision_verify (624_001_mini_git_like_object_store_01) — waiting 900000ms (attempt 6, ~75 min waited so far)
+
+08:46:48.337 [warning] usage limit / out of credits on precision_verify (624_001_mini_git_like_object_store_01) — waiting 900000ms (attempt 7, ~90 min waited so far)
+
+09:01:50.249 [warning] usage limit / out of credits on precision_verify (624_001_mini_git_like_object_store_01) — waiting 900000ms (attempt 8, ~105 min waited so far)
+
+09:16:51.971 [warning] usage limit / out of credits on precision_verify (624_001_mini_git_like_object_store_01) — waiting 900000ms (attempt 9, ~120 min waited so far)
+
+09:31:53.741 [warning] usage limit / out of credits on precision_verify (624_001_mini_git_like_object_store_01) — waiting 900000ms (attempt 10, ~135 min waited so far)
+
+09:46:55.452 [warning] usage limit / out of credits on precision_verify (624_001_mini_git_like_object_store_01) — waiting 900000ms (attempt 11, ~150 min waited so far)
+  IMPROVED — blind solve green (23/23)
+
+=== 624_002_merge_commit_dag_with_topological_log_and_merge_base_01
+  REJECTED (blind red): test log walks a linear chain newest-to-oldest
+
+=== 624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_01
+  IMPROVED — blind solve green (18/18)
+
+=== 624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01
+  IMPROVED — blind solve green (34/34)
+
+=== 625_001_mini_s3_like_object_storage_01
+  IMPROVED — blind solve green (47/47)
+
+=== 625_002_versioned_object_store_with_delete_markers_01
+  IMPROVED — blind solve green (35/35)
+
+=== 625_003_lifecycle_ttl_object_store_with_lazy_expiration_01
+  IMPROVED — blind solve green (30/30)
+
+=== 625_004_conditional_write_object_store_with_etags_01
+  unchanged — already precise
+
+=== 626_001_mini_prometheus_like_time_series_db_01
+  IMPROVED — blind solve green (23/23)
+
+=== 626_002_pre_aggregated_rollup_time_series_db_01
+  IMPROVED — blind solve green (21/21)
+
+=== 626_003_reset_aware_counter_time_series_db_01
+  IMPROVED — blind solve green (22/22)
+
+=== 626_004_sharded_concurrent_time_series_db_01
+  IMPROVED — blind solve green (40/40)
+
+prompt precision summary: %{unchanged: 156, improved: 151, needs_triage: 17}
+IMPROVED prompts need their child embeds cascaded — run:
+  mix run scripts/resync_embeds.exs -- --wt-all --apply
+  mix run scripts/resync_bugfix_embeds.exs -- --apply
+  mix run scripts/resync_tfim_embeds.exs -- --apply
+  mix run scripts/resync_adapt_embeds.exs -- --apply
+  elixir scripts/check_embeds.exs
+(prompt-only edits: no pair invalidation, no module-FIM gold impact).
+

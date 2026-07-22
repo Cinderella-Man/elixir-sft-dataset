@@ -1,0 +1,1556 @@
+05:14:07.508 [info] VARIATION 098_004_audience_bound_token_with_validity_window_01: Audience-Bound Token with Validity Window
+05:14:07.508 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+05:14:07.508 [debug] claude -p USER prompt:
+Write me an Elixir module called `ScopedToken` that generates and validates
+signed tokens that are **bound to a specific audience** and carry a **validity
+window** with both a not-before time and an expiry — no database or persistent
+state. A token issued for one audience must not verify when presented for a
+different audience, and a token may be issued so that it only becomes valid at
+some point in the future.
+
+I need these two functions in the public API:
+
+- `ScopedToken.generate(payload, secret, audience, ttl_seconds, opts \\ [])`
+  where `payload` is any Elixir term, `secret` is a binary signing key,
+  `audience` is a binary label the token is bound to (for example `"web"` or
+  `"mobile"`), and `ttl_seconds` is a positive integer. It must return a
+  URL-safe binary token (no padding issues, safe to embed in URLs or headers)
+  that encodes the payload, the issue timestamp, a not-before timestamp, the
+  expiration timestamp, the audience, and an HMAC-SHA256 signature over all of
+  that data. The expiration is `issued_at + ttl_seconds`. The not-before
+  timestamp is `issued_at + not_before`, where `not_before` comes from `opts`
+  (see below) and defaults to `0`.
+
+- `ScopedToken.verify(token, secret, expected_audience, opts \\ [])` which
+  decodes and validates the token against `expected_audience`. Return
+  `{:ok, payload}` if the signature is valid, the token's audience matches
+  `expected_audience` exactly, and the current time falls within the validity
+  window (at or after the not-before time and strictly before the expiry).
+  Otherwise return one of:
+  - `{:error, :invalid_signature}` if the token structure parses cleanly but the
+    HMAC does not match.
+  - `{:error, :audience_mismatch}` if the signature is valid but the token's
+    audience does not exactly equal `expected_audience`.
+  - `{:error, :not_yet_valid}` if the signature and audience are fine but the
+    current time is before the not-before time.
+  - `{:error, :expired}` if the signature and audience are fine and the token is
+    within its not-before window but the current time is at or past the expiry.
+  - `{:error, :malformed}` for anything that cannot be decoded at all: bad
+    base64, too short to contain an HMAC, a header that doesn't match the
+    remaining bytes, non-binary input, and so on.
+
+The check order inside `verify` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header (issue time, not-before
+time, expiry time, audience, payload) → HMAC verification → audience match →
+not-before check → expiry check → payload deserialization. Any failure before
+HMAC verification is a structural problem and yields `:malformed`. An HMAC
+mismatch yields `:invalid_signature`. A post-HMAC deserialization failure yields
+`:malformed`.
+
+Precedence matters and follows directly from that order:
+
+- `:invalid_signature` takes precedence over `:audience_mismatch`, `:not_yet_valid`,
+  and `:expired` — the signature is always checked first, so a token verified
+  with the wrong secret returns `:invalid_signature` no matter what its audience
+  or timestamps are.
+- `:audience_mismatch` takes precedence over `:not_yet_valid` and `:expired`, so
+  an expired token presented for the wrong audience returns `:audience_mismatch`.
+- `:not_yet_valid` is checked before `:expired`.
+
+Boundary rules:
+
+- The token becomes valid at exactly its not-before time: the not-before check
+  passes when the current time is greater than or equal to the not-before
+  timestamp (use `>=`).
+- A token whose `expires_at` equals the current time is already expired: the
+  expiry check passes only when the current time is strictly less than the
+  expiry (use `<`, not `<=`).
+- With the default `not_before` of `0`, the not-before timestamp equals the
+  issue time, so the token is immediately valid.
+
+Both functions take an optional `opts` keyword. In `verify`, the only
+recognized key is `:clock`, a zero-arity function returning a Unix epoch second.
+In `generate`, two keys are recognized: `:clock` (same meaning) and
+`:not_before`, a non-negative integer number of seconds after the issue time
+before which the token is not valid (default `0`). When `:clock` is omitted, the
+current time is read from `System.os_time(:second)`. The clock is purely a test
+seam for deterministic testing — in production the default applies.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Use `Base.url_encode64/2` with `padding: false` so the output is URL-safe
+  without `=` characters.
+- The signed region must cover all fields (payload bytes + issue time +
+  not-before time + expiry time + the audience, plus any length prefixes you
+  include for framing) so that none of them — including the audience — can be
+  tampered with independently.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Deserialize the payload with `:erlang.binary_to_term/2` using the `[:safe]`
+  option.
+- Do not use any external dependencies — only the Elixir standard library and
+  OTP.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+05:14:46.819 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule ScopedToken do
+  @moduledoc """
+  Generation and validation of signed, audience-bound tokens with a validity
+  window, backed only by an HMAC-SHA256 signature — no database or persistent
+  state.
+
+  A token binds an arbitrary Elixir payload to:
+
+    * an **audience** label (for example `"web"` or `"mobile"`), so a token
+      issued for one audience will not verify for another, and
+    * a **validity window** with both a not-before time and an expiry, so a
+      token can be issued to become valid only at some point in the future and
+      to stop being valid once it expires.
+
+  The wire format is a URL-safe (unpadded) Base64 encoding of:
+
+      <<
+        issued_at::64,
+        not_before_at::64,
+        expires_at::64,
+        aud_len::32, audience::binary,
+        payload_len::32, payload::binary,
+        mac::binary-size(32)
+      >>
+
+  The 32-byte trailing MAC is an HMAC-SHA256 over every preceding byte, so the
+  audience, all three timestamps, the payload and their length prefixes are all
+  covered by the signature and cannot be tampered with independently.
+  """
+
+  @mac_size 32
+
+  @typedoc "A zero-arity function returning a Unix epoch second."
+  @type clock :: (-> integer())
+
+  @doc """
+  Generate a URL-safe signed token.
+
+  `payload` is any Elixir term, `secret` is the binary HMAC key, `audience` is
+  the binary label the token is bound to, and `ttl_seconds` is a positive
+  integer number of seconds until expiry.
+
+  The expiration is `issued_at + ttl_seconds`. The not-before timestamp is
+  `issued_at + not_before`, where `not_before` comes from `opts` and defaults
+  to `0` (making the token immediately valid).
+
+  ## Options
+
+    * `:clock` — a zero-arity function returning a Unix epoch second. Defaults
+      to `System.os_time(:second)`. This is a test seam only.
+    * `:not_before` — a non-negative integer number of seconds after the issue
+      time before which the token is not valid. Defaults to `0`.
+
+  Returns the token as a URL-safe binary with no padding characters.
+  """
+  @spec generate(term(), binary(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, secret, audience, ttl_seconds, opts \\ [])
+      when is_binary(secret) and is_binary(audience) and is_integer(ttl_seconds) and
+             ttl_seconds > 0 and is_list(opts) do
+    not_before = Keyword.get(opts, :not_before, 0)
+
+    unless is_integer(not_before) and not_before >= 0 do
+      raise ArgumentError, ":not_before must be a non-negative integer"
+    end
+
+    issued_at = now(opts)
+    not_before_at = issued_at + not_before
+    expires_at = issued_at + ttl_seconds
+
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<
+        issued_at::64,
+        not_before_at::64,
+        expires_at::64,
+        byte_size(audience)::32,
+        audience::binary,
+        byte_size(payload_bin)::32,
+        payload_bin::binary
+      >>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, signed)
+    Base.url_encode64(signed <> mac, padding: false)
+  end
+
+  @doc """
+  Decode and validate `token` against `expected_audience`.
+
+  Returns `{:ok, payload}` when the signature is valid, the token's audience
+  exactly equals `expected_audience`, and the current time is within the
+  validity window (at or after the not-before time and strictly before the
+  expiry).
+
+  Otherwise returns one of `{:error, reason}` where `reason` is:
+
+    * `:invalid_signature` — the structure parses but the HMAC does not match.
+    * `:audience_mismatch` — signature valid, but audience differs.
+    * `:not_yet_valid` — signature and audience fine, but before not-before.
+    * `:expired` — signature and audience fine and past the not-before window,
+      but at or past the expiry.
+    * `:malformed` — anything that cannot be decoded at all (bad base64, too
+      short, header not matching the remaining bytes, non-binary input, or a
+      post-HMAC payload deserialization failure).
+
+  The checks run in this exact order: base64 decode, split off the trailing
+  32-byte MAC, structural parse of the header, HMAC verification, audience
+  match, not-before check, expiry check, payload deserialization.
+
+  ## Options
+
+    * `:clock` — a zero-arity function returning a Unix epoch second. Defaults
+      to `System.os_time(:second)`. This is a test seam only.
+  """
+  @spec verify(binary(), binary(), binary(), keyword()) ::
+          {:ok, term()}
+          | {:error,
+             :invalid_signature
+             | :audience_mismatch
+             | :not_yet_valid
+             | :expired
+             | :malformed}
+  def verify(token, secret, expected_audience, opts \\ [])
+      when is_binary(secret) and is_binary(expected_audience) and is_list(opts) do
+    with true <- is_binary(token) or {:error, :malformed},
+         {:ok, decoded} <- decode(token),
+         {:ok, signed, mac} <- split_mac(decoded),
+         {:ok, fields} <- parse(signed),
+         :ok <- check_mac(secret, signed, mac),
+         :ok <- check_audience(fields.audience, expected_audience),
+         :ok <- check_not_before(fields.not_before_at, opts),
+         :ok <- check_expiry(fields.expires_at, opts),
+         {:ok, payload} <- deserialize(fields.payload) do
+      {:ok, payload}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # -- internal helpers ------------------------------------------------------
+
+  @spec now(keyword()) :: integer()
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      nil -> System.os_time(:second)
+      clock when is_function(clock, 0) -> clock.()
+    end
+  end
+
+  @spec decode(binary()) :: {:ok, binary()} | {:error, :malformed}
+  defp decode(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, decoded} -> {:ok, decoded}
+      :error -> {:error, :malformed}
+    end
+  end
+
+  @spec split_mac(binary()) :: {:ok, binary(), binary()} | {:error, :malformed}
+  defp split_mac(decoded) when byte_size(decoded) < @mac_size do
+    {:error, :malformed}
+  end
+
+  defp split_mac(decoded) do
+    signed_size = byte_size(decoded) - @mac_size
+    <<signed::binary-size(signed_size), mac::binary-size(@mac_size)>> = decoded
+    {:ok, signed, mac}
+  end
+
+  @spec parse(binary()) :: {:ok, map()} | {:error, :malformed}
+  defp parse(<<
+         issued_at::64,
+         not_before_at::64,
+         expires_at::64,
+         aud_len::32,
+         audience::binary-size(aud_len),
+         payload_len::32,
+         payload::binary-size(payload_len)
+       >>) do
+    {:ok,
+     %{
+       issued_at: issued_at,
+       not_before_at: not_before_at,
+       expires_at: expires_at,
+       audience: audience,
+       payload: payload
+     }}
+  end
+
+  defp parse(_other), do: {:error, :malformed}
+
+  @spec check_mac(binary(), binary(), binary()) :: :ok | {:error, :invalid_signature}
+  defp check_mac(secret, signed, mac) do
+    expected = :crypto.mac(:hmac, :sha256, secret, signed)
+
+    if secure_compare(expected, mac) do
+      :ok
+    else
+      {:error, :invalid_signature}
+    end
+  end
+
+  @spec check_audience(binary(), binary()) :: :ok | {:error, :audience_mismatch}
+  defp check_audience(audience, expected_audience) do
+    if secure_compare(audience, expected_audience) do
+      :ok
+    else
+      {:error, :audience_mismatch}
+    end
+  end
+
+  @spec check_not_before(integer(), keyword()) :: :ok | {:error, :not_yet_valid}
+  defp check_not_before(not_before_at, opts) do
+    if now(opts) >= not_before_at do
+      :ok
+    else
+      {:error, :not_yet_valid}
+    end
+  end
+
+  @spec check_expiry(integer(), keyword()) :: :ok | {:error, :expired}
+  defp check_expiry(expires_at, opts) do
+    if now(opts) < expires_at do
+      :ok
+    else
+      {:error, :expired}
+    end
+  end
+
+  @spec deserialize(binary()) :: {:ok, term()} | {:error, :malformed}
+  defp deserialize(payload) do
+    {:ok, :erlang.binary_to_term(payload, [:safe])}
+  rescue
+    ArgumentError -> {:error, :malformed}
+  end
+
+  # Constant-time comparison: compares every byte without short-circuiting on
+  # the first difference. Returns `false` immediately only  (truncated)
+05:14:46.819 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5788, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5788, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5788, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5788, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 3467, "type" => "message"}], "output_tokens" => 3467, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+05:14:46.834 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_004_audience_bound_token_with_validity_window_01 solution.ex
+05:14:47.508 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":254,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_004_audience_bound_token_with_validity_window_01/solution.ex","task":"098_004_audience_bound_token_with_validity_window_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-12T03:14:47.485748Z"}
+05:14:47.509 [info] cycle 098_004_audience_bound_token_with_validity_window_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+05:14:47.509 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+05:14:47.509 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ScopedToken` that generates and validates
+signed tokens that are **bound to a specific audience** and carry a **validity
+window** with both a not-before time and an expiry — no database or persistent
+state. A token issued for one audience must not verify when presented for a
+different audience, and a token may be issued so that it only becomes valid at
+some point in the future.
+
+I need these two functions in the public API:
+
+- `ScopedToken.generate(payload, secret, audience, ttl_seconds, opts \\ [])`
+  where `payload` is any Elixir term, `secret` is a binary signing key,
+  `audience` is a binary label the token is bound to (for example `"web"` or
+  `"mobile"`), and `ttl_seconds` is a positive integer. It must return a
+  URL-safe binary token (no padding issues, safe to embed in URLs or headers)
+  that encodes the payload, the issue timestamp, a not-before timestamp, the
+  expiration timestamp, the audience, and an HMAC-SHA256 signature over all of
+  that data. The expiration is `issued_at + ttl_seconds`. The not-before
+  timestamp is `issued_at + not_before`, where `not_before` comes from `opts`
+  (see below) and defaults to `0`.
+
+- `ScopedToken.verify(token, secret, expected_audience, opts \\ [])` which
+  decodes and validates the token against `expected_audience`. Return
+  `{:ok, payload}` if the signature is valid, the token's audience matches
+  `expected_audience` exactly, and the current time falls within the validity
+  window (at or after the not-before time and strictly before the expiry).
+  Otherwise return one of:
+  - `{:error, :invalid_signature}` if the token structure parses cleanly but the
+    HMAC does not match.
+  - `{:error, :audience_mismatch}` if the signature is valid but the token's
+    audience does not exactly equal `expected_audience`.
+  - `{:error, :not_yet_valid}` if the signature and audience are fine but the
+    current time is before the not-before time.
+  - `{:error, :expired}` if the signature and audience are fine and the token is
+    within its not-before window but the current time is at or past the expiry.
+  - `{:error, :malformed}` for anything that cannot be decoded at all: bad
+    base64, too short to contain an HMAC, a header that doesn't match the
+    remaining bytes, non-binary input, and so on.
+
+The check order inside `verify` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header (issue time, not-before
+time, expiry time, audience, payload) → HMAC verification → audience match →
+not-before check → expiry check → payload deserialization. Any failure before
+HMAC verification is a structural problem and yields `:malformed`. An HMAC
+mismatch yields `:invalid_signature`. A post-HMAC deserialization failure yields
+`:malformed`.
+
+Precedence matters and follows directly from that order:
+
+- `:invalid_signature` takes precedence over `:audience_mismatch`, `:not_yet_valid`,
+  and `:expired` — the signature is always checked first, so a token verified
+  with the wrong secret returns `:invalid_signature` no matter what its audience
+  or timestamps are.
+- `:audience_mismatch` takes precedence over `:not_yet_valid` and `:expired`, so
+  an expired token presented for the wrong audience returns `:audience_mismatch`.
+- `:not_yet_valid` is checked before `:expired`.
+
+Boundary rules:
+
+- The token becomes valid at exactly its not-before time: the not-before check
+  passes when the current time is greater than or equal to the not-before
+  timestamp (use `>=`).
+- A token whose `expires_at` equals the current time is already expired: the
+  expiry check passes only when the current time is strictly less than the
+  expiry (use `<`, not `<=`).
+- With the default `not_before` of `0`, the not-before timestamp equals the
+  issue time, so the token is immediately valid.
+
+Both functions take an optional `opts` keyword. In `verify`, the only
+recognized key is `:clock`, a zero-arity function returning a Unix epoch second.
+In `generate`, two keys are recognized: `:clock` (same meaning) and
+`:not_before`, a non-negative integer number of seconds after the issue time
+before which the token is not valid (default `0`). When `:clock` is omitted, the
+current time is read from `System.os_time(:second)`. The clock is purely a test
+seam for deterministic testing — in production the default applies.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Use `Base.url_encode64/2` with `padding: false` so the output is URL-safe
+  without `=` characters.
+- The signed region must cover all fields (payload bytes + issue time +
+  not-before time + expiry time + the audience, plus any length prefixes you
+  include for framing) so that none of them — including the audience — can be
+  tampered with independently.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Deserialize the payload with `:erlang.binary_to_term/2` using the `[:safe]`
+  option.
+- Do not use any external dependencies — only the Elixir standard library and
+  OTP.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule ScopedToken do
+  @moduledoc """
+  Generation and validation of signed, audience-bound tokens with a validity
+  window, backed only by an HMAC-SHA256 signature — no database or persistent
+  state.
+
+  A token binds an arbitrary Elixir payload to:
+
+    * an **audience** label (for example `"web"` or `"mobile"`), so a token
+      issued for one audience will not verify for another, and
+    * a **validity window** with both a not-before time and an expiry, so a
+      token can be issued to become valid only at some point in the future and
+      to stop being valid once it expires.
+
+  The wire format is a URL-safe (unpadded) Base64 encoding of:
+
+      <<
+        issued_at::64,
+        not_before_at::64,
+        expires_at::64,
+        aud_len::32, audience::binary,
+        payload_len::32, payload::binary,
+        mac::binary-size(32)
+      >>
+
+  The 32-byte trailing MAC is an HMAC-SHA256 over every preceding byte, so the
+  audience, all three timestamps, the payload and their length prefixes are all
+  covered by the signature and cannot be tampered with independently.
+  """
+
+  @mac_size 32
+
+  @typedoc "A zero-arity function returning a Unix epoch second."
+  @type clock :: (-> integer())
+
+  @doc """
+  Generate a URL-safe signed token.
+
+  `payload` is any Elixir term, `secret` is the binary HMAC key, `audience` is
+  the binary label the token is bound to, and `ttl_seconds` is a positive
+  integer number of seconds until expiry.
+
+  The expiration is `issued_at + ttl_seconds`. The not-before timestamp is
+  `issued_at + not_before`, where `not_before` comes from `opts` and defaults
+  to `0` (making the token immediately valid).
+
+  ## Options
+
+    * `:clock` — a zero-arity function returning  (truncated)
+05:15:51.488 [debug] claude -p RESULT (stop="end_turn"):
+The compile warning comes from `is_binary(token) or {:error, :malformed}` in `verify/4`: on OTP 27 / Elixir 1.18 the type checker flags `or` with a non-boolean (`{:error, :malformed}` is a tuple) operand. I'll replace it with a proper guarded helper clause.
+
+<file path="solution.ex">
+defmodule ScopedToken do
+  @moduledoc """
+  Generation and validation of signed, audience-bound tokens with a validity
+  window, backed only by an HMAC-SHA256 signature — no database or persistent
+  state.
+
+  A token binds an arbitrary Elixir payload to:
+
+    * an **audience** label (for example `"web"` or `"mobile"`), so a token
+      issued for one audience will not verify for another, and
+    * a **validity window** with both a not-before time and an expiry, so a
+      token can be issued to become valid only at some point in the future and
+      to stop being valid once it expires.
+
+  The wire format is a URL-safe (unpadded) Base64 encoding of:
+
+      <<
+        issued_at::64,
+        not_before_at::64,
+        expires_at::64,
+        aud_len::32, audience::binary,
+        payload_len::32, payload::binary,
+        mac::binary-size(32)
+      >>
+
+  The 32-byte trailing MAC is an HMAC-SHA256 over every preceding byte, so the
+  audience, all three timestamps, the payload and their length prefixes are all
+  covered by the signature and cannot be tampered with independently.
+  """
+
+  @mac_size 32
+
+  @typedoc "A zero-arity function returning a Unix epoch second."
+  @type clock :: (-> integer())
+
+  @doc """
+  Generate a URL-safe signed token.
+
+  `payload` is any Elixir term, `secret` is the binary HMAC key, `audience` is
+  the binary label the token is bound to, and `ttl_seconds` is a positive
+  integer number of seconds until expiry.
+
+  The expiration is `issued_at + ttl_seconds`. The not-before timestamp is
+  `issued_at + not_before`, where `not_before` comes from `opts` and defaults
+  to `0` (making the token immediately valid).
+
+  ## Options
+
+    * `:clock` — a zero-arity function returning a Unix epoch second. Defaults
+      to `System.os_time(:second)`. This is a test seam only.
+    * `:not_before` — a non-negative integer number of seconds after the issue
+      time before which the token is not valid. Defaults to `0`.
+
+  Returns the token as a URL-safe binary with no padding characters.
+  """
+  @spec generate(term(), binary(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, secret, audience, ttl_seconds, opts \\ [])
+      when is_binary(secret) and is_binary(audience) and is_integer(ttl_seconds) and
+             ttl_seconds > 0 and is_list(opts) do
+    not_before = Keyword.get(opts, :not_before, 0)
+
+    unless is_integer(not_before) and not_before >= 0 do
+      raise ArgumentError, ":not_before must be a non-negative integer"
+    end
+
+    issued_at = now(opts)
+    not_before_at = issued_at + not_before
+    expires_at = issued_at + ttl_seconds
+
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<
+        issued_at::64,
+        not_before_at::64,
+        expires_at::64,
+        byte_size(audience)::32,
+        audience::binary,
+        byte_size(payload_bin)::32,
+        payload_bin::binary
+      >>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, signed)
+    Base.url_encode64(signed <> mac, padding: false)
+  end
+
+  @doc """
+  Decode and validate `token` against `expected_audience`.
+
+  Returns `{:ok, payload}` when the signature is valid, the token's audience
+  exactly equals `expected_audience`, and the current time is within the
+  validity window (at or after the not-before time and strictly before the
+  expiry).
+
+  Otherwise returns one of `{:error, reason}` where `reason` is:
+
+    * `:invalid_signature` — the structure parses but the HMAC does not match.
+    * `:audience_mismatch` — signature valid, but audience differs.
+    * `:not_yet_valid` — signature and audience fine, but before not-before.
+    * `:expired` — signature and audience fine and past the not-before window,
+      but at or past the expiry.
+    * `:malformed` — anything that cannot be decoded at all (bad base64, too
+      short, header not matching the remaining bytes, non-binary input, or a
+      post-HMAC payload deserialization failure).
+
+  The checks run in this exact order: base64 decode, split off the trailing
+  32-byte MAC, structural parse of the header, HMAC verification, audience
+  match, not-before check, expiry check, payload deserialization.
+
+  ## Options
+
+    * `:clock` — a zero-arity function returning a Unix epoch second. Defaults
+      to `System.os_time(:second)`. This is a test seam only.
+  """
+  @spec verify(binary(), binary(), binary(), keyword()) ::
+          {:ok, term()}
+          | {:error,
+             :invalid_signature
+             | :audience_mismatch
+             | :not_yet_valid
+             | :expired
+             | :malformed}
+  def verify(token, secret, expected_audience, opts \\ [])
+      when is_binary(secret) and is_binary(expected_audience) and is_list(opts) do
+    with :ok <- ensure_binary(token),
+         {:ok, decoded} <- decode(token),
+         {:ok, signed, mac} <- split_mac(decoded),
+         {:ok, fields} <- parse(signed),
+         :ok <- check_mac(secret, signed, mac),
+         :ok <- check_audience(fields.audience, expected_audience),
+         :ok <- check_not_before(fields.not_before_at, opts),
+         :ok <- check_expiry(fields.expires_at, opts),
+         {:ok, payload} <- deserialize(fields.payload) do
+      {:ok, payload}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # -- internal helpers ------------------------------------------------------
+
+  @spec ensure_binary(term()) :: :ok | {:error, :malformed}
+  defp ensure_binary(token) when is_binary(token), do: :ok
+  defp ensure_binary(_token), do: {:error, :malformed}
+
+  @spec now(keyword()) :: integer()
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      nil -> System.os_time(:second)
+      clock when is_function(clock, 0) -> clock.()
+    end
+  end
+
+  @spec decode(binary()) :: {:ok, binary()} | {:error, :malformed}
+  defp decode(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, decoded} -> {:ok, decoded}
+      :error -> {:error, :malformed}
+    end
+  end
+
+  @spec split_mac(binary()) :: {:ok, binary(), binary()} | {:error, :malformed}
+  defp split_mac(decoded) when byte_size(decoded) < @mac_size do
+    {:error, :malformed}
+  end
+
+  defp split_mac(decoded) do
+    signed_size = byte_size(decoded) - @mac_size
+    <<signed::binary-size(signed_size), mac::binary-size(@mac_size)>> = decoded
+    {:ok, signed, mac}
+  end
+
+  @spec parse(binary()) :: {:ok, map()} | {:error, :malformed}
+  defp parse(<<
+         issued_at::64,
+         not_before_at::64,
+         expires_at::64,
+         aud_len::32,
+         audience::binary-size(aud_len),
+         payload_len::32,
+         payload::binary-size(payload_len)
+       >>) do
+    {:ok,
+     %{
+       issued_at: issued_at,
+       not_before_at: not_before_at,
+       expires_at: expires_at,
+       audience: audience,
+       payload: payload
+     }}
+  end
+
+  defp parse(_other), do: {:error, :malformed}
+
+  @spec check_mac(binary(), binary(), binary()) :: :ok | {:error, :invalid_signature}
+  defp check_mac(secret, signed, mac) do
+    expected = :crypto.mac(:hmac, :sha256, secret, signed)
+
+    if secure_compare(expected, mac) do
+      :ok
+    else
+      {:error, :invalid_signature}
+    end
+  end
+
+  @spec check_audience(binary(), binary()) :: :ok | {:error, :audience_mismatch}
+  defp check_audience(audience, expected_audience) do
+    if secure_compare(audience, expected_audience) do
+      :ok
+    else
+      {:error, :audience_mismatch}
+    end
+  end
+
+  @spec check_not_before(integer(), keyword()) :: :ok | {:error, :not_yet_valid}
+  defp check_not_before(not_before_at, opts) do
+    if now(opts) >= not_before_at do
+      :ok
+    else
+      {:error, :not_yet_valid}
+    end
+  end
+
+  @spec check_expiry(integer(), keyword()) :: :ok | {:error, :expired}
+  defp check_expiry(expires_at, opts) do
+    if now(opts) < expires_ (truncated)
+05:15:51.488 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12098, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12098, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12098, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12098, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 5598, "type" => "message"}], "output_tokens" => 5598, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+05:15:51.511 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_004_audience_bound_token_with_validity_window_01 solution.ex
+05:15:52.166 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":258,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_004_audience_bound_token_with_validity_window_01/solution.ex","task":"098_004_audience_bound_token_with_validity_window_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-12T03:15:52.144648Z"}
+05:15:52.168 [info] cycle 098_004_audience_bound_token_with_validity_window_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+05:15:52.168 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+05:15:52.168 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ScopedToken` that generates and validates
+signed tokens that are **bound to a specific audience** and carry a **validity
+window** with both a not-before time and an expiry — no database or persistent
+state. A token issued for one audience must not verify when presented for a
+different audience, and a token may be issued so that it only becomes valid at
+some point in the future.
+
+I need these two functions in the public API:
+
+- `ScopedToken.generate(payload, secret, audience, ttl_seconds, opts \\ [])`
+  where `payload` is any Elixir term, `secret` is a binary signing key,
+  `audience` is a binary label the token is bound to (for example `"web"` or
+  `"mobile"`), and `ttl_seconds` is a positive integer. It must return a
+  URL-safe binary token (no padding issues, safe to embed in URLs or headers)
+  that encodes the payload, the issue timestamp, a not-before timestamp, the
+  expiration timestamp, the audience, and an HMAC-SHA256 signature over all of
+  that data. The expiration is `issued_at + ttl_seconds`. The not-before
+  timestamp is `issued_at + not_before`, where `not_before` comes from `opts`
+  (see below) and defaults to `0`.
+
+- `ScopedToken.verify(token, secret, expected_audience, opts \\ [])` which
+  decodes and validates the token against `expected_audience`. Return
+  `{:ok, payload}` if the signature is valid, the token's audience matches
+  `expected_audience` exactly, and the current time falls within the validity
+  window (at or after the not-before time and strictly before the expiry).
+  Otherwise return one of:
+  - `{:error, :invalid_signature}` if the token structure parses cleanly but the
+    HMAC does not match.
+  - `{:error, :audience_mismatch}` if the signature is valid but the token's
+    audience does not exactly equal `expected_audience`.
+  - `{:error, :not_yet_valid}` if the signature and audience are fine but the
+    current time is before the not-before time.
+  - `{:error, :expired}` if the signature and audience are fine and the token is
+    within its not-before window but the current time is at or past the expiry.
+  - `{:error, :malformed}` for anything that cannot be decoded at all: bad
+    base64, too short to contain an HMAC, a header that doesn't match the
+    remaining bytes, non-binary input, and so on.
+
+The check order inside `verify` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header (issue time, not-before
+time, expiry time, audience, payload) → HMAC verification → audience match →
+not-before check → expiry check → payload deserialization. Any failure before
+HMAC verification is a structural problem and yields `:malformed`. An HMAC
+mismatch yields `:invalid_signature`. A post-HMAC deserialization failure yields
+`:malformed`.
+
+Precedence matters and follows directly from that order:
+
+- `:invalid_signature` takes precedence over `:audience_mismatch`, `:not_yet_valid`,
+  and `:expired` — the signature is always checked first, so a token verified
+  with the wrong secret returns `:invalid_signature` no matter what its audience
+  or timestamps are.
+- `:audience_mismatch` takes precedence over `:not_yet_valid` and `:expired`, so
+  an expired token presented for the wrong audience returns `:audience_mismatch`.
+- `:not_yet_valid` is checked before `:expired`.
+
+Boundary rules:
+
+- The token becomes valid at exactly its not-before time: the not-before check
+  passes when the current time is greater than or equal to the not-before
+  timestamp (use `>=`).
+- A token whose `expires_at` equals the current time is already expired: the
+  expiry check passes only when the current time is strictly less than the
+  expiry (use `<`, not `<=`).
+- With the default `not_before` of `0`, the not-before timestamp equals the
+  issue time, so the token is immediately valid.
+
+Both functions take an optional `opts` keyword. In `verify`, the only
+recognized key is `:clock`, a zero-arity function returning a Unix epoch second.
+In `generate`, two keys are recognized: `:clock` (same meaning) and
+`:not_before`, a non-negative integer number of seconds after the issue time
+before which the token is not valid (default `0`). When `:clock` is omitted, the
+current time is read from `System.os_time(:second)`. The clock is purely a test
+seam for deterministic testing — in production the default applies.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Use `Base.url_encode64/2` with `padding: false` so the output is URL-safe
+  without `=` characters.
+- The signed region must cover all fields (payload bytes + issue time +
+  not-before time + expiry time + the audience, plus any length prefixes you
+  include for framing) so that none of them — including the audience — can be
+  tampered with independently.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Deserialize the payload with `:erlang.binary_to_term/2` using the `[:safe]`
+  option.
+- Do not use any external dependencies — only the Elixir standard library and
+  OTP.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule ScopedToken do
+  @moduledoc """
+  Generation and validation of signed, audience-bound tokens with a validity
+  window, backed only by an HMAC-SHA256 signature — no database or persistent
+  state.
+
+  A token binds an arbitrary Elixir payload to:
+
+    * an **audience** label (for example `"web"` or `"mobile"`), so a token
+      issued for one audience will not verify for another, and
+    * a **validity window** with both a not-before time and an expiry, so a
+      token can be issued to become valid only at some point in the future and
+      to stop being valid once it expires.
+
+  The wire format is a URL-safe (unpadded) Base64 encoding of:
+
+      <<
+        issued_at::64,
+        not_before_at::64,
+        expires_at::64,
+        aud_len::32, audience::binary,
+        payload_len::32, payload::binary,
+        mac::binary-size(32)
+      >>
+
+  The 32-byte trailing MAC is an HMAC-SHA256 over every preceding byte, so the
+  audience, all three timestamps, the payload and their length prefixes are all
+  covered by the signature and cannot be tampered with independently.
+  """
+
+  @mac_size 32
+
+  @typedoc "A zero-arity function returning a Unix epoch second."
+  @type clock :: (-> integer())
+
+  @doc """
+  Generate a URL-safe signed token.
+
+  `payload` is any Elixir term, `secret` is the binary HMAC key, `audience` is
+  the binary label the token is bound to, and `ttl_seconds` is a positive
+  integer number of seconds until expiry.
+
+  The expiration is `issued_at + ttl_seconds`. The not-before timestamp is
+  `issued_at + not_before`, where `not_before` comes from `opts` and defaults
+  to `0` (making the token immediately valid).
+
+  ## Options
+
+    * `:clock` — a zero-arity function returning  (truncated)
+05:16:48.339 [debug] claude -p RESULT (stop="end_turn"):
+The compile warning comes from the `@type clock/0` declaration in `solution.ex`: it's defined but never referenced in any spec, so Elixir emits a `type clock/0 is unused` warning. I'll remove that unused type (the doc content it carried is already explained in the option docs).
+
+<file path="solution.ex">
+defmodule ScopedToken do
+  @moduledoc """
+  Generation and validation of signed, audience-bound tokens with a validity
+  window, backed only by an HMAC-SHA256 signature — no database or persistent
+  state.
+
+  A token binds an arbitrary Elixir payload to:
+
+    * an **audience** label (for example `"web"` or `"mobile"`), so a token
+      issued for one audience will not verify for another, and
+    * a **validity window** with both a not-before time and an expiry, so a
+      token can be issued to become valid only at some point in the future and
+      to stop being valid once it expires.
+
+  The wire format is a URL-safe (unpadded) Base64 encoding of:
+
+      <<
+        issued_at::64,
+        not_before_at::64,
+        expires_at::64,
+        aud_len::32, audience::binary,
+        payload_len::32, payload::binary,
+        mac::binary-size(32)
+      >>
+
+  The 32-byte trailing MAC is an HMAC-SHA256 over every preceding byte, so the
+  audience, all three timestamps, the payload and their length prefixes are all
+  covered by the signature and cannot be tampered with independently.
+  """
+
+  @mac_size 32
+
+  @doc """
+  Generate a URL-safe signed token.
+
+  `payload` is any Elixir term, `secret` is the binary HMAC key, `audience` is
+  the binary label the token is bound to, and `ttl_seconds` is a positive
+  integer number of seconds until expiry.
+
+  The expiration is `issued_at + ttl_seconds`. The not-before timestamp is
+  `issued_at + not_before`, where `not_before` comes from `opts` and defaults
+  to `0` (making the token immediately valid).
+
+  ## Options
+
+    * `:clock` — a zero-arity function returning a Unix epoch second. Defaults
+      to `System.os_time(:second)`. This is a test seam only.
+    * `:not_before` — a non-negative integer number of seconds after the issue
+      time before which the token is not valid. Defaults to `0`.
+
+  Returns the token as a URL-safe binary with no padding characters.
+  """
+  @spec generate(term(), binary(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, secret, audience, ttl_seconds, opts \\ [])
+      when is_binary(secret) and is_binary(audience) and is_integer(ttl_seconds) and
+             ttl_seconds > 0 and is_list(opts) do
+    not_before = Keyword.get(opts, :not_before, 0)
+
+    unless is_integer(not_before) and not_before >= 0 do
+      raise ArgumentError, ":not_before must be a non-negative integer"
+    end
+
+    issued_at = now(opts)
+    not_before_at = issued_at + not_before
+    expires_at = issued_at + ttl_seconds
+
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<
+        issued_at::64,
+        not_before_at::64,
+        expires_at::64,
+        byte_size(audience)::32,
+        audience::binary,
+        byte_size(payload_bin)::32,
+        payload_bin::binary
+      >>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, signed)
+    Base.url_encode64(signed <> mac, padding: false)
+  end
+
+  @doc """
+  Decode and validate `token` against `expected_audience`.
+
+  Returns `{:ok, payload}` when the signature is valid, the token's audience
+  exactly equals `expected_audience`, and the current time is within the
+  validity window (at or after the not-before time and strictly before the
+  expiry).
+
+  Otherwise returns one of `{:error, reason}` where `reason` is:
+
+    * `:invalid_signature` — the structure parses but the HMAC does not match.
+    * `:audience_mismatch` — signature valid, but audience differs.
+    * `:not_yet_valid` — signature and audience fine, but before not-before.
+    * `:expired` — signature and audience fine and past the not-before window,
+      but at or past the expiry.
+    * `:malformed` — anything that cannot be decoded at all (bad base64, too
+      short, header not matching the remaining bytes, non-binary input, or a
+      post-HMAC payload deserialization failure).
+
+  The checks run in this exact order: base64 decode, split off the trailing
+  32-byte MAC, structural parse of the header, HMAC verification, audience
+  match, not-before check, expiry check, payload deserialization.
+
+  ## Options
+
+    * `:clock` — a zero-arity function returning a Unix epoch second. Defaults
+      to `System.os_time(:second)`. This is a test seam only.
+  """
+  @spec verify(binary(), binary(), binary(), keyword()) ::
+          {:ok, term()}
+          | {:error,
+             :invalid_signature
+             | :audience_mismatch
+             | :not_yet_valid
+             | :expired
+             | :malformed}
+  def verify(token, secret, expected_audience, opts \\ [])
+      when is_binary(secret) and is_binary(expected_audience) and is_list(opts) do
+    with :ok <- ensure_binary(token),
+         {:ok, decoded} <- decode(token),
+         {:ok, signed, mac} <- split_mac(decoded),
+         {:ok, fields} <- parse(signed),
+         :ok <- check_mac(secret, signed, mac),
+         :ok <- check_audience(fields.audience, expected_audience),
+         :ok <- check_not_before(fields.not_before_at, opts),
+         :ok <- check_expiry(fields.expires_at, opts),
+         {:ok, payload} <- deserialize(fields.payload) do
+      {:ok, payload}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # -- internal helpers ------------------------------------------------------
+
+  @spec ensure_binary(term()) :: :ok | {:error, :malformed}
+  defp ensure_binary(token) when is_binary(token), do: :ok
+  defp ensure_binary(_token), do: {:error, :malformed}
+
+  @spec now(keyword()) :: integer()
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      nil -> System.os_time(:second)
+      clock when is_function(clock, 0) -> clock.()
+    end
+  end
+
+  @spec decode(binary()) :: {:ok, binary()} | {:error, :malformed}
+  defp decode(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, decoded} -> {:ok, decoded}
+      :error -> {:error, :malformed}
+    end
+  end
+
+  @spec split_mac(binary()) :: {:ok, binary(), binary()} | {:error, :malformed}
+  defp split_mac(decoded) when byte_size(decoded) < @mac_size do
+    {:error, :malformed}
+  end
+
+  defp split_mac(decoded) do
+    signed_size = byte_size(decoded) - @mac_size
+    <<signed::binary-size(signed_size), mac::binary-size(@mac_size)>> = decoded
+    {:ok, signed, mac}
+  end
+
+  @spec parse(binary()) :: {:ok, map()} | {:error, :malformed}
+  defp parse(<<
+         issued_at::64,
+         not_before_at::64,
+         expires_at::64,
+         aud_len::32,
+         audience::binary-size(aud_len),
+         payload_len::32,
+         payload::binary-size(payload_len)
+       >>) do
+    {:ok,
+     %{
+       issued_at: issued_at,
+       not_before_at: not_before_at,
+       expires_at: expires_at,
+       audience: audience,
+       payload: payload
+     }}
+  end
+
+  defp parse(_other), do: {:error, :malformed}
+
+  @spec check_mac(binary(), binary(), binary()) :: :ok | {:error, :invalid_signature}
+  defp check_mac(secret, signed, mac) do
+    expected = :crypto.mac(:hmac, :sha256, secret, signed)
+
+    if secure_compare(expected, mac) do
+      :ok
+    else
+      {:error, :invalid_signature}
+    end
+  end
+
+  @spec check_audience(binary(), binary()) :: :ok | {:error, :audience_mismatch}
+  defp check_audience(audience, expected_audience) do
+    if secure_compare(audience, expected_audience) do
+      :ok
+    else
+      {:error, :audience_mismatch}
+    end
+  end
+
+  @spec check_not_before(integer(), keyword()) :: :ok | {:error, :not_yet_valid}
+  defp check_not_before(not_before_at, opts) do
+    if now(opts) >= not_before_at do
+      :ok
+    else
+      {:error, :not_yet_valid}
+    end
+  end
+
+  @spec check_expiry(integer(), keyword()) :: :ok | {:error, :expired}
+  defp check_expiry(expires_at, opts) do
+    if now(opts) < expires_at do
+      :ok
+    else
+      {:error, :expired}
+    end
+  end
+
+  @spec deser (truncated)
+05:16:48.340 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12173, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12173, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12173, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12173, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 5051, "type" => "message"}], "output_tokens" => 5051, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+05:16:48.364 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_004_audience_bound_token_with_validity_window_01 solution.ex
+05:16:49.006 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":255,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_004_audience_bound_token_with_validity_window_01/solution.ex","task":"098_004_audience_bound_token_with_validity_window_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-12T03:16:48.983881Z"}
+05:16:49.008 [info] cycle 098_004_audience_bound_token_with_validity_window_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+05:16:49.008 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+05:16:49.008 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ScopedToken` that generates and validates
+signed tokens that are **bound to a specific audience** and carry a **validity
+window** with both a not-before time and an expiry — no database or persistent
+state. A token issued for one audience must not verify when presented for a
+different audience, and a token may be issued so that it only becomes valid at
+some point in the future.
+
+I need these two functions in the public API:
+
+- `ScopedToken.generate(payload, secret, audience, ttl_seconds, opts \\ [])`
+  where `payload` is any Elixir term, `secret` is a binary signing key,
+  `audience` is a binary label the token is bound to (for example `"web"` or
+  `"mobile"`), and `ttl_seconds` is a positive integer. It must return a
+  URL-safe binary token (no padding issues, safe to embed in URLs or headers)
+  that encodes the payload, the issue timestamp, a not-before timestamp, the
+  expiration timestamp, the audience, and an HMAC-SHA256 signature over all of
+  that data. The expiration is `issued_at + ttl_seconds`. The not-before
+  timestamp is `issued_at + not_before`, where `not_before` comes from `opts`
+  (see below) and defaults to `0`.
+
+- `ScopedToken.verify(token, secret, expected_audience, opts \\ [])` which
+  decodes and validates the token against `expected_audience`. Return
+  `{:ok, payload}` if the signature is valid, the token's audience matches
+  `expected_audience` exactly, and the current time falls within the validity
+  window (at or after the not-before time and strictly before the expiry).
+  Otherwise return one of:
+  - `{:error, :invalid_signature}` if the token structure parses cleanly but the
+    HMAC does not match.
+  - `{:error, :audience_mismatch}` if the signature is valid but the token's
+    audience does not exactly equal `expected_audience`.
+  - `{:error, :not_yet_valid}` if the signature and audience are fine but the
+    current time is before the not-before time.
+  - `{:error, :expired}` if the signature and audience are fine and the token is
+    within its not-before window but the current time is at or past the expiry.
+  - `{:error, :malformed}` for anything that cannot be decoded at all: bad
+    base64, too short to contain an HMAC, a header that doesn't match the
+    remaining bytes, non-binary input, and so on.
+
+The check order inside `verify` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header (issue time, not-before
+time, expiry time, audience, payload) → HMAC verification → audience match →
+not-before check → expiry check → payload deserialization. Any failure before
+HMAC verification is a structural problem and yields `:malformed`. An HMAC
+mismatch yields `:invalid_signature`. A post-HMAC deserialization failure yields
+`:malformed`.
+
+Precedence matters and follows directly from that order:
+
+- `:invalid_signature` takes precedence over `:audience_mismatch`, `:not_yet_valid`,
+  and `:expired` — the signature is always checked first, so a token verified
+  with the wrong secret returns `:invalid_signature` no matter what its audience
+  or timestamps are.
+- `:audience_mismatch` takes precedence over `:not_yet_valid` and `:expired`, so
+  an expired token presented for the wrong audience returns `:audience_mismatch`.
+- `:not_yet_valid` is checked before `:expired`.
+
+Boundary rules:
+
+- The token becomes valid at exactly its not-before time: the not-before check
+  passes when the current time is greater than or equal to the not-before
+  timestamp (use `>=`).
+- A token whose `expires_at` equals the current time is already expired: the
+  expiry check passes only when the current time is strictly less than the
+  expiry (use `<`, not `<=`).
+- With the default `not_before` of `0`, the not-before timestamp equals the
+  issue time, so the token is immediately valid.
+
+Both functions take an optional `opts` keyword. In `verify`, the only
+recognized key is `:clock`, a zero-arity function returning a Unix epoch second.
+In `generate`, two keys are recognized: `:clock` (same meaning) and
+`:not_before`, a non-negative integer number of seconds after the issue time
+before which the token is not valid (default `0`). When `:clock` is omitted, the
+current time is read from `System.os_time(:second)`. The clock is purely a test
+seam for deterministic testing — in production the default applies.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Use `Base.url_encode64/2` with `padding: false` so the output is URL-safe
+  without `=` characters.
+- The signed region must cover all fields (payload bytes + issue time +
+  not-before time + expiry time + the audience, plus any length prefixes you
+  include for framing) so that none of them — including the audience — can be
+  tampered with independently.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Deserialize the payload with `:erlang.binary_to_term/2` using the `[:safe]`
+  option.
+- Do not use any external dependencies — only the Elixir standard library and
+  OTP.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule ScopedToken do
+  @moduledoc """
+  Generation and validation of signed, audience-bound tokens with a validity
+  window, backed only by an HMAC-SHA256 signature — no database or persistent
+  state.
+
+  A token binds an arbitrary Elixir payload to:
+
+    * an **audience** label (for example `"web"` or `"mobile"`), so a token
+      issued for one audience will not verify for another, and
+    * a **validity window** with both a not-before time and an expiry, so a
+      token can be issued to become valid only at some point in the future and
+      to stop being valid once it expires.
+
+  The wire format is a URL-safe (unpadded) Base64 encoding of:
+
+      <<
+        issued_at::64,
+        not_before_at::64,
+        expires_at::64,
+        aud_len::32, audience::binary,
+        payload_len::32, payload::binary,
+        mac::binary-size(32)
+      >>
+
+  The 32-byte trailing MAC is an HMAC-SHA256 over every preceding byte, so the
+  audience, all three timestamps, the payload and their length prefixes are all
+  covered by the signature and cannot be tampered with independently.
+  """
+
+  @mac_size 32
+
+  @doc """
+  Generate a URL-safe signed token.
+
+  `payload` is any Elixir term, `secret` is the binary HMAC key, `audience` is
+  the binary label the token is bound to, and `ttl_seconds` is a positive
+  integer number of seconds until expiry.
+
+  The expiration is `issued_at + ttl_seconds`. The not-before timestamp is
+  `issued_at + not_before`, where `not_before` comes from `opts` and defaults
+  to `0` (making the token immediately valid).
+
+  ## Options
+
+    * `:clock` — a zero-arity function returning a Unix epoch second. Defaults
+      to `System.os_time(:second)`. This is a test seam only.
+    * ` (truncated)
+05:24:28.640 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the failure is a single compile warning. The two most warning-prone constructs in `solution.ex` are the `import Bitwise` placed inside a recursive private clause and the redundant `with ... else` that merely re-wraps `{:error, reason}` values. I'll fully-qualify the `Bitwise` calls (eliminating the local import entirely) and drop the redundant `else` (behavior is identical — an unmatched `<-` value already is the `{:error, reason}` we want), keeping all behavior and house-style requirements intact.
+
+<file path="solution.ex">
+defmodule ScopedToken do
+  @moduledoc """
+  Generation and validation of signed, audience-bound tokens with a validity
+  window, backed only by an HMAC-SHA256 signature — no database or persistent
+  state.
+
+  A token binds an arbitrary Elixir payload to:
+
+    * an **audience** label (for example `"web"` or `"mobile"`), so a token
+      issued for one audience will not verify for another, and
+    * a **validity window** with both a not-before time and an expiry, so a
+      token can be issued to become valid only at some point in the future and
+      to stop being valid once it expires.
+
+  The wire format is a URL-safe (unpadded) Base64 encoding of:
+
+      <<
+        issued_at::64,
+        not_before_at::64,
+        expires_at::64,
+        aud_len::32, audience::binary,
+        payload_len::32, payload::binary,
+        mac::binary-size(32)
+      >>
+
+  The 32-byte trailing MAC is an HMAC-SHA256 over every preceding byte, so the
+  audience, all three timestamps, the payload and their length prefixes are all
+  covered by the signature and cannot be tampered with independently.
+  """
+
+  @mac_size 32
+
+  @doc """
+  Generate a URL-safe signed token.
+
+  `payload` is any Elixir term, `secret` is the binary HMAC key, `audience` is
+  the binary label the token is bound to, and `ttl_seconds` is a positive
+  integer number of seconds until expiry.
+
+  The expiration is `issued_at + ttl_seconds`. The not-before timestamp is
+  `issued_at + not_before`, where `not_before` comes from `opts` and defaults
+  to `0` (making the token immediately valid).
+
+  ## Options
+
+    * `:clock` — a zero-arity function returning a Unix epoch second. Defaults
+      to `System.os_time(:second)`. This is a test seam only.
+    * `:not_before` — a non-negative integer number of seconds after the issue
+      time before which the token is not valid. Defaults to `0`.
+
+  Returns the token as a URL-safe binary with no padding characters.
+  """
+  @spec generate(term(), binary(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, secret, audience, ttl_seconds, opts \\ [])
+      when is_binary(secret) and is_binary(audience) and is_integer(ttl_seconds) and
+             ttl_seconds > 0 and is_list(opts) do
+    not_before = Keyword.get(opts, :not_before, 0)
+
+    unless is_integer(not_before) and not_before >= 0 do
+      raise ArgumentError, ":not_before must be a non-negative integer"
+    end
+
+    issued_at = now(opts)
+    not_before_at = issued_at + not_before
+    expires_at = issued_at + ttl_seconds
+
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<
+        issued_at::64,
+        not_before_at::64,
+        expires_at::64,
+        byte_size(audience)::32,
+        audience::binary,
+        byte_size(payload_bin)::32,
+        payload_bin::binary
+      >>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, signed)
+    Base.url_encode64(signed <> mac, padding: false)
+  end
+
+  @doc """
+  Decode and validate `token` against `expected_audience`.
+
+  Returns `{:ok, payload}` when the signature is valid, the token's audience
+  exactly equals `expected_audience`, and the current time is within the
+  validity window (at or after the not-before time and strictly before the
+  expiry).
+
+  Otherwise returns one of `{:error, reason}` where `reason` is:
+
+    * `:invalid_signature` — the structure parses but the HMAC does not match.
+    * `:audience_mismatch` — signature valid, but audience differs.
+    * `:not_yet_valid` — signature and audience fine, but before not-before.
+    * `:expired` — signature and audience fine and past the not-before window,
+      but at or past the expiry.
+    * `:malformed` — anything that cannot be decoded at all (bad base64, too
+      short, header not matching the remaining bytes, non-binary input, or a
+      post-HMAC payload deserialization failure).
+
+  The checks run in this exact order: base64 decode, split off the trailing
+  32-byte MAC, structural parse of the header, HMAC verification, audience
+  match, not-before check, expiry check, payload deserialization.
+
+  ## Options
+
+    * `:clock` — a zero-arity function returning a Unix epoch second. Defaults
+      to `System.os_time(:second)`. This is a test seam only.
+  """
+  @spec verify(binary(), binary(), binary(), keyword()) ::
+          {:ok, term()}
+          | {:error,
+             :invalid_signature
+             | :audience_mismatch
+             | :not_yet_valid
+             | :expired
+             | :malformed}
+  def verify(token, secret, expected_audience, opts \\ [])
+      when is_binary(secret) and is_binary(expected_audience) and is_list(opts) do
+    with :ok <- ensure_binary(token),
+         {:ok, decoded} <- decode(token),
+         {:ok, signed, mac} <- split_mac(decoded),
+         {:ok, fields} <- parse(signed),
+         :ok <- check_mac(secret, signed, mac),
+         :ok <- check_audience(fields.audience, expected_audience),
+         :ok <- check_not_before(fields.not_before_at, opts),
+         :ok <- check_expiry(fields.expires_at, opts),
+         {:ok, payload} <- deserialize(fields.payload) do
+      {:ok, payload}
+    end
+  end
+
+  # -- internal helpers ------------------------------------------------------
+
+  @spec ensure_binary(term()) :: :ok | {:error, :malformed}
+  defp ensure_binary(token) when is_binary(token), do: :ok
+  defp ensure_binary(_token), do: {:error, :malformed}
+
+  @spec now(keyword()) :: integer()
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      nil -> System.os_time(:second)
+      clock when is_function(clock, 0) -> clock.()
+    end
+  end
+
+  @spec decode(binary()) :: {:ok, binary()} | {:error, :malformed}
+  defp decode(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, decoded} -> {:ok, decoded}
+      :error -> {:error, :malformed}
+    end
+  end
+
+  @spec split_mac(binary()) :: {:ok, binary(), binary()} | {:error, :malformed}
+  defp split_mac(decoded) when byte_size(decoded) < @mac_size do
+    {:error, :malformed}
+  end
+
+  defp split_mac(decoded) do
+    signed_size = byte_size(decoded) - @mac_size
+    <<signed::binary-size(signed_size), mac::binary-size(@mac_size)>> = decoded
+    {:ok, signed, mac}
+  end
+
+  @spec parse(binary()) :: {:ok, map()} | {:error, :malformed}
+  defp parse(<<
+         issued_at::64,
+         not_before_at::64,
+         expires_at::64,
+         aud_len::32,
+         audience::binary-size(aud_len),
+         payload_len::32,
+         payload::binary-size(payload_len)
+       >>) do
+    {:ok,
+     %{
+       issued_at: issued_at,
+       not_before_at: not_before_at,
+       expires_at: expires_at,
+       audience: audience,
+       payload: payload
+     }}
+  end
+
+  defp parse(_other), do: {:error, :malformed}
+
+  @spec check_mac(binary(), binary(), binary()) :: :ok | {:error, :invalid_signature}
+  defp check_mac(secret, signed, mac) do
+    expected = :crypto.mac(:hmac, :sha256, secret, signed)
+
+    if secure_compare(expected, mac) do
+      :ok
+    else
+      {:error, :invalid_signature}
+    end
+  end
+
+  @spec check_audience(binary(), binary()) :: :ok | {:error, :audience_mismatch}
+  defp check_audience(audience, expected_audience) do
+    if secure_compare(audience, expected_audience) do
+      :ok
+    else
+      {:error, :audience_mismatch}
+    end
+  end
+
+  @spec check_not_before(integer(), keyword()) :: :ok | {:error, :not_yet_valid}
+  defp check_not_before(not_before_at, opts) do
+    if now(opts) >= not_before_at do
+      :ok
+    else
+      {:error, :not_yet_valid}
+    end
+  end
+
+  @spec check_expiry(inte (truncated)
+05:24:28.640 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12133, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12133, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12133, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12133, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 34884, "type" => "message"}], "output_tokens" => 34884, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+05:24:28.667 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_004_audience_bound_token_with_validity_window_01 solution.ex
+05:24:29.338 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":252,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_004_audience_bound_token_with_validity_window_01/solution.ex","task":"098_004_audience_bound_token_with_validity_window_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-12T03:24:29.316232Z"}
+05:24:29.340 [info] cycle 098_004_audience_bound_token_with_validity_window_01: REJECTED after 4 attempt(s)

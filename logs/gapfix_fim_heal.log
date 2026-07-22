@@ -1,0 +1,53 @@
+  resynced tasks/080_002_weighted_critical_path_dag_scheduler_02: prompt.md
+  resynced tasks/080_002_weighted_critical_path_dag_scheduler_03: prompt.md
+  resynced tasks/080_002_weighted_critical_path_dag_scheduler_04: prompt.md
+resync_embeds over 3 dirs: %{resynced: 3} — APPLIED
+    note: gold located by whitespace-normalized match (child gold wrapping differs from parent — reflow-stale gold)
+    note: gold located by whitespace-normalized match (child gold wrapping differs from parent — reflow-stale gold)
+module-FIM: 991 clean, 0 reflow, 0 drift, 0 skipped
+wt_: 331 clean, 0 reflow, 0 drift, 0 skipped
+embed check: 1322 clean, 0 reflow, 0 drift, 0 skipped
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 1 needing top-up → next: 080_002_weighted_critical_path_dag_scheduler_01
+  2. new bases:      skipped (GEN_ONLY=backfill)
+=============================================
+
+
+Backfill: 1 seed(s) needing derivatives.
+[1/1] 080_002_weighted_critical_path_dag_scheduler_01 (backfill) ...
+      mutant [1/10] new/0 gutted to raise ... killed
+      mutant [2/10] add_task/3 gutted to raise ... killed
+      mutant [3/10] add_dependency/3 gutted to raise ... killed
+      mutant [4/10] predecessors/2 gutted to raise ... killed
+      mutant [5/10] successors/2 gutted to raise ... killed
+      mutant [6/10] topological_sort/1 gutted to raise ... killed
+      mutant [7/10] earliest_start/1 gutted to raise ... killed
+      mutant [8/10] earliest_finish/1 gutted to raise ... killed
+      mutant [9/10] makespan/1 gutted to raise ... killed
+      mutant [10/10] critical_path/1 gutted to raise ... killed
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L80 s282: {:ok, _} -> {:error, _} killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_080_002_weighted_critical_path_dag_scheduler_01
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L270 s1147: false -> true killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_080_002_weighted_critical_path_dag_scheduler_02
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L76 s259: 1 -> 2 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L49 s108: >= -> > not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L110 s407: {:ok, _} -> {:error, _} killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_080_002_weighted_critical_path_dag_scheduler_03
+      bugfix_080_002_weighted_critical_path_dag_scheduler_01 (bugfix) ... ACCEPTED (9 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_080_002_weighted_critical_path_dag_scheduler_02 (bugfix) ... ACCEPTED (9 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_080_002_weighted_critical_path_dag_scheduler_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_080_002_weighted_critical_path_dag_scheduler_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_080_002_weighted_critical_path_dag_scheduler_03 (bugfix) ... ACCEPTED (9 passed, mutant killed (semantic_killed), 1 attempt(s))
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 1098 | mintable (rejected → accepted) pairs: 219 | minted: %{exists: 86, unverified: 133}
+
+Done.

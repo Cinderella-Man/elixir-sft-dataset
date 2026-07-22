@@ -1,0 +1,333 @@
+12:41:29.433 [info] FIM 623_001_mini_elasticsearch_like_inverted_index_fim01 → 623_001_mini_elasticsearch_like_inverted_index_02: target handle_call/3
+12:41:29.433 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+12:41:29.433 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `handle_call/3`.
+
+Generate a prompt describing how to implement `handle_call/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `handle_call/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `handle_call/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `handle_call/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `InvertedIndex` that implements a full-text search engine with TF-IDF scoring, field-level boosting, and prefix suggestion.
+
+I need these functions in the public API:
+
+- `InvertedIndex.start_link(opts)` to start the process. It should accept a `:name` option for process registration and a `:stop_words` option which is a `MapSet` of words to exclude during tokenization. If `:stop_words` is not provided, default to a built-in set containing at minimum: "the", "a", "an", "is", "are", "was", "were", "in", "on", "at", "to", "of", "and", "or", "it", "this", "that", "for", "with", "as", "by", "not", "be", "has", "had", "have", "do", "does", "did", "but", "if", "from".
+
+- `InvertedIndex.index(server, id, fields, opts \\ [])` which indexes a document. `id` is a string, `fields` is a map of field names to text strings (e.g. `%{title: "Quick brown fox", body: "The fox jumped over the lazy dog"}`). Tokenization must: split on whitespace and punctuation via a regex like `~r/[^a-z0-9]+/`, lowercase everything, then remove stop words. If `opts[:stem]` is `true`, apply a basic suffix-stripping stemmer that at minimum handles "-ing", "-ed", "-s", "-ly", "-tion" → "-t", "-ment". Store enough information per posting to compute TF-IDF scores later. Indexing the same `id` again must replace the previous version of that document cleanly. Return `:ok`.
+
+- `InvertedIndex.remove(server, id)` which removes a document from the index entirely. After removal it must not appear in any search results and the document count used for IDF calculations must decrease. Return `:ok`. Removing a non-existent id must not raise.
+
+- `InvertedIndex.search(server, query, opts \\ [])` which tokenizes the query using the same pipeline as indexing, finds all documents containing at least one query term, and returns them ranked by score descending. The scoring formula must be TF-IDF: `tf(term, doc_field) * idf(term)` where `tf = count_of_term_in_field / total_tokens_in_field` and `idf = :math.log(total_documents / documents_containing_term)`. When a document has multiple fields, the score for a term is the sum of its per-field `tf * idf * boost`. Field boosts are passed via `opts[:boosts]` as a map like `%{title: 3, body: 1}`. Fields not listed default to boost 1. If multiple query terms match, their scores are summed. Return a list of `%{id: id, score: score}` maps sorted by score descending. Support `opts[:limit]` to cap the number of results. Support `opts[:stem]` to stem the query before lookup.
+
+- `InvertedIndex.suggest(server, prefix, limit \\ 10)` which returns term completions from the index vocabulary. The prefix is lowercased before lookup. Return up to `limit` terms that start with the prefix, sorted by document frequency descending (terms appearing in more documents come first). Return a list of strings.
+
+- `InvertedIndex.stats(server)` which returns `%{document_count: integer, term_count: integer}` — the total indexed documents and the total unique terms in the vocabulary.
+
+Additional requirements:
+- Implement this as a GenServer. Use no external dependencies — only standard library and OTP.
+- The stemmer used during search must match the one used during indexing. Stemming is controlled per-call via `opts[:stem]`. The caller is responsible for consistency (indexing with `stem: true` and searching with `stem: true`).
+- All term storage and lookup must be case-insensitive.
+- The module must be in a single file called `inverted_index.ex`.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule InvertedIndex do
+  @moduledoc """
+  A full-text search engine backed by a GenServer, supporting TF-IDF scoring,
+  field-level boosting, prefix-based term suggestion, and optional suffix-stripping stemming.
+  """
+
+  use GenServer
+
+  @default_stop_words MapSet.new([
+                        "the",
+                        "a",
+                        "an",
+                        "is",
+                        "are",
+                        "was",
+                        "were",
+                        "in",
+                        "on",
+                        "at",
+                        "to",
+                        "of",
+                        "and",
+                        "or",
+                        "it",
+                        "this",
+                        "that",
+                        "for",
+                        "with",
+                        "as",
+                        "by",
+                        "not",
+                        "be",
+                        "has",
+                        "had",
+                        "have",
+                        "do",
+                        "does",
+                        "did",
+                        "but",
+                        "if",
+                        "from"
+                      ])
+
+  # ── State shape ──────────────────────────────────────────────────────────────
+  #
+  # %{
+  #   stop_words: MapSet.t(),
+  #   docs: %{doc_id => %{field_name => [token, ...]}},       # raw tokens per field
+  #   postings: %{term => %{doc_id => %{field_name => count}}}, # inverted index
+  #   doc_freq: %{term => pos_integer}                          # # docs containing term
+  # }
+
+  # ── Public API ───────────────────────────────────────────────────────────────
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  @doc "Start the InvertedIndex process."
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, server_opts)
+  end
+
+  @spec index(GenServer.server(), term(), map(), keyword()) :: :ok
+  @doc "Index a document. Re-indexing the same `id` replaces the previous version."
+  def index(server, id, fields, opts \\ []) do
+    GenServer.call(server, {:index, id, fields, opts})
+  end
+
+  @spec remove(GenServer.server(), term()) :: :ok
+  @doc "Remove a document from the index. No-op when `id` is absent."
+  def remove(server, id) do
+    GenServer.call(server, {:remove, id})
+  end
+
+  @spec search(GenServer.server(), String.t(), keyword()) :: [%{id: term(), score: float()}]
+  @doc "Search the index. Returns `[%{id: id, score: score}, ...]` sorted by score descending."
+  def search(server, query, opts \\ []) do
+    GenServer.call(server, {:search, query, opts})
+  end
+
+  @spec suggest(GenServer.server(), String.t(), pos_integer()) :: [String.t()]
+  @doc """
+  Return up to `limit` term completions for `prefix`, sorted by document
+  frequency descending.
+  """
+  def suggest(server, prefix, limit \\ 10) do
+    GenServer.call(server, {:suggest, prefix, limit})
+  end
+
+  @spec stats(GenServer.server()) :: %{
+          document_count: non_neg_integer(),
+          term_count: n (truncated)
+12:42:30.726 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the `handle_call/3` GenServer callback for the `InvertedIndex` module. This is a single callback function made up of several clauses — one per synchronous request the server accepts. The state is a map with the shape:
+
+```
+%{
+  stop_words: MapSet.t(),
+  docs: %{doc_id => %{field_name => [token, ...]}},        # raw tokens per field
+  postings: %{term => %{doc_id => %{field_name => count}}}, # inverted index
+  doc_freq: %{term => pos_integer}                          # # docs containing term
+}
+```
+
+Implement the following clauses. Each must return a `{:reply, reply, new_state}` tuple.
+
+**`{:index, id, fields, opts}`** — Index (or re-index) a document. First remove any existing version of `id` via `do_remove/2` so counts stay consistent. Read the `:stem` flag from `opts` (default `false`). Tokenize every field's text with `tokenize/3` (using `state.stop_words` and the stem flag), building a map of `field => [token, ...]`. From those tokens, build per-term, per-field counts using `Enum.frequencies/1`, producing `%{term => %{field => count}}`. Merge this into `state.postings` (nesting the document under each term) and bump `state.doc_freq` by 1 for each term the document contains. Store the tokenized fields under `id` in `state.docs`. Reply `:ok` with the updated state.
+
+**`{:remove, id}`** — Remove the document via `do_remove/2` and reply `:ok` with the resulting state.
+
+**`{:search, query, opts}`** — Read `:stem` (default `false`), `:boosts` (default `%{}`), and `:limit` (default `nil`) from `opts`. Tokenize the query with `tokenize/3`. If the index is empty (`map_size(state.docs) == 0`) or no query terms survive tokenization, reply with `[]`. Otherwise, for each unique query term precompute its IDF as `:math.log(total_docs / doc_freq)` (or `0.0` when the term has no document frequency). Accumulate a per-document score: for each term, look up its postings and, for every document/field, compute `tf = count / total_tokens_in_field` (where `total_tokens_in_field` is the length of that field's token list in `state.docs`), multiply by the term's IDF and the field's boost (`Map.get(boosts, field, 1)`), and sum across fields and terms per document. Turn the score map into a list of `%{id: doc_id, score: score}`, sort by score descending, apply `:limit` with `Enum.take/2` when present, and reply with the list.
+
+**`{:suggest, prefix, limit}`** — Downcase the prefix, filter `state.doc_freq` to terms starting with it, sort by document frequency descending, take `limit`, map to the bare term strings, and reply with that list.
+
+**`:stats`** — Reply with `%{document_count: map_size(state.docs), term_count: map_size(state.doc_freq)}`.
+
+All clauses leave the state unchanged except `{:index, ...}` and `{:remove, ...}`.
+
+```elixir
+defmodule InvertedIndex do
+  @moduledoc """
+  A full-text search engine backed by a GenServer, supporting TF-IDF scoring,
+  field-level boosting, prefix-based term suggestion, and optional suffix-stripping stemming.
+  """
+
+  use GenServer
+
+  @default_stop_words MapSet.new([
+                        "the",
+                        "a",
+                        "an",
+                        "is",
+                        "are",
+                        "was",
+                        "were",
+                        "in",
+                        "on",
+                        "at",
+                        "to",
+                        "of",
+                        "and",
+                        "or",
+                        "it",
+                        "this",
+                        "that",
+                        "for",
+                        "with",
+                        "as",
+                        "by",
+                        "not",
+                        "be",
+                        "has",
+                        "had",
+                        "have",
+                        "do",
+                        "does",
+                        "did",
+                        "but",
+                        "if",
+                        "from"
+                      ])
+
+  # ── State shape ──────────────────────────────────────────────────────────────
+  #
+  # %{
+  #   stop_words: MapSet.t(),
+  #   docs: %{doc_id => %{field_name => [token, ...]}},       # raw tokens per field
+  #   postings: %{term => %{doc_id => %{field_name => count}}}, # inverted index
+  #   doc_freq: %{term => pos_integer}                          # # docs containing term
+  # }
+
+  # ── Public API ───────────────────────────────────────────────────────────────
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  @doc "Start the InvertedIndex process."
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, server_opts)
+  end
+
+  @spec index(GenServer.server(), term(), map(), keyword()) :: :ok
+  @doc "Index a document. Re-indexing the same `id` replaces the previous version."
+  def index(server, id, fields, opts \\ []) do
+    GenServer.call(server, {:index, id, fields, opts})
+  end
+
+  @spec remove(GenServer.server(), term()) :: :ok
+  @doc "Remove a document from the index. No-op when `id` is absent."
+  def remove(server, id) do
+    GenServer.call(server, {:remove, id})
+  end
+
+  @spec search(GenServer.server(), String.t(), keyword()) :: [%{id: term(), score: float()}]
+  @doc "Search the index. Returns `[%{id: id, score: score}, ...]` sorted by score descending."
+  def search(server, query, opts \\ []) do
+    GenServer.call(server, {:search, query, opts})
+  end
+
+  @spec suggest(GenServer.server(), String.t(), pos_integer()) :: [String.t()]
+  @doc """
+  Return up to `limit` term completions for `prefix`, sorted by document
+  frequency descending.
+  """
+  def suggest(server, prefix, limit \\ 10) do
+    GenServer.call(server, {:suggest, prefix, limit})
+  end
+
+  @spec stats(GenServer.server()) :: %{
+          document_count: non_neg_integer(),
+          term_count: non_neg_integer()
+        }
+  @doc "Return `%{document_count: integer, term_count: integer}`."
+  def stats(server) do
+    GenServer.call(server, :stats)
+  end
+
+  # ── GenServer callbacks ──────────────────────────────────────────────────────
+
+  @impl true
+  def init(opts) do
+    stop_words = Keyword.get(opts, :stop_words, @default_stop_words)
+
+    {:ok,
+     %{
+       stop_words: stop_words,
+       docs: %{},
+       postings: %{},
+       doc_freq: %{}
+     }}
+  end
+
+  @impl true
+  # TODO
+
+  # ── Internal helpers ─────────────────────────────────────────────────────────
+
+  defp do_remove(state, id) do
+    case Map.pop(state.docs, id) do
+      {nil, _docs} ->
+        state
+
+      {tokenized_fields, docs} ->
+        # Collect every unique term that appeared in this document.
+        terms_in_doc =
+          tokenized_fields
+          |> Enum.flat_map(fn {_field, tokens} -> tokens end)
+          |> Enum.uniq()
+
+        {postings, doc_freq} =
+          Enum.reduce(terms_in_doc, {state.postings, state.doc_freq}, fn term, {p, df} ->
+            case Map.get(p, term) do
+              nil ->
+                {p, df}
+
+              doc_map ->
+                doc_map = Map.delete(doc_map, id)
+
+                p =
+                  if map_size(doc_map) == 0,
+                    do: Map.delete(p, term),
+                    else: Map.put(p, term, doc_map)
+
+                new_df = Map.get(df, term, 1) - 1
+
+                df =
+                  if new_df <= 0,
+                    do: Map.delete(df, term),
+                    else: Map.put(df, term, new_df)
+
+   (truncated)
+12:42:30.726 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9409, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9409, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9409, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9409, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 5867, "type" => "message"}], "output_tokens" => 5867, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+12:42:30.745 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_623_001_mini_elasticsearch_like_inverted_index_02/623_001_mini_elasticsearch_like_inverted_index_02 solution.ex
+12:42:31.542 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":121,"lines_over_98":0,"max_line_length":98,"mode":"fim","pipe_chain_count":6,"public_fn_count":5,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"623_001_mini_elasticsearch_like_inverted_index_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_623_001_mini_elasticsearch_like_inverted_index_02/623_001_mini_elasticsearch_like_inverted_index_02/solution.ex","task":"623_001_mini_elasticsearch_like_inverted_index_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":30,"tests_ran":true,"tests_skipped":0,"tests_total":30,"timestamp":"2026-07-11T10:42:31.518441Z"}
+12:42:31.544 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_623_001_mini_elasticsearch_like_inverted_index_02/623_001_mini_elasticsearch_like_inverted_index_02 .gen_staging/fim_623_001_mini_elasticsearch_like_inverted_index_02/mutant.ex
+12:42:32.343 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":19,"lines_over_98":0,"max_line_length":60,"mode":"fim","pipe_chain_count":0,"public_fn_count":5,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":14,"compiled":true,"parent":"623_001_mini_elasticsearch_like_inverted_index_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.0,"reasons":["compilation: 14 warning(s) → hard fail (overall 0.0)","tests: 30/30 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_623_001_mini_elasticsearch_like_inverted_index_02/mutant.ex","task":"623_001_mini_elasticsearch_like_inverted_index_02","test_failures":[{"message":"{:EXIT, #PID<0.208.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test indexes documents and finds them by keyword"},{"message":"{:EXIT, #PID<0.210.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test multi-term search returns all matching documents"},{"message":"{:EXIT, #PID<0.212.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 132, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test stats reflects document and term counts"},{"message":"{:EXIT, #PID<0.214.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test document with higher term frequency ranks first"},{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test rare terms get higher IDF weight"},{"message":"{:EXIT, #PID<0.218.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test stop words are not searchable"},{"message":"{:EXIT, #PID<0.220.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test document with only stop words is not searchable"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test custom stop words override the defaults"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test title boost makes title matches rank higher"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test boosted score is higher than default score for the same doc"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test term in multiple fields scores higher than in one field"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test limit caps number of returned results"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test stemmed search matches morphological variants"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2627.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"InvertedIndexTest","test":"test unstemmed query does not match stemmed index"},{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{InvertedIndex, :handle_call, 3, [file: ~c\"/tmp/evalfim_1805402_2 (truncated)
+12:42:32.343 [debug] fim mutation gate: killed
+12:42:32.345 [info] promoted 623_001_mini_elasticsearch_like_inverted_index_02 -> tasks/623_001_mini_elasticsearch_like_inverted_index_02

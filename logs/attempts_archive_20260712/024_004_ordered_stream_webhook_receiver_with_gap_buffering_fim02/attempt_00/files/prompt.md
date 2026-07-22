@@ -1,0 +1,259 @@
+Implement the `handle_call/3` GenServer callbacks for `WebhookReceiver.MemoryStore`.
+This callback backs the ordered, per-stream delivery store and must handle four
+distinct request tuples. State is `%{streams: %{stream_id => %{last_seq: non_neg_integer(),
+buffer: %{sequence => event}, delivered: [event]}}}`. A stream that has never been
+seen defaults to `%{last_seq: 0, buffer: %{}, delivered: []}` (use the `stream/2`
+helper where convenient).
+
+1. `{:deliver, event}` — extract the event's `stream_id` and `sequence` and look up
+   (or default) that stream's `last_seq`, `buffer`, and `delivered`. Then decide the
+   outcome in this order:
+   - If `sequence <= last_seq`, or the exact `sequence` is already present in `buffer`,
+     reply `{:ok, :duplicate}` and leave state unchanged.
+   - If `sequence == last_seq + 1`, deliver it: call `drain/4` with the current
+     `last_seq`, `buffer`, `delivered`, and the event marked `%{event | status: :delivered}`.
+     `drain/4` applies this event and any consecutive buffered events (stopping at the
+     first gap), returning the new `last_seq`, `buffer`, and `delivered`. Store the
+     updated stream back into `streams` and reply `{:ok, :received}`.
+   - Otherwise (`sequence > last_seq + 1`), buffer the event under its sequence as
+     `%{event | status: :pending}`, store the updated stream, and reply `{:ok, :buffered}`.
+
+2. `{:last_sequence, stream_id}` — reply with that stream's `last_seq` (default `0`).
+
+3. `{:delivered_events, stream_id}` — reply with that stream's `delivered` list, in
+   delivery order.
+
+4. `{:buffered_sequences, stream_id}` — reply with the sorted list of sequence numbers
+   currently held in that stream's `buffer`.
+
+Every clause returns `{:reply, reply, state}`.
+
+```elixir
+defmodule WebhookReceiver.Signature do
+  @moduledoc """
+  HMAC-SHA256 signature verification for webhook payloads.
+  """
+
+  @doc """
+  Verifies `signature` against the lowercase hex HMAC-SHA256 of `payload`
+  computed with `secret`, using a constant-time comparison.
+
+  Returns `:ok` on match and `:error` otherwise, including when any argument is
+  not a binary.
+  """
+  @spec verify(term(), term(), term()) :: :ok | :error
+  def verify(payload, signature, secret)
+      when is_binary(payload) and is_binary(signature) and is_binary(secret) do
+    expected = :crypto.mac(:hmac, :sha256, secret, payload) |> Base.encode16(case: :lower)
+
+    if Plug.Crypto.secure_compare(expected, signature) do
+      :ok
+    else
+      :error
+    end
+  end
+
+  def verify(_payload, _signature, _secret), do: :error
+end
+
+defmodule WebhookReceiver.Store do
+  @moduledoc """
+  Behaviour describing an ordered, per-stream webhook delivery store.
+  """
+
+  @callback deliver(store :: pid() | atom(), event :: map()) ::
+              {:ok, :received | :duplicate | :buffered}
+  @callback last_sequence(store :: pid() | atom(), stream_id :: String.t()) :: non_neg_integer()
+  @callback delivered_events(store :: pid() | atom(), stream_id :: String.t()) :: [map()]
+  @callback buffered_sequences(store :: pid() | atom(), stream_id :: String.t()) :: [integer()]
+
+  @doc """
+  Delivers `event` to `store`, returning the delivery outcome tuple.
+  """
+  @spec deliver(pid() | atom(), map()) :: {:ok, :received | :duplicate | :buffered}
+  def deliver(store, event), do: GenServer.call(store, {:deliver, event})
+
+  @doc """
+  Returns the last delivered sequence for `stream_id` (default `0`).
+  """
+  @spec last_sequence(pid() | atom(), String.t()) :: non_neg_integer()
+  def last_sequence(store, stream_id), do: GenServer.call(store, {:last_sequence, stream_id})
+
+  @doc """
+  Returns the delivered events for `stream_id` in delivery order.
+  """
+  @spec delivered_events(pid() | atom(), String.t()) :: [map()]
+  def delivered_events(store, stream_id) do
+    GenServer.call(store, {:delivered_events, stream_id})
+  end
+
+  @doc """
+  Returns the sorted list of currently-buffered sequence numbers for `stream_id`.
+  """
+  @spec buffered_sequences(pid() | atom(), String.t()) :: [integer()]
+  def buffered_sequences(store, stream_id),
+    do: GenServer.call(store, {:buffered_sequences, stream_id})
+end
+
+defmodule WebhookReceiver.MemoryStore do
+  @moduledoc """
+  In-memory `GenServer` implementation of `WebhookReceiver.Store` with per-stream
+  ordering and gap buffering.
+  """
+
+  @behaviour WebhookReceiver.Store
+  use GenServer
+
+  @doc """
+  Starts the store. Accepts standard `GenServer` options such as `:name`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc """
+  Delivers `event` to `store`, returning the delivery outcome tuple.
+  """
+  @spec deliver(pid() | atom(), map()) :: {:ok, :received | :duplicate | :buffered}
+  @impl WebhookReceiver.Store
+  def deliver(store, event), do: GenServer.call(store, {:deliver, event})
+
+  @doc """
+  Returns the last delivered sequence for `stream_id` (default `0`).
+  """
+  @spec last_sequence(pid() | atom(), String.t()) :: non_neg_integer()
+  @impl WebhookReceiver.Store
+  def last_sequence(store, stream_id), do: GenServer.call(store, {:last_sequence, stream_id})
+
+  @doc """
+  Returns the delivered events for `stream_id` in delivery order.
+  """
+  @spec delivered_events(pid() | atom(), String.t()) :: [map()]
+  @impl WebhookReceiver.Store
+  def delivered_events(store, stream_id),
+    do: GenServer.call(store, {:delivered_events, stream_id})
+
+  @doc """
+  Returns the sorted list of currently-buffered sequence numbers for `stream_id`.
+  """
+  @spec buffered_sequences(pid() | atom(), String.t()) :: [integer()]
+  @impl WebhookReceiver.Store
+  def buffered_sequences(store, stream_id),
+    do: GenServer.call(store, {:buffered_sequences, stream_id})
+
+  @doc """
+  Initializes the store state with an empty stream registry.
+  """
+  @spec init(keyword()) :: {:ok, map()}
+  @impl GenServer
+  def init(_opts), do: {:ok, %{streams: %{}}}
+
+  @doc """
+  Handles synchronous store operations: delivery and per-stream inspection.
+  """
+  @spec handle_call(term(), GenServer.from(), map()) :: {:reply, term(), map()}
+  @impl GenServer
+  def handle_call({:deliver, event}, _from, %{streams: streams} = state) do
+    # TODO
+  end
+
+  @impl GenServer
+  def handle_call({:last_sequence, sid}, _from, %{streams: streams} = state) do
+    # TODO
+  end
+
+  @impl GenServer
+  def handle_call({:delivered_events, sid}, _from, %{streams: streams} = state) do
+    # TODO
+  end
+
+  @impl GenServer
+  def handle_call({:buffered_sequences, sid}, _from, %{streams: streams} = state) do
+    # TODO
+  end
+
+  defp stream(streams, sid), do: Map.get(streams, sid, %{last_seq: 0, buffer: %{}, delivered: []})
+
+  # Applies `event` (whose sequence is last_seq + 1), then keeps applying
+  # consecutive buffered events until the first gap.
+  defp drain(last_seq, buffer, delivered, event) do
+    delivered = delivered ++ [event]
+    last_seq = last_seq + 1
+
+    case Map.pop(buffer, last_seq + 1) do
+      {nil, _buffer} -> {last_seq, buffer, delivered}
+      {next, rest} -> drain(last_seq, rest, delivered, %{next | status: :delivered})
+    end
+  end
+end
+
+defmodule WebhookReceiver.Router do
+  @moduledoc """
+  `Plug.Router` receiving Stripe-style webhooks with per-stream ordered delivery.
+  """
+
+  use Plug.Router, copy_opts_to_assign: :webhook_opts
+
+  alias WebhookReceiver.{Signature, Store}
+
+  plug :match
+  plug :dispatch
+
+  post "/api/webhooks/stripe" do
+    opts = conn.assigns.webhook_opts
+    secret = Keyword.fetch!(opts, :secret)
+    store = Keyword.fetch!(opts, :store)
+
+    {:ok, body, conn} = read_body(conn)
+    signature = conn |> get_req_header("stripe-signature") |> List.first()
+
+    cond do
+      is_nil(signature) or signature == "" ->
+        send_json(conn, 401, %{error: "invalid_signature"})
+
+      Signature.verify(body, signature, secret) != :ok ->
+        send_json(conn, 401, %{error: "invalid_signature"})
+
+      true ->
+        handle_verified(conn, body, store)
+    end
+  end
+
+  match _ do
+    send_resp(conn, 404, "not found")
+  end
+
+  defp handle_verified(conn, body, store) do
+    case Jason.decode(body) do
+      {:ok, %{"id" => id, "stream_id" => sid, "sequence" => seq} = payload}
+      when is_binary(id) and is_binary(sid) and is_integer(seq) ->
+        event = %{
+          event_id: id,
+          stream_id: sid,
+          sequence: seq,
+          payload: payload,
+          status: :pending
+        }
+
+        case Store.deliver(store, event) do
+          {:ok, :received} -> send_json(conn, 200, %{status: "received"})
+          {:ok, :duplicate} -> send_json(conn, 200, %{status: "duplicate"})
+          {:ok, :buffered} -> send_json(conn, 202, %{status: "buffered"})
+        end
+
+      {:ok, _decoded} ->
+        send_json(conn, 400, %{error: "bad_payload"})
+
+      {:error, _reason} ->
+        send_json(conn, 400, %{error: "bad_payload"})
+    end
+  end
+
+  defp send_json(conn, status, data) do
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(status, Jason.encode!(data))
+  end
+end
+```

@@ -1,0 +1,1067 @@
+04:12:46.969 [info] VARIATION 034_004_data_reconciliation_engine_variation_3_01: Data Reconciliation Engine — Variation 3
+04:12:46.970 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_data_reconciliation_engine_variation_3_01 solution.ex
+04:12:47.376 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":2,"lines_over_98":0,"max_line_length":32,"mode":"full","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"invalid syntax found on .gen_staging/034_004_data_reconciliation_engine_variation_3_01/solution.ex:1:32:\n    error: syntax error before: '{'\n    │\n  1 │ defmodule ConcurrentReconciler {\n    │                                ^\n    │\n    └─ .gen_staging/034_004_data_reconciliation_engine_variation_3_01/solution.ex:1:32","type":"SyntaxError"}],"compile_warnings":0,"compiled":false,"score":{"analysis":0.38,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: failed to compile (0.0)","analysis: @doc on public functions → 0/1 pts","analysis: @spec annotations present → 0/2 pts","analysis: @moduledoc present → 0/2 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/034_004_data_reconciliation_engine_variation_3_01/solution.ex","task":"034_004_data_reconciliation_engine_variation_3_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-04T02:12:47.354758Z"}
+04:12:47.376 [info] cycle 034_004_data_reconciliation_engine_variation_3_01: repairing — Compilation failed:
+  - SyntaxError: invalid syntax found on .gen_staging/034_004_data_reconciliation_engine_variation_3_01/solution.ex:1:32:
+    error: syntax error before: '{'
+    │
+  1 │ defmodule ConcurrentReconciler {
+    │                                ^
+    │
+    └─ .gen_staging/034_004_data_reconciliation_engine_variation_3_01/solution.ex:1:32
+04:12:47.376 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+04:12:47.377 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Compilation failed:
+  - SyntaxError: invalid syntax found on .gen_staging/034_004_data_reconciliation_engine_variation_3_01/solution.ex:1:32:
+    error: syntax error before: '{'
+    │
+  1 │ defmodule ConcurrentReconciler {
+    │                                ^
+    │
+    └─ .gen_staging/034_004_data_reconciliation_engine_variation_3_01/solution.ex:1:32
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ConcurrentReconciler` that reconciles two large
+lists of records by a shared key, producing the same structured diff as an ordinary
+reconciler, but computing the per-record field diffs **concurrently** across a pool
+of worker tasks so it can take advantage of multiple schedulers.
+
+I need this public API:
+
+- `ConcurrentReconciler.reconcile(left, right, opts)` where `left` and `right` are
+  lists of maps and `opts` is a keyword list. It returns a map with three keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}`
+    entries for keys present in both lists. `diff_map` is `%{field => %{left: val, right: val}}`
+    for fields whose values differ, empty if identical on all compared fields.
+  - `:only_in_left` — records present in `left` but absent in `right`.
+  - `:only_in_right` — records present in `right` but absent in `left`.
+
+The `opts` keyword list must support:
+- `:key_fields` (required) — a list of atoms forming the composite key used to match
+  records (e.g. `[:id]` or `[:org_id, :user_id]`).
+- `:compare_fields` (optional) — a list of atoms specifying which fields to diff on
+  matched records. If omitted or `nil`, all fields except the key fields are compared.
+- `:max_concurrency` (optional) — a positive integer bounding how many matched-record
+  diffs run in parallel. Defaults to `System.schedulers_online()`.
+
+Behaviour requirements:
+- The result must be **identical in content** to a sequential reconciliation — the
+  concurrency must not change which records are matched or how they differ. Order of
+  results does not matter.
+- Key matching must be exact; composite keys require all key fields to be equal.
+- Field comparison must be value-exact (using `==`), and a field missing from one or
+  both records is treated as `nil`.
+- Matched entries must carry the full original left and right records.
+- `:max_concurrency` must be honoured as an upper bound; an invalid value (not a
+  positive integer) must raise `ArgumentError`.
+- The diff computation for matched records must be spread across worker tasks (e.g.
+  via `Task.async_stream`); the function may use processes internally, but must have
+  no other side effects and no external dependencies beyond the Elixir/OTP standard
+  library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule ConcurrentReconciler {
+}
+
+----- test_harness.exs -----
+defmodule ConcurrentReconcilerTest do
+  use ExUnit.Case, async: false
+
+  defp sort_by_id(list), do: Enum.sort_by(list, &record_id/1)
+  defp record_id(%{left: l}), do: l.id
+  defp record_id(%{id: id}), do: id
+
+  # ---------------------------------------------------------------------------
+  # Basic behaviour (parity with a sequential reconciler)
+  # ---------------------------------------------------------------------------
+
+  test "records present in both lists appear in :matched" do
+    left = [%{id: 1, name: "Alice"}, %{id: 2, name: "Bob"}]
+    right = [%{id: 1, name: "Alice"}, %{id: 2, name: "Bob"}]
+
+    result = ConcurrentReconciler.reconcile(left, right, key_fields: [:id])
+
+    assert length(result.matched) == 2
+    assert result.only_in_left == []
+    assert result.only_in_right == []
+  end
+
+  test "records only in left / right are partitioned correctly" do
+    left = [%{id: 1}, %{id: 2}]
+    right = [%{id: 1}, %{id: 3}]
+
+    result = ConcurrentReconciler.reconcile(left, right, key_fields: [:id])
+
+    assert length(result.matched) == 1
+    assert result.only_in_left == [%{id: 2}]
+    assert result.only_in_right == [%{id: 3}]
+  end
+
+  test "differing fields are reported" do
+    left = [%{id: 1, name: "Alice", age: 30}]
+    right = [%{id: 1, name: "Alicia", age: 31}]
+
+    result = ConcurrentReconciler.reconcile(left, right, key_fields: [:id])
+
+    [entry] = result.matched
+
+    assert entry.differences == %{
+             name: %{left: "Alice", right: "Alicia"},
+             age: %{left: 30, right: 31}
+           }
+  end
+
+  test "identical matched records have empty differences" do
+    left = [%{id: 1, name: "Alice"}]
+    right = [%{id: 1, name: "Alice"}]
+
+    result = ConcurrentReconciler.reconcile(left, right, key_fields: [:id])
+
+    [entry] = result.matched
+    assert entry.differences == %{}
+    assert entry.left == %{id: 1, name: "Alice"}
+    assert entry.right == %{id: 1, name: "Alice"}
+  end
+
+  test "compare_fields restricts the diff" do
+    left = [%{id: 1, name: "Alice", internal: "old"}]
+    right = [%{id: 1, name: "Alice", internal: "new"}]
+
+    result =
+      ConcurrentReconciler.reconcile(left, right,
+        key_fields: [:id],
+        compare_fields: [:name]
+      )
+
+    [entry] = result.matched
+    assert entry.differences == %{}
+  end
+
+  test "a field missing from one record is diffed as nil" do
+    left = [%{id: 1, score: 42}]
+    right = [%{id: 1}]
+
+    result = ConcurrentReconciler.reconcile(left, right, key_fields: [:id])
+
+    [entry] = result.matched
+    assert entry.differences == %{score: %{left: 42, right: nil}}
+  end
+
+  test "composite key matches only when all fields are equal" do
+    left = [%{org_id: 1, user_id: 10, name: "Alice"}, %{org_id: 1, user_id: 20, name: "Bob"}]
+    right = [%{org_id: 1, user_id: 10, name: "Alice"}, %{org_id: 2, user_id: 10, name: "Carol"}]
+
+    result =
+      ConcurrentReconciler.reconcile(left, right, key_fields: [:org_id, :user_id])
+
+    assert length(result.matched) == 1
+    assert length(result.only_in_left) == 1
+    assert length(result.only_in_right) == 1
+  end
+
+  # ---------------------------------------------------------------------------
+  # Concurrency-specific behaviour
+  # ---------------------------------------------------------------------------
+
+  test "result is independent of :max_concurrency" do
+    left = for i <- 1..200, do: %{id: i, v: i}
+    right = for i <- 1..200, do: %{id: i, v: i + rem(i, 3)}
+
+    seq = ConcurrentReconciler.reconcile(left, right, key_fields: [:id], max_concurrency: 1)
+    par = ConcurrentReconciler.reconcile(left, right, key_fields: [:id], max_concurrency: 8)
+
+    assert sort_by_id(seq.matched) == sort_by_id(par.matched)
+    assert sort_by_id(seq.only_in_left) == sort_by_id(par.only_in_left)
+    assert sort_by_id(seq.only_in_right) == sort_by_id(par.only_in_right)
+  end
+
+  test "large dataset reconciles correctly under concurrency" do
+    left = for i <- 1..1_000, do: %{id: i, v: i}
+
+    right =
+      for i <- 1..1_000 do
+        if rem(i, 2) == 0, do: %{id: i, v: i}, else: %{id: i, v: i + 1}
+      end
+
+    result = ConcurrentReconciler.reconcile(left, right, key_fields: [:id], max_concurrency: 16)
+
+    assert length(result.matched) == 1_000
+    assert result.only_in_left == []
+    assert result.only_in_right == []
+
+    changed = Enum.filter(result.matched, &(&1.differences != %{}))
+    unchanged = Enum.filter(result.matched, &(&1.differences == %{}))
+
+    # Odd ids differ, even ids are identical.
+    assert length(changed) == 500
+    assert length(unchanged) == 500
+    assert Enum.all?(changed, &(rem(&1.left.id, 2) == 1))
+  end (truncated)
+04:13:11.941 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule ConcurrentReconciler do
+  @moduledoc """
+  Reconciles two lists of record maps by a shared (possibly composite) key,
+  producing a structured diff.
+
+  Matched records are compared field-by-field, with the per-record field diffs
+  computed concurrently across a pool of worker tasks (via `Task.async_stream`)
+  so the work can take advantage of multiple schedulers. The result is identical
+  in content to a sequential reconciliation; only the wall-clock cost differs.
+  """
+
+  @typedoc "A record represented as a map of field => value."
+  @type record :: map()
+
+  @typedoc "A diff map of field => %{left: value, right: value} for differing fields."
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @typedoc "A matched entry carrying both original records and their differences."
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` (lists of maps) by the composite key given in
+  `opts[:key_fields]`.
+
+  Returns a map with `:matched`, `:only_in_left`, and `:only_in_right`.
+
+  ## Options
+
+    * `:key_fields` (required) — list of atoms forming the composite key.
+    * `:compare_fields` (optional) — list of atoms to diff on matched records.
+      Defaults to all fields except the key fields.
+    * `:max_concurrency` (optional) — positive integer bounding parallel diffs.
+      Defaults to `System.schedulers_online/0`.
+
+  Raises `ArgumentError` if `:key_fields` is missing/invalid or if
+  `:max_concurrency` is not a positive integer.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields = Keyword.get(opts, :compare_fields, nil)
+    max_concurrency = fetch_max_concurrency!(opts)
+
+    left_index = index_by_key(left, key_fields)
+    right_index = index_by_key(right, key_fields)
+
+    left_keys = Map.keys(left_index)
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    {common_keys, only_left_keys} =
+      Enum.split_with(left_keys, &MapSet.member?(right_keys, &1))
+
+    only_right_keys = Enum.reject(Map.keys(right_index), &Map.has_key?(left_index, &1))
+
+    matched =
+      common_keys
+      |> Task.async_stream(
+        fn key ->
+          l = Map.fetch!(left_index, key)
+          r = Map.fetch!(right_index, key)
+          %{left: l, right: r, differences: diff(l, r, key_fields, compare_fields)}
+        end,
+        max_concurrency: max_concurrency,
+        ordered: false
+      )
+      |> Enum.map(fn {:ok, entry} -> entry end)
+
+    %{
+      matched: matched,
+      only_in_left: Enum.map(only_left_keys, &Map.fetch!(left_index, &1)),
+      only_in_right: Enum.map(only_right_keys, &Map.fetch!(right_index, &1))
+    }
+  end
+
+  @spec fetch_key_fields!(keyword()) :: [atom()]
+  defp fetch_key_fields!(opts) do
+    case Keyword.get(opts, :key_fields) do
+      [_ | _] = fields ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      _ ->
+        raise ArgumentError, ":key_fields is required and must be a non-empty list of atoms"
+    end
+  end
+
+  @spec fetch_max_concurrency!(keyword()) :: pos_integer()
+  defp fetch_max_concurrency!(opts) do
+    case Keyword.get(opts, :max_concurrency, System.schedulers_online()) do
+      n when is_integer(n) and n > 0 -> n
+      _ -> raise ArgumentError, ":max_concurrency must be a positive integer"
+    end
+  end
+
+  @spec index_by_key([record()], [atom()]) :: %{optional(term()) => record()}
+  defp index_by_key(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      Map.put(acc, key_for(record, key_fields), record)
+    end)
+  end
+
+  @spec key_for(record(), [atom()]) :: [term()]
+  defp key_for(record, key_fields), do: Enum.map(key_fields, &Map.get(record, &1))
+
+  @spec diff(record(), record(), [atom()], [atom()] | nil) :: diff_map()
+  defp diff(left, right, key_fields, compare_fields) do
+    fields = fields_to_compare(left, right, key_fields, compare_fields)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+
+      if lv == rv do
+        acc
+      else
+        Map.put(acc, field, %{left: lv, right: rv})
+      end
+    end)
+  end
+
+  @spec fields_to_compare(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  defp fields_to_compare(_left, _right, _key_fields, compare_fields)
+       when is_list(compare_fields) do
+    compare_fields
+  end
+
+  defp fields_to_compare(left, right, key_fields, _compare_fields) do
+    key_set = MapSet.new(key_fields)
+
+    left
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+end
+</file>
+04:13:11.941 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3974, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3974, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3974, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3974, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 2163, "type" => "message"}], "output_tokens" => 2163, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+04:13:11.959 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_data_reconciliation_engine_variation_3_01 solution.ex
+04:13:12.700 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":146,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":6,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_data_reconciliation_engine_variation_3_01/solution.ex","task":"034_004_data_reconciliation_engine_variation_3_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T02:13:12.677005Z"}
+04:13:12.701 [info] cycle 034_004_data_reconciliation_engine_variation_3_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+04:13:12.701 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+04:13:12.701 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ConcurrentReconciler` that reconciles two large
+lists of records by a shared key, producing the same structured diff as an ordinary
+reconciler, but computing the per-record field diffs **concurrently** across a pool
+of worker tasks so it can take advantage of multiple schedulers.
+
+I need this public API:
+
+- `ConcurrentReconciler.reconcile(left, right, opts)` where `left` and `right` are
+  lists of maps and `opts` is a keyword list. It returns a map with three keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}`
+    entries for keys present in both lists. `diff_map` is `%{field => %{left: val, right: val}}`
+    for fields whose values differ, empty if identical on all compared fields.
+  - `:only_in_left` — records present in `left` but absent in `right`.
+  - `:only_in_right` — records present in `right` but absent in `left`.
+
+The `opts` keyword list must support:
+- `:key_fields` (required) — a list of atoms forming the composite key used to match
+  records (e.g. `[:id]` or `[:org_id, :user_id]`).
+- `:compare_fields` (optional) — a list of atoms specifying which fields to diff on
+  matched records. If omitted or `nil`, all fields except the key fields are compared.
+- `:max_concurrency` (optional) — a positive integer bounding how many matched-record
+  diffs run in parallel. Defaults to `System.schedulers_online()`.
+
+Behaviour requirements:
+- The result must be **identical in content** to a sequential reconciliation — the
+  concurrency must not change which records are matched or how they differ. Order of
+  results does not matter.
+- Key matching must be exact; composite keys require all key fields to be equal.
+- Field comparison must be value-exact (using `==`), and a field missing from one or
+  both records is treated as `nil`.
+- Matched entries must carry the full original left and right records.
+- `:max_concurrency` must be honoured as an upper bound; an invalid value (not a
+  positive integer) must raise `ArgumentError`.
+- The diff computation for matched records must be spread across worker tasks (e.g.
+  via `Task.async_stream`); the function may use processes internally, but must have
+  no other side effects and no external dependencies beyond the Elixir/OTP standard
+  library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule ConcurrentReconciler do
+  @moduledoc """
+  Reconciles two lists of record maps by a shared (possibly composite) key,
+  producing a structured diff.
+
+  Matched records are compared field-by-field, with the per-record field diffs
+  computed concurrently across a pool of worker tasks (via `Task.async_stream`)
+  so the work can take advantage of multiple schedulers. The result is identical
+  in content to a sequential reconciliation; only the wall-clock cost differs.
+  """
+
+  @typedoc "A record represented as a map of field => value."
+  @type record :: map()
+
+  @typedoc "A diff map of field => %{left: value, right: value} for differing fields."
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @typedoc "A matched entry carrying both original records and their differences."
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` (lists of maps) by the composite key given in
+  `opts[:key_fields]`.
+
+  Returns a map with `:matched`, `:only_in_left`, and `:only_in_right`.
+
+  ## Options
+
+    * `:key_fields` (required) — list of atoms forming the composite key.
+    * `:compare_fields` (optional) — list of atoms to diff on matched records.
+      Defaults to all fields except the key fields.
+    * `:max_concurrency` (optional) — positive integer bounding parallel diffs.
+      Defaults to `System.schedulers_online/0`.
+
+  Raises `ArgumentError` if `:key_fields` is missing/invalid or if
+  `:max_concurrency` is not a positive integer.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields = Keyword.get(opts, :compare_fields, nil)
+    max_concurrency = fetch_max_concurrency!(opts)
+
+    left_index = index_by_key(left, key_fields)
+    right_index = index_by_key(right, key_fields)
+
+    left_keys = Map.keys(left_index)
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    {common_keys, only_left_keys} =
+      Enum.split_with(left_keys, &MapSet.member?(right_keys, &1))
+
+    only_right_keys = Enum.reject(Map.keys(right_index), &Map.has_key?(left_index, &1))
+
+    matched =
+      common_keys
+      |> Task.async_stream(
+        fn key ->
+          l = Map.fetch!(left_index, key)
+          r = Map.fetch!(right_index, key)
+          %{left: l, right: r, differences: diff(l, r, key_fields, compare_fields)}
+        end,
+        max_concurrency: max_concurrency,
+        ordered: false
+      )
+      |> Enum.map(fn {:ok, entry} -> entry end)
+
+    %{
+      matched: matched,
+      only_in_left: Enum.map(only_left_keys, &Map.fetch!(left_index, &1)),
+      only_in_right: Enum.map(only_right_keys, &Map.fetch!(right_index, &1))
+    }
+  end
+
+  @spec fetch_key_fields!(keyword()) :: [atom()]
+  defp fetch_key_fields!(opts) do
+    case Keyword.get(opts, :key_fields) do
+      [_ | _] = fields ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      _ ->
+        raise ArgumentError, ":key_fields is required and must be a non-empty list of atoms"
+    end
+  end
+
+  @spec fetch_max_concurrency!(keyword()) :: pos_integer()
+  defp fetch_max_concurrency!(opts) do
+    case Keyword.get(opts, :max_concurrency, System.schedulers_online()) do
+      n when is_integer(n) and n > 0 -> n
+      _ -> raise ArgumentError, ":max_concurrency must be a positive integer"
+    end
+  end
+
+  @spec index_by_key([record()], [atom()]) :: %{optional(term()) => record()}
+  defp index_by_key(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      Map.put(acc, key_for(record, key_fields), record)
+    end)
+  end
+
+  @spec key_for(record(), [atom()]) :: [term()]
+  defp key_for(record, key_fields), do: Enum.map(key_fields, &Map.get(record, &1))
+
+  @spec diff(record(), record(), [atom()], [atom()] | nil) :: diff_map()
+  defp diff(left, right, key_fields, compare_fields) do
+    fields = fields_to_compare(left, right, key_fields, compare_fields)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+
+      if lv == rv do
+        acc
+      else
+        Map.put(acc, field, %{left: lv, right: rv})
+      end
+    end)
+  end
+
+  @spec fields_to_compare(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  defp fields_to_compare(_left, _right, _key_fields, compare_fields)
+       when is_l (truncated)
+04:19:11.430 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, I need to find and silence a compile warning while keeping behavior identical and satisfying house style. Let me analyze the file carefully.
+
+The code already has `@moduledoc`, `@spec`/`@doc` on the public function, and no `TODO` markers. The likely warning source on modern Elixir/OTP is the partial anonymous-function pattern `fn {:ok, entry} -> entry end` (the type-checker/linter can flag a non-exhaustive clause on the `Task.async_stream` result). I'll silence it by extracting via `elem/2` (no pattern to be non-exhaustive), and clean up the key partitioning with clear MapSet operations — all behavior-preserving.
+
+<file path="solution.ex">
+defmodule ConcurrentReconciler do
+  @moduledoc """
+  Reconciles two lists of record maps by a shared (possibly composite) key,
+  producing a structured diff.
+
+  Matched records are compared field-by-field, with the per-record field diffs
+  computed concurrently across a pool of worker tasks (via `Task.async_stream`)
+  so the work can take advantage of multiple schedulers. The result is identical
+  in content to a sequential reconciliation; only the wall-clock cost differs.
+  """
+
+  @typedoc "A record represented as a map of field => value."
+  @type record :: map()
+
+  @typedoc "A diff map of field => %{left: value, right: value} for differing fields."
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @typedoc "A matched entry carrying both original records and their differences."
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` (lists of maps) by the composite key given in
+  `opts[:key_fields]`.
+
+  Returns a map with `:matched`, `:only_in_left`, and `:only_in_right`.
+
+  ## Options
+
+    * `:key_fields` (required) — list of atoms forming the composite key.
+    * `:compare_fields` (optional) — list of atoms to diff on matched records.
+      Defaults to all fields except the key fields.
+    * `:max_concurrency` (optional) — positive integer bounding parallel diffs.
+      Defaults to `System.schedulers_online/0`.
+
+  Raises `ArgumentError` if `:key_fields` is missing/invalid or if
+  `:max_concurrency` is not a positive integer.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields = Keyword.get(opts, :compare_fields, nil)
+    max_concurrency = fetch_max_concurrency!(opts)
+
+    left_index = index_by_key(left, key_fields)
+    right_index = index_by_key(right, key_fields)
+
+    left_keys = MapSet.new(Map.keys(left_index))
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    common_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      common_keys
+      |> Task.async_stream(
+        fn key ->
+          l = Map.fetch!(left_index, key)
+          r = Map.fetch!(right_index, key)
+          %{left: l, right: r, differences: diff(l, r, key_fields, compare_fields)}
+        end,
+        max_concurrency: max_concurrency,
+        ordered: false
+      )
+      |> Enum.map(&elem(&1, 1))
+
+    %{
+      matched: matched,
+      only_in_left: Enum.map(only_left_keys, &Map.fetch!(left_index, &1)),
+      only_in_right: Enum.map(only_right_keys, &Map.fetch!(right_index, &1))
+    }
+  end
+
+  @spec fetch_key_fields!(keyword()) :: [atom()]
+  defp fetch_key_fields!(opts) do
+    case Keyword.get(opts, :key_fields) do
+      [_ | _] = fields ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      _ ->
+        raise ArgumentError, ":key_fields is required and must be a non-empty list of atoms"
+    end
+  end
+
+  @spec fetch_max_concurrency!(keyword()) :: pos_integer()
+  defp fetch_max_concurrency!(opts) do
+    case Keyword.get(opts, :max_concurrency, System.schedulers_online()) do
+      n when is_integer(n) and n > 0 -> n
+      _ -> raise ArgumentError, ":max_concurrency must be a positive integer"
+    end
+  end
+
+  @spec index_by_key([record()], [atom()]) :: %{optional(term()) => record()}
+  defp index_by_key(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      Map.put(acc, key_for(record, key_fields), record)
+    end)
+  end
+
+  @spec key_for(record(), [atom()]) :: [term()]
+  defp key_for(record, key_fields), do: Enum.map(key_fields, &Map.get(record, &1))
+
+  @spec diff(record(), record(), [atom()], [atom()] | nil) :: diff_map()
+  defp diff(left, right, key_fields, compare_fields) do
+    fields = fields_to_compare(left, right, key_fields, compare_fields)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+
+      if lv == rv do
+        acc
+      else
+        Map.put(acc, field, %{left: lv, right: rv})
+      end
+    end)
+  end
+
+  @spec fields_to_compare(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  defp fields_to_compare(_left, _right, _key_fields, compare_fields)
+       when is_list(compare_fields) do
+    compare_fields
+  end
+
+  defp fields_to_compare(left, right, key_fields, _compare_fields) do
+    key_set = MapSet.new(key_fields)
+
+    left
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+end
+</file>
+04:19:11.430 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6013, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6013, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6013, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6013, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 26877, "type" => "message"}], "output_tokens" => 26877, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+04:19:11.450 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_data_reconciliation_engine_variation_3_01 solution.ex
+04:19:12.209 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":145,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":6,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_data_reconciliation_engine_variation_3_01/solution.ex","task":"034_004_data_reconciliation_engine_variation_3_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T02:19:12.185788Z"}
+04:19:12.210 [info] cycle 034_004_data_reconciliation_engine_variation_3_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+04:19:12.210 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+04:19:12.210 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ConcurrentReconciler` that reconciles two large
+lists of records by a shared key, producing the same structured diff as an ordinary
+reconciler, but computing the per-record field diffs **concurrently** across a pool
+of worker tasks so it can take advantage of multiple schedulers.
+
+I need this public API:
+
+- `ConcurrentReconciler.reconcile(left, right, opts)` where `left` and `right` are
+  lists of maps and `opts` is a keyword list. It returns a map with three keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}`
+    entries for keys present in both lists. `diff_map` is `%{field => %{left: val, right: val}}`
+    for fields whose values differ, empty if identical on all compared fields.
+  - `:only_in_left` — records present in `left` but absent in `right`.
+  - `:only_in_right` — records present in `right` but absent in `left`.
+
+The `opts` keyword list must support:
+- `:key_fields` (required) — a list of atoms forming the composite key used to match
+  records (e.g. `[:id]` or `[:org_id, :user_id]`).
+- `:compare_fields` (optional) — a list of atoms specifying which fields to diff on
+  matched records. If omitted or `nil`, all fields except the key fields are compared.
+- `:max_concurrency` (optional) — a positive integer bounding how many matched-record
+  diffs run in parallel. Defaults to `System.schedulers_online()`.
+
+Behaviour requirements:
+- The result must be **identical in content** to a sequential reconciliation — the
+  concurrency must not change which records are matched or how they differ. Order of
+  results does not matter.
+- Key matching must be exact; composite keys require all key fields to be equal.
+- Field comparison must be value-exact (using `==`), and a field missing from one or
+  both records is treated as `nil`.
+- Matched entries must carry the full original left and right records.
+- `:max_concurrency` must be honoured as an upper bound; an invalid value (not a
+  positive integer) must raise `ArgumentError`.
+- The diff computation for matched records must be spread across worker tasks (e.g.
+  via `Task.async_stream`); the function may use processes internally, but must have
+  no other side effects and no external dependencies beyond the Elixir/OTP standard
+  library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule ConcurrentReconciler do
+  @moduledoc """
+  Reconciles two lists of record maps by a shared (possibly composite) key,
+  producing a structured diff.
+
+  Matched records are compared field-by-field, with the per-record field diffs
+  computed concurrently across a pool of worker tasks (via `Task.async_stream`)
+  so the work can take advantage of multiple schedulers. The result is identical
+  in content to a sequential reconciliation; only the wall-clock cost differs.
+  """
+
+  @typedoc "A record represented as a map of field => value."
+  @type record :: map()
+
+  @typedoc "A diff map of field => %{left: value, right: value} for differing fields."
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @typedoc "A matched entry carrying both original records and their differences."
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` (lists of maps) by the composite key given in
+  `opts[:key_fields]`.
+
+  Returns a map with `:matched`, `:only_in_left`, and `:only_in_right`.
+
+  ## Options
+
+    * `:key_fields` (required) — list of atoms forming the composite key.
+    * `:compare_fields` (optional) — list of atoms to diff on matched records.
+      Defaults to all fields except the key fields.
+    * `:max_concurrency` (optional) — positive integer bounding parallel diffs.
+      Defaults to `System.schedulers_online/0`.
+
+  Raises `ArgumentError` if `:key_fields` is missing/invalid or if
+  `:max_concurrency` is not a positive integer.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields = Keyword.get(opts, :compare_fields, nil)
+    max_concurrency = fetch_max_concurrency!(opts)
+
+    left_index = index_by_key(left, key_fields)
+    right_index = index_by_key(right, key_fields)
+
+    left_keys = MapSet.new(Map.keys(left_index))
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    common_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      common_keys
+      |> Task.async_stream(
+        fn key ->
+          l = Map.fetch!(left_index, key)
+          r = Map.fetch!(right_index, key)
+          %{left: l, right: r, differences: diff(l, r, key_fields, compare_fields)}
+        end,
+        max_concurrency: max_concurrency,
+        ordered: false
+      )
+      |> Enum.map(&elem(&1, 1))
+
+    %{
+      matched: matched,
+      only_in_left: Enum.map(only_left_keys, &Map.fetch!(left_index, &1)),
+      only_in_right: Enum.map(only_right_keys, &Map.fetch!(right_index, &1))
+    }
+  end
+
+  @spec fetch_key_fields!(keyword()) :: [atom()]
+  defp fetch_key_fields!(opts) do
+    case Keyword.get(opts, :key_fields) do
+      [_ | _] = fields ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      _ ->
+        raise ArgumentError, ":key_fields is required and must be a non-empty list of atoms"
+    end
+  end
+
+  @spec fetch_max_concurrency!(keyword()) :: pos_integer()
+  defp fetch_max_concurrency!(opts) do
+    case Keyword.get(opts, :max_concurrency, System.schedulers_online()) do
+      n when is_integer(n) and n > 0 -> n
+      _ -> raise ArgumentError, ":max_concurrency must be a positive integer"
+    end
+  end
+
+  @spec index_by_key([record()], [atom()]) :: %{optional(term()) => record()}
+  defp index_by_key(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      Map.put(acc, key_for(record, key_fields), record)
+    end)
+  end
+
+  @spec key_for(record(), [atom()]) :: [term()]
+  defp key_for(record, key_fields), do: Enum.map(key_fields, &Map.get(record, &1))
+
+  @spec diff(record(), record(), [atom()], [atom()] | nil) :: diff_map()
+  defp diff(left, right, key_fields, compare_fields) do
+    fields = fields_to_compare(left, right, key_fields, compare_fields)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+
+      if lv == rv do
+        acc
+      else
+        Map.put(acc, field, %{left: lv, right: rv})
+      end
+    end)
+  end
+
+  @spec fields_to_compare(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  defp fields_to_compare(_left, _right, _key_fields, compare_fields)
+       when is_list(compa (truncated)
+04:25:12.259 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the solution already has `@moduledoc`, `@spec`/`@doc` on the public function, no TODOs, and every line is within limits — so the only thing to fix is the single compile warning. After reviewing every line, I'll make the constructs most exposed to the (OTP 27+/Elixir 1.18+) compiler flow-typing pass fully explicit and conventional, keeping behavior identical.
+
+<file path="solution.ex">
+defmodule ConcurrentReconciler do
+  @moduledoc """
+  Reconciles two lists of record maps by a shared (possibly composite) key,
+  producing a structured diff.
+
+  Matched records are compared field-by-field, with the per-record field diffs
+  computed concurrently across a pool of worker tasks (via `Task.async_stream`)
+  so the work can take advantage of multiple schedulers. The result is identical
+  in content to a sequential reconciliation; only the wall-clock cost differs.
+  """
+
+  @typedoc "A record represented as a map of field => value."
+  @type record :: map()
+
+  @typedoc "A diff map of field => %{left: value, right: value} for differing fields."
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @typedoc "A matched entry carrying both original records and their differences."
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` (lists of maps) by the composite key given in
+  `opts[:key_fields]`.
+
+  Returns a map with `:matched`, `:only_in_left`, and `:only_in_right`.
+
+  ## Options
+
+    * `:key_fields` (required) — list of atoms forming the composite key.
+    * `:compare_fields` (optional) — list of atoms to diff on matched records.
+      Defaults to all fields except the key fields.
+    * `:max_concurrency` (optional) — positive integer bounding parallel diffs.
+      Defaults to `System.schedulers_online/0`.
+
+  Raises `ArgumentError` if `:key_fields` is missing/invalid or if
+  `:max_concurrency` is not a positive integer.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts)
+      when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    max_concurrency = fetch_max_concurrency!(opts)
+
+    left_index = index_by_key(left, key_fields)
+    right_index = index_by_key(right, key_fields)
+
+    left_keys = MapSet.new(Map.keys(left_index))
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    common_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      common_keys
+      |> Task.async_stream(
+        fn key ->
+          l = Map.fetch!(left_index, key)
+          r = Map.fetch!(right_index, key)
+          %{left: l, right: r, differences: diff(l, r, key_fields, compare_fields)}
+        end,
+        max_concurrency: max_concurrency,
+        ordered: false
+      )
+      |> Enum.map(fn {:ok, entry} -> entry end)
+
+    %{
+      matched: matched,
+      only_in_left: Enum.map(only_left_keys, &Map.fetch!(left_index, &1)),
+      only_in_right: Enum.map(only_right_keys, &Map.fetch!(right_index, &1))
+    }
+  end
+
+  @spec fetch_key_fields!(keyword()) :: [atom()]
+  defp fetch_key_fields!(opts) do
+    case Keyword.get(opts, :key_fields) do
+      [_ | _] = fields ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      _ ->
+        raise ArgumentError, ":key_fields is required and must be a non-empty list of atoms"
+    end
+  end
+
+  @spec fetch_max_concurrency!(keyword()) :: pos_integer()
+  defp fetch_max_concurrency!(opts) do
+    case Keyword.get(opts, :max_concurrency, System.schedulers_online()) do
+      n when is_integer(n) and n > 0 -> n
+      _ -> raise ArgumentError, ":max_concurrency must be a positive integer"
+    end
+  end
+
+  @spec index_by_key([record()], [atom()]) :: %{optional(term()) => record()}
+  defp index_by_key(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      Map.put(acc, key_for(record, key_fields), record)
+    end)
+  end
+
+  @spec key_for(record(), [atom()]) :: [term()]
+  defp key_for(record, key_fields), do: Enum.map(key_fields, &Map.get(record, &1))
+
+  @spec diff(record(), record(), [atom()], [atom()] | nil) :: diff_map()
+  defp diff(left, right, key_fields, compare_fields) do
+    fields = fields_to_compare(left, right, key_fields, compare_fields)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      left_value = Map.get(left, field)
+      right_value = Map.get(right, field)
+
+      if left_value == right_value do
+        acc
+      else
+        Map.put(acc, field, %{left: left_value, right: right_value})
+      end
+    end)
+  end
+
+  @spec fields_to_compare(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  defp fields_to_compare(_left, _right, _key_fields, fields) when is_list(fields) do
+    fields
+  end
+
+  defp fields_to_compare(left, right, key_fields, nil) do
+    key_set = MapSet.new(key_fields)
+
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+end
+</file>
+04:25:12.259 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6004, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6004, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6004, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6004, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 26849, "type" => "message"}], "output_tokens" => 26849, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+04:25:12.278 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_data_reconciliation_engine_variation_3_01 solution.ex
+04:25:13.008 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":143,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":4,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_data_reconciliation_engine_variation_3_01/solution.ex","task":"034_004_data_reconciliation_engine_variation_3_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T02:25:12.986603Z"}
+04:25:13.009 [info] cycle 034_004_data_reconciliation_engine_variation_3_01: REJECTED after 4 attempt(s)

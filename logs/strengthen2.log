@@ -1,0 +1,114 @@
+strengthening 17 family(ies), sequential, ledger logs/strengthen_harnesses.jsonl
+
+[1/17] 077_001_interval_tree_for_overlapping_range_queries_01 (ledgered 0.38) ... rejected — still below floor after strengthening (0.42)
+[2/17] 105_001_genserver_based_debouncer_01 (ledgered 0.4) ... applied
+[3/17] 013_001_exponential_backoff_retry_worker_01 (ledgered 0.41) ... rejected — reference not green vs new harness: tests failed
+[4/17] 074_001_custom_exunit_assertion_helpers_01 (ledgered 0.41) ... rejected — blind solver fails the strengthened harness — added test(s) demand behavior the prompt does not state. Failing: 
+[5/17] 013_002_timeout_guarded_retry_worker_01 (ledgered 0.42) ... applied
+[6/17] 107_002_keyed_event_aggregator_with_per_key_batching_01 (ledgered 0.43) ... applied
+[7/17] 041_001_lru_cache_backed_by_ets_01 (ledgered 0.45) ... rejected — blind solver fails the strengthened harness — added test(s) demand behavior the prompt does not state. Failing: test backing ETS tables use the documented names, types and read settings; test every touch consumes the next counter value and drops the stale order entry; test a miss creates nothing, evicts nothing and does not reorder
+[8/17] 001_001_rate_limiter_01 (ledgered 0.47) ... applied
+[9/17] 023_002_in_flight_coalescing_idempotent_payments_01 (ledgered 0.47) ... rejected — house/harness lint: test_harness.exs reaches into internal state via `:sys.get_state`/`:sys.replace_state` (2 call(s)) — assert observable behavior through the public API instead
+[10/17] 063_004_bounded_concurrency_concurrent_fetcher_01 (ledgered 0.47) ... rejected — blind solver fails the strengthened harness — added test(s) demand behavior the prompt does not state. Failing: test returns ok for all sources when the pool is large enough; test handles error returns and crashes without affecting other fetches; test runs at most max_concurrency fetches at a time; test sources still queued or running when the timeout fires are reported as :timeout
+[11/17] 101_001_sliding_window_counter_01 (ledgered 0.47) ... rejected — house/harness lint: test_harness.exs reaches into internal state via `:sys.get_state`/`:sys.replace_state` (6 call(s)) — assert observable behavior through the public API instead
+[12/17] 002_002_rolling_window_error_rate_cb_01 (ledgered 0.47) ... applied
+[13/17] 104_004_usage_recycling_connection_pool_01 (ledgered 0.47) ... applied
+[14/17] 041_002_lfu_cache_backed_by_ets_01 (ledgered 0.48) ... 
+10:54:26.160 [warning] transient error (error_max_turns ) on strengthen_harness (041_002_lfu_cache_backed_by_ets_01) — retry 1/5 after 2000ms
+applied
+[15/17] 041_003_sharded_lru_cache_with_consistent_key_routing_01 (ledgered 0.48) ... warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_25282.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_25346.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_26370.ex:57: LRUCacheSharded.size/1
+  .gen_staging/strengthen_041_003_sharded_lru_cache_with_consistent_key_routing_01/test_harness.exs:197: LRUCacheShardedTest."test max_size: 1 is accepted and caps each shard at a single entry"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_26434.ex:57: LRUCacheSharded.size/1
+  .gen_staging/strengthen_041_003_sharded_lru_cache_with_consistent_key_routing_01/test_harness.exs:197: LRUCacheShardedTest."test max_size: 1 is accepted and caps each shard at a single entry"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_26626.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_26946.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_27010.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+rejected — blind solver fails the strengthened harness — added test(s) demand behavior the prompt does not state. Failing: test num_shards: 1 behaves like a plain LRU cache; test get refreshes recency within a single shard; test get returns :miss for unknown key; test put and get round-trip across shards
+[16/17] 079_001_bloom_filter_01 (ledgered 0.48) ... 
+11:06:05.487 [warning] transient error (error_max_turns ) on strengthen_harness (079_001_bloom_filter_01) — retry 1/5 after 2000ms
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_30466.ex:22: BloomFilter.add/2
+  .gen_staging/strengthen_079_001_bloom_filter_01/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_30530.ex:22: BloomFilter.add/2
+  .gen_staging/strengthen_079_001_bloom_filter_01/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_30658.ex:33: BloomFilter.member?/2
+  .gen_staging/strengthen_079_001_bloom_filter_01/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_30722.ex:33: BloomFilter.member?/2
+  .gen_staging/strengthen_079_001_bloom_filter_01/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+applied
+[17/17] 075_001_property_based_test_generators_01 (ledgered 0.49) ... 
+11:11:39.877 [warning] transient error (error_max_turns ) on strengthen_harness (075_001_property_based_test_generators_01) — retry 1/5 after 2000ms
+applied
+
+=== STRENGTHEN LEDGER (50 row(s)) === %{"already_ok" => 10, "applied" => 15, "rejected" => 25}
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  105_001_genserver_based_debouncer_01: 0.4 → 0.8 (+3 test(s))
+  013_002_timeout_guarded_retry_worker_01: 0.4 → 0.84 (+6 test(s))
+  107_002_keyed_event_aggregator_with_per_key_batching_01: 0.43 → 0.79 (+3 test(s))
+  001_001_rate_limiter_01: 0.47 → 0.87 (+4 test(s))
+  002_002_rolling_window_error_rate_cb_01: 0.47 → 0.75 (+5 test(s))
+  104_004_usage_recycling_connection_pool_01: 0.47 → 0.82 (+9 test(s))
+  041_002_lfu_cache_backed_by_ets_01: 0.48 → 0.78 (+4 test(s))
+  079_001_bloom_filter_01: 0.48 → 1.0 (+6 test(s))
+  075_001_property_based_test_generators_01: 0.49 → 1.0 (+7 test(s))

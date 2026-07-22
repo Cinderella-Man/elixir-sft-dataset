@@ -1,0 +1,456 @@
+14:09:03.401 [info] VARIATION 061_004_weight_budget_parallel_map_01: Weight-Budget Parallel Map
+14:09:03.402 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/061_004_weight_budget_parallel_map_01 solution.ex
+14:09:04.600 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":2,"max_line_length":104,"mode":"full","pipe_chain_count":5,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.75,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.95,"reasons":["analysis: no lines over 98 chars (found 2) → 0/1 pts","analysis: @doc on public functions → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/061_004_weight_budget_parallel_map_01/solution.ex","task":"061_004_weight_budget_parallel_map_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T12:09:04.579144Z"}
+14:09:04.601 [info] cycle 061_004_weight_budget_parallel_map_01: repairing — The solution is green but does not meet the house style: no @doc on any public function; 2 line(s) over 98 columns — wrap them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+14:09:04.601 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+14:09:04.601 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @doc on any public function; 2 line(s) over 98 columns — wrap them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `WeightedMap` that applies a function to a collection in
+parallel, but where the concurrency limit is a **weight budget** rather than a simple task
+count.
+
+I need one public function:
+- `WeightedMap.pmap(collection, func, weight_fun, budget)` where `weight_fun` maps an
+  element to a **positive integer** weight and `budget` is a positive integer. It applies
+  `func` to each element in parallel such that the **sum of the weights of all in-flight
+  tasks never exceeds `budget`**. Results are returned in the **same order** as the input
+  collection, regardless of completion order.
+
+Admission rules:
+- Admit elements in input order (head-of-line). A queued element may only start once the
+  currently running total weight plus its own weight is `<= budget`.
+- Special case: if a single element's weight is **greater than `budget`**, it would
+  otherwise never run — so allow it to run **alone** (only when nothing else is currently
+  running). While it runs, no other element may start.
+
+Task crash handling: if `func` raises or the spawned task exits abnormally for a given
+element, that element's result should be `{:error, reason}` — this must not affect or cancel
+other in-flight tasks, and the element's weight must be released back to the budget.
+
+You will also need to write a helper GenServer called `WeightMeter` in the same file. It must
+expose:
+- `WeightMeter.start_link(opts)` — starts the process, accepts `:name`
+- `WeightMeter.add(server, weight)` — adds `weight` to the in-flight total, returns the new total
+- `WeightMeter.sub(server, weight)` — subtracts `weight` from the in-flight total, returns the new total
+- `WeightMeter.peak(server)` — returns the highest in-flight total the meter has ever reached
+
+`WeightMeter` is intended for use in tests to verify that the weight budget is actually
+respected at runtime; your `pmap` implementation itself does not need to use it.
+
+Give me the complete implementation in a single file. Use only OTP and the standard library —
+no external dependencies. Do not use `Task.async_stream`; implement the weight-aware
+admission and scheduling logic yourself using `spawn_monitor`.
+
+----- solution.ex -----
+defmodule WeightMeter do
+  @moduledoc """
+  A GenServer that tracks a running total of in-flight weight and remembers the
+  highest total it has ever reached. Intended for tests to verify that
+  `WeightedMap.pmap/4` never exceeds its declared weight budget at runtime.
+  """
+
+  use GenServer
+
+  def start_link(opts \\ []) do
+    {name, server_opts} =
+      case Keyword.pop(opts, :name) do
+        {nil, rest} -> {__MODULE__, rest}
+        {name, rest} -> {name, rest}
+      end
+
+    GenServer.start_link(__MODULE__, %{current: 0, peak: 0}, [{:name, name} | server_opts])
+  end
+
+  def add(server, weight), do: GenServer.call(server, {:add, weight})
+  def sub(server, weight), do: GenServer.call(server, {:sub, weight})
+  def peak(server), do: GenServer.call(server, :peak)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:add, weight}, _from, %{current: current, peak: peak} = state) do
+    new_current = current + weight
+    {:reply, new_current, %{state | current: new_current, peak: max(new_current, peak)}}
+  end
+
+  def handle_call({:sub, weight}, _from, %{current: current} = state) do
+    new_current = current - weight
+    {:reply, new_current, %{state | current: new_current}}
+  end
+
+  def handle_call(:peak, _from, %{peak: peak} = state), do: {:reply, peak, state}
+end
+
+
+defmodule WeightedMap do
+  @moduledoc """
+  Parallel map whose concurrency is bounded by a weight *budget*: the sum of the
+  weights of all in-flight tasks never exceeds `budget`. Elements are admitted in
+  input order; an element heavier than the whole budget is allowed to run alone.
+
+  Results are returned in input order; a raised exception or abnormal task exit
+  yields `{:error, reason}` for that element and releases its weight, leaving all
+  other in-flight tasks untouched.
+  """
+
+  @spec pmap(Enumerable.t(), (term() -> term()), (term() -> pos_integer()), pos_integer()) :: [term()]
+  def pmap(collection, func, weight_fun, budget)
+      when is_function(func, 1) and is_function(weight_fun, 1) and is_integer(budget) and budget >= 1 do
+    indexed =
+      collection
+      |> Enum.to_list()
+      |> Enum.with_index()
+      |> Enum.map(fn {elem, idx} ->
+        w = weight_fun.(elem)
+
+        unless is_integer(w) and w >= 1 do
+          raise ArgumentError, "weight_fun must return a positive integer, got: #{inspect(w)}"
+        end
+
+        {elem, idx, w}
+      end)
+
+    total = length(indexed)
+
+    if total == 0 do
+      []
+    else
+      state = %{
+        parent: self(),
+        func: func,
+        budget: budget,
+        weight: 0,
+        running: %{},
+        queue: indexed,
+        results: %{}
+      }
+
+      results = run(state)
+      Enum.map(0..(total - 1), &Map.fetch!(results, &1))
+    end
+  end
+
+  # Admit as many queued elements as the budget allows, then wait for one to
+  # finish; repeat until everything is done.
+  defp run(state) do
+    state = admit(state)
+
+    if map_size(state.running) == 0 and state.queue == [] do
+      state.results
+    else
+      state |> collect_one() |> run()
+    end
+  end
+
+  # Head-of-line admission: keep starting the queue head while it fits, or while
+  # it is an oversize element and nothing else is running.
+  defp admit(%{queue: []} = state), do: state
+
+  defp admit(%{queue: [{elem, idx, w} | rest]} = state) do
+    %{running: running, weight: weight, budget: budget} = state
+
+    cond do
+      weight + w <= budget ->
+        {ref, entry} = spawn_task(state.parent, state.func, elem, idx, w)
+        admit(%{state | queue: rest, running: Map.put(running, ref, entry), weight: weight + w})
+
+      weight == 0 and w > budget ->
+        {ref, entry} = spawn_task(state.parent, state.func, elem, idx, w)
+        admit(%{state | queue: rest, running: Map.put(running, ref, entry), weight: weight + w})
+
+      true ->
+        state
+    end
+  end
+
+  defp spawn_task(parent, func, elem, idx, w) do
+    ref = make_ref()
+
+    {_pid, mon} =
+      spawn_monitor(fn ->
+        result =
+          try do
+            {:ok, func.(elem)}
+          rescue
+            e -> {:error, {e, __STACKTRACE__}}
+          catch
+            :exit, r -> {:error, r}
+            :throw, t -> {:error, {:throw, t}}
+          end
+
+        send(parent, {ref, result})
+      end)
+
+    {ref, {mon, idx, w}}
+  end
+
+  defp collect_one(%{running: running} = state) do
+    receive do
+      {ref, result} when is_map_key(running, ref) ->
+        {mon, idx, w} = Map.fetch!(running, ref)
+        Process.demonitor(mon, [:flush])
+
+        outcome =
+          case result do
+            {:ok, value} -> value
+            {:error, reason} -> {:error, reason}
+          end
+
+        %{
+          state
+          | running: Map.delete(running, ref),
+            weight: state.weight - w,
+            results: Map.put(state.results, idx, outcome)
+        }
+
+      {:DOWN, mon, :process, _pid, reason} ->
+        case Enum.find(runnin (truncated)
+14:09:35.202 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule WeightMeter do
+  @moduledoc """
+  A GenServer that tracks a running total of in-flight weight and remembers the
+  highest total it has ever reached. Intended for tests to verify that
+  `WeightedMap.pmap/4` never exceeds its declared weight budget at runtime.
+  """
+
+  use GenServer
+
+  @doc """
+  Starts the meter. Accepts `:name` to register the process; any other options
+  are passed through to `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, server_opts} =
+      case Keyword.pop(opts, :name) do
+        {nil, rest} -> {__MODULE__, rest}
+        {name, rest} -> {name, rest}
+      end
+
+    GenServer.start_link(__MODULE__, %{current: 0, peak: 0}, [{:name, name} | server_opts])
+  end
+
+  @doc "Adds `weight` to the in-flight total and returns the new total."
+  @spec add(GenServer.server(), integer()) :: integer()
+  def add(server, weight), do: GenServer.call(server, {:add, weight})
+
+  @doc "Subtracts `weight` from the in-flight total and returns the new total."
+  @spec sub(GenServer.server(), integer()) :: integer()
+  def sub(server, weight), do: GenServer.call(server, {:sub, weight})
+
+  @doc "Returns the highest in-flight total the meter has ever reached."
+  @spec peak(GenServer.server()) :: integer()
+  def peak(server), do: GenServer.call(server, :peak)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:add, weight}, _from, %{current: current, peak: peak} = state) do
+    new_current = current + weight
+    {:reply, new_current, %{state | current: new_current, peak: max(new_current, peak)}}
+  end
+
+  def handle_call({:sub, weight}, _from, %{current: current} = state) do
+    new_current = current - weight
+    {:reply, new_current, %{state | current: new_current}}
+  end
+
+  def handle_call(:peak, _from, %{peak: peak} = state), do: {:reply, peak, state}
+end
+
+
+defmodule WeightedMap do
+  @moduledoc """
+  Parallel map whose concurrency is bounded by a weight *budget*: the sum of the
+  weights of all in-flight tasks never exceeds `budget`. Elements are admitted in
+  input order; an element heavier than the whole budget is allowed to run alone.
+
+  Results are returned in input order; a raised exception or abnormal task exit
+  yields `{:error, reason}` for that element and releases its weight, leaving all
+  other in-flight tasks untouched.
+  """
+
+  @doc """
+  Applies `func` to every element of `collection` in parallel, keeping the sum of
+  the weights (from `weight_fun`) of all in-flight tasks within `budget`.
+
+  Elements are admitted in input order. An element whose weight exceeds `budget`
+  runs alone. Results are returned in input order; a crash for an element yields
+  `{:error, reason}` for that element only.
+  """
+  @spec pmap(
+          Enumerable.t(),
+          (term() -> term()),
+          (term() -> pos_integer()),
+          pos_integer()
+        ) :: [term()]
+  def pmap(collection, func, weight_fun, budget)
+      when is_function(func, 1) and is_function(weight_fun, 1) and
+             is_integer(budget) and budget >= 1 do
+    indexed =
+      collection
+      |> Enum.to_list()
+      |> Enum.with_index()
+      |> Enum.map(fn {elem, idx} ->
+        w = weight_fun.(elem)
+
+        unless is_integer(w) and w >= 1 do
+          raise ArgumentError, "weight_fun must return a positive integer, got: #{inspect(w)}"
+        end
+
+        {elem, idx, w}
+      end)
+
+    total = length(indexed)
+
+    if total == 0 do
+      []
+    else
+      state = %{
+        parent: self(),
+        func: func,
+        budget: budget,
+        weight: 0,
+        running: %{},
+        queue: indexed,
+        results: %{}
+      }
+
+      results = run(state)
+      Enum.map(0..(total - 1), &Map.fetch!(results, &1))
+    end
+  end
+
+  # Admit as many queued elements as the budget allows, then wait for one to
+  # finish; repeat until everything is done.
+  defp run(state) do
+    state = admit(state)
+
+    if map_size(state.running) == 0 and state.queue == [] do
+      state.results
+    else
+      state |> collect_one() |> run()
+    end
+  end
+
+  # Head-of-line admission: keep starting the queue head while it fits, or while
+  # it is an oversize element and nothing else is running.
+  defp admit(%{queue: []} = state), do: state
+
+  defp admit(%{queue: [{elem, idx, w} | rest]} = state) do
+    %{running: running, weight: weight, budget: budget} = state
+
+    cond do
+      weight + w <= budget ->
+        {ref, entry} = spawn_task(state.parent, state.func, elem, idx, w)
+        admit(%{state | queue: rest, running: Map.put(running, ref, entry), weight: weight + w})
+
+      weight == 0 and w > budget ->
+        {ref, entry} = spawn_task(state.parent, state.func, elem, idx, w)
+        admit(%{state | queue: rest, running: Map.put(running, ref, entry), weight: weight + w})
+
+      true ->
+        state
+    end
+  end
+
+  defp spawn_task(parent, func, elem, idx, w) do
+    ref = make_ref()
+
+    {_pid, mon} =
+      spawn_monitor(fn ->
+        result =
+          try do
+            {:ok, func.(elem)}
+          rescue
+            e -> {:error, {e, __STACKTRACE__}}
+          catch
+            :exit, r -> {:error, r}
+            :throw, t -> {:error, {:throw, t}}
+          end
+
+        send(parent, {ref, result})
+      end)
+
+    {ref, {mon, idx, w}}
+  end
+
+  defp collect_one(%{running: running} = state) do
+    receive do
+      {ref, result} when is_map_key(running, ref) ->
+        {mon, idx, w} = Map.fetch!(running, ref)
+        Process.demonitor(mon, [:flush])
+
+        outcome =
+          case result do
+            {:ok, value} -> value
+            {:error, reason} -> {:error, reason}
+          end
+
+        %{
+          state
+          | running: Map.delete(running, ref),
+            weight: state.weight - w,
+            results: Map.put(state.results, idx, outcome)
+        }
+
+      {:DOWN, mon, :process, _pid, reason} ->
+        case Enum.find(running, fn {_ref, {m, _idx, _w}} -> m == mon end) do
+          {ref, {_mon, idx, w}} ->
+            %{
+              state
+              | running: Map.delete(running, ref),
+                weight: state.weight - w,
+                results: Map.put(state.results, idx, {:error, reason})
+            }
+
+          nil ->
+            collect_one(state)
+        end
+
+      _other ->
+        collect_one(state)
+    end
+  end
+end
+</file>
+14:09:35.202 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5242, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5242, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5242, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5242, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 2814, "type" => "message"}], "output_tokens" => 2814, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:09:35.221 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/061_004_weight_budget_parallel_map_01 solution.ex
+14:09:36.432 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":208,"lines_over_98":0,"max_line_length":96,"mode":"full","pipe_chain_count":5,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/061_004_weight_budget_parallel_map_01/solution.ex","task":"061_004_weight_budget_parallel_map_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T12:09:36.410390Z"}
+14:09:36.436 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/061_004_weight_budget_parallel_map_01_mut solution.ex
+14:09:37.242 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":182,"lines_over_98":4,"max_line_length":452,"mode":"full","pipe_chain_count":5,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.71,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 4/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.64},"shape":"single","solution_file":".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex","task":"061_004_weight_budget_parallel_map_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedMapTest","test":"test never exceeds the weight budget"},{"message":"MUTATION","module":"WeightedMapTest","test":"test a task heavier than the budget runs alone"},{"message":"MUTATION","module":"WeightedMapTest","test":"test runs several small tasks in parallel under the budget"},{"message":"MUTATION","module":"WeightedMapTest","test":"test WeightMeter tracks running total and peak"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T12:09:37.218781Z"}
+14:09:37.246 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/061_004_weight_budget_parallel_map_01_mut solution.ex
+14:09:38.055 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":188,"lines_over_98":4,"max_line_length":452,"mode":"full","pipe_chain_count":5,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.76,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 3/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.73},"shape":"single","solution_file":".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex","task":"061_004_weight_budget_parallel_map_01_mut","test_failures":[{"message":"\n\nAssertion with == failed\ncode:  assert WeightMeter.peak(meter) == 10\nleft:  0\nright: 10\n","module":"WeightedMapTest","test":"test a task heavier than the budget runs alone"},{"message":"\n\nAssertion with >= failed\ncode:  assert WeightMeter.peak(meter) >= 2\nleft:  0\nright: 2\n","module":"WeightedMapTest","test":"test runs several small tasks in parallel under the budget"},{"message":"MUTATION","module":"WeightedMapTest","test":"test WeightMeter tracks running total and peak"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T12:09:38.032318Z"}
+14:09:38.059 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/061_004_weight_budget_parallel_map_01_mut solution.ex
+14:09:39.249 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":188,"lines_over_98":4,"max_line_length":452,"mode":"full","pipe_chain_count":5,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.7,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 4/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.64},"shape":"single","solution_file":".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex","task":"061_004_weight_budget_parallel_map_01_mut","test_failures":[{"message":"\n\nAssertion with <= failed\ncode:  assert WeightMeter.peak(meter) <= 8\nleft:  26\nright: 8\n","module":"WeightedMapTest","test":"test never exceeds the weight budget"},{"message":"\n\nAssertion with == failed\ncode:  assert WeightMeter.peak(meter) == 10\nleft:  11\nright: 10\n","module":"WeightedMapTest","test":"test a task heavier than the budget runs alone"},{"message":"\n\nAssertion with <= failed\ncode:  assert WeightMeter.peak(meter) <= 3\nleft:  6\nright: 3\n","module":"WeightedMapTest","test":"test runs several small tasks in parallel under the budget"},{"message":"MUTATION","module":"WeightedMapTest","test":"test WeightMeter tracks running total and peak"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T12:09:39.224640Z"}
+14:09:39.253 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/061_004_weight_budget_parallel_map_01_mut solution.ex
+14:09:40.448 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":188,"lines_over_98":4,"max_line_length":452,"mode":"full","pipe_chain_count":5,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.71,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 4/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.64},"shape":"single","solution_file":".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex","task":"061_004_weight_budget_parallel_map_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedMapTest","test":"test never exceeds the weight budget"},{"message":"MUTATION","module":"WeightedMapTest","test":"test a task heavier than the budget runs alone"},{"message":"MUTATION","module":"WeightedMapTest","test":"test runs several small tasks in parallel under the budget"},{"message":"MUTATION","module":"WeightedMapTest","test":"test WeightMeter tracks running total and peak"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T12:09:40.425834Z"}
+14:09:40.452 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/061_004_weight_budget_parallel_map_01_mut solution.ex
+14:09:41.269 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":188,"lines_over_98":4,"max_line_length":452,"mode":"full","pipe_chain_count":5,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.71,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 4/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.64},"shape":"single","solution_file":".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex","task":"061_004_weight_budget_parallel_map_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WeightMeter, :init, 1, [file: ~c\".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex\", line: 37, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WeightedMapTest","test":"test never exceeds the weight budget"},{"message":"{:EXIT, #PID<0.239.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WeightMeter, :init, 1, [file: ~c\".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex\", line: 37, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WeightedMapTest","test":"test a task heavier than the budget runs alone"},{"message":"{:EXIT, #PID<0.241.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WeightMeter, :init, 1, [file: ~c\".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex\", line: 37, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WeightedMapTest","test":"test runs several small tasks in parallel under the budget"},{"message":"{:EXIT, #PID<0.252.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WeightMeter, :init, 1, [file: ~c\".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex\", line: 37, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WeightedMapTest","test":"test WeightMeter tracks running total and peak"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T12:09:41.247330Z"}
+14:09:41.273 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/061_004_weight_budget_parallel_map_01_mut solution.ex
+14:09:42.083 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":186,"lines_over_98":4,"max_line_length":452,"mode":"full","pipe_chain_count":5,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":9,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.1,"mode":"full","overall":0.63,"reasons":["compilation: 9 warning(s) → -0.9 pts","tests: 4/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.64},"shape":"single","solution_file":".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex","task":"061_004_weight_budget_parallel_map_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WeightMeter, :handle_call, 3, [file: ~c\".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex\", line: 42, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WeightedMapTest","test":"test never exceeds the weight budget"},{"message":"{:EXIT, #PID<0.241.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WeightMeter, :handle_call, 3, [file: ~c\".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex\", line: 42, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WeightedMapTest","test":"test a task heavier than the budget runs alone"},{"message":"{:EXIT, #PID<0.244.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WeightMeter, :handle_call, 3, [file: ~c\".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex\", line: 42, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WeightedMapTest","test":"test runs several small tasks in parallel under the budget"},{"message":"{:EXIT, #PID<0.258.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WeightMeter, :handle_call, 3, [file: ~c\".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex\", line: 50, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WeightedMapTest","test":"test WeightMeter tracks running total and peak"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T12:09:42.059413Z"}
+14:09:42.087 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/061_004_weight_budget_parallel_map_01_mut solution.ex
+14:09:42.720 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":157,"lines_over_98":4,"max_line_length":452,"mode":"full","pipe_chain_count":2,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.29,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 10/11 failed","analysis: no lines over 98 chars (found 4) → 0/1 pts"],"tests":0.09},"shape":"single","solution_file":".gen_staging/061_004_weight_budget_parallel_map_01_mut/solution.ex","task":"061_004_weight_budget_parallel_map_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedMapTest","test":"test empty collection returns []"},{"message":"MUTATION","module":"WeightedMapTest","test":"test returns results in original order"},{"message":"MUTATION","module":"WeightedMapTest","test":"test weighted elements are mapped in order"},{"message":"MUTATION","module":"WeightedMapTest","test":"test order preserved when tasks finish out of order"},{"message":"MUTATION","module":"WeightedMapTest","test":"test never exceeds the weight budget"},{"message":"MUTATION","module":"WeightedMapTest","test":"test a task heavier than the budget runs alone"},{"message":"MUTATION","module":"WeightedMapTest","test":"test runs several small tasks in parallel under the budget"},{"message":"MUTATION","module":"WeightedMapTest","test":"test a crashing function returns {:error, reason} for that element only"},{"message":"MUTATION","module":"WeightedMapTest","test":"test a crash releases weight so remaining work still proceeds"},{"message":"\n\nExpected exception ArgumentError but got RuntimeError (MUTATION)\n","module":"WeightedMapTest","test":"test invalid weight raises ArgumentError"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T12:09:42.698268Z"}
+14:09:42.721 [info] cycle 061_004_weight_budget_parallel_map_01: ACCEPTED on attempt 1
+14:09:42.721 [info] promoted 061_004_weight_budget_parallel_map_01 -> tasks/061_004_weight_budget_parallel_map_01

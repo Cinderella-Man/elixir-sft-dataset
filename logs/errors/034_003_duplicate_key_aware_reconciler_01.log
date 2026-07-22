@@ -1,0 +1,1036 @@
+[22m01:10:48.847 [info] VARIATION 034_003_duplicate_key_aware_reconciler_01: Duplicate-Key-Aware Reconciler[0m
+[36m01:10:48.847 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_duplicate_key_aware_reconciler_01 solution.ex[0m
+[36m01:10:49.464 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":141,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":6,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_003_duplicate_key_aware_reconciler_01/solution.ex","task":"034_003_duplicate_key_aware_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-06T23:10:49.445952Z"}[0m
+[22m01:10:49.465 [info] cycle 034_003_duplicate_key_aware_reconciler_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m01:10:49.465 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m01:10:49.465 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Reconciler` that takes two lists of records and reconciles them by a shared key, producing a structured diff — but that treats **duplicate keys** as a first-class, explicitly reported condition instead of silently collapsing them.
+
+I need this function in the public API:
+
+- `Reconciler.reconcile(left, right, opts)` where `left` and `right` are lists of maps and `opts` is a keyword list. It returns a map with four keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for keys that appear **exactly once on each side**. `diff_map` is a map of `%{field => %{left: val, right: val}}` for fields whose values differ (empty when identical on all compared fields).
+  - `:only_in_left` — records for keys that appear **exactly once in `left` and not at all in `right`**.
+  - `:only_in_right` — records for keys that appear **exactly once in `right` and not at all in `left`**.
+  - `:duplicate_keys` — a list of `%{key: key_map, left_count: n, right_count: m}` entries for every key that appears **more than once on either side**. `key_map` is a map of `%{key_field => value}` reconstructed from the composite key. Such keys are considered ambiguous and must NOT appear in `:matched`, `:only_in_left`, or `:only_in_right`.
+
+The `opts` keyword list must support:
+- `:key_fields` (required) — a list of atoms forming the composite key (e.g. `[:id]` or `[:org, :uid]`). Key matching is exact.
+- `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields except the key fields are compared.
+
+Behaviour requirements:
+- A key with two or more records on the left (or on the right) is a duplicate, regardless of how many records the other side has — including zero. Report it once, with the true counts on each side.
+- Composite keys must work correctly, and `:duplicate_keys` entries must express the key as a `%{field => value}` map for all key fields.
+- Field comparison must be value-exact (using `==`). If a compared field is missing from one or both records, treat the missing value as `nil`.
+- Records in `:matched` must include both the original left and right record in full, even if some fields are excluded from comparison.
+- Order of results does not matter.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff.
+
+  Unlike a last-write-wins reconciler, any key that appears more than once on
+  either side is treated as ambiguous and surfaced in a dedicated
+  `:duplicate_keys` bucket rather than being silently collapsed. Only keys with
+  exactly one record on each relevant side flow into `:matched`, `:only_in_left`,
+  or `:only_in_right`.
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+  @type duplicate_entry :: %{
+          key: map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+  @type result :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()],
+          duplicate_keys: [duplicate_entry()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` by the composite key in `opts`, flagging duplicate
+  keys instead of collapsing them.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields_opt = Keyword.get(opts, :compare_fields, nil)
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    all_keys =
+      MapSet.union(MapSet.new(Map.keys(left_groups)), MapSet.new(Map.keys(right_groups)))
+
+    init = %{matched: [], only_in_left: [], only_in_right: [], duplicate_keys: []}
+
+    Enum.reduce(all_keys, init, fn key, acc ->
+      lrecs = Map.get(left_groups, key, [])
+      rrecs = Map.get(right_groups, key, [])
+      classify(acc, key, key_fields, lrecs, rrecs, compare_fields_opt)
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Classification
+  # ---------------------------------------------------------------------------
+
+  defp classify(acc, key, key_fields, lrecs, rrecs, compare_fields_opt) do
+    lcount = length(lrecs)
+    rcount = length(rrecs)
+
+    cond do
+      lcount > 1 or rcount > 1 ->
+        entry = %{key: key_map(key, key_fields), left_count: lcount, right_count: rcount}
+        %{acc | duplicate_keys: [entry | acc.duplicate_keys]}
+
+      lcount == 1 and rcount == 1 ->
+        l = hd(lrecs)
+        r = hd(rrecs)
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields_opt)
+        entry = %{left: l, right: r, differences: diff(l, r, fields)}
+        %{acc | matched: [entry | acc.matched]}
+
+      lcount == 1 ->
+        %{acc | only_in_left: [hd(lrecs) | acc.only_in_left]}
+
+      true ->
+        %{acc | only_in_right: [hd(rrecs) | acc.only_in_right]}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation / key handling
+  # ---------------------------------------------------------------------------
+
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        unless Enum.all?(fields, &is_atom/1) do
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+        fields
+
+      {:ok, _} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  defp group_by_key(records, key_fields) do
+    Enum.group_by(records, &composite_key(&1, key_fields))
+  end
+
+  defp composite_key(record, key_fields) do
+    key_fields |> Enum.map(&Map.get(record, &1)) |> List.to_tuple()
+  end
+
+  defp key_map(key_tuple, key_fields) do
+    key_fields
+    |> Enum.zip(Tuple.to_list(key_tuple))
+    |> Map.new()
+  end
+
+  # ---------------------------------------------------------------------------
+  # Diffing
+  # ---------------------------------------------------------------------------
+
+  defp resolve_compare_fields(_l, _r, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    key_set = MapSet.new(key_fields)
+
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+
+  defp diff(left, right, fields) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+
+      if lv == rv do
+        acc
+      else
+        Map.put(acc, field, %{left: lv (truncated)[0m
+[33m01:13:25.261 [warning] transient error (error_max_turns ) on fix (034_003_duplicate_key_aware_reconciler_01) — retry 1/5 after 2000ms[0m
+[36m01:17:40.706 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the solution already has `@moduledoc`, `@spec`, `@doc`, and no TODO markers, and no obvious unused variables or bare-float matches. The one construct that is non-idiomatic and the most likely source of the single compile warning is the `unless` inside `fetch_key_fields!`. I'll restructure it into a clean `if`, keeping behavior identical, and tidy the module so nothing can warn.
+
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff.
+
+  Unlike a last-write-wins reconciler, any key that appears more than once on
+  either side is treated as ambiguous and surfaced in a dedicated
+  `:duplicate_keys` bucket rather than being silently collapsed. Only keys with
+  exactly one record on each relevant side flow into `:matched`, `:only_in_left`,
+  or `:only_in_right`.
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+  @type duplicate_entry :: %{
+          key: map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+  @type result :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()],
+          duplicate_keys: [duplicate_entry()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` by the composite key in `opts`, flagging
+  duplicate keys instead of collapsing them.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields_opt = Keyword.get(opts, :compare_fields, nil)
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    all_keys =
+      MapSet.union(MapSet.new(Map.keys(left_groups)), MapSet.new(Map.keys(right_groups)))
+
+    init = %{matched: [], only_in_left: [], only_in_right: [], duplicate_keys: []}
+
+    Enum.reduce(all_keys, init, fn key, acc ->
+      lrecs = Map.get(left_groups, key, [])
+      rrecs = Map.get(right_groups, key, [])
+      classify(acc, key, key_fields, lrecs, rrecs, compare_fields_opt)
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Classification
+  # ---------------------------------------------------------------------------
+
+  defp classify(acc, key, key_fields, lrecs, rrecs, compare_fields_opt) do
+    lcount = length(lrecs)
+    rcount = length(rrecs)
+
+    cond do
+      lcount > 1 or rcount > 1 ->
+        entry = %{key: key_map(key, key_fields), left_count: lcount, right_count: rcount}
+        %{acc | duplicate_keys: [entry | acc.duplicate_keys]}
+
+      lcount == 1 and rcount == 1 ->
+        l = hd(lrecs)
+        r = hd(rrecs)
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields_opt)
+        entry = %{left: l, right: r, differences: diff(l, r, fields)}
+        %{acc | matched: [entry | acc.matched]}
+
+      lcount == 1 ->
+        %{acc | only_in_left: [hd(lrecs) | acc.only_in_left]}
+
+      true ->
+        %{acc | only_in_right: [hd(rrecs) | acc.only_in_right]}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation / key handling
+  # ---------------------------------------------------------------------------
+
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      {:ok, _other} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  defp group_by_key(records, key_fields) do
+    Enum.group_by(records, &composite_key(&1, key_fields))
+  end
+
+  defp composite_key(record, key_fields) do
+    key_fields |> Enum.map(&Map.get(record, &1)) |> List.to_tuple()
+  end
+
+  defp key_map(key_tuple, key_fields) do
+    key_fields
+    |> Enum.zip(Tuple.to_list(key_tuple))
+    |> Map.new()
+  end
+
+  # ---------------------------------------------------------------------------
+  # Diffing
+  # ---------------------------------------------------------------------------
+
+  defp resolve_compare_fields(_l, _r, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    key_set = MapSet.new(key_fields)
+
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+
+  defp diff(left, right, fields) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+
+      if lv == rv do
+        acc
+      else
+        Map.put(acc, field, %{left: lv, right: rv})
+      end
+    end)
+  end
+end
+</file>[0m
+[36m01:17:40.706 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 20334, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 20334, "input_tokens" => 2972, "output_tokens" => 19304, "type" => "message"}], "output_tokens" => 19304, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m01:17:40.724 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_duplicate_key_aware_reconciler_01 solution.ex[0m
+[36m01:17:41.337 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":141,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":6,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_003_duplicate_key_aware_reconciler_01/solution.ex","task":"034_003_duplicate_key_aware_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-06T23:17:41.317609Z"}[0m
+[22m01:17:41.338 [info] cycle 034_003_duplicate_key_aware_reconciler_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m01:17:41.338 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m01:17:41.338 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Reconciler` that takes two lists of records and reconciles them by a shared key, producing a structured diff — but that treats **duplicate keys** as a first-class, explicitly reported condition instead of silently collapsing them.
+
+I need this function in the public API:
+
+- `Reconciler.reconcile(left, right, opts)` where `left` and `right` are lists of maps and `opts` is a keyword list. It returns a map with four keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for keys that appear **exactly once on each side**. `diff_map` is a map of `%{field => %{left: val, right: val}}` for fields whose values differ (empty when identical on all compared fields).
+  - `:only_in_left` — records for keys that appear **exactly once in `left` and not at all in `right`**.
+  - `:only_in_right` — records for keys that appear **exactly once in `right` and not at all in `left`**.
+  - `:duplicate_keys` — a list of `%{key: key_map, left_count: n, right_count: m}` entries for every key that appears **more than once on either side**. `key_map` is a map of `%{key_field => value}` reconstructed from the composite key. Such keys are considered ambiguous and must NOT appear in `:matched`, `:only_in_left`, or `:only_in_right`.
+
+The `opts` keyword list must support:
+- `:key_fields` (required) — a list of atoms forming the composite key (e.g. `[:id]` or `[:org, :uid]`). Key matching is exact.
+- `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields except the key fields are compared.
+
+Behaviour requirements:
+- A key with two or more records on the left (or on the right) is a duplicate, regardless of how many records the other side has — including zero. Report it once, with the true counts on each side.
+- Composite keys must work correctly, and `:duplicate_keys` entries must express the key as a `%{field => value}` map for all key fields.
+- Field comparison must be value-exact (using `==`). If a compared field is missing from one or both records, treat the missing value as `nil`.
+- Records in `:matched` must include both the original left and right record in full, even if some fields are excluded from comparison.
+- Order of results does not matter.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff.
+
+  Unlike a last-write-wins reconciler, any key that appears more than once on
+  either side is treated as ambiguous and surfaced in a dedicated
+  `:duplicate_keys` bucket rather than being silently collapsed. Only keys with
+  exactly one record on each relevant side flow into `:matched`, `:only_in_left`,
+  or `:only_in_right`.
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+  @type duplicate_entry :: %{
+          key: map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+  @type result :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()],
+          duplicate_keys: [duplicate_entry()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` by the composite key in `opts`, flagging
+  duplicate keys instead of collapsing them.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields_opt = Keyword.get(opts, :compare_fields, nil)
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    all_keys =
+      MapSet.union(MapSet.new(Map.keys(left_groups)), MapSet.new(Map.keys(right_groups)))
+
+    init = %{matched: [], only_in_left: [], only_in_right: [], duplicate_keys: []}
+
+    Enum.reduce(all_keys, init, fn key, acc ->
+      lrecs = Map.get(left_groups, key, [])
+      rrecs = Map.get(right_groups, key, [])
+      classify(acc, key, key_fields, lrecs, rrecs, compare_fields_opt)
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Classification
+  # ---------------------------------------------------------------------------
+
+  defp classify(acc, key, key_fields, lrecs, rrecs, compare_fields_opt) do
+    lcount = length(lrecs)
+    rcount = length(rrecs)
+
+    cond do
+      lcount > 1 or rcount > 1 ->
+        entry = %{key: key_map(key, key_fields), left_count: lcount, right_count: rcount}
+        %{acc | duplicate_keys: [entry | acc.duplicate_keys]}
+
+      lcount == 1 and rcount == 1 ->
+        l = hd(lrecs)
+        r = hd(rrecs)
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields_opt)
+        entry = %{left: l, right: r, differences: diff(l, r, fields)}
+        %{acc | matched: [entry | acc.matched]}
+
+      lcount == 1 ->
+        %{acc | only_in_left: [hd(lrecs) | acc.only_in_left]}
+
+      true ->
+        %{acc | only_in_right: [hd(rrecs) | acc.only_in_right]}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation / key handling
+  # ---------------------------------------------------------------------------
+
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      {:ok, _other} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  defp group_by_key(records, key_fields) do
+    Enum.group_by(records, &composite_key(&1, key_fields))
+  end
+
+  defp composite_key(record, key_fields) do
+    key_fields |> Enum.map(&Map.get(record, &1)) |> List.to_tuple()
+  end
+
+  defp key_map(key_tuple, key_fields) do
+    key_fields
+    |> Enum.zip(Tuple.to_list(key_tuple))
+    |> Map.new()
+  end
+
+  # ---------------------------------------------------------------------------
+  # Diffing
+  # ---------------------------------------------------------------------------
+
+  defp resolve_compare_fields(_l, _r, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    key_set = MapSet.new(key_fields)
+
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+
+  defp diff(left, right, fields) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+
+      if lv == rv do
+        acc
+      else
+        Map.put(acc, fi (truncated)[0m
+[36m01:22:55.275 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the solution's structure looks clean, but I need to produce a version that is guaranteed warning-free by construction. Since I can't run the compiler, I'll rewrite `solution.ex` from scratch, personally verifying every binding is used (no unused-variable warnings), avoiding any bare float-zero, keeping all lines ≤98 columns, and preserving behavior exactly — while retaining `@moduledoc`, `@spec`, and `@doc`.
+
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff.
+
+  Unlike a last-write-wins reconciler, any key that appears more than once on
+  either side is treated as ambiguous and surfaced in a dedicated
+  `:duplicate_keys` bucket rather than being silently collapsed. Only keys with
+  exactly one record on each relevant side flow into `:matched`, `:only_in_left`,
+  or `:only_in_right`.
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+  @type duplicate_entry :: %{
+          key: map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()],
+          duplicate_keys: [duplicate_entry()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` by the composite key in `opts`, flagging
+  duplicate keys instead of collapsing them.
+
+  Options:
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the
+      composite key. Matching is exact.
+    * `:compare_fields` (optional) — a list of atoms to diff on matched
+      records. When omitted or `nil`, all fields except the key fields are
+      compared. Missing fields are treated as `nil`.
+
+  Returns a map with `:matched`, `:only_in_left`, `:only_in_right`, and
+  `:duplicate_keys`. Result order is not significant.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields = Keyword.get(opts, :compare_fields, nil)
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    all_keys =
+      MapSet.union(MapSet.new(Map.keys(left_groups)), MapSet.new(Map.keys(right_groups)))
+
+    init = %{matched: [], only_in_left: [], only_in_right: [], duplicate_keys: []}
+
+    Enum.reduce(all_keys, init, fn key, acc ->
+      lrecs = Map.get(left_groups, key, [])
+      rrecs = Map.get(right_groups, key, [])
+      classify(acc, key, key_fields, lrecs, rrecs, compare_fields)
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Classification
+  # ---------------------------------------------------------------------------
+
+  @spec classify(result(), tuple(), [atom()], [record()], [record()], [atom()] | nil) :: result()
+  defp classify(acc, key, key_fields, lrecs, rrecs, compare_fields) do
+    lcount = length(lrecs)
+    rcount = length(rrecs)
+
+    cond do
+      lcount > 1 or rcount > 1 ->
+        entry = %{key: key_map(key, key_fields), left_count: lcount, right_count: rcount}
+        %{acc | duplicate_keys: [entry | acc.duplicate_keys]}
+
+      lcount == 1 and rcount == 1 ->
+        [l] = lrecs
+        [r] = rrecs
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields)
+        entry = %{left: l, right: r, differences: diff(l, r, fields)}
+        %{acc | matched: [entry | acc.matched]}
+
+      lcount == 1 ->
+        [l] = lrecs
+        %{acc | only_in_left: [l | acc.only_in_left]}
+
+      true ->
+        [r] = rrecs
+        %{acc | only_in_right: [r | acc.only_in_right]}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation / key handling
+  # ---------------------------------------------------------------------------
+
+  @spec fetch_key_fields!(keyword()) :: [atom(), ...]
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      {:ok, _other} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  @spec group_by_key([record()], [atom()]) :: %{optional(tuple()) => [record()]}
+  defp group_by_key(records, key_fields) do
+    Enum.group_by(records, &composite_key(&1, key_fields))
+  end
+
+  @spec composite_key(record(), [atom()]) :: tuple()
+  defp composite_key(record, key_fields) do
+    key_fields |> Enum.map(&Map.get(record, &1)) |> List.to_tuple()
+  end
+
+  @spec key_map(tuple(), [atom()]) :: map()
+  defp key_map(key_tuple, key_fields) do
+    key_fields
+    |> Enum.zip(Tuple.to_list(key_tuple))
+    |> Map.new()
+  end
+
+  # ---------------------------------------------------------------------------
+  # Diffing
+  # ---------------------------------------------------------------------------
+
+  @spec resolve_compare_fields(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  defp resolve_compare_fields(_left, _right, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    key_set = MapSet.new(key_fields)
+
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+
+  @spec diff(record(), record(), [atom()]) :: diff_map()
+  defp diff(left, right, fields) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+
+      if lv == rv do
+        acc
+      else
+        Map.put(acc, field, %{left: lv, right: rv})
+      end
+    end)
+  end
+end
+</file>[0m
+[36m01:22:55.275 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5560, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5560, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5560, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5560, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 23479, "type" => "message"}], "output_tokens" => 23479, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m01:22:55.294 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_duplicate_key_aware_reconciler_01 solution.ex[0m
+[36m01:22:55.916 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":162,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":6,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_003_duplicate_key_aware_reconciler_01/solution.ex","task":"034_003_duplicate_key_aware_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-06T23:22:55.893026Z"}[0m
+[22m01:22:55.917 [info] cycle 034_003_duplicate_key_aware_reconciler_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m01:22:55.917 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m01:22:55.917 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Reconciler` that takes two lists of records and reconciles them by a shared key, producing a structured diff — but that treats **duplicate keys** as a first-class, explicitly reported condition instead of silently collapsing them.
+
+I need this function in the public API:
+
+- `Reconciler.reconcile(left, right, opts)` where `left` and `right` are lists of maps and `opts` is a keyword list. It returns a map with four keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for keys that appear **exactly once on each side**. `diff_map` is a map of `%{field => %{left: val, right: val}}` for fields whose values differ (empty when identical on all compared fields).
+  - `:only_in_left` — records for keys that appear **exactly once in `left` and not at all in `right`**.
+  - `:only_in_right` — records for keys that appear **exactly once in `right` and not at all in `left`**.
+  - `:duplicate_keys` — a list of `%{key: key_map, left_count: n, right_count: m}` entries for every key that appears **more than once on either side**. `key_map` is a map of `%{key_field => value}` reconstructed from the composite key. Such keys are considered ambiguous and must NOT appear in `:matched`, `:only_in_left`, or `:only_in_right`.
+
+The `opts` keyword list must support:
+- `:key_fields` (required) — a list of atoms forming the composite key (e.g. `[:id]` or `[:org, :uid]`). Key matching is exact.
+- `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields except the key fields are compared.
+
+Behaviour requirements:
+- A key with two or more records on the left (or on the right) is a duplicate, regardless of how many records the other side has — including zero. Report it once, with the true counts on each side.
+- Composite keys must work correctly, and `:duplicate_keys` entries must express the key as a `%{field => value}` map for all key fields.
+- Field comparison must be value-exact (using `==`). If a compared field is missing from one or both records, treat the missing value as `nil`.
+- Records in `:matched` must include both the original left and right record in full, even if some fields are excluded from comparison.
+- Order of results does not matter.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff.
+
+  Unlike a last-write-wins reconciler, any key that appears more than once on
+  either side is treated as ambiguous and surfaced in a dedicated
+  `:duplicate_keys` bucket rather than being silently collapsed. Only keys with
+  exactly one record on each relevant side flow into `:matched`, `:only_in_left`,
+  or `:only_in_right`.
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+  @type duplicate_entry :: %{
+          key: map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()],
+          duplicate_keys: [duplicate_entry()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` by the composite key in `opts`, flagging
+  duplicate keys instead of collapsing them.
+
+  Options:
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the
+      composite key. Matching is exact.
+    * `:compare_fields` (optional) — a list of atoms to diff on matched
+      records. When omitted or `nil`, all fields except the key fields are
+      compared. Missing fields are treated as `nil`.
+
+  Returns a map with `:matched`, `:only_in_left`, `:only_in_right`, and
+  `:duplicate_keys`. Result order is not significant.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields = Keyword.get(opts, :compare_fields, nil)
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    all_keys =
+      MapSet.union(MapSet.new(Map.keys(left_groups)), MapSet.new(Map.keys(right_groups)))
+
+    init = %{matched: [], only_in_left: [], only_in_right: [], duplicate_keys: []}
+
+    Enum.reduce(all_keys, init, fn key, acc ->
+      lrecs = Map.get(left_groups, key, [])
+      rrecs = Map.get(right_groups, key, [])
+      classify(acc, key, key_fields, lrecs, rrecs, compare_fields)
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Classification
+  # ---------------------------------------------------------------------------
+
+  @spec classify(result(), tuple(), [atom()], [record()], [record()], [atom()] | nil) :: result()
+  defp classify(acc, key, key_fields, lrecs, rrecs, compare_fields) do
+    lcount = length(lrecs)
+    rcount = length(rrecs)
+
+    cond do
+      lcount > 1 or rcount > 1 ->
+        entry = %{key: key_map(key, key_fields), left_count: lcount, right_count: rcount}
+        %{acc | duplicate_keys: [entry | acc.duplicate_keys]}
+
+      lcount == 1 and rcount == 1 ->
+        [l] = lrecs
+        [r] = rrecs
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields)
+        entry = %{left: l, right: r, differences: diff(l, r, fields)}
+        %{acc | matched: [entry | acc.matched]}
+
+      lcount == 1 ->
+        [l] = lrecs
+        %{acc | only_in_left: [l | acc.only_in_left]}
+
+      true ->
+        [r] = rrecs
+        %{acc | only_in_right: [r | acc.only_in_right]}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation / key handling
+  # ---------------------------------------------------------------------------
+
+  @spec fetch_key_fields!(keyword()) :: [atom(), ...]
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      {:ok, _other} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  @spec group_by_key([record()], [atom()]) :: %{optional(tuple()) => [record()]}
+  defp group_by_key(records, key_fields) do
+    Enum.group_by(records, &composite_key(&1, key_fields))
+  end
+
+  @spec composite_key(record(), [atom()]) :: tuple()
+  defp composite_key(record, key_fields) do
+    key_fields |> Enum.map(&Map.get(record, &1)) |> List.to_tuple()
+  end
+
+  @spec key_map(tuple(), [atom()]) :: map()
+  defp key_map(key_tuple, k (truncated)[0m
+[36m01:27:54.458 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the only `.field` (dot-access on a plain map) usage in the module is on the `acc` accumulator inside `classify/6` (`acc.matched`, `acc.duplicate_keys`, etc.) combined with the `%{acc | ...}` map-update syntax. On modern Elixir/OTP that map-update-plus-dot-access pattern on an untyped accumulator is exactly the kind of construct that trips a compile warning. I'll replace it with `Map.update!/3`, which is behaviorally identical (the accumulator always has those keys) and warning-free — while keeping all house-style requirements.
+
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff.
+
+  Unlike a last-write-wins reconciler, any key that appears more than once on
+  either side is treated as ambiguous and surfaced in a dedicated
+  `:duplicate_keys` bucket rather than being silently collapsed. Only keys with
+  exactly one record on each relevant side flow into `:matched`, `:only_in_left`,
+  or `:only_in_right`.
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+  @type duplicate_entry :: %{
+          key: map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()],
+          duplicate_keys: [duplicate_entry()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` by the composite key in `opts`, flagging
+  duplicate keys instead of collapsing them.
+
+  Options:
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the
+      composite key. Matching is exact.
+    * `:compare_fields` (optional) — a list of atoms to diff on matched
+      records. When omitted or `nil`, all fields except the key fields are
+      compared. Missing fields are treated as `nil`.
+
+  Returns a map with `:matched`, `:only_in_left`, `:only_in_right`, and
+  `:duplicate_keys`. Result order is not significant.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields = Keyword.get(opts, :compare_fields, nil)
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    all_keys =
+      MapSet.union(MapSet.new(Map.keys(left_groups)), MapSet.new(Map.keys(right_groups)))
+
+    init = %{matched: [], only_in_left: [], only_in_right: [], duplicate_keys: []}
+
+    Enum.reduce(all_keys, init, fn key, acc ->
+      lrecs = Map.get(left_groups, key, [])
+      rrecs = Map.get(right_groups, key, [])
+      classify(acc, key, key_fields, lrecs, rrecs, compare_fields)
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Classification
+  # ---------------------------------------------------------------------------
+
+  @spec classify(result(), tuple(), [atom()], [record()], [record()], [atom()] | nil) ::
+          result()
+  defp classify(acc, key, key_fields, lrecs, rrecs, compare_fields) do
+    lcount = length(lrecs)
+    rcount = length(rrecs)
+
+    cond do
+      lcount > 1 or rcount > 1 ->
+        entry = %{key: key_map(key, key_fields), left_count: lcount, right_count: rcount}
+        Map.update!(acc, :duplicate_keys, &[entry | &1])
+
+      lcount == 1 and rcount == 1 ->
+        [l] = lrecs
+        [r] = rrecs
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields)
+        entry = %{left: l, right: r, differences: diff(l, r, fields)}
+        Map.update!(acc, :matched, &[entry | &1])
+
+      lcount == 1 ->
+        [l] = lrecs
+        Map.update!(acc, :only_in_left, &[l | &1])
+
+      true ->
+        [r] = rrecs
+        Map.update!(acc, :only_in_right, &[r | &1])
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation / key handling
+  # ---------------------------------------------------------------------------
+
+  @spec fetch_key_fields!(keyword()) :: [atom(), ...]
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      {:ok, _other} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  @spec group_by_key([record()], [atom()]) :: %{optional(tuple()) => [record()]}
+  defp group_by_key(records, key_fields) do
+    Enum.group_by(records, &composite_key(&1, key_fields))
+  end
+
+  @spec composite_key(record(), [atom()]) :: tuple()
+  defp composite_key(record, key_fields) do
+    key_fields |> Enum.map(&Map.get(record, &1)) |> List.to_tuple()
+  end
+
+  @spec key_map(tuple(), [atom()]) :: map()
+  defp key_map(key_tuple, key_fields) do
+    key_fields
+    |> Enum.zip(Tuple.to_list(key_tuple))
+    |> Map.new()
+  end
+
+  # ---------------------------------------------------------------------------
+  # Diffing
+  # ---------------------------------------------------------------------------
+
+  @spec resolve_compare_fields(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  defp resolve_compare_fields(_left, _right, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    key_set = MapSet.new(key_fields)
+
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+
+  @spec diff(record(), record(), [atom()]) :: diff_map()
+  defp diff(left, right, fields) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+
+      if lv == rv do
+        acc
+      else
+        Map.put(acc, field, %{left: lv, right: rv})
+      end
+    end)
+  end
+end
+</file>[0m
+[36m01:27:54.458 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 20854, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 20854, "cache_read_input_tokens" => 0, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 20854, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 20854, "cache_read_input_tokens" => 0, "input_tokens" => 2972, "output_tokens" => 22589, "type" => "message"}], "output_tokens" => 22589, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m01:27:54.477 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_duplicate_key_aware_reconciler_01 solution.ex[0m
+[36m01:27:55.101 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":163,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":6,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_003_duplicate_key_aware_reconciler_01/solution.ex","task":"034_003_duplicate_key_aware_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-06T23:27:55.080306Z"}[0m
+[22m01:27:55.102 [info] cycle 034_003_duplicate_key_aware_reconciler_01: REJECTED after 4 attempt(s)[0m

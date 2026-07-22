@@ -1,0 +1,330 @@
+08:32:12.691 [info] VARIATION 037_004_stateful_concurrent_consistent_pseudonymizer_01: Stateful Concurrent Consistent Pseudonymizer
+08:32:12.692 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01 solution.ex
+08:32:13.363 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":true,"line_count":95,"lines_over_98":0,"max_line_length":83,"mode":"full","pipe_chain_count":3,"public_fn_count":7,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.97,"reasons":["analysis: @doc on public functions → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01/solution.ex","task":"037_004_stateful_concurrent_consistent_pseudonymizer_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T06:32:13.338516Z"}
+08:32:13.364 [info] cycle 037_004_stateful_concurrent_consistent_pseudonymizer_01: repairing — The solution is green but does not meet the house style: no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+08:32:13.364 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+08:32:13.364 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Anonymizer` implemented as a **stateful GenServer** that anonymizes streams of records **concurrently** while guaranteeing referential integrity across every batch it has ever processed.
+
+I need these functions in the public API:
+- `Anonymizer.start_link(rules)` — start the server. `rules` is a map whose keys are field-name atoms and whose values are one of:
+  - `{:pseudonym, prefix}` — replace the value with a stable sequential pseudonym `"<prefix>_<n>"` (e.g. `"PERSON_1"`), where `n` is assigned per field in first-seen order. The same original value always receives the same pseudonym, even across separate `anonymize/2` calls.
+  - `:hash` — replace the value with its SHA-256 hex digest.
+  - `:redact` — replace the value with `"[REDACTED]"`.
+  Returns `{:ok, pid}`.
+- `Anonymizer.anonymize(pid, records)` — transform a list of maps and return the transformed list **in the same order**. Records must be processed concurrently (e.g. with `Task.async_stream`), yet the transformation must remain race-free: within and across calls, identical original values for a pseudonymized field must always map to the identical pseudonym, and distinct values must map to distinct pseudonyms. Fields not named in `rules`, and rule fields missing from a given record, are left untouched.
+- `Anonymizer.mapping(pid, field)` — return the current `%{original_value => pseudonym}` table accumulated for a pseudonymized `field`.
+
+Because pseudonym numbering depends on first-seen order under concurrency, the exact number attached to any given value is not required to be deterministic across runs — only referential integrity, uniqueness, the `"<prefix>_<n>"` format, and stable cross-batch consistency are required.
+
+Use only the Elixir/OTP standard library — no external dependencies. Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Anonymizer do
+  @moduledoc """
+  Stateful, concurrent anonymizer.
+
+  A GenServer holds the accumulated `original -> pseudonym` tables so that
+  referential integrity is preserved across every batch. `anonymize/2`
+  processes records concurrently with `Task.async_stream` while all pseudonym
+  assignment is serialized through the server, keeping it race-free. Supported
+  rules: `{:pseudonym, prefix}`, `:hash`, `:redact`. Only OTP/stdlib is used.
+  """
+
+  use GenServer
+
+  # --- Public API -------------------------------------------------------------
+
+  @spec start_link(map()) :: GenServer.on_start()
+  def start_link(rules) when is_map(rules) do
+    GenServer.start_link(__MODULE__, rules)
+  end
+
+  @spec anonymize(pid(), [map()]) :: [map()]
+  def anonymize(pid, records) when is_list(records) do
+    rules = GenServer.call(pid, :get_rules)
+
+    records
+    |> Task.async_stream(
+      fn record ->
+        Enum.reduce(rules, record, fn {field, rule}, acc ->
+          case Map.fetch(acc, field) do
+            {:ok, value} -> Map.put(acc, field, resolve(pid, field, value, rule))
+            :error -> acc
+          end
+        end)
+      end,
+      max_concurrency: max(System.schedulers_online(), 2),
+      ordered: true,
+      timeout: :infinity
+    )
+    |> Enum.map(fn {:ok, record} -> record end)
+  end
+
+  @spec mapping(pid(), atom()) :: map()
+  def mapping(pid, field) do
+    GenServer.call(pid, {:mapping, field})
+  end
+
+  # --- Rule resolution --------------------------------------------------------
+
+  defp resolve(_pid, _field, _value, :redact), do: "[REDACTED]"
+
+  defp resolve(_pid, _field, value, :hash) do
+    :crypto.hash(:sha256, to_string(value)) |> Base.encode16(case: :lower)
+  end
+
+  defp resolve(pid, field, value, {:pseudonym, prefix}) do
+    GenServer.call(pid, {:pseudonym, field, to_string(value), prefix})
+  end
+
+  # --- GenServer callbacks ----------------------------------------------------
+
+  @impl true
+  def init(rules) do
+    {:ok, %{rules: rules, maps: %{}, counters: %{}}}
+  end
+
+  @impl true
+  def handle_call(:get_rules, _from, state) do
+    {:reply, state.rules, state}
+  end
+
+  def handle_call({:mapping, field}, _from, state) do
+    {:reply, Map.get(state.maps, field, %{}), state}
+  end
+
+  def handle_call({:pseudonym, field, value, prefix}, _from, state) do
+    field_map = Map.get(state.maps, field, %{})
+
+    case Map.fetch(field_map, value) do
+      {:ok, pseudonym} ->
+        {:reply, pseudonym, state}
+
+      :error ->
+        n = Map.get(state.counters, field, 0) + 1
+        pseudonym = "#{prefix}_#{n}"
+
+        state = %{
+          state
+          | maps: Map.put(state.maps, field, Map.put(field_map, value, pseudonym)),
+            counters: Map.put(state.counters, field, n)
+        }
+
+        {:reply, pseudonym, state}
+    end
+  end
+end
+
+----- test_harness.exs -----
+defmodule AnonymizerTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    {:ok, pid} =
+      Anonymizer.start_link(%{name: {:pseudonym, "PERSON"}, email: :hash, ssn: :redact})
+
+    {:ok, pid: pid}
+  end
+
+  test "pseudonyms follow prefix_N format and preserve referential integrity", %{pid: pid} do
+    records = [%{name: "Alice"}, %{name: "Bob"}, %{name: "Alice"}]
+    [r1, r2, r3] = Anonymizer.anonymize(pid, records)
+    assert r1.name == r3.name
+    refute r1.name == r2.name
+    assert r1.name =~ ~r/^PERSON_\d+$/
+    assert r2.name =~ ~r/^PERSON_\d+$/
+  end
+
+  test "preserves record order under concurrent processing", %{pid: pid} do
+    records = for i <- 1..50, do: %{name: "user#{i}", id: i}
+    result = Anonymizer.anonymize(pid, records)
+    assert Enum.map(result, & &1.id) == Enum.to_list(1..50)
+  end
+
+  test "referential integrity holds across separate batches", %{pid: pid} do
+    [a] = Anonymizer.anonymize(pid, [%{name: "Alice"}])
+    [b] = Anonymizer.anonymize(pid, [%{name: "Alice"}])
+    assert a.name == b.name
+  end
+
+  test "hash and redact rules work alongside pseudonyms", %{pid: pid} do
+    [r] = Anonymizer.anonymize(pid, [%{name: "Alice", email: "a@x.com", ssn: "111"}])
+    assert r.name =~ ~r/^PERSON_\d+$/
+    assert r.email == (:crypto.hash(:sha256, "a@x.com") |> Base.encode16(case: :lower))
+    assert r.ssn == "[REDACTED]"
+  end
+
+  test "hash is consistent for the same value", %{pid: pid} do
+    [r1, r2] = Anonymizer.anonymize(pid, [%{email: "a@x.com"}, %{email: "a@x.com"}])
+    assert r1.email == r2.email
+  end
+
+  test "distinct values get distinct pseudonyms under concurrent load", %{pid: pid} do
+    records = for i <- 1..200, do: %{name: "name_#{i}"}
+    result = Anonymizer.anonymize(pid, records)
+    pseudonyms = Enum.map(result, & &1.name)
+    assert length(Enum.uniq(pseudonyms)) == 200
+  end
+
+  test "mapping/2 exposes the value -> pseudonym table", %{pid: pid} do
+    Anonymizer.anonymize(pid, [%{name: "Alice"}, %{name: "Bob"}])
+    mapping = Anonymizer.mapping(pid, :name)
+    assert map_size(mapping) == 2
+    assert Map.has_key?(mapping, "Alice")
+  end
+
+  test "unlisted fields and missing rule fields are handled gracefully", %{pid: pid} do
+    [r] = Anonymizer.anonymize(pid, [%{name: "Alice", role: "admin"}])
+    assert r.role == "admin"
+    assert r.name =~ ~r/^PERSON_\d+$/
+
+    [r2] = Anonymizer.anonymize(pid, [%{email: "a@x.c (truncated)
+08:32:31.464 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule Anonymizer do
+  @moduledoc """
+  Stateful, concurrent anonymizer.
+
+  A GenServer holds the accumulated `original -> pseudonym` tables so that
+  referential integrity is preserved across every batch. `anonymize/2`
+  processes records concurrently with `Task.async_stream` while all pseudonym
+  assignment is serialized through the server, keeping it race-free. Supported
+  rules: `{:pseudonym, prefix}`, `:hash`, `:redact`. Only OTP/stdlib is used.
+  """
+
+  use GenServer
+
+  # --- Public API -------------------------------------------------------------
+
+  @doc """
+  Start the anonymizer server.
+
+  `rules` is a map of field-name atoms to one of `{:pseudonym, prefix}`,
+  `:hash`, or `:redact`. Returns `{:ok, pid}`.
+  """
+  @spec start_link(map()) :: GenServer.on_start()
+  def start_link(rules) when is_map(rules) do
+    GenServer.start_link(__MODULE__, rules)
+  end
+
+  @doc """
+  Transform a list of maps, returning the transformed list in the same order.
+
+  Records are processed concurrently while pseudonym assignment stays
+  race-free and referentially consistent within and across calls. Fields not
+  named in the rules, and rule fields missing from a record, are left as-is.
+  """
+  @spec anonymize(pid(), [map()]) :: [map()]
+  def anonymize(pid, records) when is_list(records) do
+    rules = GenServer.call(pid, :get_rules)
+
+    records
+    |> Task.async_stream(
+      fn record ->
+        Enum.reduce(rules, record, fn {field, rule}, acc ->
+          case Map.fetch(acc, field) do
+            {:ok, value} -> Map.put(acc, field, resolve(pid, field, value, rule))
+            :error -> acc
+          end
+        end)
+      end,
+      max_concurrency: max(System.schedulers_online(), 2),
+      ordered: true,
+      timeout: :infinity
+    )
+    |> Enum.map(fn {:ok, record} -> record end)
+  end
+
+  @doc """
+  Return the current `%{original_value => pseudonym}` table for `field`.
+  """
+  @spec mapping(pid(), atom()) :: map()
+  def mapping(pid, field) do
+    GenServer.call(pid, {:mapping, field})
+  end
+
+  # --- Rule resolution --------------------------------------------------------
+
+  defp resolve(_pid, _field, _value, :redact), do: "[REDACTED]"
+
+  defp resolve(_pid, _field, value, :hash) do
+    :crypto.hash(:sha256, to_string(value)) |> Base.encode16(case: :lower)
+  end
+
+  defp resolve(pid, field, value, {:pseudonym, prefix}) do
+    GenServer.call(pid, {:pseudonym, field, to_string(value), prefix})
+  end
+
+  # --- GenServer callbacks ----------------------------------------------------
+
+  @impl true
+  def init(rules) do
+    {:ok, %{rules: rules, maps: %{}, counters: %{}}}
+  end
+
+  @impl true
+  def handle_call(:get_rules, _from, state) do
+    {:reply, state.rules, state}
+  end
+
+  def handle_call({:mapping, field}, _from, state) do
+    {:reply, Map.get(state.maps, field, %{}), state}
+  end
+
+  def handle_call({:pseudonym, field, value, prefix}, _from, state) do
+    field_map = Map.get(state.maps, field, %{})
+
+    case Map.fetch(field_map, value) do
+      {:ok, pseudonym} ->
+        {:reply, pseudonym, state}
+
+      :error ->
+        n = Map.get(state.counters, field, 0) + 1
+        pseudonym = "#{prefix}_#{n}"
+
+        state = %{
+          state
+          | maps: Map.put(state.maps, field, Map.put(field_map, value, pseudonym)),
+            counters: Map.put(state.counters, field, n)
+        }
+
+        {:reply, pseudonym, state}
+    end
+  end
+end
+</file>
+08:32:31.464 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3823, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3823, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3823, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3823, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 1541, "type" => "message"}], "output_tokens" => 1541, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:32:31.483 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01 solution.ex
+08:32:32.135 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":111,"lines_over_98":0,"max_line_length":83,"mode":"full","pipe_chain_count":3,"public_fn_count":7,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01/solution.ex","task":"037_004_stateful_concurrent_consistent_pseudonymizer_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T06:32:32.111723Z"}
+08:32:32.138 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut solution.ex
+08:32:32.789 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":81,"lines_over_98":3,"max_line_length":427,"mode":"full","pipe_chain_count":3,"public_fn_count":7,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 8/8 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex","task":"037_004_stateful_concurrent_consistent_pseudonymizer_01_mut","test_failures":[{"message":"MUTATION","module":"AnonymizerTest","test":"test pseudonyms follow prefix_N format and preserve referential integrity"},{"message":"MUTATION","module":"AnonymizerTest","test":"test preserves record order under concurrent processing"},{"message":"MUTATION","module":"AnonymizerTest","test":"test referential integrity holds across separate batches"},{"message":"MUTATION","module":"AnonymizerTest","test":"test hash and redact rules work alongside pseudonyms"},{"message":"MUTATION","module":"AnonymizerTest","test":"test hash is consistent for the same value"},{"message":"MUTATION","module":"AnonymizerTest","test":"test distinct values get distinct pseudonyms under concurrent load"},{"message":"MUTATION","module":"AnonymizerTest","test":"test mapping/2 exposes the value -> pseudonym table"},{"message":"MUTATION","module":"AnonymizerTest","test":"test unlisted fields and missing rule fields are handled gracefully"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T06:32:32.764791Z"}
+08:32:32.791 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut solution.ex
+08:32:33.443 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":69,"lines_over_98":3,"max_line_length":427,"mode":"full","pipe_chain_count":1,"public_fn_count":7,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.26,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 8/8 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex","task":"037_004_stateful_concurrent_consistent_pseudonymizer_01_mut","test_failures":[{"message":"MUTATION","module":"AnonymizerTest","test":"test pseudonyms follow prefix_N format and preserve referential integrity"},{"message":"MUTATION","module":"AnonymizerTest","test":"test preserves record order under concurrent processing"},{"message":"MUTATION","module":"AnonymizerTest","test":"test referential integrity holds across separate batches"},{"message":"MUTATION","module":"AnonymizerTest","test":"test hash and redact rules work alongside pseudonyms"},{"message":"MUTATION","module":"AnonymizerTest","test":"test hash is consistent for the same value"},{"message":"MUTATION","module":"AnonymizerTest","test":"test distinct values get distinct pseudonyms under concurrent load"},{"message":"MUTATION","module":"AnonymizerTest","test":"test mapping/2 exposes the value -> pseudonym table"},{"message":"MUTATION","module":"AnonymizerTest","test":"test unlisted fields and missing rule fields are handled gracefully"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T06:32:33.419312Z"}
+08:32:33.447 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut solution.ex
+08:32:34.132 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":81,"lines_over_98":3,"max_line_length":427,"mode":"full","pipe_chain_count":3,"public_fn_count":7,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.87,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 1/8 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.88},"shape":"single","solution_file":".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex","task":"037_004_stateful_concurrent_consistent_pseudonymizer_01_mut","test_failures":[{"message":"MUTATION","module":"AnonymizerTest","test":"test mapping/2 exposes the value -> pseudonym table"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T06:32:34.107446Z"}
+08:32:34.134 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut solution.ex
+08:32:34.792 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":81,"lines_over_98":3,"max_line_length":427,"mode":"full","pipe_chain_count":3,"public_fn_count":7,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 8/8 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex","task":"037_004_stateful_concurrent_consistent_pseudonymizer_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :init, 1, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test pseudonyms follow prefix_N format and preserve referential integrity"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :init, 1, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test preserves record order under concurrent processing"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :init, 1, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test referential integrity holds across separate batches"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :init, 1, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test hash and redact rules work alongside pseudonyms"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :init, 1, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test hash is consistent for the same value"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :init, 1, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test distinct values get distinct pseudonyms under concurrent load"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :init, 1, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test mapping/2 exposes the value -> pseudonym table"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :init, 1, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test unlisted fields and missing rule fields are handled gracefully"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T06:32:34.769131Z"}
+08:32:34.794 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut solution.ex
+08:32:35.430 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":64,"lines_over_98":3,"max_line_length":427,"mode":"full","pipe_chain_count":3,"public_fn_count":7,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.3,"mode":"full","overall":0.21,"reasons":["compilation: 7 warning(s) → -0.7 pts","tests: 8/8 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex","task":"037_004_stateful_concurrent_consistent_pseudonymizer_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :handle_call, 3, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test pseudonyms follow prefix_N format and preserve referential integrity"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :handle_call, 3, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test preserves record order under concurrent processing"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :handle_call, 3, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test referential integrity holds across separate batches"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :handle_call, 3, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test hash and redact rules work alongside pseudonyms"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :handle_call, 3, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test hash is consistent for the same value"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :handle_call, 3, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test distinct values get distinct pseudonyms under concurrent load"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :handle_call, 3, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test mapping/2 exposes the value -> pseudonym table"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Anonymizer, :handle_call, 3, [file: ~c\".gen_staging/037_004_stateful_concurrent_consistent_pseudonymizer_01_mut/solution.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AnonymizerTest","test":"test unlisted fields and missing rule fields are handled gracefully"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T06:32:35.408972Z"}
+08:32:35.431 [info] cycle 037_004_stateful_concurrent_consistent_pseudonymizer_01: ACCEPTED on attempt 1
+08:32:35.432 [info] promoted 037_004_stateful_concurrent_consistent_pseudonymizer_01 -> tasks/037_004_stateful_concurrent_consistent_pseudonymizer_01

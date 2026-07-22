@@ -1,0 +1,364 @@
+15:12:00.226 [info] FIM 065_004_policy_driven_saga_coordinator_fim03 → 065_004_policy_driven_saga_coordinator_04: target compensate/4
+15:12:00.226 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+15:12:00.226 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `compensate/4`.
+
+Generate a prompt describing how to implement `compensate/4` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `compensate/4` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `compensate/4` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `compensate/4` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Policy-Driven Saga / Compensating Transaction Coordinator
+
+Write me an Elixir module called `PolicySaga` that executes a **saga** — a sequence of
+steps, each with a forward **action** and a **compensating action** — with a
+configurable **rollback policy** per step. As in a normal saga, if a step's action
+fails, the coordinator runs the compensations of previously-completed steps in reverse
+order. The twist: a step can declare that if **its own compensation fails**, the whole
+rollback must **abort** (stop immediately, leaving the remaining earlier steps
+uncompensated for manual intervention) rather than continuing best-effort.
+
+Use only the Elixir/OTP standard library — no external dependencies. Give me the
+complete module in a single file.
+
+## Public API
+
+```elixir
+PolicySaga.new()
+|> PolicySaga.step(:reserve, &reserve/1, &cancel/1, on_error: :abort)
+|> PolicySaga.step(:charge,  &charge/1,  &refund/1)
+|> PolicySaga.execute(%{order_id: 42})
+```
+
+### `PolicySaga.new/0`
+
+Returns a new, empty saga value (opaque).
+
+### `PolicySaga.step(saga, name, action, compensation, opts \\ [])`
+
+Appends a step and returns the updated saga.
+
+- `name` — an identifier for the step.
+- `action` — a 1-arity function receiving the current **context** (a map), returning
+  `{:ok, result}` or `{:error, reason}`.
+- `compensation` — a 1-arity function receiving the context that undoes the step; its
+  return value is recorded. By convention it returns `{:ok, _}` (success) or
+  `{:error, _}` (failed to compensate).
+- `opts` — supports `:on_error`, the step's rollback policy, one of:
+  - `:continue` (default) — if this step's compensation returns `{:error, _}`, record
+    it and keep running the remaining compensations (best-effort).
+  - `:abort` — if this step's compensation returns `{:error, _}`, stop the whole
+    rollback immediately; earlier steps are left uncompensated.
+
+Any other `:on_error` value must raise `ArgumentError`. Steps run in the order added.
+
+### `PolicySaga.execute(saga, context)`
+
+**Forward pass.** For each step in order, call its `action`:
+
+- On `{:ok, result}`: store under the step's `name` key, mark the step **completed**,
+  continue.
+- On `{:error, reason}`: stop the forward pass and begin compensation.
+
+**Compensation pass.** Run the compensations of the completed steps in reverse
+completion order (most recently completed first). Each compensation receives the
+context accumulated up to the point of failure. For each compensation that returns
+`{:error, _}`: if that step's policy is `:abort`, stop the pass immediately (the
+compensations *not yet run* are left uncompensated); otherwise record and continue.
+The failed step's compensation is not run.
+
+### Return values
+
+- **All steps succeed:** `{:ok, final_context}`.
+- **A step fails:** `{:error, error}` where `error` has exactly these keys:
+  - `:step` — the `name` of the failing step.
+  - `:error` — the `reason` from the failing action.
+  - `:compensated` — the list of step names whose compensations ran (were attempted),
+    in run order.
+  - `:compensations` — a map `name => compensation_return_value`.
+  - `:aborted_at` — the `name` of the compensation whose failure aborted the rollback,
+    or `nil` if the pass completed normally.
+  - `:uncompensated` — the list of completed step names that were *not* compensated
+    because the rollback aborted, in the order they would have run (`[]` if none).
+- **Empty saga:** `{:ok, context}` unchanged.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule PolicySaga do
+  @moduledoc """
+  A saga / compensating-transaction coordinator with a per-step **rollback policy**.
+
+  Steps run in order; on a step failure the compensations of previously-completed
+  steps run in reverse completion order. A step's `:on_error` policy governs what
+  happens if *its own compensation* returns `{:error, _}`:
+
+    * `:continue` (default) — record and keep rolling back (best-effort).
+    * `:abort` — stop the rollback immediately; earlier steps are left uncompensated.
+  """
+
+  @opaque t :: %__MODULE__{steps: [step()]}
+  @type context :: map()
+  @type policy :: :continue | :abort
+  @type step :: %{
+          name: term(),
+          action: (context() -> {:ok, term()} | {:error, term()}),
+          compensation: (context() -> term()),
+          policy: policy()
+        }
+  @type error :: %{
+          step: term(),
+          error: term(),
+          compensated: [term()],
+          compensations: %{optional(term()) => term()},
+          aborted_at: term() | nil,
+          uncompensated: [term()]
+        }
+
+  defstruct steps: []
+
+  @doc "Returns a new, empty saga."
+  @spec new() :: t()
+  def new, do: %__MODULE__{steps: []}
+
+  @doc """
+  Appends a step. `opts` supports `:on_error` (`:continue` default, or `:abort`).
+  """
+  @spec step(t(), term(), (context() -> {:ok, term()} | {:error, term()}),
+          (context() -> term()), keyword()) :: t()
+  def step(%__MODULE__{steps: steps} = saga, name, action, compensation, opts \\ [])
+      when is_function(action, 1) and is_function(compensation, 1) do
+    policy = Keyword.get(opts, :on_error, :continue)
+
+    unless policy in [:continue, :abort] do
+      raise ArgumentError, "on_error must be :continue or :abort, got: #{inspect(policy)}"
+    end
+
+    step = %{name: name, action: action, compensation: compensation, policy: policy}
+    %__MODULE__{saga | steps: steps ++ [step]}
+  end
+
+  @doc "Runs the saga from `context`."
+  @spec execute(t(), context()) :: {:ok, context()} | {:error, error()}
+  def execute(%__MODULE__{steps: steps}, context) when is_map(context) do
+    forward(steps, context, [])
+  end
+
+  # `completed` is in reverse completion order (most recent first).
+  defp forward([], context, _completed), do: {:ok, context}
+
+  defp forward([step | rest], context, completed) do
+    case step.action.(context) do
+      {:ok, result} ->
+        forward(rest, Map.put(context, step.name, result), [step | completed])
+
+      {:error, reason} ->
+        compensate(completed, context, step.name, reason)
+    end
+  end
+
+  defp compensate(completed, context, failed_step, reason) do
+    {ran, compensations, aborted_at, uncompensated} =
+      do_compensate(completed, context, [], %{})
+
+    {:error,
+     %{
+       step: failed_step,
+       error: reason,
+       compensated: Enum.reverse(ran),
+       compensations: compensations,
+       aborted_at: aborted_at,
+       uncompensated: uncompensated
+     }}
+  end
+
+  # Returns {ran (reverse run order), compensations, aborted_at, uncompensated}.
+  defp do_compensate([], _context, ran, results), do: {ran, results, nil, []}
+
+  defp do_compensate([step | rest], context, ran, results) do
+    result = step.compensation.(context)
+    ran = [step.name | ran]
+    results = Map.put(results, step.name, result)
+
+    case result do
+      {:error, _} when step.policy == :abort ->
+        {ran, results, step.name, Enum.map(rest, & &1.name)}
+
+      _ ->
+        do_compensate(rest, context, ran, results)
+    end
+  end
+end
+ (truncated)
+15:12:27.191 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Implement `compensate/4`
+
+Implement the private `compensate/4` function. It is the entry point to the
+**compensation pass**, called when a step's forward action returns
+`{:error, reason}`. Its arguments are:
+
+- `completed` — the list of already-completed step maps, in **reverse completion
+  order** (most recently completed first), i.e. the exact order their
+  compensations should run.
+- `context` — the context map accumulated up to the point of failure.
+- `failed_step` — the `name` of the step whose action failed.
+- `reason` — the `reason` returned by that failing action.
+
+It should delegate the actual rollback to `do_compensate/4`, calling it with
+`completed`, `context`, and empty accumulators (`[]` for the run list and `%{}`
+for the compensation-results map). `do_compensate/4` returns a 4-tuple
+`{ran, compensations, aborted_at, uncompensated}`, where `ran` is the list of
+compensated step names in **reverse** run order.
+
+`compensate/4` must then return `{:error, error}`, where `error` is a map with
+exactly these keys:
+
+- `:step` — `failed_step`.
+- `:error` — `reason`.
+- `:compensated` — the step names whose compensations ran, in **run order**
+  (i.e. `ran` reversed).
+- `:compensations` — the `compensations` map (`name => compensation_return_value`).
+- `:aborted_at` — `aborted_at` (the step name whose compensation failure aborted
+  the rollback, or `nil`).
+- `:uncompensated` — `uncompensated` (completed step names skipped due to an
+  abort, in the order they would have run; `[]` if none).
+
+```elixir
+defmodule PolicySaga do
+  @moduledoc """
+  A saga / compensating-transaction coordinator with a per-step **rollback policy**.
+
+  Steps run in order; on a step failure the compensations of previously-completed
+  steps run in reverse completion order. A step's `:on_error` policy governs what
+  happens if *its own compensation* returns `{:error, _}`:
+
+    * `:continue` (default) — record and keep rolling back (best-effort).
+    * `:abort` — stop the rollback immediately; earlier steps are left uncompensated.
+  """
+
+  @opaque t :: %__MODULE__{steps: [step()]}
+  @type context :: map()
+  @type policy :: :continue | :abort
+  @type step :: %{
+          name: term(),
+          action: (context() -> {:ok, term()} | {:error, term()}),
+          compensation: (context() -> term()),
+          policy: policy()
+        }
+  @type error :: %{
+          step: term(),
+          error: term(),
+          compensated: [term()],
+          compensations: %{optional(term()) => term()},
+          aborted_at: term() | nil,
+          uncompensated: [term()]
+        }
+
+  defstruct steps: []
+
+  @doc "Returns a new, empty saga."
+  @spec new() :: t()
+  def new, do: %__MODULE__{steps: []}
+
+  @doc """
+  Appends a step. `opts` supports `:on_error` (`:continue` default, or `:abort`).
+  """
+  @spec step(t(), term(), (context() -> {:ok, term()} | {:error, term()}),
+          (context() -> term()), keyword()) :: t()
+  def step(%__MODULE__{steps: steps} = saga, name, action, compensation, opts \\ [])
+      when is_function(action, 1) and is_function(compensation, 1) do
+    policy = Keyword.get(opts, :on_error, :continue)
+
+    unless policy in [:continue, :abort] do
+      raise ArgumentError, "on_error must be :continue or :abort, got: #{inspect(policy)}"
+    end
+
+    step = %{name: name, action: action, compensation: compensation, policy: policy}
+    %__MODULE__{saga | steps: steps ++ [step]}
+  end
+
+  @doc "Runs the saga from `context`."
+  @spec execute(t(), context()) :: {:ok, context()} | {:error, error()}
+  def execute(%__MODULE__{steps: steps}, context) when is_map(context) do
+    forward(steps, context, [])
+  end
+
+  # `completed` is in reverse completion order (most recent first).
+  defp forward([], context, _completed), do: {:ok, context}
+
+  defp forward([step | rest], context, completed) do
+    case step.action.(context) do
+      {:ok, result} ->
+        forward(rest, Map.put(context, step.name, result), [step | completed])
+
+      {:error, reason} ->
+        compensate(completed, context, step.name, reason)
+    end
+  end
+
+  defp compensate(completed, context, failed_step, reason) do
+    # TODO
+  end
+
+  # Returns {ran (reverse run order), compensations, aborted_at, uncompensated}.
+  defp do_compensate([], _context, ran, results), do: {ran, results, nil, []}
+
+  defp do_compensate([step | rest], context, ran, results) do
+    result = step.compensation.(context)
+    ran = [step.name | ran]
+    results = Map.put(results, step.name, result)
+
+    case result do
+      {:error, _} when step.policy == :abort ->
+        {ran, results, step.name, Enum.map(rest, & &1.name)}
+
+      _ ->
+        do_compensate(rest, context, ran, results)
+    end
+  end
+end
+```
+</file>
+<file path="solution.ex">
+  defp compensate(completed, context, failed_step, reason) do
+    {ran, compensations, aborted_at, uncompensated} =
+      do_compensate(completed, context, [], %{})
+
+    {:error,
+     %{
+       step: failed_step,
+       error: reason,
+       compensated: Enum.reverse(ran),
+       compensations: compensations,
+       aborted_at: aborted_at,
+       uncompensated: uncompensated
+     }}
+  end
+</file>
+15:12:27.191 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3402, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3402, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3402, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3402, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2292, "type" => "message"}], "output_tokens" => 2292, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+15:12:27.211 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_065_004_policy_driven_saga_coordinator_04/065_004_policy_driven_saga_coordinator_04 solution.ex
+15:12:27.899 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":14,"lines_over_98":0,"max_line_length":61,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"065_004_policy_driven_saga_coordinator_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_065_004_policy_driven_saga_coordinator_04/065_004_policy_driven_saga_coordinator_04/solution.ex","task":"065_004_policy_driven_saga_coordinator_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-04T13:12:27.877055Z"}
+15:12:27.900 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_065_004_policy_driven_saga_coordinator_04/065_004_policy_driven_saga_coordinator_04 .gen_staging/fim_065_004_policy_driven_saga_coordinator_04/mutant.ex
+15:12:28.588 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":59,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"parent":"065_004_policy_driven_saga_coordinator_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.5,"mode":"fim","overall":0.48,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 6/9 failed"],"tests":0.33},"shape":"fim","solution_file":".gen_staging/fim_065_004_policy_driven_saga_coordinator_04/mutant.ex","task":"065_004_policy_driven_saga_coordinator_04","test_failures":[{"message":"MUTATION","module":"PolicySagaTest","test":"test failure with all compensations succeeding: no abort"},{"message":"MUTATION","module":"PolicySagaTest","test":"test :continue policy keeps rolling back past a failed compensation"},{"message":"MUTATION","module":"PolicySagaTest","test":"test :abort policy stops the rollback and leaves earlier steps uncompensated"},{"message":"MUTATION","module":"PolicySagaTest","test":"test :abort policy does not fire when that step's compensation succeeds"},{"message":"MUTATION","module":"PolicySagaTest","test":"test first step failing runs no compensations"},{"message":"MUTATION","module":"PolicySagaTest","test":"test a compensation sees its own step's stored result"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":3,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-04T13:12:28.564971Z"}
+15:12:28.588 [debug] fim mutation gate: killed
+15:12:28.589 [info] promoted 065_004_policy_driven_saga_coordinator_04 -> tasks/065_004_policy_driven_saga_coordinator_04

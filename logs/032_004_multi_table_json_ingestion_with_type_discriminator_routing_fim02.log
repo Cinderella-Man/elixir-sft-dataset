@@ -1,0 +1,412 @@
+03:31:52.640 [info] FIM 032_004_multi_table_json_ingestion_with_type_discriminator_routing_fim02 → 032_004_multi_table_json_ingestion_with_type_discriminator_routing_03: target insert_schema_group/4
+03:31:52.640 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+03:31:52.640 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `insert_schema_group/4`.
+
+Generate a prompt describing how to implement `insert_schema_group/4` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `insert_schema_group/4` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `insert_schema_group/4` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `insert_schema_group/4` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `MultiSchemaIngestion` that reads a JSON array
+file where each record contains a `"type"` discriminator field, routes records
+to the appropriate Ecto schema based on a caller-supplied routing map, and
+batch-inserts each group into its respective database table.
+
+I need these functions in the public API:
+
+- `MultiSchemaIngestion.ingest(repo, routing, file_path, opts \\ [])` — the
+  main entry point. `routing` is a map from type-discriminator strings to Ecto
+  schema modules, e.g. `%{"order" => MyApp.Order, "refund" => MyApp.Refund}`.
+
+  It reads the JSON file at `file_path`, decodes the top-level array, groups
+  records by their `"type"` field, and for each group inserts rows in batches
+  via `repo.insert_all/3`. It must return `{:ok, stats}` on success or
+  `{:error, reason}` on failure.
+
+  `stats` is a map with these keys:
+    - `:total`          — total records read from the file (integer)
+    - `:by_schema`      — a map from schema module to per-schema stats:
+                          `%{inserted: integer(), failed: integer()}`
+    - `:unroutable`     — count of records whose `"type"` value did not match
+                          any key in the routing map (integer)
+    - `:missing_type`   — count of records that had no `"type"` field at all
+                          (integer)
+
+- Accepted `opts`:
+    - `:batch_size` (integer, default 500) — how many records per
+      `insert_all` call, applied independently per schema group
+    - `:on_conflict` (atom or keyword, default `:nothing`) — passed
+      to `Repo.insert_all` as `on_conflict:`
+    - `:conflict_target` (atom, list, or a map from schema module to
+      atom/list, default `:nothing`) — when a plain atom or list, the same
+      target is used for all schemas.  When a map, each schema can have
+      its own conflict target, e.g.
+      `%{MyApp.Order => [:order_id], MyApp.Refund => [:refund_id]}`
+    - `:type_field` (string, default `"type"`) — the JSON key used as the
+      type discriminator
+
+Processing order: records for each schema group are inserted in the order
+they appeared in the original file.  Groups are processed in the order of
+their first appearance.
+
+Before insertion, convert string-keyed JSON maps to atom-keyed maps using
+only fields declared on each target schema (via `schema.__schema__(:fields)`),
+drop the discriminator field, and inject `inserted_at` / `updated_at`
+timestamps if the schema declares them.
+
+The module must handle these error conditions gracefully — never raise:
+- File not found → `{:error, :file_not_found}`
+- File is not valid JSON → `{:error, :invalid_json}`
+- File contains valid JSON but not a top-level array →
+  `{:error, :not_a_list}`
+- A record has no `"type"` field → count as `:missing_type`, skip it
+- A record's `"type"` value is not in the routing map → count as
+  `:unroutable`, skip it
+- A batch `insert_all` call fails → log the error, add the batch size to
+  that schema's `:failed` count, and continue with remaining batches
+
+Use `File.read/1` + `Jason.decode/1` for I/O and parsing. Use
+`Enum.chunk_every/2` for batching. Use `require Logger` and emit a
+`Logger.info/1` line after every batch with the schema name and running
+totals.
+
+Give me the complete module in a single file. Assume Jason and Ecto are
+available as dependencies; do not add anything else.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule MultiSchemaIngestion do
+  @moduledoc """
+  Reads a JSON array file where each record carries a type discriminator,
+  routes records to different Ecto schemas based on a caller-supplied routing
+  map, and batch-inserts each group into its respective database table.
+
+  This is useful when a single data feed contains heterogeneous record types
+  that belong in different tables (e.g. orders, refunds, adjustments).
+
+  ## Example
+
+      routing = %{
+        "order"  => MyApp.Order,
+        "refund" => MyApp.Refund
+      }
+
+      MultiSchemaIngestion.ingest(MyApp.Repo, routing, "/data/feed.json",
+        batch_size:      1_000,
+        on_conflict:     :nothing,
+        conflict_target: %{MyApp.Order => [:order_id], MyApp.Refund => [:refund_id]},
+        type_field:      "record_type"
+      )
+      #=> {:ok, %{
+      #=>   total: 10_000,
+      #=>   by_schema: %{
+      #=>     MyApp.Order  => %{inserted: 7_500, failed: 0},
+      #=>     MyApp.Refund => %{inserted: 2_400, failed: 0}
+      #=>   },
+      #=>   unroutable: 80,
+      #=>   missing_type: 20
+      #=> }}
+  """
+
+  require Logger
+
+  # ---------------------------------------------------------------------------
+  # Types
+  # ---------------------------------------------------------------------------
+
+  @type repo           :: module()
+  @type schema         :: module()
+  @type routing        :: %{String.t() => schema()}
+  @type per_schema_stats :: %{inserted: integer(), failed: integer()}
+  @type stats          :: %{
+    total:        integer(),
+    by_schema:    %{schema() => per_schema_stats()},
+    unroutable:   integer(),
+    missing_type: integer()
+  }
+
+  # ---------------------------------------------------------------------------
+  # Defaults
+  # ---------------------------------------------------------------------------
+
+  @default_batch_size      500
+  @default_on_conflict     :nothing
+  @default_conflict_target :nothing
+  @default_type_field      "type"
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Ingests records from a JSON array file, routing each record to the
+  appropriate Ecto schema based on its type discriminator field.
+
+  See module doc for accepted options.
+  """
+  @spec ingest(repo(), routing(), String.t(), keyword()) ::
+          {:ok, stats()} | {:error, :file_not_found | :invalid_json | :not_a_list}
+  def ingest(repo, routing, file_path, opts \\ []) do
+    cfg = %{
+      batch_size:      Keyword.get(opts, :batch_size,      @default_batch_size),
+      on_conflict:     Keyword.get(opts, :on_conflict,     @default_on_conflict),
+      conflict_target: Keyword.get(opts, :conflict_target, @default_conflict_target),
+      type_field:      Keyword.get(opts, :type_field,      @default_type_field)
+    }
+
+    with {:ok, raw}     <- read_file(file_path),
+         {:ok, parsed}  <- parse_json(raw),
+         {:ok, records} <- validate_list(parsed) do
+      {:ok, process_records(repo, routing, records, cfg)}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # File I/O and validation
+  # ---------------------------------------------------------------------------
+
+  defp read_file(path) do
+    case File.read(path) do
+      {:ok, contents}  -> {:ok, contents}
+      {:error, reason} ->
+        Logger.error("[MultiSchemaIngestion] Could not read file #{inspect(path)}: #{inspect(reason)}")
+        {:error, :file_not_found}
+    (truncated)
+03:32:38.791 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `insert_schema_group/4` function. It takes the `repo`, a single
+`schema` module, the list of `records` routed to that schema (already in original file
+order), and the config map `cfg`. It returns a per-schema stats map of the shape
+`%{inserted: integer(), failed: integer()}`.
+
+It must:
+
+- Build the set of the schema's declared field names via `schema_field_set/1`, compute a
+  single truncated-to-second timestamp `now` with
+  `NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)`, and resolve this schema's
+  conflict target from `cfg.conflict_target` via `resolve_conflict_target/2`.
+- Assemble the `insert_all` options as `[on_conflict: cfg.on_conflict, conflict_target: <resolved target>]`.
+- Convert each record to an insertable row with `prepare_row/4` (passing the field set,
+  `cfg.type_field`, and `now`), split the prepared rows into batches with
+  `Enum.chunk_every/2` using `cfg.batch_size`, then reduce over the batches starting from
+  `%{inserted: 0, failed: 0}`.
+- For each batch, call `repo.insert_all(schema, batch, insert_opts)`, add the returned
+  count to the running `:inserted` total, and emit a `Logger.info/1` line naming the schema
+  and reporting the batch size, the count inserted, and the running inserted/failed totals.
+- If a batch raises (`rescue`) or throws (`catch`), never propagate it: log the error with
+  the schema name and the number of skipped records, add that batch's size to the running
+  `:failed` total, and continue with the remaining batches.
+
+```elixir
+defmodule MultiSchemaIngestion do
+  @moduledoc """
+  Reads a JSON array file where each record carries a type discriminator,
+  routes records to different Ecto schemas based on a caller-supplied routing
+  map, and batch-inserts each group into its respective database table.
+
+  This is useful when a single data feed contains heterogeneous record types
+  that belong in different tables (e.g. orders, refunds, adjustments).
+
+  ## Example
+
+      routing = %{
+        "order"  => MyApp.Order,
+        "refund" => MyApp.Refund
+      }
+
+      MultiSchemaIngestion.ingest(MyApp.Repo, routing, "/data/feed.json",
+        batch_size:      1_000,
+        on_conflict:     :nothing,
+        conflict_target: %{MyApp.Order => [:order_id], MyApp.Refund => [:refund_id]},
+        type_field:      "record_type"
+      )
+      #=> {:ok, %{
+      #=>   total: 10_000,
+      #=>   by_schema: %{
+      #=>     MyApp.Order  => %{inserted: 7_500, failed: 0},
+      #=>     MyApp.Refund => %{inserted: 2_400, failed: 0}
+      #=>   },
+      #=>   unroutable: 80,
+      #=>   missing_type: 20
+      #=> }}
+  """
+
+  require Logger
+
+  # ---------------------------------------------------------------------------
+  # Types
+  # ---------------------------------------------------------------------------
+
+  @type repo           :: module()
+  @type schema         :: module()
+  @type routing        :: %{String.t() => schema()}
+  @type per_schema_stats :: %{inserted: integer(), failed: integer()}
+  @type stats          :: %{
+    total:        integer(),
+    by_schema:    %{schema() => per_schema_stats()},
+    unroutable:   integer(),
+    missing_type: integer()
+  }
+
+  # ---------------------------------------------------------------------------
+  # Defaults
+  # ---------------------------------------------------------------------------
+
+  @default_batch_size      500
+  @default_on_conflict     :nothing
+  @default_conflict_target :nothing
+  @default_type_field      "type"
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Ingests records from a JSON array file, routing each record to the
+  appropriate Ecto schema based on its type discriminator field.
+
+  See module doc for accepted options.
+  """
+  @spec ingest(repo(), routing(), String.t(), keyword()) ::
+          {:ok, stats()} | {:error, :file_not_found | :invalid_json | :not_a_list}
+  def ingest(repo, routing, file_path, opts \\ []) do
+    cfg = %{
+      batch_size:      Keyword.get(opts, :batch_size,      @default_batch_size),
+      on_conflict:     Keyword.get(opts, :on_conflict,     @default_on_conflict),
+      conflict_target: Keyword.get(opts, :conflict_target, @default_conflict_target),
+      type_field:      Keyword.get(opts, :type_field,      @default_type_field)
+    }
+
+    with {:ok, raw}     <- read_file(file_path),
+         {:ok, parsed}  <- parse_json(raw),
+         {:ok, records} <- validate_list(parsed) do
+      {:ok, process_records(repo, routing, records, cfg)}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # File I/O and validation
+  # ---------------------------------------------------------------------------
+
+  defp read_file(path) do
+    case File.read(path) do
+      {:ok, contents}  -> {:ok, contents}
+      {:error, reason} ->
+        Logger.error("[MultiSchemaIngestion] Could not read file #{inspect(path)}: #{inspect(reason)}")
+        {:error, :file_not_found}
+    end
+  end
+
+  defp parse_json(raw) do
+    case Jason.decode(raw) do
+      {:ok, value}     -> {:ok, value}
+      {:error, reason} ->
+        Logger.error("[MultiSchemaIngestion] JSON parse error: #{inspect(reason)}")
+        {:error, :invalid_json}
+    end
+  end
+
+  defp validate_list(value) when is_list(value), do: {:ok, value}
+  defp validate_list(value) do
+    Logger.error("[MultiSchemaIngestion] Expected a JSON array, got: #{inspect(value, limit: 5)}")
+    {:error, :not_a_list}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Record classification and grouping
+  # ---------------------------------------------------------------------------
+
+  @spec process_records(repo(), routing(), [map()], map()) :: stats()
+  defp process_records(repo, routing, records, cfg) do
+    total = length(records)
+    type_field = cfg.type_field
+
+    # Classify each record, preserving original order.
+    {groups, unroutable, missing_type} =
+      Enum.reduce(records, {%{}, 0, 0}, fn record, {groups, unr, miss} ->
+        case Map.fetch(record, type_field) do
+          :error ->
+            Logger.warning("[MultiSchemaIngestion] Record missing '#{type_field}' field, skipping")
+            {groups, unr, miss + 1}
+
+          {:ok, type_value} ->
+            case Map.fetch(routing, type_value) do
+              :error ->
+                Logger.warning("[MultiSchemaIngestion] Unknown type '#{type_value}', skipping")
+                {groups, unr + 1, miss}
+
+              {:ok, schema} ->
+                # Append to the group, maintaining insertion order.
+                updated = Map.update(groups, schema, [record], &(&1 ++ [record]))
+                {updated, unr, miss}
+            end
+        end
+      end)
+
+    # Process each schema group.
+    by_schema =
+      groups
+      |> Enum.reduce(%{}, fn {schema, schema_records}, acc ->
+        schema_stats = insert_schema_group(repo, schema, schema_records, cfg)
+        Map.put(acc, schema, schema_stats)
+      end)
+
+    # Include schemas from routing that had zero records.
+    by_schema =
+      routing
+      |> Map.values()
+      |> Enum.uniq()
+      |> Enum.reduce(by_schema, fn schema, acc ->
+        Map.put_new(acc, schema, %{inserted: 0, failed: 0})
+      end)
+
+    %{
+      total:        total,
+      by_schema:    by_schema,
+      unroutable:   unroutable,
+      missing_type: missing_type
+    }
+  end
+
+  # ---------------------------------------------------------------------------
+  # Per-schema batch insertion
+  # ---------------------------------------------------------------------------
+
+  @spec insert_schema_group(repo(), schema(), [map()], map()) :: per_schema_stats()
+  defp insert_schema_group(repo, schema, records, cfg) do
+    # TODO
+  end
+
+  # ---------------------------------------------------------------------------
+  # Row preparation
+  # ---------------------------------------------------------------------------
+
+  @spec schema_field_set (truncated)
+03:32:38.791 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5681, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5681, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5681, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5681, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 4456, "type" => "message"}], "output_tokens" => 4456, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+03:32:38.811 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_032_004_multi_table_json_ingestion_with_type_discriminator_routing_03/032_004_multi_table_json_ingestion_with_type_discriminator_routing_03 solution.ex
+03:32:39.743 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":42,"lines_over_98":0,"max_line_length":83,"mode":"fim","pipe_chain_count":4,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"032_004_multi_table_json_ingestion_with_type_discriminator_routing_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_032_004_multi_table_json_ingestion_with_type_discriminator_routing_03/032_004_multi_table_json_ingestion_with_type_discriminator_routing_03/solution.ex","task":"032_004_multi_table_json_ingestion_with_type_discriminator_routing_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-04T01:32:39.722759Z"}
+03:32:39.744 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_032_004_multi_table_json_ingestion_with_type_discriminator_routing_03/032_004_multi_table_json_ingestion_with_type_discriminator_routing_03 .gen_staging/fim_032_004_multi_table_json_ingestion_with_type_discriminator_routing_03/mutant.ex
+03:32:40.632 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":55,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":9,"compiled":true,"parent":"032_004_multi_table_json_ingestion_with_type_discriminator_routing_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.1,"mode":"fim","overall":0.49,"reasons":["compilation: 9 warning(s) → -0.9 pts","tests: 6/10 failed"],"tests":0.4},"shape":"fim","solution_file":".gen_staging/fim_032_004_multi_table_json_ingestion_with_type_discriminator_routing_03/mutant.ex","task":"032_004_multi_table_json_ingestion_with_type_discriminator_routing_03","test_failures":[{"message":"MUTATION","module":"MultiSchemaIngestionTest","test":"test routes records to correct schemas based on type field"},{"message":"MUTATION","module":"MultiSchemaIngestionTest","test":"test counts records with unknown type as unroutable"},{"message":"MUTATION","module":"MultiSchemaIngestionTest","test":"test counts records with no type field as missing_type"},{"message":"MUTATION","module":"MultiSchemaIngestionTest","test":"test supports custom type_field option"},{"message":"MUTATION","module":"MultiSchemaIngestionTest","test":"test uses per-schema conflict targets from a map"},{"message":"MUTATION","module":"MultiSchemaIngestionTest","test":"test continues processing other schemas after a batch failure"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":4,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-04T01:32:40.605866Z"}
+03:32:40.632 [debug] fim mutation gate: killed
+03:32:40.633 [info] promoted 032_004_multi_table_json_ingestion_with_type_discriminator_routing_03 -> tasks/032_004_multi_table_json_ingestion_with_type_discriminator_routing_03

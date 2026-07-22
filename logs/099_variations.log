@@ -1,0 +1,333 @@
+07:55:47.982 [info] VARIATIONS gen for 099_001_data_masking_for_logs_01 (3 slot(s))
+07:55:47.983 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+07:55:47.983 [debug] claude -p USER prompt:
+I have this SFT task (idea #99 — "Data Masking for Logs"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings;
+process-unique temp paths via `System.pid()` + `System.unique_integer/1`; every
+assertion justified by an explicit statement in that variation's prompt.md — a
+solver reading ONLY the prompt must be able to pass every test, so never assert
+internal state or undocumented option values).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 99 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `LogMasker` that scrubs sensitive data from log-bound maps, keyword lists, and strings.
+
+I need these functions in the public API:
+- `LogMasker.new(sensitive_keys)` which creates a masker configuration. `sensitive_keys` is a list of atoms (e.g. `[:password, :ssn, :credit_card, :token]`). Return an opaque struct or map that can be passed to other functions.
+- `LogMasker.mask(masker, data)` which accepts either a map, a keyword list, or a string, and returns the same type with sensitive data scrubbed. For maps and keyword lists, recursively walk all values — if a key matches a sensitive key (comparison should be case-insensitive and work for both atom and string keys), replace its value with `"[MASKED]"` regardless of what the value is. Lists of maps or keyword lists should also be walked recursively. Non-sensitive keys must be left completely untouched.
+- `LogMasker.mask_string(masker, string)` which scans a raw string and masks three patterns:
+  - **Credit card numbers**: any sequence of 13–19 digits (optionally separated by spaces or hyphens) — replace all digit groups except the last 4 digits with `*` characters of equal length, keeping separators intact. E.g. `"4111-1111-1111-1234"` → `"****-****-****-1234"`.
+  - **Email addresses**: mask the local part (before `@`) keeping only the first character and replacing the rest with `***`. E.g. `"john.doe@example.com"` → `"j***@example.com"`.
+  - **SSN patterns**: sequences matching `\d{3}-\d{2}-\d{4}` — replace with `"***-**-****"`.
+
+`LogMasker.mask/2` should also apply `mask_string/2` to any string *values* it encounters while walking a map or keyword list, even for non-sensitive keys, so stray PII embedded in strings is caught everywhere.
+
+Give me the complete module in a single file. Use only the Elixir standard library and built-in regex support — no external dependencies.
+
+=== BASE solution.ex ===
+defmodule LogMasker do
+  @moduledoc """
+  Scrubs sensitive data from log-bound maps, keyword lists, and strings.
+
+  ## Usage
+
+      iex> masker = LogMasker.new([:password, :ssn, :credit_card, :token])
+      iex> LogMasker.mask(masker, %{user: "jane", password: "hunter2"})
+      %{user: "jane", password: "[MASKED]"}
+
+      iex> LogMasker.mask_string(masker, "card 4111-1111-1111-1234, email a@b.com")
+      "card ****-****-****-1234, email a***@b.com"
+  """
+
+  @enforce_keys [:sensitive_keys]
+  defstruct sensitive_keys: MapSet.new()
+
+  @opaque t :: %__MODULE__{sensitive_keys: MapSet.t(String.t())}
+
+  @mask "[MASKED]"
+
+  # Credit card: 13–19 digits, optionally separated by spaces or hyphens.
+  #   \b  — word boundary so we don't anchor mid-digit
+  #   \d  — first digit
+  #   (?:[\s-]?\d){12,18} — 12..18 more "optional-sep + digit" pairs → 13..19 digits total
+  @cc_regex ~r/\b\d(?:[\s-]?\d){12,18}\b/
+
+  # Email: standard local@domain with TLD.
+  @email_regex ~r/([A-Za-z0-9._%+\-]+)@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})/
+
+  # US Social Security number pattern.
+  @ssn_regex ~r/\b\d{3}-\d{2}-\d{4}\b/
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Builds an opaque masker configuration from a list of sensitive keys.
+
+  Keys may be atoms or strings. Comparison at mask time is case-insensitive,
+  so `:Password`, `"password"`, and `"PASSWORD"` are all treated equivalently
+  to `:password`.
+  """
+  @spec new([atom() | String.t()]) :: t()
+  def new(sensitive_keys) when is_list(sensitive_keys) do
+    normalized =
+      sensitive_keys
+      |> Enum.map(&normalize_key/1)
+      |> Enum.reject(&is_nil/1)
+      |> MapSet.new()
+
+    %__MODULE__{sensitive_keys: normalized}
+  end
+
+  @doc """
+  Masks sensitive data in a map, keyword list, or string.
+
+  * Maps and keyword lists are walked recursively. Values under sensitive keys
+    are replaced with `"[MASKED]"` regardless of the original value. Non-sensitive
+    keys are preserved, and their values continue to be scrubbed.
+  * Plain lists (and lists of maps / keyword lists) are walked element-by-element.
+  * String values are always passed through `mask_string/2`, so embedded PII
+    (credit cards, emails, SSNs) is scrubbed everywhere — even under keys
+    that were not marked sensitive.
+  * Structs and other terms are returned unchanged.
+  """
+  @spec mask(t(), term()) :: term()
+  def mask(%__MODULE__{} = masker, data), do: do_mask(masker, data)
+
+  @doc """
+  Masks credit card numbers, email addresses, and SSN patterns inside a raw string.
+
+  * Credit cards (13–19 digits, optionally separated by spaces or hyphens):
+    all digits except the final four are replaced with `*`, separators kept.
+  * Emails: the local part keeps only its first character; the rest becomes `***`.
+  * SSNs (`\\d{3}-\\d{2}-\\d{4}`): replaced with `***-**-****`.
+  """
+  @spec mask_string(t(), String.t()) :: String.t()
+  def mask_string(%__MODULE__{}, string) when is_binary(string) do
+    string
+    |> mask_credit_cards()
+    |> mask_ssns()
+    |> mask_emails()
+  end
+
+  # ---------------------------------------------------------------------------
+  # Recursive walk
+  # ---------------------------------------------------------------------------
+
+  # Plain maps (not structs): walk entries.
+  defp do_mask(masker, data) when is_map(data) and not is_struct(data) do
+    Map.new(data, fn {k, v} ->
+      if sensitive_key?(masker, k) do
+        {k, @mask}
+      else
+        {k, do_mask(masker, v)}
+      end
+    end)
+  end
+
+  # Lists: keyword lists get key-aware handling; otherwise walk elements.
+  defp do_mask(masker, data) when is_list(data) do
+    if keyword_list?(data) do
+      Enum.map(data, fn {k, v} ->
+        if sensitive_key?(masker, k) do
+          {k, @mask}
+        else
+          {k, do_mask(masker, v)}
+        end
+      end)
+    else
+      Enum.map(data, &do_mask(masker, &1))
+    end
+  end
+
+  # Strings: route through mask_string/2 so embedded PII is scrubbed.
+  defp do_mask(masker, data) when is_binary(data), do: mask_string(masker, data)
+
+  # Structs, numbers, atoms, tuples, pids, etc.: leave untouched.
+  defp do_mask(_masker, data), do: data
+
+  # ---------------------------------------------------------------------------
+  # String scrubbers
+  # ---------------------------------------------------------------------------
+
+  defp mask_credit_cards(string) do
+    Regex.replace(@cc_regex, string, &mask_cc_match/1)
+  end
+
+  # Build the masked replacement by walking the matched span one char at a time,
+  # replacing every digit with `*` except the final four.
+  defp mask_cc_match(match) do
+    chars = String.graphemes(match)
+    digit_count = Enum.count(chars, &digit?/1)
+    keep_threshold = digit_count - 4
+
+    {reversed, _seen} =
+      Enum.reduce(chars, {[], 0}, fn ch, {acc, seen} - (truncated)
+08:01:23.723 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `LogRedactor` that scrubs sensitive data from log-bound maps, keyword lists, and strings **and reports how much it scrubbed**. This is the same idea as a basic log masker, but every operation must hand back a *redaction report* so callers can emit metrics about how much PII a payload contained.
+
+I need these functions in the public API:
+
+- `LogRedactor.new(sensitive_keys)` — creates a redactor configuration. `sensitive_keys` is a list of atoms and/or strings (e.g. `[:password, :ssn, :token]`). Comparison at redaction time must be case-insensitive and work for both atom and string keys. Return an opaque struct or map that can be passed to the other functions.
+
+- `LogRedactor.redact(redactor, data)` — accepts a map, a keyword list, a plain list, or any other term, and returns a **tuple** `{scrubbed, report}`.
+  - `scrubbed` is the same shape as the input with sensitive data removed.
+  - Maps and keyword lists are walked recursively. If a key matches a sensitive key, its value is replaced with the string `"[REDACTED]"` regardless of the value's type (integer, nil, list, string, …). Non-sensitive keys are preserved, and their values continue to be walked.
+  - Plain lists (including lists of maps or keyword lists) are walked element-by-element.
+  - Every **string value** encountered under a non-sensitive key is passed through the same pattern scrubbing as `redact_string/2` (see below), so stray PII embedded in free text is caught everywhere. Values replaced with `"[REDACTED]"` because of a sensitive key are **not** additionally pattern-scanned.
+  - Structs, numbers, atoms, and other terms are returned unchanged.
+  - `report` is a map with exactly these four integer keys:
+    - `:keys_masked` — how many values were replaced with `"[REDACTED]"` because their key was sensitive (counted across the whole recursive walk).
+    - `:credit_cards` — how many credit-card matches were masked across all scanned strings.
+    - `:emails` — how many email matches were masked across all scanned strings.
+    - `:ssns` — how many SSN matches were masked across all scanned strings.
+  - For an input with nothing to scrub (e.g. an empty map), the report is `%{keys_masked: 0, credit_cards: 0, emails: 0, ssns: 0}`.
+
+- `LogRedactor.redact_string(redactor, string)` — scans a raw string, masks the three patterns below, and returns `{scrubbed_string, report}`. The report has the same four keys; `:keys_masked` is always `0` for this function, and the other three count how many matches of each pattern were masked in the string.
+
+The three string patterns (identical scrubbing rules to a standard masker):
+- **Credit card numbers**: any sequence of 13–19 digits (optionally separated by single spaces or hyphens) — replace every digit except the last 4 with a `*`, keeping separators intact. E.g. `"4111-1111-1111-1234"` → `"****-****-****-1234"`.
+- **Email addresses**: keep only the first character of the local part (before `@`) and replace the rest with `***`. E.g. `"john.doe@example.com"` → `"j***@example.com"`.
+- **SSN patterns**: sequences matching `\d{3}-\d{2}-\d{4}` — replace with `"***-**-****"`.
+
+Give me the complete module in a single file. Use only the Elixir standard library and built-in regex support — no external dependencies.
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule LogRedactorTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    r = LogRedactor.new([:password, :ssn, :token, :secret, :credit_card])
+    %{r: r}
+  end
+
+  # -------------------------------------------------------
+  # redact/2 — structural masking + keys_masked report
+  # -------------------------------------------------------
+
+  test "masks sensitive keys and reports keys_masked", %{r: r} do
+    {scrubbed, report} = LogRedactor.redact(r, %{username: "alice", password: "s3cr3t"})
+    assert scrubbed.username == "alice"
+    assert scrubbed.password == "[REDACTED]"
+    assert report.keys_masked == 1
+  end
+
+  test "masks sensitive keys regardless of value type", %{r: r} do
+    {scrubbed, report} = LogRedactor.redact(r, %{password: 12345, token: nil, secret: [1, 2, 3]})
+    assert scrubbed.password == "[REDACTED]"
+    assert scrubbed.token == "[REDACTED]"
+    assert scrubbed.secret == "[REDACTED]"
+    assert report.keys_masked == 3
+  end
+
+  test "leaves non-sensitive keys untouched", %{r: r} do
+    {scrubbed, report} = LogRedactor.redact(r, %{user_id: 42, role: "admin"})
+    assert scrubbed.user_id == 42
+    assert scrubbed.role == "admin"
+    assert report.keys_masked == 0
+  end
+
+  test "case-insensitive matching for string keys", %{r: r} do
+    {scrubbed, report} = LogRedactor.redact(r, %{"Password" => "x", "TOKEN" => "y"})
+    assert scrubbed["Password"] == "[REDACTED]"
+    assert scrubbed["TOKEN"] == "[REDACTED]"
+    assert report.keys_masked == 2
+  end
+
+  test "recursively counts keys_masked in nested maps", %{r: r} do
+    data = %{user: %{name: "carol", creds: %{password: "hunter2", token: "tok"}}}
+    {scrubbed, report} = LogRedactor.redact(r, data)
+    assert scrubbed.user.name == "carol"
+    assert scrubbed.user.creds.password == "[REDACTED]"
+    assert scrubbed.user.creds.token == "[REDACTED]"
+    assert report.keys_masked == 2
+  end
+
+  test "counts keys_masked across a list of maps", %{r: r} do
+    data = [%{user: "a", password: "1"}, %{user: "b", password: "2"}]
+    {scrubbed, report} = LogRedactor.redact(r, data)
+    [m1, m2] = scrubbed
+    assert m1.password == "[REDACTED]"
+    assert m2.password == "[REDACTED]"
+    assert report.keys_masked == 2
+  end
+
+  test "masks sensitive keys in a keyword list", %{r: r} do
+    {scrubbed, report} = LogRedactor.redact(r, username: "dave", password: "secret!", role: :viewer)
+    assert scrubbed[:username] == "dave"
+    assert scrubbed[:password] == "[REDACTED]"
+    assert scrubbed[:role] == :viewer
+    assert report.keys_masked == 1
+  end
+
+  # -------------------------------------------------------
+  # redact/2 — pattern scrubbing on string values
+  # -------------------------------------------------------
+
+  test "pattern-masks string values under non-sensitive keys and counts them", %{r: r} do
+    data = %{message: "ssn 123-45-6789 email a@b.com card 4111-1111-1111-1234"}
+    {scrubbed, report} = LogRedactor.redact(r, data)
+    refute scrubbed.message =~ "123-45-6789"
+    refute scrubbed.message =~ "a@b.com"
+    refute scrubbed.message =~ "4111-1111-1111"
+    assert scrubbed.message =~ "1234"
+    assert report.keys_masked == 0
+    assert report.credit_cards == 1
+    assert report.emails == 1
+    assert report.ssns == 1
+  end
+
+  test "sensitive-key values are not additionally pattern-scanned", %{r: r} do
+    # password's value looks like an SSN, but it is redacted wholesale, not counted as an SSN match
+    {scrubbed, report} = LogRedactor.redact(r, %{password: "123-45-6789"})
+    assert scrubbed.password == "[REDACTED]"
+    assert report.keys_masked == 1
+    assert report.ssns == 0
+  end
+
+  test "empty map yields an all-zero report", %{r: r} do
+    assert LogRedactor.redact(r, %{}) == {%{}, %{keys_masked: 0, credit_cards: 0, emails: 0, ssns: 0}}
+  end
+
+  # -------------------------------------------------------
+  # redact_string/2
+  # -------------------------------------------------------
+
+  test "redact_string masks a dashed credit card and reports one card", %{r: r} do
+    {scrubbed, report} = LogRedactor.redact_string(r, "4111-1111-1111-1234")
+    assert scrubbed == "****-****-****-1234"
+    assert report.credit_cards == 1
+    assert report.keys_masked == 0
+  end
+
+  test "redact_string masks an email keeping the first char", %{r: r} do
+    {scrubbed, report} = LogRedactor.redact_string(r, "Contact john.doe@example.com please")
+    assert scrubbed =~ "j***@example.com"
+    refute scrubbed =~ "john.doe"
+    assert report.emails == 1
+  end
+
+  test "redact_string masks an SSN", %{r: r} do
+    {scrubbed, report} = LogRedactor.redact_string(r, "SSN: 123-45-6789 on file")
+    assert scrubbed =~ "***-**-****"
+    assert repo (truncated)
+08:01:23.723 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 27572, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 27572, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 27572, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 27572, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 31186, "type" => "message"}], "output_tokens" => 31186, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

@@ -1,0 +1,422 @@
+19:16:58.003 [info] FIM 074_003_concurrency_and_message_assertion_helpers_fim03 → 074_003_concurrency_and_message_assertion_helpers_04: target no_message/1
+19:16:58.003 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+19:16:58.003 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `no_message/1`.
+
+Generate a prompt describing how to implement `no_message/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `no_message/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `no_message/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `no_message/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `AssertHelpers` that provides three custom ExUnit assertion macros intended to be `use`d inside test modules. This set focuses on the **concurrency / message-passing model**: the current process mailbox and process liveness.
+
+I need these macros:
+
+- `assert_next_message(expected, timeout_ms \\ 1000)` — waits up to `timeout_ms` for the next message to arrive in the calling process's mailbox (consuming it) and asserts it equals `expected`. On failure there are two distinct cases: (a) a message arrived but did not match — show the expected and the received message; (b) no message arrived before the timeout — show the expected message and how long it waited.
+
+- `assert_no_message(within_ms \\ 100)` — asserts that NO message arrives in the calling process's mailbox within `within_ms` milliseconds. On failure, show the message that unexpectedly arrived.
+
+- `assert_process_exits(pid, timeout_ms \\ 1000)` — monitors `pid` and asserts that it terminates within `timeout_ms`. A process that is already dead counts as passing. On failure, show the pid, whether it is still alive, and how long it waited. Be sure to clean up the monitor on timeout so no stray `:DOWN` message is left behind.
+
+All three must be macros (not plain functions) so that ExUnit can report the correct file and line number on failure. Use `ExUnit.Assertions.flunk/1` for surfacing failure messages. The module should be a single file with no external dependencies beyond `ExUnit`.
+
+Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule AssertHelpers do
+  @moduledoc """
+  Custom ExUnit assertion macros for the concurrency / message-passing model.
+
+  These operate on the calling process's mailbox and on process liveness.
+
+  The macros are intentionally thin wrappers around the public runtime
+  functions `next_message/2`, `no_message/1` and `process_exits/2`. Keeping the
+  real behavior in ordinary functions (which run in the *calling* process, so
+  they still see the caller's mailbox) makes the logic directly exercisable and
+  observable, while the macros preserve correct file/line reporting for ExUnit.
+
+  ## Usage
+
+      defmodule MyApp.SomeTest do
+        use ExUnit.Case
+        use AssertHelpers
+
+        test "example" do
+          send(self(), :ready)
+          assert_next_message(:ready)
+          assert_no_message(50)
+          assert_process_exits(worker_pid)
+        end
+      end
+  """
+
+  @doc false
+  @spec __using__(keyword()) :: Macro.t()
+  defmacro __using__(_opts) do
+    quote do
+      import AssertHelpers
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # assert_next_message/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Waits up to `timeout_ms` for the next message in the calling process's
+  mailbox (consuming it) and asserts it equals `expected`.
+
+  On failure distinguishes a mismatched message from a timeout.
+  """
+  @spec assert_next_message(Macro.t(), Macro.t()) :: Macro.t()
+  defmacro assert_next_message(expected, timeout_ms \\ 1_000) do
+    quote do
+      AssertHelpers.next_message(unquote(expected), unquote(timeout_ms))
+    end
+  end
+
+  @doc """
+  Runtime implementation of `assert_next_message/2`.
+
+  Receives the next message from the current process mailbox within
+  `timeout_ms` and returns `:ok` when it equals `expected`. Otherwise calls
+  `ExUnit.Assertions.flunk/1` describing whether a different message arrived or
+  the wait timed out.
+  """
+  @spec next_message(term(), non_neg_integer()) :: :ok
+  def next_message(expected, timeout_ms \\ 1_000) do
+    receive do
+      msg ->
+        if msg == expected do
+          :ok
+        else
+          ExUnit.Assertions.flunk("""
+          assert_next_message failed
+
+            expected message: #{inspect(expected)}
+            received message: #{inspect(msg)}
+          """)
+        end
+    after
+      timeout_ms ->
+        ExUnit.Assertions.flunk("""
+        assert_next_message timed out
+
+          expected message: #{inspect(expected)}
+          waited          : #{timeout_ms}ms
+          no message arrived in the mailbox within the timeout
+        """)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # assert_no_message/1
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Asserts that no message arrives in the calling process's mailbox within
+  `within_ms` milliseconds. On failure shows the message that arrived.
+  """
+  @spec assert_no_message(Macro.t()) :: Macro.t()
+  defmacro assert_no_message(within_ms \\ 100) do
+    quote do
+      AssertHelpers.no_message(unquote(within_ms))
+    end
+  end
+
+  @doc """
+  Runtime implementation of `assert_no_message/1`.
+
+  Returns `:ok` when no message arrives in the current process mailbox within
+  `within_ms` milliseconds, otherwise flunks showing the unexpected message.
+  """
+  @spec no_message(non_neg_integer()) :: :ok
+  def no_message(within_ms \\ 100) do
+    receive do
+      msg ->
+        ExUnit.Assertions.flunk("""
+        assert_no_message failed
+
+          expected no message within #{within_ms}ms
+          but received: #{inspect(msg)}
+        """)
+    after
+      within_ms -> :ok
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # assert_process_exits/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Monitors `pid` and asserts it terminates within `timeout_ms`. An
+  already-dead process passes. The monitor is flushed on timeout so no stray
+  `:DOWN` message is left in the mailbox.
+  """
+  @spec assert_process_exits(Macro.t(), Macro.t()) :: Macro.t()
+  defmacro assert_process_exits(pid, timeout_ms \\ 1_000) do
+    quote do
+      AssertHelpers.process_exits(unquote(pid), unquote(timeout_ms))
+    end
+  end
+
+  @doc """
+  Runtime implementation of `assert_process_exits/2`.
+
+  Monitors `pid` and returns `:ok` when it terminates within `timeout_ms` (an
+  already-dead process reports `:DOWN` with reason `:noproc` immediately). On
+  timeout the monitor is demonitored with `:flush` and the function flunks with
+  the pid, liveness and elapsed budget.
+  """
+  @spec process_exits(pid(), non_neg_integer()) :: :ok
+  def process_exits(pid, timeout_ms \\ 1_000) do
+    ref = Process.monitor(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, _object, _reason} ->
+        :ok
+    after
+      timeout_ms ->
+        Process.demonitor(ref, [:flush])
+
+        ExUnit.Assertions.flunk("""
+        assert_process_exits timed out
+
+          process : #{inspect(pid)}
+          alive?  : #{Process.alive?(pid)}
+          waited  : #{timeout_ms}ms
+          the process did not terminate within the timeout
+        """)
+    end
+  end
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in (truncated)
+19:17:26.437 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `no_message/1` function — the runtime implementation behind
+the `assert_no_message/1` macro. It runs in the calling process (so it observes
+that process's own mailbox) and asserts that **no** message arrives within the
+given window.
+
+It takes a single argument, `within_ms`, a non-negative integer count of
+milliseconds (defaulting to `100`). The function should wait up to `within_ms`
+milliseconds for any message to arrive in the current process's mailbox:
+
+- If no message arrives before `within_ms` elapses, return `:ok`.
+- If a message arrives within the window, the assertion has failed: call
+  `ExUnit.Assertions.flunk/1` with a message that states no message was expected
+  within `within_ms` milliseconds and shows the message that unexpectedly
+  arrived (use `inspect/1` to render it).
+
+Use a `receive`/`after` block so the timeout is the `after` clause returning
+`:ok` and any received message triggers the flunk.
+
+```elixir
+defmodule AssertHelpers do
+  @moduledoc """
+  Custom ExUnit assertion macros for the concurrency / message-passing model.
+
+  These operate on the calling process's mailbox and on process liveness.
+
+  The macros are intentionally thin wrappers around the public runtime
+  functions `next_message/2`, `no_message/1` and `process_exits/2`. Keeping the
+  real behavior in ordinary functions (which run in the *calling* process, so
+  they still see the caller's mailbox) makes the logic directly exercisable and
+  observable, while the macros preserve correct file/line reporting for ExUnit.
+
+  ## Usage
+
+      defmodule MyApp.SomeTest do
+        use ExUnit.Case
+        use AssertHelpers
+
+        test "example" do
+          send(self(), :ready)
+          assert_next_message(:ready)
+          assert_no_message(50)
+          assert_process_exits(worker_pid)
+        end
+      end
+  """
+
+  @doc false
+  @spec __using__(keyword()) :: Macro.t()
+  defmacro __using__(_opts) do
+    quote do
+      import AssertHelpers
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # assert_next_message/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Waits up to `timeout_ms` for the next message in the calling process's
+  mailbox (consuming it) and asserts it equals `expected`.
+
+  On failure distinguishes a mismatched message from a timeout.
+  """
+  @spec assert_next_message(Macro.t(), Macro.t()) :: Macro.t()
+  defmacro assert_next_message(expected, timeout_ms \\ 1_000) do
+    quote do
+      AssertHelpers.next_message(unquote(expected), unquote(timeout_ms))
+    end
+  end
+
+  @doc """
+  Runtime implementation of `assert_next_message/2`.
+
+  Receives the next message from the current process mailbox within
+  `timeout_ms` and returns `:ok` when it equals `expected`. Otherwise calls
+  `ExUnit.Assertions.flunk/1` describing whether a different message arrived or
+  the wait timed out.
+  """
+  @spec next_message(term(), non_neg_integer()) :: :ok
+  def next_message(expected, timeout_ms \\ 1_000) do
+    receive do
+      msg ->
+        if msg == expected do
+          :ok
+        else
+          ExUnit.Assertions.flunk("""
+          assert_next_message failed
+
+            expected message: #{inspect(expected)}
+            received message: #{inspect(msg)}
+          """)
+        end
+    after
+      timeout_ms ->
+        ExUnit.Assertions.flunk("""
+        assert_next_message timed out
+
+          expected message: #{inspect(expected)}
+          waited          : #{timeout_ms}ms
+          no message arrived in the mailbox within the timeout
+        """)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # assert_no_message/1
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Asserts that no message arrives in the calling process's mailbox within
+  `within_ms` milliseconds. On failure shows the message that arrived.
+  """
+  @spec assert_no_message(Macro.t()) :: Macro.t()
+  defmacro assert_no_message(within_ms \\ 100) do
+    quote do
+      AssertHelpers.no_message(unquote(within_ms))
+    end
+  end
+
+  @doc """
+  Runtime implementation of `assert_no_message/1`.
+
+  Returns `:ok` when no message arrives in the current process mailbox within
+  `within_ms` milliseconds, otherwise flunks showing the unexpected message.
+  """
+  @spec no_message(non_neg_integer()) :: :ok
+  def no_message(within_ms \\ 100) do
+    # TODO
+  end
+
+  # ---------------------------------------------------------------------------
+  # assert_process_exits/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Monitors `pid` and asserts it terminates within `timeout_ms`. An
+  already-dead process passes. The monitor is flushed on timeout so no stray
+  `:DOWN` message is left in the mailbox.
+  """
+  @spec assert_process_exits(Macro.t(), Macro.t()) :: Macro.t()
+  defmacro assert_process_exits(pid, timeout_ms \\ 1_000) do
+    quote do
+      AssertHelpers.process_exits(unquote(pid), unquote(timeout_ms))
+    end
+  end
+
+  @doc """
+  Runtime implementation of `assert_process_exits/2`.
+
+  Monitors `pid` and returns `:ok` when it terminates within `timeout_ms` (an
+  already-dead process reports `:DOWN` with reason `:noproc` immediately). On
+  timeout the monitor is demonitored with `:flush` and the function flunks with
+  the pid, liveness and elapsed budget.
+  """
+  @spec process_exits(pid(), non_neg_integer()) :: :ok
+  def process_exits(pid, timeout_ms \\ 1_000) do
+    ref = Process.monitor(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, _object, _reason} ->
+        :ok
+    after
+      timeout_ms ->
+        Process.demonitor(ref, [:flush])
+
+        ExUnit.Assertions.flunk("""
+        assert_process_exits timed out
+
+          process : #{inspect(pid)}
+          alive?  : #{Process.alive?(pid)}
+          waited  : #{timeout_ms}ms
+          the process did not terminate within the timeout
+        """)
+    end
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  def no_message(within_ms \\ 100) do
+    receive do
+      msg ->
+        ExUnit.Assertions.flunk("""
+        assert_no_message failed
+
+          expected no message within #{within_ms}ms
+          but received: #{inspect(msg)}
+        """)
+    after
+      within_ms -> :ok
+    end
+  end
+</file>
+19:17:26.437 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3330, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3330, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3330, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3330, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2463, "type" => "message"}], "output_tokens" => 2463, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+19:17:26.457 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_074_003_concurrency_and_message_assertion_helpers_04/074_003_concurrency_and_message_assertion_helpers_04 solution.ex
+19:17:27.826 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":13,"lines_over_98":0,"max_line_length":51,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"074_003_concurrency_and_message_assertion_helpers_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_074_003_concurrency_and_message_assertion_helpers_04/074_003_concurrency_and_message_assertion_helpers_04/solution.ex","task":"074_003_concurrency_and_message_assertion_helpers_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-04T17:17:27.803169Z"}
+19:17:27.826 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_074_003_concurrency_and_message_assertion_helpers_04/074_003_concurrency_and_message_assertion_helpers_04 .gen_staging/fim_074_003_concurrency_and_message_assertion_helpers_04/mutant.ex
+19:17:28.936 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":35,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"parent":"074_003_concurrency_and_message_assertion_helpers_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.9,"mode":"fim","overall":0.78,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 6/20 failed"],"tests":0.7},"shape":"fim","solution_file":".gen_staging/fim_074_003_concurrency_and_message_assertion_helpers_04/mutant.ex","task":"074_003_concurrency_and_message_assertion_helpers_04","test_failures":[{"message":"MUTATION","module":"AssertHelpersTest","test":"test assert_no_message/1 passes when the mailbox stays empty"},{"message":"MUTATION","module":"AssertHelpersTest","test":"test assert_no_message/1 fails when a message arrives within the window"},{"message":"MUTATION","module":"AssertHelpersTest","test":"test no_message/1 (runtime function) returns :ok when nothing arrives"},{"message":"\n\nExpected exception ExUnit.AssertionError but got RuntimeError (MUTATION)\n","module":"AssertHelpersTest","test":"test no_message/1 (runtime function) flunks showing the message that unexpectedly arrived"},{"message":"MUTATION","module":"AssertHelpersTest","test":"test assert_process_exits/2 does not leave a stray :DOWN message after a timeout"},{"message":"MUTATION","module":"AssertHelpersTest","test":"test process_exits/2 (runtime function) flushes the monitor so no stray :DOWN remains after a timeout"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-04T17:17:28.913036Z"}
+19:17:28.936 [debug] fim mutation gate: killed
+19:17:28.938 [info] promoted 074_003_concurrency_and_message_assertion_helpers_04 -> tasks/074_003_concurrency_and_message_assertion_helpers_04

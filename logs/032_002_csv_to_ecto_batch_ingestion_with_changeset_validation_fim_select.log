@@ -1,0 +1,212 @@
+03:24:56.705 [info] FIM candidate-select for 032_002_csv_to_ecto_batch_ingestion_with_changeset_validation_01 (up to 3)
+03:24:56.705 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+03:24:56.705 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `CsvIngestion` that reads a CSV file, validates
+each row through an Ecto changeset, and inserts valid rows in batches into a
+database table via Ecto.
+
+I need these functions in the public API:
+
+- `CsvIngestion.ingest(repo, schema, file_path, opts \\ [])` — the main entry
+  point. It reads the CSV file at `file_path` using `NimbleCSV`, validates each
+  parsed row by building an Ecto changeset from the schema module, collects
+  valid rows, splits them into batches, and calls `repo.insert_all/3` for each
+  batch. It must return `{:ok, stats}` on success or `{:error, reason}` on
+  failure.
+  `stats` is a map with these integer keys:
+    - `:total`       — total data rows read from the file (excluding header)
+    - `:inserted`    — rows successfully inserted into the database
+    - `:invalid`     — rows that failed changeset validation
+    - `:failed`      — rows in batches where `insert_all` raised an error
+
+  Additionally, `stats` must include:
+    - `:validation_errors` — a list of `{line_number, errors}` tuples where
+      `line_number` is the 1-based line number in the CSV (header is line 1,
+      first data row is line 2) and `errors` is the keyword list from
+      `changeset.errors`
+
+- Accepted `opts`:
+    - `:batch_size` (integer, default 500) — how many valid records per
+      `insert_all` call
+    - `:on_conflict` (atom or keyword, default `:nothing`) — passed
+      directly to `Repo.insert_all` as the `on_conflict:` option
+    - `:conflict_target` (atom or list, default `:nothing`) — passed as
+      `conflict_target:`
+    - `:field_mapping` (map, default `nil`) — an optional map from CSV
+      header names (strings) to schema field names (atoms), e.g.
+      `%{"Product ID" => :external_id, "Product Name" => :name}`.
+      When `nil`, headers are converted to snake_case atoms directly.
+
+Row validation: for each parsed CSV row, build a changeset using
+`schema.changeset(struct(schema), attrs)`. If the changeset is valid, include
+the row in the insertion batch (extract the changes as a plain map). If
+invalid, record the line number and errors, skip the row.
+
+Before insertion, inject `inserted_at` and `updated_at` timestamps into each
+row map if those fields exist on the schema.
+
+The module must handle these error conditions gracefully — never raise:
+- File not found → `{:error, :file_not_found}`
+- File is empty (0 bytes) → `{:error, :empty_file}`
+- File has a header row but zero data rows → this is valid, return
+  `{:ok, stats}` with all zeroes
+- A batch `insert_all` call fails → log the error, add the batch size to
+  `:failed`, and continue with the remaining batches
+
+Use `File.exists?/1` and `NimbleCSV` for I/O and parsing. Use
+`Enum.chunk_every/2` for batching. Use `require Logger` and emit a
+`Logger.info/1` line after every batch with the running totals.
+
+Give me the complete module in a single file. Assume NimbleCSV, Jason, and
+Ecto are available as dependencies; do not add anything else.
+
+=== MODULE ===
+```elixir
+defmodule CsvIngestion do
+  @moduledoc """
+  Reads a CSV file, validates each row via an Ecto changeset, and batch-inserts
+  valid rows into the database.
+
+  Invalid rows are collected with their line numbers and changeset errors so the
+  caller can report validation failures without aborting the entire import.
+
+  ## Example
+
+      CsvIngestion.ingest(MyApp.Repo, MyApp.Product, "/tmp/products.csv",
+        batch_size:     1_000,
+        on_conflict:    :nothing,
+        conflict_target: [:external_id],
+        field_mapping:  %{"Product ID" => :external_id, "Product Name" => :name}
+      )
+      #=> {:ok, %{total: 5000, inserted: 4980, invalid: 18, failed: 0,
+      #=>         validation_errors: [{3, [name: {"can't be blank", ...}]}, ...]}}
+  """
+
+  require Logger
+
+  # ---------------------------------------------------------------------------
+  # Types
+  # ---------------------------------------------------------------------------
+
+  @type repo   :: module()
+  @type schema :: module()
+  @type stats  :: %{
+    total:             integer(),
+    inserted:          integer(),
+    invalid:           integer(),
+    failed:            integer(),
+    validation_errors: [{pos_integer(), keyword()}]
+  }
+  @type ingest_opts :: [
+    batch_size:      pos_integer(),
+    on_conflict:     atom() | keyword(),
+    conflict_target: atom() | [atom()],
+    field_mapping:   map() | nil
+  ]
+
+  # ---------------------------------------------------------------------------
+  # Defaults
+  # ---------------------------------------------------------------------------
+
+  @default_batch_size      500
+  @default_on_conflict     :nothing
+  @default_conflict_target :nothing
+
+  # ---------------------------------------------------------------------------
+  # CSV parser definition
+  # ---------------------------------------------------------------------------
+
+  NimbleCSV.define(CsvIngestion.Parser, separator: ",", escape: "\"")
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Ingests records from a CSV file into the database.
+
+  ## Parameters
+
+    - `repo`      – An Ecto repository module (e.g. `MyApp.Repo`).
+    - `schema`    – An Ecto schema module that also exposes `changeset/2`.
+    - `file_path` – Path to a UTF-8 CSV file with a header row.
+    - `opts`      – Keyword list; see module doc for accepted keys.
+
+  ## Return values
+
+    - `{:ok, stats}` – Returned when the file was read and parsed successfully,
+                       even if some rows were invalid or some batches failed.
+    - `{:error, :file_not_found}` – The file does not exist.
+    - `{:error, :empty_file}`     – The file is 0 bytes.
+  """
+  @spec ingest(repo(), schema(), String.t(), ingest_opts()) ::
+          {:ok, stats()} | {:error, :file_not_found | :empty_file}
+  def ingest(repo, schema, file_path, opts \\ []) do
+    batch_size      = Keyword.get(opts, :batch_size,      @default_batch_size)
+    on_conflict     = Keyword.get(opts, :on_conflict,     @default_on_conflict)
+    conflict_target = Keyword.get(opts, :conflict_target, @default_conflict_target)
+    field_mapping   = Keyword.get(opts, :field_mapping,   nil)
+
+    with :ok          <- check_file(file_path),
+         {:ok, rows}  <- parse_csv(file_path) do
+
+      cfg = %{
+        batch_size:      batch_size,
+        on_conflict:     on_conflict,
+        conflict_target: conflict_target
+      }
+
+      {:ok, process_rows(repo, schema, rows, field_mapping, cfg)}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # File checks
+  # ---------------------------------------------------------------------------
+
+  @spec check_file(String.t()) :: :ok | {:error, :file_not_found | :empty_file}
+  defp check_file(path) do
+    cond do
+      not File.exists?(path) ->
+        Logger.error("[CsvIngestion] File not found: #{inspect(path)}")
+        {:error, :file_not_found}
+
+      File.stat!(path).size == 0 ->
+        Logger.error("[CsvIngestion] File is empty: #{inspect(path)}")
+        {:error, :empty_file}
+
+      true ->
+        :ok
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # CSV parsing
+  # ---------------------------------------------------------------------------
+
+  @spec parse_csv(String.t()) :: {:ok, [{[String.t()], pos_integer()}]}
+  defp parse_csv(path) do
+    raw = File.read!(path)
+
+    # NimbleCSV.parse_string returns a  (truncated)
+03:25:05.223 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+process_rows/6
+process_batch/5
+build_attrs/3
+</file>
+03:25:05.223 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5967, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5967, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5967, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5967, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 202, "type" => "message"}], "output_tokens" => 202, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

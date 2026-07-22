@@ -1,0 +1,13 @@
+Screen triage: 3 untriaged RED task(s) — model=opus
+[1/3] 003_003_lease_based_bucket_01 ... PROMPT GAP: The public API functions must use guard clauses so that non-positive values for `capacity`, `refill_rate`, `tokens`, or `lease_timeout_ms` raise a `FunctionClauseError` rather than being handled at runtime.
+[2/3] 005_004_filteredeventbus_01 ... PROMPT GAP: Each element of the list in `{:any, [...]}` and `{:none, [...]}` is itself a complete filter — i.e. a list of clauses ANDed together — so a nested group is written `{:any, [[{:eq, [:a], 1}], [{:gt, [:b], 2}]]}`, and bare clause tuples as elements are invalid.
+[3/3] 015_001_heartbeat_monitor_01 ... ENTAILED (solver-weak — keep)
+
+=== SCREEN TRIAGE SUMMARY (whole ledger) ===
+  triaged: 92   entailed/keep: 63   open prompt gaps: 2   stale/resolved gaps: 27   errors: 0
+
+  PROMPT GAPS (human sign-off + backfill needed — cascade per docs/10 inv. #5):
+    - 003_003_lease_based_bucket_01
+        The public API functions must use guard clauses so that non-positive values for `capacity`, `refill_rate`, `tokens`, or `lease_timeout_ms` raise a `FunctionClauseError` rather than being handled at runtime.
+    - 005_004_filteredeventbus_01
+        Each element of the list in `{:any, [...]}` and `{:none, [...]}` is itself a complete filter — i.e. a list of clauses ANDed together — so a nested group is written `{:any, [[{:eq, [:a], 1}], [{:gt, [:b], 2}]]}`, and bare clause tuples as elements are invalid.

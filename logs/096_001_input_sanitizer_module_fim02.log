@@ -1,0 +1,441 @@
+[22m06:53:10.063 [info] FIM 096_001_input_sanitizer_module_fim02 → 096_001_input_sanitizer_module_03: target filename/1[0m
+[36m06:53:10.063 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m06:53:10.063 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `filename/1`.
+
+Generate a prompt describing how to implement `filename/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `filename/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `filename/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `filename/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Sanitizer` that cleans and validates user inputs against common injection and traversal attacks.
+
+I need these functions in the public API:
+
+- `Sanitizer.html(input, opts \\ [])` which strips all HTML tags except those in an allowlist. The default allowlist is `["b", "i", "em", "strong", "a"]`. The allowlist is configurable via an `:allow` option (e.g., `allow: ["b", "span"]`). Rules:
+  - All attributes are stripped from every tag **except** `href` on `<a>` tags.
+  - Any `href` value that starts with `javascript:` (case-insensitive, ignoring whitespace) must be removed entirely — replace the `<a>` with just its inner text content.
+  - Tags not in the allowlist are stripped but their inner text content is preserved.
+  - Return the sanitized string.
+
+- `Sanitizer.sql_identifier(input)` which ensures a string is safe for interpolation as a SQL identifier (e.g. a table or column name). Rules:
+  - Strip or replace any character that is not alphanumeric or an underscore.
+  - If the result is empty, return `{:error, :empty}`.
+  - If the result starts with a digit, prepend an underscore.
+  - Return `{:ok, sanitized}` on success.
+
+- `Sanitizer.filename(input)` which produces a safe filename. Rules:
+  - Strip null bytes (`\0`).
+  - Strip path traversal sequences: `..`, `/`, `\`.
+  - Strip or replace any character outside of alphanumerics, underscores, hyphens, and dots.
+  - Collapse multiple consecutive dots into a single dot.
+  - If the result is empty after sanitization, return `{:error, :empty}`.
+  - Return `{:ok, sanitized}` on success.
+
+Give me the complete module in a single file with no external dependencies — standard library only. Do not use any external HTML parsing libraries; implement the tag stripping with regex or hand-rolled parsing.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Sanitizer do
+  @moduledoc """
+  Cleans and validates user inputs against common injection and traversal attacks.
+
+  All functions are pure (no side-effects, no external dependencies) and rely
+  solely on the Elixir / Erlang standard library.
+  """
+
+  # ---------------------------------------------------------------------------
+  # HTML sanitization
+  # ---------------------------------------------------------------------------
+
+  @default_allow ~w[b i em strong a]
+
+  # Tags whose *content* (inner text/markup) must be discarded entirely, not
+  # just the tag itself.  These are raw/executable contexts — stripping just
+  # the tag wrapper would still leave runnable code in the output.
+  @raw_content_tags ~w[script style noscript iframe]
+
+  @doc """
+  Strips HTML tags that are not present in the allowlist.
+
+  ## Options
+
+    * `:allow` – list of lowercase tag names to permit
+      (default: #{inspect(@default_allow)}).
+
+  ## Rules
+
+    * Raw-content tags (`script`, `style`, `noscript`, `iframe`) are removed
+      **together with their inner content**.
+    * Tags not in the allowlist are stripped but their inner text is preserved.
+    * All attributes are stripped from every allowed tag **except** `href` on
+      `<a>` tags.
+    * Any `href` whose value starts with `javascript:` (case-insensitive,
+      ignoring leading ASCII whitespace/control chars) is unsafe — the `<a>`
+      tag is dropped and only its inner text is kept.
+
+  ## Examples
+
+      iex> Sanitizer.html("<b>Hello</b> <script>alert(1)</script>world")
+      "<b>Hello</b> world"
+
+      iex> Sanitizer.html("<a href=\\"https://example.com\\">link</a>")
+      "<a href=\\"https://example.com\\">link</a>"
+
+      iex> Sanitizer.html("<a href=\\"javascript:alert(1)\\">click</a>")
+      "click"
+
+      iex> Sanitizer.html("<span class=\\"x\\"><b>bold</b></span>")
+      "<b>bold</b>"
+
+      iex> Sanitizer.html("<b class=\\"danger\\">text</b>")
+      "<b>text</b>"
+
+      iex> Sanitizer.html("<B>Hello</B>")
+      "<b>Hello</b>"
+
+  """
+  @spec html(String.t(), keyword()) :: String.t()
+  def html(input, opts \\ []) when is_binary(input) do
+    allow = opts |> Keyword.get(:allow, @default_allow) |> Enum.map(&String.downcase/1)
+
+    input
+    |> strip_raw_content_tags()
+    |> parse_html(allow)
+  end
+
+  # ── Phase 1: nuke raw-content tags and everything inside them ──────────────
+
+  # Uses a case-insensitive, dotall regex so multiline script blocks are caught.
+  @raw_tag_pattern Enum.join(@raw_content_tags, "|")
+  @raw_tag_re Regex.compile!(
+    "<(#{@raw_tag_pattern})(\\s[^>]*)?>.*?<\\/\\1>",
+    [:caseless, :dotall]
+  )
+
+  defp strip_raw_content_tags(input),
+    do: Regex.replace(@raw_tag_re, input, "")
+
+  # ── Phase 2: hand-rolled single-pass tag parser ────────────────────────────
+  #
+  # Parser states
+  #   :text – reading regular character data
+  #   :tag  – reading inside a < … > sequence
+  #
+  # Extra state `poisoned_a` (boolean):
+  #   Becomes `true` when we emit *nothing* for an opening <a> because its
+  #   href was a javascript: URI.  While true we also suppress the matching
+  #   </a>.  Resets to `false` once the closing tag is consumed.
+  #
+  # `acc`  – iodata accumulator for the final output
+  # `buf`  – string buffer for the token currently being built
+
+  defp parse_html(input, allow) do
+    {result, _} = do_parse(input, allow, [], :text, "", _poisoned_a = false)
+    IO.iodata_to_binary(result)
+  end
+
+  defp do_parse("", _allow, acc, :text, buf, _pa),
+    do: {[acc, buf], false}
+
+  defp do_parse("", _allow, acc, :tag, buf, _pa),
+    # Unclosed tag at EOF — treat as literal text
+    do: {[acc, "<", buf], false}
+
+  defp do_parse("<" <> rest, allow, acc, :text, buf, pa),
+    do: do_parse(rest, allow, [acc, buf], :tag, "", pa)
+
+  defp do_parse(">" <> rest, allow, acc, :tag, buf, pa) do
+    {tag_out, new_pa} = process_tag(buf, allow, pa)
+    do_parse(rest, allow, [acc, tag_out], :text, "", new_pa)
+  end
+
+  defp do_parse(<<ch::utf8, rest::binary>>, allow, acc, state, buf, pa),
+    do: do_parse(rest, allow, acc, state, buf <> <<ch::utf8>>, pa)
+
+  # ── Tag processor ──────────────────────────────────────────────────────────
+  #
+  # Returns `{iodata_to_emit, new_poisoned_a}`.
+
+  defp process_tag(raw, allow, pa) do
+    trimmed = String.trim(raw)
+
+    cond do
+      # HTML comment, doctype, or processing instruction — discard
+      String.starts_with?(trimmed, "!") or String.starts_with?(trimmed, "?") ->
+        {"", pa}
+
+      # Closing tag
+      String.starts_with?(trimmed, "/") ->
+        tag_name =
+          trimmed
+          |> String.slice(1..-1//1)
+          |> extract_tag_name()
+
+        cond do
+          tag_name == "a" and pa ->
+            # Consume the closing </a> of a poisoned anchor; reset state
+            {"", false}
+
+          tag_name in allow ->
+            {"</#{tag_name}>", pa}
+
+          true ->
+            {"", pa}
+        end
+
+      # Opening (or self-closing) ta (truncated)[0m
+[36m06:54:03.153 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `filename/1` function.
+
+It takes a binary `input` and produces a filesystem-safe filename, returning
+`{:ok, sanitized}` on success or `{:error, :empty}` when nothing usable
+remains. The transformation must be applied in order:
+
+1. Strip null bytes (`\0`).
+2. Strip path separators — both `/` and `\` — so traversal sequences like
+   `../../etc/passwd` lose their slashes (leaving dot runs to be neutralised
+   below).
+3. Keep only the safe character set: alphanumerics, underscores (`_`),
+   hyphens (`-`), and dots (`.`). Every other character is removed.
+4. Collapse any run of two or more consecutive dots into a single dot. This
+   handles both traversal remnants (e.g. `....etcpasswd` → `.etcpasswd`) and
+   double-dot typos (e.g. `hello..world` → `hello.world`).
+5. Strip any leading or trailing dots left over after the collapse
+   (e.g. `.etcpasswd` → `etcpasswd`).
+
+If the resulting string is empty, return `{:error, :empty}`; otherwise return
+`{:ok, sanitized}`.
+
+```elixir
+defmodule Sanitizer do
+  @moduledoc """
+  Cleans and validates user inputs against common injection and traversal attacks.
+
+  All functions are pure (no side-effects, no external dependencies) and rely
+  solely on the Elixir / Erlang standard library.
+  """
+
+  # ---------------------------------------------------------------------------
+  # HTML sanitization
+  # ---------------------------------------------------------------------------
+
+  @default_allow ~w[b i em strong a]
+
+  # Tags whose *content* (inner text/markup) must be discarded entirely, not
+  # just the tag itself.  These are raw/executable contexts — stripping just
+  # the tag wrapper would still leave runnable code in the output.
+  @raw_content_tags ~w[script style noscript iframe]
+
+  @doc """
+  Strips HTML tags that are not present in the allowlist.
+
+  ## Options
+
+    * `:allow` – list of lowercase tag names to permit
+      (default: #{inspect(@default_allow)}).
+
+  ## Rules
+
+    * Raw-content tags (`script`, `style`, `noscript`, `iframe`) are removed
+      **together with their inner content**.
+    * Tags not in the allowlist are stripped but their inner text is preserved.
+    * All attributes are stripped from every allowed tag **except** `href` on
+      `<a>` tags.
+    * Any `href` whose value starts with `javascript:` (case-insensitive,
+      ignoring leading ASCII whitespace/control chars) is unsafe — the `<a>`
+      tag is dropped and only its inner text is kept.
+
+  ## Examples
+
+      iex> Sanitizer.html("<b>Hello</b> <script>alert(1)</script>world")
+      "<b>Hello</b> world"
+
+      iex> Sanitizer.html("<a href=\\"https://example.com\\">link</a>")
+      "<a href=\\"https://example.com\\">link</a>"
+
+      iex> Sanitizer.html("<a href=\\"javascript:alert(1)\\">click</a>")
+      "click"
+
+      iex> Sanitizer.html("<span class=\\"x\\"><b>bold</b></span>")
+      "<b>bold</b>"
+
+      iex> Sanitizer.html("<b class=\\"danger\\">text</b>")
+      "<b>text</b>"
+
+      iex> Sanitizer.html("<B>Hello</B>")
+      "<b>Hello</b>"
+
+  """
+  @spec html(String.t(), keyword()) :: String.t()
+  def html(input, opts \\ []) when is_binary(input) do
+    allow = opts |> Keyword.get(:allow, @default_allow) |> Enum.map(&String.downcase/1)
+
+    input
+    |> strip_raw_content_tags()
+    |> parse_html(allow)
+  end
+
+  # ── Phase 1: nuke raw-content tags and everything inside them ──────────────
+
+  # Uses a case-insensitive, dotall regex so multiline script blocks are caught.
+  @raw_tag_pattern Enum.join(@raw_content_tags, "|")
+  @raw_tag_re Regex.compile!(
+    "<(#{@raw_tag_pattern})(\\s[^>]*)?>.*?<\\/\\1>",
+    [:caseless, :dotall]
+  )
+
+  defp strip_raw_content_tags(input),
+    do: Regex.replace(@raw_tag_re, input, "")
+
+  # ── Phase 2: hand-rolled single-pass tag parser ────────────────────────────
+  #
+  # Parser states
+  #   :text – reading regular character data
+  #   :tag  – reading inside a < … > sequence
+  #
+  # Extra state `poisoned_a` (boolean):
+  #   Becomes `true` when we emit *nothing* for an opening <a> because its
+  #   href was a javascript: URI.  While true we also suppress the matching
+  #   </a>.  Resets to `false` once the closing tag is consumed.
+  #
+  # `acc`  – iodata accumulator for the final output
+  # `buf`  – string buffer for the token currently being built
+
+  defp parse_html(input, allow) do
+    {result, _} = do_parse(input, allow, [], :text, "", _poisoned_a = false)
+    IO.iodata_to_binary(result)
+  end
+
+  defp do_parse("", _allow, acc, :text, buf, _pa),
+    do: {[acc, buf], false}
+
+  defp do_parse("", _allow, acc, :tag, buf, _pa),
+    # Unclosed tag at EOF — treat as literal text
+    do: {[acc, "<", buf], false}
+
+  defp do_parse("<" <> rest, allow, acc, :text, buf, pa),
+    do: do_parse(rest, allow, [acc, buf], :tag, "", pa)
+
+  defp do_parse(">" <> rest, allow, acc, :tag, buf, pa) do
+    {tag_out, new_pa} = process_tag(buf, allow, pa)
+    do_parse(rest, allow, [acc, tag_out], :text, "", new_pa)
+  end
+
+  defp do_parse(<<ch::utf8, rest::binary>>, allow, acc, state, buf, pa),
+    do: do_parse(rest, allow, acc, state, buf <> <<ch::utf8>>, pa)
+
+  # ── Tag processor ──────────────────────────────────────────────────────────
+  #
+  # Returns `{iodata_to_emit, new_poisoned_a}`.
+
+  defp process_tag(raw, allow, pa) do
+    trimmed = String.trim(raw)
+
+    cond do
+      # HTML comment, doctype, or processing instruction — discard
+      String.starts_with?(trimmed, "!") or String.starts_with?(trimmed, "?") ->
+        {"", pa}
+
+      # Closing tag
+      String.starts_with?(trimmed, "/") ->
+        tag_name =
+          trimmed
+          |> String.slice(1..-1//1)
+          |> extract_tag_name()
+
+        cond do
+          tag_name == "a" and pa ->
+            # Consume the closing </a> of a poisoned anchor; reset state
+            {"", false}
+
+          tag_name in allow ->
+            {"</#{tag_name}>", pa}
+
+          true ->
+            {"", pa}
+        end
+
+      # Opening (or self-closing) tag
+      true ->
+        tag_name = extract_tag_name(trimmed)
+        attrs_raw = String.slice(trimmed, String.length(tag_name)..-1//1)
+        self_closing? = attrs_raw |> String.trim_trailing() |> String.ends_with?("/")
+
+        if tag_name in allow do
+          rebuild_tag(tag_name, attrs_raw, self_closing?, pa)
+        else
+          {"", pa}
+        end
+    end
+  end
+
+  # ── Attribute helpers ──────────────────────────────────────────────────────
+
+  # Pull the leading tag name from a raw tag string.  Always lowercased.
+  defp extract_tag_name(raw) do
+    case Regex.run(~r/\A\s*([a-zA-Z][a-zA-Z0-9\-]*)/, raw, capture: :all_but_first) do
+      [name] -> String.downcase(name)
+      _ -> ""
+    end
+  end
+
+  # Rebuild an allowed tag, retaining only the permitted attributes.
+  # Returns `{iodata, new_poisoned_a}`.
+
+  defp rebuild_tag("a", attrs_raw, self_closing?, pa) do
+    href = extract_href(attrs_raw)
+
+    case href do
+      nil ->
+        # No href — emit a clean anchor tag
+        {if(self_closing?, do: "<a/>", else: "<a>"), pa}
+
+      href_val ->
+        if javascript_href?(href_val) do
+          # Poisoned: suppress opening tag, set poisoned state so the
+          # closing tag is also suppressed when encountered.
+          {"", true}
+        else
+          escaped = html_escape_attr(href_val)
+          tag = if self_closing?, do: ~s(<a href="#{escaped}"/>), else: ~s(<a href="#{escaped}">)
+          {tag, pa}
+        end
+    end
+  end
+
+  defp rebuild_tag(name, _attrs_raw, self_closing?, pa) do
+    tag = if self_closing?, do: "<#{name}/>", else: "<#{name}>"
+    {tag, pa}
+  end
+
+  # Extract the value of the `href` attribute from a raw attribute string.
+  # Handles double-quoted, single-quoted, and unquoted va (truncated)[0m
+[36m06:54:03.153 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6252, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6252, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6252, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6252, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 5529, "type" => "message"}], "output_tokens" => 5529, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m06:54:03.173 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_096_001_input_sanitizer_module_03/096_001_input_sanitizer_module_03 solution.ex[0m
+[36m06:54:03.835 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":26,"lines_over_98":0,"max_line_length":77,"mode":"fim","pipe_chain_count":6,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"096_001_input_sanitizer_module_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_096_001_input_sanitizer_module_03/096_001_input_sanitizer_module_03/solution.ex","task":"096_001_input_sanitizer_module_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":25,"tests_ran":true,"tests_skipped":0,"tests_total":25,"timestamp":"2026-07-07T04:54:03.810458Z"}[0m
+[36m06:54:03.836 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_096_001_input_sanitizer_module_03/096_001_input_sanitizer_module_03 .gen_staging/fim_096_001_input_sanitizer_module_03/mutant.ex[0m
+[36m06:54:04.493 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":66,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"096_001_input_sanitizer_module_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":0.8,"reasons":["tests: 7/25 failed"],"tests":0.72},"shape":"fim","solution_file":".gen_staging/fim_096_001_input_sanitizer_module_03/mutant.ex","task":"096_001_input_sanitizer_module_03","test_failures":[{"message":"MUTATION","module":"SanitizerTest","test":"test Sanitizer.filename/1 allows safe filenames unchanged"},{"message":"MUTATION","module":"SanitizerTest","test":"test Sanitizer.filename/1 strips null bytes"},{"message":"MUTATION","module":"SanitizerTest","test":"test Sanitizer.filename/1 strips path traversal sequences"},{"message":"MUTATION","module":"SanitizerTest","test":"test Sanitizer.filename/1 strips backslashes (Windows traversal)"},{"message":"MUTATION","module":"SanitizerTest","test":"test Sanitizer.filename/1 collapses multiple consecutive dots"},{"message":"MUTATION","module":"SanitizerTest","test":"test Sanitizer.filename/1 returns error for empty result"},{"message":"MUTATION","module":"SanitizerTest","test":"test Sanitizer.filename/1 strips characters outside safe set"}],"tests_errors":0,"tests_excluded":0,"tests_failed":7,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":25,"timestamp":"2026-07-07T04:54:04.471633Z"}[0m
+[36m06:54:04.493 [debug] fim mutation gate: killed[0m
+[22m06:54:04.495 [info] promoted 096_001_input_sanitizer_module_03 -> tasks/096_001_input_sanitizer_module_03[0m

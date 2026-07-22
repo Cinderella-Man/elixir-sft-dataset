@@ -1,0 +1,288 @@
+14:44:51.179 [info] FIM 063_003_fallback_chain_concurrent_fetcher_fim01 → 063_003_fallback_chain_concurrent_fetcher_02: target fetch_all/2
+14:44:51.180 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:44:51.180 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `fetch_all/2`.
+
+Generate a prompt describing how to implement `fetch_all/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `fetch_all/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `fetch_all/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `fetch_all/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Fallback-Chain Concurrent Fetcher
+
+Write me an Elixir module called `FallbackFetcher` that fetches data from multiple sources concurrently, where **each source carries an ordered chain of fallback functions** that are tried in sequence until one succeeds, all under a single global timeout.
+
+I need this function in the public API:
+
+- `FallbackFetcher.fetch_all(sources, timeout_ms)` where:
+  - `sources` is a list of `{name, fetch_fns}` tuples. `name` can be any term (atom, string, tuple, etc.).
+  - `fetch_fns` is a list of zero-arity functions (the fallback chain). Each function either returns `{:ok, result}` or returns `{:error, reason}` / raises.
+  - `timeout_ms` is a single global wall-clock budget shared across every source.
+
+Behaviour:
+
+- Every source runs **concurrently** with every other source, starting the moment `fetch_all` is called.
+- **Within a single source**, the fallback functions are tried **sequentially, in order**: try the first; if it returns `{:ok, value}`, that source is done with `{:ok, value}`; if it returns `{:error, reason}` or raises, move on to the next function; continue until one succeeds or the chain is exhausted.
+- The function returns a map of `%{name => result_tuple}` where each value is one of:
+  - `{:ok, value}` — some fallback in the chain succeeded within the timeout.
+  - `{:error, {:all_failed, reasons}}` — every fallback failed; `reasons` is the list of failure reasons in the order the functions were tried (a raised exception is captured as its exception struct).
+  - `{:error, :timeout}` — the global timeout expired while this source was still working through its chain.
+
+Rules:
+
+- The global timeout is shared across all sources, not per-source and not per-fallback. A source whose chain (summed sequentially) overruns the deadline is reported as `{:error, :timeout}`.
+- When the timeout fires, any source still working must be killed immediately — no zombie processes. The function returns only after all spawned processes are done or confirmed dead.
+- If `sources` is empty, return `%{}` immediately.
+
+Do not use any external dependencies — only Elixir's standard library and OTP primitives (`Task`, `Process`, etc.).
+
+Give me the complete implementation in a single file with a single module.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule FallbackFetcher do
+  @moduledoc """
+  Fetches from multiple sources concurrently under a single global timeout,
+  where each source carries an ordered chain of fallback functions.
+
+  Sources run concurrently with one another; within a source the fallbacks are
+  attempted sequentially until one succeeds or the chain is exhausted. Any
+  source still working when the shared deadline fires is killed and reported as
+  `{:error, :timeout}`.
+  """
+
+  @doc """
+  Fetch from all sources concurrently, returning within `timeout_ms`.
+
+  Returns `%{name => result_tuple}` where each value is `{:ok, value}`,
+  `{:error, {:all_failed, reasons}}`, or `{:error, :timeout}`.
+  """
+  @spec fetch_all([{term(), [(-> {:ok, term()} | {:error, term()})]}], non_neg_integer()) ::
+          %{term() => {:ok, term()} | {:error, term()}}
+  def fetch_all([], _timeout_ms), do: %{}
+
+  def fetch_all(sources, timeout_ms)
+      when is_list(sources) and is_integer(timeout_ms) and timeout_ms >= 0 do
+    tagged =
+      Enum.map(sources, fn {name, fetch_fns} ->
+        task = Task.async(fn -> run_chain(fetch_fns, []) end)
+        {name, task}
+      end)
+
+    tasks = Enum.map(tagged, fn {_name, task} -> task end)
+    yields = Task.yield_many(tasks, timeout_ms)
+
+    ref_to_result =
+      Enum.reduce(yields, %{}, fn {task, outcome}, acc ->
+        result =
+          case outcome do
+            {:ok, {:ok, value}} ->
+              {:ok, value}
+
+            {:ok, {:error, reasons}} ->
+              {:error, {:all_failed, reasons}}
+
+            {:exit, reason} ->
+              {:error, reason}
+
+            nil ->
+              Task.shutdown(task, :brutal_kill)
+              {:error, :timeout}
+          end
+
+        Map.put(acc, task.ref, result)
+      end)
+
+    Map.new(tagged, fn {name, task} -> {name, Map.fetch!(ref_to_result, task.ref)} end)
+  end
+
+  # Tries each fallback in order. Returns `{:ok, value}` on the first success,
+  # or `{:error, reasons}` (reasons in attempt order) if the chain is exhausted.
+  defp run_chain([], reasons), do: {:error, Enum.reverse(reasons)}
+
+  defp run_chain([fetch_fn | rest], reasons) do
+    case safe_call(fetch_fn) do
+      {:ok, _} = ok -> ok
+      {:error, reason} -> run_chain(rest, [reason | reasons])
+    end
+  end
+
+  # Normalises any exception, throw, exit, or unexpected return into a tagged
+  # `{:ok, _} | {:error, _}` tuple so a fallback can never crash the caller.
+  defp safe_call(fetch_fn) do
+    case fetch_fn.() do
+      {:ok, _} = ok -> ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_return, other}}
+    end
+  rescue
+    exception -> {:error, exception}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description + skeleton module with a `# TODO` for fetch_all/2
+  - solution.ex — just the fetch_all/2 function
+
+
+14:45:26.939 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Implement `fetch_all/2`
+
+Implement the public `fetch_all/2` function, the module's only entry point. It
+takes `sources` (a list of `{name, fetch_fns}` tuples, where `name` is any term
+and `fetch_fns` is an ordered list of zero-arity fallback functions) and
+`timeout_ms` (a single global wall-clock budget shared across every source).
+
+It must:
+
+- Return `%{}` immediately when `sources` is empty.
+- Otherwise, start **every** source concurrently the moment it is called by
+  spawning a `Task.async/1` per source that runs that source's fallback chain
+  via the private `run_chain/2` helper (starting with an empty accumulator).
+  Keep each spawned task associated with its source `name`.
+- Wait for all tasks under the **shared** `timeout_ms` deadline (not per-source,
+  not per-fallback) using `Task.yield_many/2`, and turn each task's outcome into
+  a result tuple:
+  - `{:ok, {:ok, value}}` → `{:ok, value}` (a fallback succeeded in time).
+  - `{:ok, {:error, reasons}}` → `{:error, {:all_failed, reasons}}` (the chain
+    was exhausted; `reasons` are in attempt order).
+  - `{:exit, reason}` → `{:error, reason}`.
+  - `nil` (the task did not finish before the deadline) → forcibly kill the task
+    with `Task.shutdown(task, :brutal_kill)` so no zombie process survives, then
+    `{:error, :timeout}`.
+- Return only after every spawned process has finished or been confirmed dead,
+  producing a `%{name => result_tuple}` map that preserves each original source
+  `name` (which may repeat or be any term) as its key.
+
+Guard the main clause so it only accepts a list of sources and a non-negative
+integer timeout.
+
+```elixir
+defmodule FallbackFetcher do
+  @moduledoc """
+  Fetches from multiple sources concurrently under a single global timeout,
+  where each source carries an ordered chain of fallback functions.
+
+  Sources run concurrently with one another; within a source the fallbacks are
+  attempted sequentially until one succeeds or the chain is exhausted. Any
+  source still working when the shared deadline fires is killed and reported as
+  `{:error, :timeout}`.
+  """
+
+  @doc """
+  Fetch from all sources concurrently, returning within `timeout_ms`.
+
+  Returns `%{name => result_tuple}` where each value is `{:ok, value}`,
+  `{:error, {:all_failed, reasons}}`, or `{:error, :timeout}`.
+  """
+  @spec fetch_all([{term(), [(-> {:ok, term()} | {:error, term()})]}], non_neg_integer()) ::
+          %{term() => {:ok, term()} | {:error, term()}}
+  def fetch_all(sources, timeout_ms) do
+    # TODO
+  end
+
+  # Tries each fallback in order. Returns `{:ok, value}` on the first success,
+  # or `{:error, reasons}` (reasons in attempt order) if the chain is exhausted.
+  defp run_chain([], reasons), do: {:error, Enum.reverse(reasons)}
+
+  defp run_chain([fetch_fn | rest], reasons) do
+    case safe_call(fetch_fn) do
+      {:ok, _} = ok -> ok
+      {:error, reason} -> run_chain(rest, [reason | reasons])
+    end
+  end
+
+  # Normalises any exception, throw, exit, or unexpected return into a tagged
+  # `{:ok, _} | {:error, _}` tuple so a fallback can never crash the caller.
+  defp safe_call(fetch_fn) do
+    case fetch_fn.() do
+      {:ok, _} = ok -> ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_return, other}}
+    end
+  rescue
+    exception -> {:error, exception}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+end
+```
+</file>
+<file path="solution.ex">
+  def fetch_all([], _timeout_ms), do: %{}
+
+  def fetch_all(sources, timeout_ms)
+      when is_list(sources) and is_integer(timeout_ms) and timeout_ms >= 0 do
+    tagged =
+      Enum.map(sources, fn {name, fetch_fns} ->
+        task = Task.async(fn -> run_chain(fetch_fns, []) end)
+        {name, task}
+      end)
+
+    tasks = Enum.map(tagged, fn {_name, task} -> task end)
+    yields = Task.yield_many(tasks, timeout_ms)
+
+    ref_to_result =
+      Enum.reduce(yields, %{}, fn {task, outcome}, acc ->
+        result =
+          case outcome do
+            {:ok, {:ok, value}} ->
+              {:ok, value}
+
+            {:ok, {:error, reasons}} ->
+              {:error, {:all_failed, reasons}}
+
+            {:exit, reason} ->
+              {:error, reason}
+
+            nil ->
+              Task.shutdown(task, :brutal_kill)
+              {:error, :timeout}
+          end
+
+        Map.put(acc, task.ref, result)
+      end)
+
+    Map.new(tagged, fn {name, task} -> {name, Map.fetch!(ref_to_result, task.ref)} end)
+  end
+</file>
+14:45:26.940 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2742, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2742, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2742, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2742, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2844, "type" => "message"}], "output_tokens" => 2844, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:45:26.959 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_063_003_fallback_chain_concurrent_fetcher_02/063_003_fallback_chain_concurrent_fetcher_02 solution.ex
+14:45:28.142 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":36,"lines_over_98":0,"max_line_length":87,"mode":"fim","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"063_003_fallback_chain_concurrent_fetcher_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_063_003_fallback_chain_concurrent_fetcher_02/063_003_fallback_chain_concurrent_fetcher_02/solution.ex","task":"063_003_fallback_chain_concurrent_fetcher_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-04T12:45:28.119384Z"}
+14:45:28.143 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_063_003_fallback_chain_concurrent_fetcher_02/063_003_fallback_chain_concurrent_fetcher_02 .gen_staging/fim_063_003_fallback_chain_concurrent_fetcher_02/mutant.ex
+14:45:28.764 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":8,"lines_over_98":0,"max_line_length":75,"mode":"fim","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"063_003_fallback_chain_concurrent_fetcher_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.28,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 9/9 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_063_003_fallback_chain_concurrent_fetcher_02/mutant.ex","task":"063_003_fallback_chain_concurrent_fetcher_02","test_failures":[{"message":"MUTATION","module":"FallbackFetcherTest","test":"test uses the first fallback when it succeeds"},{"message":"MUTATION","module":"FallbackFetcherTest","test":"test falls through to the next fallback on error"},{"message":"MUTATION","module":"FallbackFetcherTest","test":"test treats a raising fallback as a failure and continues"},{"message":"MUTATION","module":"FallbackFetcherTest","test":"test reports all_failed with the ordered list of reasons when every fallback fails"},{"message":"MUTATION","module":"FallbackFetcherTest","test":"test a chain that overruns the global timeout is reported as :timeout"},{"message":"MUTATION","module":"FallbackFetcherTest","test":"test sources run concurrently, not sequentially"},{"message":"MUTATION","module":"FallbackFetcherTest","test":"test empty sources returns an empty map"},{"message":"MUTATION","module":"FallbackFetcherTest","test":"test timed-out chains leave no zombie processes behind"},{"message":"MUTATION","module":"FallbackFetcherTest","test":"test mixes success, exhausted fallbacks, and timeout"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-04T12:45:28.729162Z"}
+14:45:28.764 [debug] fim mutation gate: killed
+14:45:28.766 [info] promoted 063_003_fallback_chain_concurrent_fetcher_02 -> tasks/063_003_fallback_chain_concurrent_fetcher_02

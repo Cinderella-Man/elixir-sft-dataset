@@ -1,0 +1,86 @@
+=== backfill idea 63 2026-07-18T14:25:54+02:00
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 2 needing top-up → next: 063_002_quorum_first_n_concurrent_fetcher_01, 063_004_bounded_concurrency_concurrent_fetcher_01
+  2. new bases:      skipped (GEN_ONLY=backfill)
+=============================================
+
+
+Backfill: 2 seed(s) needing derivatives.
+[1/2] 063_002_quorum_first_n_concurrent_fetcher_01 (backfill) ...
+      mutant [1/1] fetch_first/3 gutted to raise ... killed
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block a non-positive quorum never invokes any fetch function carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (13/13), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_063_002_quorum_first_n_concurrent_fetcher_10
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block every source has started before any of them is allowed to complete carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (13/13), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_063_002_quorum_first_n_concurrent_fetcher_11
+      tfim_063_002_quorum_first_n_concurrent_fetcher_10 (tfim) ... ACCEPTED (13 passed, mutant killed (isolation), 1 attempt(s))
+      tfim_063_002_quorum_first_n_concurrent_fetcher_11 (tfim) ... ACCEPTED (13 passed, mutant killed (isolation), 1 attempt(s))
+[2/2] 063_004_bounded_concurrency_concurrent_fetcher_01 (backfill) ...
+      mutant [1/1] fetch_all/3 gutted to raise ... killed
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L75 s263: {:error, _} -> {:ok, _} killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_063_004_bounded_concurrency_concurrent_fetcher_01
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L33 s79: + -> - killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_063_004_bounded_concurrency_concurrent_fetcher_02
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L31 s65: > -> >= killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_063_004_bounded_concurrency_concurrent_fetcher_03
+      bugfix_063_004_bounded_concurrency_concurrent_fetcher_01 (bugfix) ... ACCEPTED (18 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_063_004_bounded_concurrency_concurrent_fetcher_02 (bugfix) ... ACCEPTED (18 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_063_004_bounded_concurrency_concurrent_fetcher_03 (bugfix) ... ACCEPTED (18 passed, mutant killed (semantic_killed), 1 attempt(s))
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 1098 | mintable (rejected → accepted) pairs: 223 | minted: %{exists: 86, unverified: 135, minted: 2}
+
+Done.
+=== rc=0
+=== backfill idea 134 2026-07-18T14:31:29+02:00
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 1 needing top-up → next: 134_003_chunked_merge_based_schema_inference_01
+  2. new bases:      skipped (GEN_ONLY=backfill)
+=============================================
+
+
+Backfill: 1 seed(s) needing derivatives.
+[1/1] 134_003_chunked_merge_based_schema_inference_01 (backfill) ...
+      mutant [1/4] partial/2 gutted to raise ... killed
+      mutant [2/4] merge/2 gutted to raise ... killed
+      mutant [3/4] finalize/1 gutted to raise ... killed
+      mutant [4/4] infer_string/2 gutted to raise ... killed
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L199 s904: {:ok, _} -> {:error, _} killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_134_003_chunked_merge_based_schema_inference_01
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L34 s111: true -> false killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_134_003_chunked_merge_based_schema_inference_02
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L41 s146: 1 -> 2 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L119 s519: true -> false killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_134_003_chunked_merge_based_schema_inference_03
+      bugfix_134_003_chunked_merge_based_schema_inference_01 (bugfix) ... ACCEPTED (14 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_134_003_chunked_merge_based_schema_inference_02 (bugfix) ... ACCEPTED (14 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_134_003_chunked_merge_based_schema_inference_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_134_003_chunked_merge_based_schema_inference_03 (bugfix) ... ACCEPTED (14 passed, mutant killed (semantic_killed), 1 attempt(s))
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 1098 | mintable (rejected → accepted) pairs: 223 | minted: %{exists: 88, unverified: 135}
+
+Done.
+=== rc=0
+=== done

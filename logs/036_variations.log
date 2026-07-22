@@ -1,0 +1,504 @@
+08:00:06.189 [info] VARIATIONS gen for 036_001_markdown_to_structured_data_parser_01 (3 slot(s))
+08:00:06.190 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+08:00:06.190 [debug] claude -p USER prompt:
+I have this SFT task (idea #36 — "Markdown-to-Structured-Data Parser"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 36 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `MarkdownParser` that parses a Markdown document and extracts structured data from it.
+
+The document format follows these conventions:
+- `## Heading` lines define category names
+- Bullet items underneath each heading follow the format: `- **Item Name**: description (tag1, tag2)`
+- Tags are optional — an item may end without parentheses
+- Any other lines (blank lines, non-matching bullets, nested list items starting with more than one `-`) should be silently ignored
+
+The single public function should be:
+- `MarkdownParser.parse(markdown_string)` which accepts a binary and returns a list of category maps in document order:
+  ```elixir
+  [
+    %{
+      category: "Category Name",
+      items: [
+        %{name: "Item Name", description: "some description", tags: ["tag1", "tag2"]}
+      ]
+    }
+  ]
+  ```
+
+Specific behaviours to implement:
+- A `##` heading with no valid bullet items beneath it (before the next heading) should still appear in the output with `items: []`
+- Items with no tag parentheses should have `tags: []`
+- Tags should be trimmed of whitespace individually
+- Only `##` (H2) headings define categories — `#`, `###`, and deeper headings should be ignored entirely (treated as unrecognised lines)
+- If the document has bullet items before any `##` heading appears, discard them
+- The function must handle an empty string input, returning `[]`
+
+Give me the complete module in a single file. Use only the Elixir standard library — no external dependencies.
+
+=== BASE solution.ex ===
+defmodule MarkdownParser do
+  @moduledoc """
+  Parses a subset of Markdown into structured category/item data.
+
+  ## Document conventions
+
+  * `## Heading` lines define category names (H2 only).
+  * Bullet items beneath a heading follow the format:
+    `- **Item Name**: description (tag1, tag2)`
+  * Tags are optional; an item with no parentheses receives `tags: []`.
+  * All other lines (blank lines, non-matching bullets, H1/H3+ headings,
+    nested list items starting with more than one `-`) are silently ignored.
+  * Bullet items that appear before the first `## heading` are discarded.
+  """
+
+  # ---------------------------------------------------------------------------
+  # Compiled regexes (module-level constants)
+  # ---------------------------------------------------------------------------
+
+  # Matches exactly an H2 heading: "## Some Title"
+  # Captures the trimmed heading text.
+  @heading_re ~r/^##\s+(.+)$/
+
+  # Matches a top-level bullet item that starts with exactly one "-" (not "  -",
+  # not "--", etc.) and contains a bold name followed by a colon.
+  # Group 1 – item name (inside **…**)
+  # Group 2 – description (everything after ": " up to an optional trailing tag list)
+  # Group 3 – raw tag string inside the final "(…)" if present
+  @item_re ~r/^-\s+\*\*(.+?)\*\*:\s+(.*?)(?:\s+\(([^)]*)\))?\s*$/
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Parses `markdown` and returns a list of category maps in document order.
+
+  ## Return shape
+
+      [
+        %{
+          category: "Category Name",
+          items: [
+            %{name: "Item Name", description: "some description", tags: ["tag1", "tag2"]}
+          ]
+        }
+      ]
+
+  Returns `[]` for an empty string or a document with no H2 headings.
+  """
+  @spec parse(binary()) :: [%{category: String.t(), items: list(map())}]
+  def parse(markdown) when is_binary(markdown) do
+    markdown
+    |> split_lines()
+    |> classify_lines()
+    |> build_categories()
+  end
+
+  # ---------------------------------------------------------------------------
+  # Step 1 – split into trimmed lines, drop truly empty ones early
+  # ---------------------------------------------------------------------------
+
+  defp split_lines(markdown) do
+    markdown
+    |> String.split("\n")
+    |> Enum.map(&String.trim_trailing/1)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Step 2 – classify each line as {:heading, name} | {:item, map} | :ignore
+  # ---------------------------------------------------------------------------
+
+  defp classify_lines(lines) do
+    Enum.map(lines, &classify_line/1)
+  end
+
+  defp classify_line(line) do
+    cond do
+      match_heading(line) -> match_heading(line)
+      match_item(line)    -> match_item(line)
+      true                -> :ignore
+    end
+  end
+
+  defp match_heading(line) do
+    case Regex.run(@heading_re, line, capture: :all_but_first) do
+      [name] -> {:heading, String.trim(name)}
+      _      -> nil
+    end
+  end
+
+  defp match_item(line) do
+    case Regex.run(@item_re, line, capture: :all_but_first) do
+      [name, description] ->
+        {:item, build_item(name, description, nil)}
+
+      [name, description, raw_tags] ->
+        {:item, build_item(name, description, raw_tags)}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp build_item(name, description, raw_tags) do
+    tags =
+      case raw_tags do
+        nil -> []
+        ""  -> []
+        str ->
+          str
+          |> String.split(",")
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
+      end
+
+    %{name: String.trim(name), description: String.trim(description), tags: tags}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Step 3 – fold classified lines into a list of category maps
+  # ---------------------------------------------------------------------------
+  #
+  # State:
+  #   categories  – accumulated result list (reversed; reversed again at the end)
+  #   current     – the category map being built, or nil if no heading seen yet
+  #
+
+  defp build_categories(classified_lines) do
+    initial = %{categories: [], current: nil}
+
+    %{categories: cats, current: last} =
+      Enum.reduce(classified_lines, initial, &process_line/2)
+
+    # Flush the final in-progress category (if any).
+    cats =
+      if last do
+        [finalise(last) | cats]
+      else
+        cats
+      end
+
+    Enum.reverse(cats)
+  end
+
+  # A new H2 heading: flush current category (if any), open a new one.
+  defp process_line({:heading, name}, %{categories: cats, current: current}) do
+    cats =
+      if current do
+        [finalise(current) | cats]
+      else
+        cats
+      end
+
+    %{categories: cats, current: %{category: name, items: []}}
+  end
+
+  # A valid bullet item: append to the current category (discard if no heading yet).
+  defp process_line({:item, item}, %{categories: cats, current: current}) do
+    if current do
+      %{categories: cats, current: Map.update!(current, :items, &[item | &1])}
+    else
+      %{categories: cats, current: nil}
+    end
+  end
+
+  # Anything else: skip.
+  defp process_line(:ignore, state), do: state
+
+  # Reverse the items list (they were prepended for efficiency).
+  defp finalise(%{category: name, items: items}) do
+    %{category: name, items: Enum.reverse(items)}
+  end
+end
+
+
+=== BASE test_harness.exs ===
+defmodule MarkdownParserTest do
+  use ExUnit.Case, async: true
+
+  (truncated)
+08:06:46.563 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `MarkdownOutline` that parses a Markdown document into a **nested outline tree** driven by heading depth.
+
+Unlike a flat category list, this parser must respect the relative nesting of ATX headings (`#` … `######`). A heading whose level is deeper than the currently open heading becomes a **child** of it; a heading at the same or shallower level closes the previous branch and starts a new sibling (or ancestor's sibling).
+
+The document format follows these conventions:
+- Heading lines `# Title` … `###### Title` (one to six `#` characters followed by whitespace and text) define outline nodes. The number of `#` characters is the node's `level`.
+- Bullet items beneath a heading follow the format: `- **Item Name**: description (tag1, tag2)` and attach to the **deepest currently open** heading node.
+- Tags are optional — an item may end without parentheses (then `tags: []`).
+- Any other lines (blank lines, non-matching bullets, nested list items indented with spaces, headings with more than six `#`) are silently ignored.
+- Bullet items that appear before the first heading are discarded.
+
+The single public function should be:
+- `MarkdownOutline.parse(markdown_string)` which accepts a binary and returns a list of top-level node maps in document order:
+  ```elixir
+  [
+    %{
+      title: "Parent",
+      level: 1,
+      items: [%{name: "p", description: "pd", tags: ["a", "b"]}],
+      children: [
+        %{title: "Child", level: 2, items: [...], children: [...]}
+      ]
+    }
+  ]
+  ```
+
+Specific behaviours to implement:
+- Nesting is by **relative** level, not absolute: a `#` heading followed directly by a `###` heading makes the `###` a child of the `#` (the missing `##` level is not required).
+- A heading with no items and no sub-headings still appears with `items: []` and `children: []`.
+- Items and children of every node must be in document order.
+- Tags are trimmed of surrounding whitespace individually and empty tags dropped.
+- Category/node titles are trimmed of surrounding whitespace.
+- Headings with seven or more `#` characters are ignored (treated as unrecognised lines).
+- The function must handle an empty string input, returning `[]`.
+
+Give me the complete module in a single file. Use only the Elixir standard library — no external dependencies.
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule MarkdownOutlineTest do
+  use ExUnit.Case, async: false
+
+  defp parse(md), do: MarkdownOutline.parse(md)
+
+  test "single top-level heading with one item and no children" do
+    md = """
+    # Root
+    - **x**: desc (a)
+    """
+
+    assert parse(md) == [
+             %{
+               title: "Root",
+               level: 1,
+               items: [%{name: "x", description: "desc", tags: ["a"]}],
+               children: []
+             }
+           ]
+  end
+
+  test "deeper heading becomes a child of the shallower heading" do
+    md = """
+    # Parent
+    - **p**: pd (a, b)
+    ## Child
+    - **c**: cd
+    """
+
+    assert parse(md) == [
+             %{
+               title: "Parent",
+               level: 1,
+               items: [%{name: "p", description: "pd", tags: ["a", "b"]}],
+               children: [
+                 %{
+                   title: "Child",
+                   level: 2,
+                   items: [%{name: "c", description: "cd", tags: []}],
+                   children: []
+                 }
+               ]
+             }
+           ]
+  end
+
+  test "same-level headings become siblings" do
+    md = """
+    # A
+    # B
+    """
+
+    result = parse(md)
+    assert length(result) == 2
+    assert Enum.map(result, & &1.title) == ["A", "B"]
+    assert Enum.all?(result, &(&1.children == []))
+  end
+
+  test "relative nesting: H1 then H3 makes H3 a child of H1" do
+    md = """
+    # Top
+    ### Deep
+    - **d**: under deep
+    """
+
+    [top] = parse(md)
+    assert top.title == "Top"
+    assert top.level == 1
+    assert [deep] = top.children
+    assert deep.title == "Deep"
+    assert deep.level == 3
+    assert [%{name: "d"}] = deep.items
+  end
+
+  test "closing a branch and opening an ancestor sibling" do
+    md = """
+    # One
+    ## OneA
+    # Two
+    """
+
+    result = parse(md)
+    assert Enum.map(result, & &1.title) == ["One", "Two"]
+    [one, two] = result
+    assert Enum.map(one.children, & &1.title) == ["OneA"]
+    assert two.children == []
+  end
+
+  test "three levels deep nesting" do
+    md = """
+    # L1
+    ## L2
+    ### L3
+    - **leaf**: bottom (t)
+    """
+
+    [l1] = parse(md)
+    [l2] = l1.children
+    [l3] = l2.children
+    assert {l1.level, l2.level, l3.level} == {1, 2, 3}
+    assert [%{name: "leaf", tags: ["t"]}] = l3.items
+  end
+
+  test "items before the first heading are discarded" do
+    md = """
+    - **orphan**: lost (x)
+    # Real
+    - **kept**: yes
+    """
+
+    [node] = parse(md)
+    assert node.title == "Real"
+    assert Enum.map(node.items, & &1.name) == ["kept"]
+  end
+
+  test "tags are individually trimmed and empty tags dropped" do
+    md = """
+    # H
+    - **i**: d ( a , b ,, c )
+    """
+
+    [%{items: [item]}] = parse(md)
+    assert item.tags == ["a", "b", "c"]
+  end
+
+  test "nested (space-indented) bullets and malformed bullets are ignored" do
+    md = """
+    # H
+    - **Parent**: top (a)
+      - **Child**: indented ignored (b)
+    - just a plain bullet
+    """
+
+    [%{items: items}] = parse(md)
+    assert length(items) == 1
+    assert hd(items).name == "Parent"
+  end
+
+  test "headings with seven or more hashes are ignored" do
+    md = """
+    # Real
+    ####### Not a heading
+    - **x**: kept
+    """
+
+    [node] = parse(md)
+    assert node.title == "Real"
+    assert Enum.map(node.items, & &1.name) == ["x"]
+  end
+
+  test "empty string returns empty list" do
+    assert parse("") == []
+  end
+
+  test "handles CRLF line endings" do
+    md = "# Root\r\n- **Item**: Desc (tag)\r\n"
+    assert [%{title: "Root", items: [%{name: "Item", tags: ["tag"]}]}] = parse(md)
+  end
+end
+</file>
+
+<file path="v1/solution.ex">
+defmodule MarkdownOutline do
+  @moduledoc """
+  Parses a subset of Markdown into a nested outline tree driven by heading depth.
+
+  Headings `#`..`######` create nodes; a heading deeper than the currently open
+  node becomes its child, while a heading at the same or shallower level closes
+  the branch and starts a sibling. Bullet items of the form
+  `- **Name**: description (tag1, tag2)` attach to the deepest open node.
+  """
+
+  # One to (potentially) many "#" followed by whitespace and title text.
+  @heading_re ~r/^(#+)\s+(.+?)\s*$/
+
+  # Top-level bullet item: exactly one leading "-", a bold name, colon, description,
+  # and an optional trailing "(tags)" group.
+  @item_re ~r/^-\s+\*\*(.+?)\*\*:\s+(.*?)(?:\s+\(([^)]*)\))?\s*$/
+
+  @spec parse(binary()) :: [map()]
+  def parse(markdown) when is_binary(markdown) do
+    {roots, stack} =
+      markdown
+      |> String.split("\n")
+      |> Enum.map(&String.trim_trailing/1)
+      |> Enum.map(&classify/1)
+      |> Enum.reduce({[], []}, &step/2)
+
+    finalize_stack(stack, roots)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Classification
+  # ---------------------------------------------------------------------------
+
+  defp classify(line) do
+    cond do
+      caps = Regex.run(@heading_re, line, capture: :all_but_first) ->
+        [hashes, title] = caps
+        level = String.length(hashes)
+        if level <= 6, do: {:heading, level, String.trim(title)}, else: :ignore
+
+      caps = Regex.run(@item_re, line, capture: :all_but_first) ->
+        {:item, build_item(caps)}
+
+      true ->
+        :ignore
+    end
+  end
+
+  defp build_item([name, description]), do: make(name, description, nil)
+  defp build_item([name, description, raw]), do: make(name, description, raw)
+
+  defp make(name, description, raw) do
+    %{name: String.trim(name), description: String.trim(description), tags: tags(raw)}
+  end
+
+  defp tags(nil), do: []
+  defp tags(""), do: []
+
+  defp tags(raw) do
+    raw
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> (truncated)
+08:06:46.564 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 23405, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 23405, "cache_read_input_tokens" => 14699, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 23405, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 23405, "cache_read_input_tokens" => 14699, "input_tokens" => 2972, "output_tokens" => 33949, "type" => "message"}], "output_tokens" => 33949, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

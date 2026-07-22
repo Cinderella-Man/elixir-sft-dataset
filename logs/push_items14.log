@@ -1,0 +1,21 @@
+[pre-push] mix format --check-formatted && mix compile --warnings-as-errors && mix test
+[pre-push] validate touched families: *110_002*
+ALL PERFECT ✓ (every task scores 1.0)
+ALL HARNESSES KILL THEIR MUTANT ✓
+[pre-push] format check (corpus-wide, matching CI)
+total: 0 deviating, 0 errors — GATE (--check: exits 1 when anything deviates; --apply to rewrite)
+[pre-push] bugfix embed staleness check on touched families
+bugfix embeds: %{unchanged: 3} (report only)
+[pre-push] temp-path lint (parallel-eval collisions)
+temp-path lint: 131 shared-path harness(es), 0 violations ✓
+[pre-push] S6 freshness (blind verdicts must match current harnesses)
+screen freshness over 332 root(s): fresh=321, fresh_legacy=6, fresh_via_strengthen=5
+screen freshness: OK ✓ (every root has fresh blind evidence)
+[pre-push] wt_ spec/harness staleness check (all wt_ dirs)
+resync_embeds over 331 dirs: %{unchanged: 331} (report only)
+[pre-push] tfim embed staleness check on touched families
+tfim embeds: %{unchanged: 8} (report only)
+[pre-push] adapt_ embed staleness check on touched families
+adapt embeds: %{would_resync: 1} (report only)
+[pre-push] FAIL: adapt_ dirs drifted from their parents — run: mix run scripts/resync_adapt_embeds.exs -- --only "*110_002*" --apply
+error: failed to push some refs to 'github.com:Cinderella-Man/elixir-sft-dataset.git'

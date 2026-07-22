@@ -1,0 +1,158 @@
+13:19:38.168 [info] FIM candidate-select for 624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01 (up to 3)
+13:19:38.168 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:19:38.168 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer module called `ObjectStore` that implements a content-addressable object store with a layer of **mutable named branch references** on top of the immutable objects, plus **reachability-based garbage collection** — like Git's refs (branches) and `git gc`. Objects are immutable and content-addressed; branches are mutable pointers to commit hashes, updated with an atomic compare-and-swap, and unreferenced objects can be swept away.
+
+I need these functions in the public API:
+
+- `ObjectStore.start_link(opts)` to start the process. It accepts an optional `:name` option for process registration. Internal state holds an in-memory map of SHA-1 hex digest → stored binary content, plus a separate mapping of branch name → commit hash.
+
+- `ObjectStore.store(server, content)` which computes the SHA-1 (lowercase hex) of `content`, persists the raw bytes keyed by that hash, and returns `{:ok, hash}`. Idempotent — the same content yields the same hash and is not duplicated.
+
+- `ObjectStore.retrieve(server, hash)` returns `{:ok, content}` or `{:error, :not_found}`.
+
+- `ObjectStore.commit(server, tree_hash, parent_hash, message, author)` creates a commit object. `tree_hash` is a SHA-1 string of any stored object. `parent_hash` is either a SHA-1 string of the parent commit or `nil` for a root commit. `message` and `author` are strings. Build a deterministic text representation (same arguments always give the same hash), store it, and return `{:ok, commit_hash}`.
+
+- `ObjectStore.create_branch(server, name, commit_hash)` creates a branch named `name` (a string) pointing at `commit_hash`. Returns `{:ok, name}`. If a branch with that name already exists, return `{:error, :exists}`. If `commit_hash` is not an existing stored object, return `{:error, :not_found}`.
+
+- `ObjectStore.branch_head(server, name)` returns `{:ok, commit_hash}` for the commit a branch points at, or `{:error, :no_branch}` if no such branch exists.
+
+- `ObjectStore.update_branch(server, name, expected_hash, new_hash)` performs an atomic compare-and-swap: it moves branch `name` to `new_hash` **only if** the branch currently points at `expected_hash`. On success returns `{:ok, new_hash}`. If the branch does not exist, return `{:error, :no_branch}`. If `new_hash` is not an existing stored object, return `{:error, :not_found}`. If the branch exists but does not currently point at `expected_hash`, return `{:error, :conflict}` and leave the branch unchanged.
+
+- `ObjectStore.delete_branch(server, name)` removes a branch and returns `:ok`, or `{:error, :no_branch}` if it does not exist.
+
+- `ObjectStore.list_branches(server)` returns a map of branch name → commit hash for all branches.
+
+- `ObjectStore.gc(server)` garbage-collects unreferenced objects and returns `{:ok, removed_count}`, the number of objects deleted. An object is **reachable** if any of the following holds: (a) it is the commit a branch points at; (b) it is an ancestor commit found by following `parent` links from any branch head; or (c) it is the tree object referenced (via `tree_hash`) by any reachable commit. Every stored object that is not reachable is deleted. In particular, a loose blob that is not referenced as some reachable commit's tree is unreachable and will be removed.
+
+Implementation requirements:
+- Use `:crypto.hash(:sha, content)` and `Base.encode16(hash, case: :lower)` for SHA-1 hashing.
+- Commit serialization must be deterministic and include the tree, parent (use the literal `nil` when there is no parent), author, and message so that ancestry and tree references can be recovered when computing reachability.
+- All stored objects (blobs and commits) live in the same flat hash map; branches live in a separate map.
+
+Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+=== MODULE ===
+```elixir
+defmodule ObjectStore do
+  @moduledoc """
+  A content-addressable object store with mutable named branch references and
+  reachability-based garbage collection, modeled loosely on Git.
+
+  Objects (blobs and commits) are immutable and addressed by the SHA-1 hex
+  digest of their raw bytes. They all live in a single flat map from hash to
+  binary content.
+
+  Branches are mutable named pointers to commit hashes. They live in a separate
+  map and are updated with an atomic compare-and-swap.
+
+  Garbage collection walks the reachability graph starting from every branch
+  head — following `parent` links to ancestor commits and `tree_hash`
+  references to tree objects — and deletes every stored object that is not
+  reachable.
+  """
+
+  use GenServer
+
+  @typedoc "A SHA-1 hex digest (lowercase)."
+  @type hash :: String.t()
+
+  @typedoc "Internal server state."
+  @type state :: %{
+          objects: %{optional(hash) => binary()},
+          branches: %{optional(String.t()) => hash}
+        }
+
+  # Public API
+
+  @doc """
+  Starts the object store process.
+
+  Accepts an optional `:name` for process registration; all other options are
+  passed through to `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name)
+
+    case name do
+      nil -> GenServer.start_link(__MODULE__, :ok, opts)
+      name -> GenServer.start_link(__MODULE__, :ok, [{:name, name} | opts])
+    end
+  end
+
+  @doc """
+  Stores raw `content`, returning `{:ok, hash}` where `hash` is its SHA-1 hex
+  digest. Idempotent: identical content always yields the same hash and is not
+  duplicated.
+  """
+  @spec store(GenServer.server(), binary()) :: {:ok, hash}
+  def store(server, content) when is_binary(content) do
+    GenServer.call(server, {:store, content})
+  end
+
+  @doc """
+  Retrieves the content stored under `hash`, or `{:error, :not_found}`.
+  """
+  @spec retrieve(GenServer.server(), hash) :: {:ok, binary()} | {:error, :not_found}
+  def retrieve(server, hash) when is_binary(hash) do
+    GenServer.call(server, {:retrieve, hash})
+  end
+
+  @doc """
+  Creates and stores a commit object referencing `tree_hash` with parent
+  `parent_hash` (or `nil` for a root commit), along with `message` and
+  `author`. Returns `{:ok, commit_hash}`. Deterministic: identical arguments
+  always produce the same commit hash.
+  """
+  @spec commit(GenServer.server(), hash, hash | nil, String.t(), String.t()) :: {:ok, hash}
+  def commit(server, tree_hash, parent_hash, message, author)
+      when is_binary(tree_hash) and (is_binary(parent_hash) or is_nil(parent_hash)) and
+             is_binary(message) and is_binary(author) do
+    GenServer.call(server, {:commit, tree_hash, parent_hash, message, author})
+  end
+
+  @doc """
+  Creates a branch `name` pointing at `commit_hash`.
+
+  Returns `{:ok, name}` on success, `{:error, :exists}` if the branch already
+  exists, or `{:error, :not_found}` if `commit_hash` is not a stored object.
+  """
+  @spec create_branch(GenServer.server(), String.t(), hash) ::
+          {:ok, String.t()} | {:error, :exists | :not_found}
+  def create_branch(server, name, commit_hash) when is_binary(name) and is_binary(commit_hash) do
+    GenServer.call(server, {:create_branch, name, commit_hash})
+  end
+
+  @doc """
+  Returns `{:ok, commit_hash}` for the commit branch `name` points at, or
+  `{:error, :no_branch}` if there is no such branch.
+  """
+  @spec branch_head(GenServer.server(), String.t()) :: {:ok, hash} | {:error, :no_branch}
+  def branch_head(server, name) when is_binary(name) do
+    GenServer.call(server, {:branch_head, name})
+  end
+
+  @doc """
+  Atomically moves branch `name` from `expected_hash` (truncated)
+13:19:48.444 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+walk/3
+serialize_commit/4
+parse_commit/1
+</file>
+13:19:48.445 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9616, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9616, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9616, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9616, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 504, "type" => "message"}], "output_tokens" => 504, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

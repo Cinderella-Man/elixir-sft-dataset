@@ -1,0 +1,665 @@
+13:10:12.978 [info] VARIATION 624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01: Branch References with Atomic CAS Updates and Reachability GC
+13:10:12.978 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:10:12.978 [debug] claude -p USER prompt:
+Write me an Elixir GenServer module called `ObjectStore` that implements a content-addressable object store with a layer of **mutable named branch references** on top of the immutable objects, plus **reachability-based garbage collection** — like Git's refs (branches) and `git gc`. Objects are immutable and content-addressed; branches are mutable pointers to commit hashes, updated with an atomic compare-and-swap, and unreferenced objects can be swept away.
+
+I need these functions in the public API:
+
+- `ObjectStore.start_link(opts)` to start the process. It accepts an optional `:name` option for process registration. Internal state holds an in-memory map of SHA-1 hex digest → stored binary content, plus a separate mapping of branch name → commit hash.
+
+- `ObjectStore.store(server, content)` which computes the SHA-1 (lowercase hex) of `content`, persists the raw bytes keyed by that hash, and returns `{:ok, hash}`. Idempotent — the same content yields the same hash and is not duplicated.
+
+- `ObjectStore.retrieve(server, hash)` returns `{:ok, content}` or `{:error, :not_found}`.
+
+- `ObjectStore.commit(server, tree_hash, parent_hash, message, author)` creates a commit object. `tree_hash` is a SHA-1 string of any stored object. `parent_hash` is either a SHA-1 string of the parent commit or `nil` for a root commit. `message` and `author` are strings. Build a deterministic text representation (same arguments always give the same hash), store it, and return `{:ok, commit_hash}`.
+
+- `ObjectStore.create_branch(server, name, commit_hash)` creates a branch named `name` (a string) pointing at `commit_hash`. Returns `{:ok, name}`. If a branch with that name already exists, return `{:error, :exists}`. If `commit_hash` is not an existing stored object, return `{:error, :not_found}`.
+
+- `ObjectStore.branch_head(server, name)` returns `{:ok, commit_hash}` for the commit a branch points at, or `{:error, :no_branch}` if no such branch exists.
+
+- `ObjectStore.update_branch(server, name, expected_hash, new_hash)` performs an atomic compare-and-swap: it moves branch `name` to `new_hash` **only if** the branch currently points at `expected_hash`. On success returns `{:ok, new_hash}`. If the branch does not exist, return `{:error, :no_branch}`. If `new_hash` is not an existing stored object, return `{:error, :not_found}`. If the branch exists but does not currently point at `expected_hash`, return `{:error, :conflict}` and leave the branch unchanged.
+
+- `ObjectStore.delete_branch(server, name)` removes a branch and returns `:ok`, or `{:error, :no_branch}` if it does not exist.
+
+- `ObjectStore.list_branches(server)` returns a map of branch name → commit hash for all branches.
+
+- `ObjectStore.gc(server)` garbage-collects unreferenced objects and returns `{:ok, removed_count}`, the number of objects deleted. An object is **reachable** if any of the following holds: (a) it is the commit a branch points at; (b) it is an ancestor commit found by following `parent` links from any branch head; or (c) it is the tree object referenced (via `tree_hash`) by any reachable commit. Every stored object that is not reachable is deleted. In particular, a loose blob that is not referenced as some reachable commit's tree is unreachable and will be removed.
+
+Implementation requirements:
+- Use `:crypto.hash(:sha, content)` and `Base.encode16(hash, case: :lower)` for SHA-1 hashing.
+- Commit serialization must be deterministic and include the tree, parent (use the literal `nil` when there is no parent), author, and message so that ancestry and tree references can be recovered when computing reachability.
+- All stored objects (blobs and commits) live in the same flat hash map; branches live in a separate map.
+
+Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+13:10:56.904 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule ObjectStore do
+  @moduledoc """
+  A content-addressable object store with mutable named branch references and
+  reachability-based garbage collection, modeled loosely on Git.
+
+  Objects (blobs and commits) are immutable and addressed by the SHA-1 hex
+  digest of their raw bytes. They all live in a single flat map from hash to
+  binary content.
+
+  Branches are mutable named pointers to commit hashes. They live in a separate
+  map and are updated with an atomic compare-and-swap.
+
+  Garbage collection walks the reachability graph starting from every branch
+  head — following `parent` links to ancestor commits and `tree_hash`
+  references to tree objects — and deletes every stored object that is not
+  reachable.
+  """
+
+  use GenServer
+
+  @typedoc "A SHA-1 hex digest (lowercase)."
+  @type hash :: String.t()
+
+  @typedoc "Internal server state."
+  @type state :: %{objects: %{optional(hash) => binary()}, branches: %{optional(String.t()) => hash}}
+
+  # Public API
+
+  @doc """
+  Starts the object store process.
+
+  Accepts an optional `:name` for process registration; all other options are
+  passed through to `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name)
+
+    case name do
+      nil -> GenServer.start_link(__MODULE__, :ok, opts)
+      name -> GenServer.start_link(__MODULE__, :ok, [{:name, name} | opts])
+    end
+  end
+
+  @doc """
+  Stores raw `content`, returning `{:ok, hash}` where `hash` is its SHA-1 hex
+  digest. Idempotent: identical content always yields the same hash and is not
+  duplicated.
+  """
+  @spec store(GenServer.server(), binary()) :: {:ok, hash}
+  def store(server, content) when is_binary(content) do
+    GenServer.call(server, {:store, content})
+  end
+
+  @doc """
+  Retrieves the content stored under `hash`, or `{:error, :not_found}`.
+  """
+  @spec retrieve(GenServer.server(), hash) :: {:ok, binary()} | {:error, :not_found}
+  def retrieve(server, hash) when is_binary(hash) do
+    GenServer.call(server, {:retrieve, hash})
+  end
+
+  @doc """
+  Creates and stores a commit object referencing `tree_hash` with parent
+  `parent_hash` (or `nil` for a root commit), along with `message` and
+  `author`. Returns `{:ok, commit_hash}`. Deterministic: identical arguments
+  always produce the same commit hash.
+  """
+  @spec commit(GenServer.server(), hash, hash | nil, String.t(), String.t()) :: {:ok, hash}
+  def commit(server, tree_hash, parent_hash, message, author)
+      when is_binary(tree_hash) and (is_binary(parent_hash) or is_nil(parent_hash)) and
+             is_binary(message) and is_binary(author) do
+    GenServer.call(server, {:commit, tree_hash, parent_hash, message, author})
+  end
+
+  @doc """
+  Creates a branch `name` pointing at `commit_hash`.
+
+  Returns `{:ok, name}` on success, `{:error, :exists}` if the branch already
+  exists, or `{:error, :not_found}` if `commit_hash` is not a stored object.
+  """
+  @spec create_branch(GenServer.server(), String.t(), hash) ::
+          {:ok, String.t()} | {:error, :exists | :not_found}
+  def create_branch(server, name, commit_hash) when is_binary(name) and is_binary(commit_hash) do
+    GenServer.call(server, {:create_branch, name, commit_hash})
+  end
+
+  @doc """
+  Returns `{:ok, commit_hash}` for the commit branch `name` points at, or
+  `{:error, :no_branch}` if there is no such branch.
+  """
+  @spec branch_head(GenServer.server(), String.t()) :: {:ok, hash} | {:error, :no_branch}
+  def branch_head(server, name) when is_binary(name) do
+    GenServer.call(server, {:branch_head, name})
+  end
+
+  @doc """
+  Atomically moves branch `name` from `expected_hash` to `new_hash`.
+
+  Returns `{:ok, new_hash}` on success. Returns `{:error, :no_branch}` if the
+  branch does not exist, `{:error, :not_found}` if `new_hash` is not a stored
+  object, or `{:error, :conflict}` (leaving the branch unchanged) if the branch
+  does not currently point at `expected_hash`.
+  """
+  @spec update_branch(GenServer.server(), String.t(), hash, hash) ::
+          {:ok, hash} | {:error, :no_branch | :not_found | :conflict}
+  def update_branch(server, name, expected_hash, new_hash)
+      when is_binary(name) and is_binary(expected_hash) and is_binary(new_hash) do
+    GenServer.call(server, {:update_branch, name, expected_hash, new_hash})
+  end
+
+  @doc """
+  Deletes branch `name`. Returns `:ok`, or `{:error, :no_branch}` if it does
+  not exist.
+  """
+  @spec delete_branch(GenServer.server(), String.t()) :: :ok | {:error, :no_branch}
+  def delete_branch(server, name) when is_binary(name) do
+    GenServer.call(server, {:delete_branch, name})
+  end
+
+  @doc """
+  Returns a map of branch name to commit hash for all branches.
+  """
+  @spec list_branches(GenServer.server()) :: %{optional(String.t()) => hash}
+  def list_branches(server) do
+    GenServer.call(server, :list_branches)
+  end
+
+  @doc """
+  Garbage-collects unreferenced objects, returning `{:ok, removed_count}`.
+
+  An object is reachable if it is a branch head, an ancestor commit reachable
+  by following `parent` links from a branch head, or the tree referenced by a
+  reachable commit. All other stored objects are deleted.
+  """
+  @spec gc(GenServer.server()) :: {:ok, non_neg_integer()}
+  def gc(server) do
+    GenServer.call(server, :gc)
+  end
+
+  # GenServer callbacks
+
+  @impl true
+  @spec init(:ok) :: {:ok, state}
+  def init(:ok) do
+    {:ok, %{objects: %{}, branches: %{}}}
+  end
+
+  @impl true
+  def handle_call({:store, content}, _from, state) do
+    hash = hash_content(content)
+    objects = Map.put_new(state.objects, hash, content)
+    {:reply, {:ok, hash}, %{state | objects: objects}}
+  end
+
+  def handle_call({:retrieve, hash}, _from, state) do
+    case Map.fetch(state.objects, hash) do
+      {:ok, content} -> {:reply, {:ok, content}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:commit, tree_hash, parent_hash, message, author}, _from, state) do
+    content = serialize_commit(tree_hash, parent_hash, message, author)
+    hash = hash_content(content)
+    objects = Map.put_new(state.objects, hash, content)
+    {:reply, {:ok, hash}, %{state | objects: objects}}
+  end
+
+  def handle_call({:create_branch, name, commit_hash}, _from, state) do
+    cond do
+      Map.has_key?(state.branches, name) ->
+        {:reply, {:error, :exists}, state}
+
+      not Map.has_key?(state.objects, commit_hash) ->
+        {:reply, {:error, :not_found}, state}
+
+      true ->
+        branches = Map.put(state.branches, name, commit_hash)
+        {:reply, {:ok, name}, %{state | branches: branches}}
+    end
+  end
+
+  def handle_call({:branch_head, name}, _from, state) do
+    case Map.fetch(state.branches, name) do
+      {:ok, commit_hash} -> {:reply, {:ok, commit_hash}, state}
+      :error -> {:reply, {:error, :no_branch}, state}
+    end
+  end
+
+  def handle_call({:update_branch, name, expected_hash, new_hash}, _from, state) do
+    cond do
+      not Map.has_key?(state.branches, name) ->
+        {:reply, {:error, :no_branch}, state}
+
+      not Map.has_key?(state.objects, new_hash) ->
+        {:reply, {:error, :not_found}, state}
+
+      Map.fetch!(state.branches, name) != expected_hash ->
+        {:reply, {:error, :conflict}, state}
+
+      true ->
+        branches = Map.put(state.branches, name, new_hash)
+        {:reply, {:ok, new_hash}, %{state | branches: branches}}
+    end
+  end
+
+  def handle_call({:delete_branch, name}, _from, state) do
+    case Map.has_key?(state.branches, name) do
+      true -> {:reply, :ok, %{state | branches: Map.delete(state.branches, name)}}
+      false -> {:reply, {:error, :no_branch}, state}
+    end
+  end
+
+  def handle_call(:list_branches, _from, state) do
+    {:reply, state.branches, state}
+  end
+
+  def handle_call(:gc, _from, state) do
+    reachable = reachable_set(state)
+
+    {kept, removed_count} =
+      Enum.reduce(state.objects, {%{}, 0}, fn {hash, content}, {acc, count} ->
+        case MapSet.member?(reachable, hash) do
+          true -> {Map.put(ac (truncated)
+13:10:56.904 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5279, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5279, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5279, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5279, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 4276, "type" => "message"}], "output_tokens" => 4276, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:10:56.934 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01 solution.ex
+13:10:57.677 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":310,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-11T11:10:57.652813Z"}
+13:10:57.679 [info] cycle 624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01: repairing — The files graded green but fall short of the house style / harness standard: only 16 test(s) — the harness needs at least 20 (max of 3 and the 20 public function(s)). Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+13:10:57.679 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:10:57.679 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: only 16 test(s) — the harness needs at least 20 (max of 3 and the 20 public function(s)). Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir GenServer module called `ObjectStore` that implements a content-addressable object store with a layer of **mutable named branch references** on top of the immutable objects, plus **reachability-based garbage collection** — like Git's refs (branches) and `git gc`. Objects are immutable and content-addressed; branches are mutable pointers to commit hashes, updated with an atomic compare-and-swap, and unreferenced objects can be swept away.
+
+I need these functions in the public API:
+
+- `ObjectStore.start_link(opts)` to start the process. It accepts an optional `:name` option for process registration. Internal state holds an in-memory map of SHA-1 hex digest → stored binary content, plus a separate mapping of branch name → commit hash.
+
+- `ObjectStore.store(server, content)` which computes the SHA-1 (lowercase hex) of `content`, persists the raw bytes keyed by that hash, and returns `{:ok, hash}`. Idempotent — the same content yields the same hash and is not duplicated.
+
+- `ObjectStore.retrieve(server, hash)` returns `{:ok, content}` or `{:error, :not_found}`.
+
+- `ObjectStore.commit(server, tree_hash, parent_hash, message, author)` creates a commit object. `tree_hash` is a SHA-1 string of any stored object. `parent_hash` is either a SHA-1 string of the parent commit or `nil` for a root commit. `message` and `author` are strings. Build a deterministic text representation (same arguments always give the same hash), store it, and return `{:ok, commit_hash}`.
+
+- `ObjectStore.create_branch(server, name, commit_hash)` creates a branch named `name` (a string) pointing at `commit_hash`. Returns `{:ok, name}`. If a branch with that name already exists, return `{:error, :exists}`. If `commit_hash` is not an existing stored object, return `{:error, :not_found}`.
+
+- `ObjectStore.branch_head(server, name)` returns `{:ok, commit_hash}` for the commit a branch points at, or `{:error, :no_branch}` if no such branch exists.
+
+- `ObjectStore.update_branch(server, name, expected_hash, new_hash)` performs an atomic compare-and-swap: it moves branch `name` to `new_hash` **only if** the branch currently points at `expected_hash`. On success returns `{:ok, new_hash}`. If the branch does not exist, return `{:error, :no_branch}`. If `new_hash` is not an existing stored object, return `{:error, :not_found}`. If the branch exists but does not currently point at `expected_hash`, return `{:error, :conflict}` and leave the branch unchanged.
+
+- `ObjectStore.delete_branch(server, name)` removes a branch and returns `:ok`, or `{:error, :no_branch}` if it does not exist.
+
+- `ObjectStore.list_branches(server)` returns a map of branch name → commit hash for all branches.
+
+- `ObjectStore.gc(server)` garbage-collects unreferenced objects and returns `{:ok, removed_count}`, the number of objects deleted. An object is **reachable** if any of the following holds: (a) it is the commit a branch points at; (b) it is an ancestor commit found by following `parent` links from any branch head; or (c) it is the tree object referenced (via `tree_hash`) by any reachable commit. Every stored object that is not reachable is deleted. In particular, a loose blob that is not referenced as some reachable commit's tree is unreachable and will be removed.
+
+Implementation requirements:
+- Use `:crypto.hash(:sha, content)` and `Base.encode16(hash, case: :lower)` for SHA-1 hashing.
+- Commit serialization must be deterministic and include the tree, parent (use the literal `nil` when there is no parent), author, and message so that ancestry and tree references can be recovered when computing reachability.
+- All stored objects (blobs and commits) live in the same flat hash map; branches live in a separate map.
+
+Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+----- solution.ex -----
+defmodule ObjectStore do
+  @moduledoc """
+  A content-addressable object store with mutable named branch references and
+  reachability-based garbage collection, modeled loosely on Git.
+
+  Objects (blobs and commits) are immutable and addressed by the SHA-1 hex
+  digest of their raw bytes. They all live in a single flat map from hash to
+  binary content.
+
+  Branches are mutable named pointers to commit hashes. They live in a separate
+  map and are updated with an atomic compare-and-swap.
+
+  Garbage collection walks the reachability graph starting from every branch
+  head — following `parent` links to ancestor commits and `tree_hash`
+  references to tree objects — and deletes every stored object that is not
+  reachable.
+  """
+
+  use GenServer
+
+  @typedoc "A SHA-1 hex digest (lowercase)."
+  @type hash :: String.t()
+
+  @typedoc "Internal server state."
+  @type state :: %{
+          objects: %{optional(hash) => binary()},
+          branches: %{optional(String.t()) => hash}
+        }
+
+  # Public API
+
+  @doc """
+  Starts the object store process.
+
+  Accepts an optional `:name` for process registration; all other options are
+  passed through to `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name)
+
+    case name do
+      nil -> GenServer.start_link(__MODULE__, :ok, opts)
+      name -> GenServer.start_link(__MODULE__, :ok, [{:name, name} | opts])
+    end
+  end
+
+  @doc """
+  Stores raw `content`, returning `{:ok, hash}` where `hash` is its SHA-1 hex
+  digest. Idempotent: identical content always yields the same hash and is not
+  duplicated.
+  """
+  @spec store(GenServer.server(), binary()) :: {:ok, hash}
+  def store(server, content) when is_binary(content) do
+    GenServer.call(server, {:store, content})
+  end
+
+  @doc """
+  Retrieves the content stored under `hash`, or `{:error, :not_found}`.
+  """
+  @spec retrieve(GenServer.server(), hash) :: {:ok, binary()} | {:error, :not_found}
+  def retrieve(server, hash) when is_binary(hash) do
+    GenServer.call(server, {:retrieve, hash})
+  end
+
+  @doc """
+  Creates and stores a commit object referencing `tree_hash` with parent
+  `parent_hash` (or `nil` for a root commit), along with `message` and
+  `author`. Returns `{:ok, commit_hash}`. Deterministic: identical arguments
+  always produce the same commit hash.
+  """
+  @spec commit(GenServer.server(), hash, hash | nil, String.t(), String.t()) :: {:ok, hash}
+  def commit(server, tree_hash, parent_hash, message, author)
+      when is_binary(tree_hash) and (is_binary(parent_hash) or is_nil(parent_hash)) and
+             is_binary(message) and is_binary(author) do
+    GenServer.call(server, {:commit, tree_hash, parent_hash, message, author})
+  end
+
+  @doc """
+  Creates a branch `name` pointing at `commit_hash`.
+
+  Returns `{:ok, name}` on success, `{:error, :exists}` if the branch already
+  exists, or `{:error, : (truncated)
+13:11:49.746 [debug] claude -p RESULT (stop="end_turn"):
+<file path="test_harness.exs">
+defmodule ObjectStoreTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    {:ok, pid} = ObjectStore.start_link([])
+    %{store: pid}
+  end
+
+  defp sha1(content), do: :crypto.hash(:sha, content) |> Base.encode16(case: :lower)
+
+  # ---------------- store / retrieve / commit ----------------
+
+  test "store returns lowercase SHA-1 and is idempotent", %{store: s} do
+    {:ok, h1} = ObjectStore.store(s, "hi")
+    {:ok, h2} = ObjectStore.store(s, "hi")
+    assert h1 == sha1("hi")
+    assert h1 == h2
+  end
+
+  test "store keeps distinct content under distinct hashes", %{store: s} do
+    {:ok, ha} = ObjectStore.store(s, "alpha")
+    {:ok, hb} = ObjectStore.store(s, "beta")
+    assert ha != hb
+    assert {:ok, "alpha"} = ObjectStore.retrieve(s, ha)
+    assert {:ok, "beta"} = ObjectStore.retrieve(s, hb)
+  end
+
+  test "store handles binary content with null bytes", %{store: s} do
+    payload = <<0, 1, 2, 255, 0>>
+    {:ok, h} = ObjectStore.store(s, payload)
+    assert h == sha1(payload)
+    assert {:ok, ^payload} = ObjectStore.retrieve(s, h)
+  end
+
+  test "retrieve returns content or not_found", %{store: s} do
+    {:ok, h} = ObjectStore.store(s, "data")
+    assert {:ok, "data"} = ObjectStore.retrieve(s, h)
+    assert {:error, :not_found} = ObjectStore.retrieve(s, sha1("nope"))
+  end
+
+  test "commit is deterministic", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, c1} = ObjectStore.commit(s, t, nil, "msg", "alice")
+    {:ok, c2} = ObjectStore.commit(s, t, nil, "msg", "alice")
+    assert c1 == c2
+  end
+
+  test "commit differing arguments produce differing hashes", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, base} = ObjectStore.commit(s, t, nil, "msg", "alice")
+    {:ok, other_msg} = ObjectStore.commit(s, t, nil, "different", "alice")
+    {:ok, other_author} = ObjectStore.commit(s, t, nil, "msg", "bob")
+    assert base != other_msg
+    assert base != other_author
+    assert other_msg != other_author
+  end
+
+  test "commit stores a retrievable object", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, c} = ObjectStore.commit(s, t, nil, "root", "alice")
+    assert {:ok, content} = ObjectStore.retrieve(s, c)
+    assert is_binary(content)
+    assert c == sha1(content)
+  end
+
+  # ---------------- branch creation / lookup ----------------
+
+  test "create_branch and branch_head", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, c} = ObjectStore.commit(s, t, nil, "root", "alice")
+
+    assert {:ok, "main"} = ObjectStore.create_branch(s, "main", c)
+    assert {:ok, ^c} = ObjectStore.branch_head(s, "main")
+  end
+
+  test "create_branch rejects a duplicate name", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, c} = ObjectStore.commit(s, t, nil, "root", "alice")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c)
+    assert {:error, :exists} = ObjectStore.create_branch(s, "main", c)
+  end
+
+  test "create_branch rejects an unknown commit", %{store: s} do
+    assert {:error, :not_found} =
+             ObjectStore.create_branch(s, "main", sha1("ghost"))
+  end
+
+  test "create_branch can point a blob-backed branch at any stored object", %{store: s} do
+    {:ok, blob} = ObjectStore.store(s, "loose")
+    assert {:ok, "b"} = ObjectStore.create_branch(s, "b", blob)
+    assert {:ok, ^blob} = ObjectStore.branch_head(s, "b")
+  end
+
+  test "branch_head returns no_branch for unknown branch", %{store: s} do
+    assert {:error, :no_branch} = ObjectStore.branch_head(s, "missing")
+  end
+
+  # ---------------- update_branch (CAS) ----------------
+
+  test "update_branch moves the branch on a matching expected hash", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, c1} = ObjectStore.commit(s, t, nil, "one", "alice")
+    {:ok, c2} = ObjectStore.commit(s, t, c1, "two", "alice")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c1)
+
+    assert {:ok, ^c2} = ObjectStore.update_branch(s, "main", c1, c2)
+    assert {:ok, ^c2} = ObjectStore.branch_head(s, "main")
+  end
+
+  test "update_branch conflicts and leaves branch unchanged on stale expected hash", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, c1} = ObjectStore.commit(s, t, nil, "one", "alice")
+    {:ok, c2} = ObjectStore.commit(s, t, c1, "two", "alice")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c1)
+
+    assert {:error, :conflict} = ObjectStore.update_branch(s, "main", c2, c2)
+    assert {:ok, ^c1} = ObjectStore.branch_head(s, "main")
+  end
+
+  test "update_branch on unknown branch returns no_branch", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, c} = ObjectStore.commit(s, t, nil, "one", "alice")
+    assert {:error, :no_branch} = ObjectStore.update_branch(s, "missing", c, c)
+  end
+
+  test "update_branch with unknown new hash returns not_found", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, c1} = ObjectStore.commit(s, t, nil, "one", "alice")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c1)
+    assert {:error, :not_found} = ObjectStore.update_branch(s, "main", c1, sha1("ghost"))
+  end
+
+  test "update_branch to the same hash is a no-op success", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, c1} = ObjectStore.commit(s, t, nil, "one", "alice")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c1)
+    assert {:ok, ^c1} = ObjectStore.update_branch(s, "main", c1, c1)
+    assert {:ok, ^c1} = ObjectStore.branch_head(s, "main")
+  end
+
+  # ---------------- delete_branch / list_branches ----------------
+
+  test "delete_branch removes a branch", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, c} = ObjectStore.commit(s, t, nil, "root", "alice")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c)
+
+    assert :ok = ObjectStore.delete_branch(s, "main")
+    assert {:error, :no_branch} = ObjectStore.branch_head(s, "main")
+    assert {:error, :no_branch} = ObjectStore.delete_branch(s, "main")
+  end
+
+  test "list_branches is empty for a fresh store", %{store: s} do
+    assert ObjectStore.list_branches(s) == %{}
+  end
+
+  test "list_branches returns all branches", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, c1} = ObjectStore.commit(s, t, nil, "a", "alice")
+    {:ok, c2} = ObjectStore.commit(s, t, nil, "b", "bob")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c1)
+    {:ok, _} = ObjectStore.create_branch(s, "dev", c2)
+
+    assert ObjectStore.list_branches(s) == %{"main" => c1, "dev" => c2}
+  end
+
+  test "list_branches reflects deletions", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree")
+    {:ok, c} = ObjectStore.commit(s, t, nil, "root", "alice")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c)
+    {:ok, _} = ObjectStore.create_branch(s, "dev", c)
+    :ok = ObjectStore.delete_branch(s, "dev")
+
+    assert ObjectStore.list_branches(s) == %{"main" => c}
+  end
+
+  # ---------------- garbage collection ----------------
+
+  test "gc removes an unreferenced loose blob but keeps commit and tree", %{store: s} do
+    {:ok, tree} = ObjectStore.store(s, "tree-content")
+    {:ok, dangling} = ObjectStore.store(s, "dangling blob")
+    {:ok, c1} = ObjectStore.commit(s, tree, nil, "root", "alice")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c1)
+
+    assert {:ok, 1} = ObjectStore.gc(s)
+    assert {:error, :not_found} = ObjectStore.retrieve(s, dangling)
+    assert {:ok, _} = ObjectStore.retrieve(s, c1)
+    assert {:ok, "tree-content"} = ObjectStore.retrieve(s, tree)
+  end
+
+  test "gc on an empty store removes nothing", %{store: s} do
+    assert {:ok, 0} = ObjectStore.gc(s)
+  end
+
+  test "gc is idempotent once nothing is unreachable", %{store: s} do
+    {:ok, tree} = ObjectStore.store(s, "tree-content")
+    {:ok, c1} = ObjectStore.commit(s, tree, nil, "root", "alice")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c1)
+
+    assert {:ok, 0} = ObjectStore.gc(s)
+    assert {:ok, 0} = ObjectStore.gc(s)
+    assert {:ok, _} = ObjectStore.retrieve(s, c1)
+    assert {:ok, _} = ObjectStore.retrieve(s, tree)
+  end
+
+  (truncated)
+13:11:49.746 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 13130, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 13130, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 13130, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 13130, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 5697, "type" => "message"}], "output_tokens" => 5697, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:11:49.779 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01 solution.ex
+13:11:50.550 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":310,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":28,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-11T11:11:50.525124Z"}
+13:11:50.562 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut solution.ex
+13:11:51.384 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":243,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 28/28 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut","test_failures":[{"message":"MUTATION","module":"ObjectStoreTest","test":"test store returns lowercase SHA-1 and is idempotent"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test store keeps distinct content under distinct hashes"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test store handles binary content with null bytes"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test retrieve returns content or not_found"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test commit is deterministic"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test commit differing arguments produce differing hashes"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test commit stores a retrievable object"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch and branch_head"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch rejects a duplicate name"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch rejects an unknown commit"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch can point a blob-backed branch at any stored object"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test branch_head returns no_branch for unknown branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch moves the branch on a matching expected hash"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch conflicts and leaves branch unchanged on stale expected hash"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch on unknown branch returns no_branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch with unknown new hash returns not_found"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch to the same hash is a no-op success"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test delete_branch removes a branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches is empty for a fresh store"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches returns all branches"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches reflects deletions"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc removes an unreferenced loose blob but keeps commit and tree"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc on an empty store removes nothing"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc is idempotent once nothing is unreachable"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc collects commits that became unreachable after a branch delete"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc keeps ancestors reachable through any branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc keeps a tree shared by multiple reachable commits"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc sweeps everything when there are no branches"}],"tests_errors":0,"tests_excluded":0,"tests_failed":28,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-11T11:11:51.358261Z"}
+13:11:51.391 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut solution.ex
+13:11:52.185 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 24/28 failed"],"tests":0.14},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut","test_failures":[{"message":"MUTATION","module":"ObjectStoreTest","test":"test store returns lowercase SHA-1 and is idempotent"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test store keeps distinct content under distinct hashes"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test store handles binary content with null bytes"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test retrieve returns content or not_found"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test commit is deterministic"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test commit differing arguments produce differing hashes"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test commit stores a retrievable object"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch and branch_head"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch rejects a duplicate name"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch can point a blob-backed branch at any stored object"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch moves the branch on a matching expected hash"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch conflicts and leaves branch unchanged on stale expected hash"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch on unknown branch returns no_branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch with unknown new hash returns not_found"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch to the same hash is a no-op success"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test delete_branch removes a branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches returns all branches"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches reflects deletions"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc removes an unreferenced loose blob but keeps commit and tree"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc is idempotent once nothing is unreachable"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc collects commits that became unreachable after a branch delete"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc keeps ancestors reachable through any branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc keeps a tree shared by multiple reachable commits"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc sweeps everything when there are no branches"}],"tests_errors":0,"tests_excluded":0,"tests_failed":24,"tests_passed":4,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-11T11:11:52.160453Z"}
+13:11:52.192 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut solution.ex
+13:11:52.981 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 10/28 failed"],"tests":0.64},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut","test_failures":[{"message":"MUTATION","module":"ObjectStoreTest","test":"test store keeps distinct content under distinct hashes"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test store handles binary content with null bytes"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test retrieve returns content or not_found"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test commit stores a retrievable object"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc removes an unreferenced loose blob but keeps commit and tree"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc is idempotent once nothing is unreachable"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc collects commits that became unreachable after a branch delete"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc keeps ancestors reachable through any branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc keeps a tree shared by multiple reachable commits"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc sweeps everything when there are no branches"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-11T11:11:52.956569Z"}
+13:11:52.988 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut solution.ex
+13:11:53.781 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 19/28 failed"],"tests":0.32},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut","test_failures":[{"message":"MUTATION","module":"ObjectStoreTest","test":"test commit is deterministic"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test commit differing arguments produce differing hashes"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test commit stores a retrievable object"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch and branch_head"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch rejects a duplicate name"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch moves the branch on a matching expected hash"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch conflicts and leaves branch unchanged on stale expected hash"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch on unknown branch returns no_branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch with unknown new hash returns not_found"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch to the same hash is a no-op success"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test delete_branch removes a branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches returns all branches"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches reflects deletions"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc removes an unreferenced loose blob but keeps commit and tree"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc is idempotent once nothing is unreachable"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc collects commits that became unreachable after a branch delete"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc keeps ancestors reachable through any branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc keeps a tree shared by multiple reachable commits"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc sweeps everything when there are no branches"}],"tests_errors":0,"tests_excluded":0,"tests_failed":19,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-11T11:11:53.758660Z"}
+13:11:53.789 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut solution.ex
+13:11:54.585 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 16/28 failed"],"tests":0.43},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut","test_failures":[{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch and branch_head"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch rejects a duplicate name"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch rejects an unknown commit"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch can point a blob-backed branch at any stored object"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch moves the branch on a matching expected hash"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch conflicts and leaves branch unchanged on stale expected hash"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch with unknown new hash returns not_found"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch to the same hash is a no-op success"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test delete_branch removes a branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches returns all branches"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches reflects deletions"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc removes an unreferenced loose blob but keeps commit and tree"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc is idempotent once nothing is unreachable"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc collects commits that became unreachable after a branch delete"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc keeps ancestors reachable through any branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc keeps a tree shared by multiple reachable commits"}],"tests_errors":0,"tests_excluded":0,"tests_failed":16,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-11T11:11:54.559523Z"}
+13:11:54.592 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut solution.ex
+13:11:55.409 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 8/28 failed"],"tests":0.71},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut","test_failures":[{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch and branch_head"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test create_branch can point a blob-backed branch at any stored object"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test branch_head returns no_branch for unknown branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch moves the branch on a matching expected hash"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch conflicts and leaves branch unchanged on stale expected hash"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch to the same hash is a no-op success"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test delete_branch removes a branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc collects commits that became unreachable after a branch delete"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-11T11:11:55.382723Z"}
+13:11:55.416 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut solution.ex
+13:11:56.188 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 6/28 failed"],"tests":0.79},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut","test_failures":[{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch moves the branch on a matching expected hash"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch conflicts and leaves branch unchanged on stale expected hash"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch on unknown branch returns no_branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch with unknown new hash returns not_found"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test update_branch to the same hash is a no-op success"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc collects commits that became unreachable after a branch delete"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":22,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-11T11:11:56.162719Z"}
+13:11:56.195 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut solution.ex
+13:11:57.001 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 3/28 failed"],"tests":0.89},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut","test_failures":[{"message":"MUTATION","module":"ObjectStoreTest","test":"test delete_branch removes a branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches reflects deletions"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc collects commits that became unreachable after a branch delete"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":25,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-11T11:11:56.976771Z"}
+13:11:57.009 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut solution.ex
+13:11:57.800 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 4/28 failed"],"tests":0.86},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut","test_failures":[{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches is empty for a fresh store"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches returns all branches"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test list_branches reflects deletions"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc sweeps everything when there are no branches"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-11T11:11:57.775891Z"}
+13:11:57.807 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut solution.ex
+13:11:58.599 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 7/28 failed"],"tests":0.75},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut","test_failures":[{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc removes an unreferenced loose blob but keeps commit and tree"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc on an empty store removes nothing"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc is idempotent once nothing is unreachable"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc collects commits that became unreachable after a branch delete"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc keeps ancestors reachable through any branch"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc keeps a tree shared by multiple reachable commits"},{"message":"MUTATION","module":"ObjectStoreTest","test":"test gc sweeps everything when there are no branches"}],"tests_errors":0,"tests_excluded":0,"tests_failed":7,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-11T11:11:58.572415Z"}
+13:11:58.606 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut solution.ex
+13:11:59.430 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.3,"reasons":["tests: 28/28 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test store returns lowercase SHA-1 and is idempotent"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test store keeps distinct content under distinct hashes"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test store handles binary content with null bytes"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test retrieve returns content or not_found"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test commit is deterministic"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test commit differing arguments produce differing hashes"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test commit stores a retrievable object"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test create_branch and branch_head"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test create_branch rejects a duplicate name"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test create_branch rejects an unknown commit"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test create_branch can point a blob-backed branch at any stored object"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test branch_head returns no_branch for unknown branch"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :init, 1, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 84, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test update_branch moves the branch on a matching expected hash"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATIO (truncated)
+13:11:59.436 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut solution.ex
+13:12:00.214 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":201,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":28,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 28 warning(s) → hard fail (overall 0.0)","tests: 28/28 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test store returns lowercase SHA-1 and is idempotent"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test store keeps distinct content under distinct hashes"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test store handles binary content with null bytes"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test retrieve returns content or not_found"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test commit is deterministic"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test commit differing arguments produce differing hashes"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test commit stores a retrievable object"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test create_branch and branch_head"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test create_branch rejects a duplicate name"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test create_branch rejects an unknown commit"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test create_branch can point a blob-backed branch at any stored object"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 105, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test branch_head returns no_branch for unknown branch"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :handle_call, 3, [file: ~c\".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_ms (truncated)
+13:12:00.215 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01 solution.ex (seed 261211977)
+13:12:01.013 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":310,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":2,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01/solution.ex","task":"624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":28,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-11T11:12:00.988374Z"}
+13:12:01.017 [info] cycle 624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01: ACCEPTED on attempt 1
+13:12:01.018 [info] promoted 624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01 -> tasks/624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01

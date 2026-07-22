@@ -1,0 +1,158 @@
+14:26:52.128 [info] FIM candidate-select for 062_001_pipeline_processor_with_stages_01 (up to 3)
+14:26:52.128 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:26:52.128 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Pipeline` that lets callers build and run linear processing pipelines from composable stages.
+
+I need these functions in the public API:
+- `Pipeline.new()` — returns a fresh, empty pipeline struct.
+- `Pipeline.stage(pipeline, name, fun)` — appends a named stage to the pipeline. `name` is an atom, `fun` is a one-arity function that receives the current value and returns either `{:ok, result}` or `{:error, reason}`. Stages must be stored in insertion order.
+- `Pipeline.run(pipeline, input)` — executes all stages in order, threading the result of each stage as the input to the next. If every stage succeeds, return `{:ok, final_result, metadata}` where `metadata` is a list of `%{stage: atom, duration_us: non_neg_integer}` entries in execution order. If any stage returns `{:error, reason}`, immediately halt and return `{:error, failed_stage_name, reason}` — do not execute any subsequent stages.
+
+Timing per stage must be measured with `:timer.tc/1` (or equivalent microsecond-resolution call) and included in the metadata even for a pipeline that halts early — include timing only for the stages that were actually executed.
+
+The module must be pure — no processes, no GenServer, no global state. It should be a plain Elixir module that works entirely in the caller's process.
+
+Give me the complete implementation in a single file. Use only the standard library, no external dependencies.
+
+=== MODULE ===
+```elixir
+defmodule Pipeline do
+  @moduledoc """
+  Composable linear processing pipelines.
+
+  Stages are executed in insertion order, each receiving the previous stage's
+  result as input. Timing metadata (in microseconds) is collected for every
+  stage that actually runs.
+
+  ## Example
+
+      iex> Pipeline.new()
+      ...> |> Pipeline.stage(:parse,    fn s -> {:ok, String.to_integer(s)} end)
+      ...> |> Pipeline.stage(:double,   fn n -> {:ok, n * 2} end)
+      ...> |> Pipeline.stage(:to_str,   fn n -> {:ok, Integer.to_string(n)} end)
+      ...> |> Pipeline.run("21")
+      {:ok, "42", [
+        %{stage: :parse,   duration_us: ...},
+        %{stage: :double,  duration_us: ...},
+        %{stage: :to_str,  duration_us: ...}
+      ]}
+  """
+
+  @enforce_keys [:stages]
+  defstruct stages: []
+
+  @type stage_meta :: %{stage: atom(), duration_us: non_neg_integer()}
+
+  @type t :: %__MODULE__{
+          stages: [{atom(), (any() -> {:ok, any()} | {:error, any()})}]
+        }
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc "Returns a fresh, empty pipeline."
+  @spec new() :: t()
+  def new, do: %__MODULE__{stages: []}
+
+  @doc """
+  Appends a named stage to the pipeline.
+
+  `fun` must be a one-arity function that returns either
+  `{:ok, result}` or `{:error, reason}`.
+  """
+  @spec stage(t(), atom(), (any() -> {:ok, any()} | {:error, any()})) :: t()
+  def stage(%__MODULE__{stages: stages} = pipeline, name, fun)
+      when is_atom(name) and is_function(fun, 1) do
+    %__MODULE__{pipeline | stages: stages ++ [{name, fun}]}
+  end
+
+  @doc """
+  Executes all stages in insertion order, threading results through the chain.
+
+  Returns:
+  - `{:ok, final_result, [%{stage: atom, duration_us: non_neg_integer}]}` — all stages passed.
+  - `{:error, failed_stage, reason}` — a stage failed; subsequent stages are skipped.
+
+  Timing is recorded (via `:timer.tc/1`) for every stage that actually ran,
+  including the one that failed.
+  """
+  @spec run(t(), any()) ::
+          {:ok, any(), [stage_meta()]}
+          | {:error, atom(), any()}
+  def run(%__MODULE__{stages: stages}, input) do
+    execute(stages, input, [])
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Base case — all stages completed successfully.
+  defp execute([], value, meta_acc) do
+    {:ok, value, Enum.reverse(meta_acc)}
+  end
+
+  defp execute([{name, fun} | rest], value, meta_acc) do
+    {duration_us, result} = :timer.tc(fn -> fun.(value) end)
+    meta = %{stage: name, duration_us: duration_us}
+
+    case result do
+      {:ok, next_value} ->
+        execute(rest, next_value, [meta | meta_acc])
+
+      {:error, reason} ->
+        # Return accumulated metadata (in execution order) as part of caller
+        # context — exposed via the three-element error tuple if desired, but
+        # the public contract only requires the three-element form below.
+        # We honour the spec strictly here.
+        {:error, name, reason}
+
+      other ->
+        raise ArgumentError,
+              "stage #{inspect(name)} returned an invalid value: #{inspect(other)}. " <>
+                "Expected {:ok, result} or {:error, reason}."
+    end
+  end
+end
+
+```
+
+Return ONE file `candidates.md` containing at most 3 lines, each a single
+function target written as `name/arity` (e.g. `refill_and_expire/2`), most valuable
+first, and NOTHING else.
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - candidates.md — one function target (name/arity) per line
+
+
+14:26:59.091 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+execute/3
+stage/3
+run/2
+</file>
+14:26:59.091 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2478, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2478, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2478, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2478, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 303, "type" => "message"}], "output_tokens" => 303, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

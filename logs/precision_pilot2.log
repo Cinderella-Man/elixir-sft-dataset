@@ -1,0 +1,22 @@
+prompt precision: 3 root(s) to edit, 0 already done at this content+gate, 0 bundle-skipped
+
+=== 006_001_ttl_cache_with_lazy_expiration_01
+
+17:11:48.627 [warning] transient error (success API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com.) on prompt_precision (006_001_ttl_cache_with_lazy_expiration_01) — retry 1/5 after 2000ms
+  IMPROVED — blind solve green (22/22)
+
+=== 007_004_cusumanomaly_01
+  unchanged — already precise
+
+=== 010_001_session_store_with_inactivity_timeout_01
+  unchanged — already precise
+
+prompt precision summary: %{unchanged: 2, improved: 1}
+IMPROVED prompts need their child embeds cascaded — run:
+  mix run scripts/resync_embeds.exs -- --wt-all --apply
+  mix run scripts/resync_bugfix_embeds.exs -- --apply
+  mix run scripts/resync_tfim_embeds.exs -- --apply
+  mix run scripts/resync_adapt_embeds.exs -- --apply
+  elixir scripts/check_embeds.exs
+(prompt-only edits: no pair invalidation, no module-FIM gold impact).
+

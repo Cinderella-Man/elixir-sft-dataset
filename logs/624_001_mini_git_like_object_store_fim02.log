@@ -1,0 +1,432 @@
+13:12:56.499 [info] FIM 624_001_mini_git_like_object_store_fim02 → 624_001_mini_git_like_object_store_03: target parse_commit/1
+13:12:56.499 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:12:56.499 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `parse_commit/1`.
+
+Generate a prompt describing how to implement `parse_commit/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `parse_commit/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `parse_commit/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `parse_commit/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer module called `ObjectStore` that implements a content-addressable object store, similar in spirit to Git's object model.
+
+I need these functions in the public API:
+
+- `ObjectStore.start_link(opts)` to start the process. It should accept a `:name` option for process registration. Internal state should be an in-memory map of SHA-1 hex digest → stored binary content.
+
+- `ObjectStore.store(server, content)` which takes an arbitrary binary/string, computes its SHA-1 hash (lowercase hex), persists the raw content keyed by that hash, and returns `{:ok, hash}`. Storing the same content twice must be idempotent — it returns the same hash and does not duplicate data.
+
+- `ObjectStore.retrieve(server, hash)` which looks up a hash and returns `{:ok, content}` if found, or `{:error, :not_found}` if the hash does not exist in the store.
+
+- `ObjectStore.tree(server, entries)` which takes a list of entry maps, each containing the keys `:name` (a string filename), `:hash` (a SHA-1 hex string referencing an already-stored object), and `:type` (either `:blob` or `:tree`). The function must build a deterministic canonical text representation of the tree by sorting entries by `:name`, serialize it into a single binary string, store that string as an object via the same `store` mechanism, and return `{:ok, tree_hash}`. Two calls with the same entries in any order must produce the same hash.
+
+- `ObjectStore.commit(server, tree_hash, parent_hash, message, author)` which creates a commit object. `tree_hash` is the SHA-1 of a tree object. `parent_hash` is either a SHA-1 string of the parent commit or `nil` for the initial commit. `message` is a string and `author` is a string. Build a deterministic text representation containing all four fields, store it as an object, and return `{:ok, commit_hash}`.
+
+- `ObjectStore.log(server, commit_hash)` which walks the parent chain starting from the given commit hash. It must return `{:ok, entries}` where `entries` is a list of maps, each containing `:hash`, `:message`, `:author`, `:tree`, and `:parent`. The list is ordered from newest to oldest. If the starting hash is not found, return `{:error, :not_found}`. Walking stops when a commit with a `nil` parent is reached.
+
+Implementation requirements:
+- Use `:crypto.hash(:sha, content)` and `Base.encode16(hash, case: :lower)` for SHA-1 hashing.
+- Tree serialization must sort entries alphabetically by name before hashing so that entry order in the input list does not affect the resulting hash.
+- Commit serialization must use a fixed field order (tree, parent, author, message) so the hash is deterministic.
+- All stored objects (blobs, trees, commits) live in the same flat hash map — there is no type distinction at the storage layer.
+
+Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule ObjectStore do
+  @moduledoc """
+  A content-addressable object store implemented as a GenServer,
+  similar in spirit to Git's object model.
+
+  All objects (blobs, trees, commits) are stored in a single flat
+  map keyed by their SHA-1 hex digest. Storing identical content
+  is idempotent — it always returns the same hash.
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the ObjectStore process.
+
+  ## Options
+    * `:name` — optional process registration name.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, _rest} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, %{}, server_opts)
+  end
+
+  @doc """
+  Stores an arbitrary binary and returns its SHA-1 hex digest.
+
+  Idempotent — storing the same content twice returns the same hash
+  without duplicating data.
+  """
+  @spec store(GenServer.server(), binary()) :: {:ok, String.t()}
+  def store(server, content) when is_binary(content) do
+    GenServer.call(server, {:store, content})
+  end
+
+  @doc """
+  Retrieves previously-stored content by its SHA-1 hex digest.
+
+  Returns `{:ok, content}` or `{:error, :not_found}`.
+  """
+  @spec retrieve(GenServer.server(), String.t()) :: {:ok, binary()} | {:error, :not_found}
+  def retrieve(server, hash) when is_binary(hash) do
+    GenServer.call(server, {:retrieve, hash})
+  end
+
+  @doc """
+  Creates a tree object from a list of entry maps.
+
+  Each entry must contain:
+    * `:name`  — filename (string)
+    * `:hash`  — SHA-1 hex of an already-stored object
+    * `:type`  — `:blob` or `:tree`
+
+  Entries are sorted alphabetically by `:name` before serialization,
+  so the resulting hash is independent of input order.
+  """
+  @spec tree(GenServer.server(), [map()]) :: {:ok, String.t()}
+  def tree(server, entries) when is_list(entries) do
+    GenServer.call(server, {:tree, entries})
+  end
+
+  @doc """
+  Creates a commit object.
+
+  * `tree_hash`   — SHA-1 of the tree object for this commit
+  * `parent_hash` — SHA-1 of the parent commit, or `nil` for the initial commit
+  * `message`     — commit message (string)
+  * `author`      — author name (string)
+  """
+  @spec commit(GenServer.server(), String.t(), String.t() | nil, String.t(), String.t()) ::
+          {:ok, String.t()}
+  def commit(server, tree_hash, parent_hash, message, author) do
+    GenServer.call(server, {:commit, tree_hash, parent_hash, message, author})
+  end
+
+  @doc """
+  Walks the parent chain starting from `commit_hash` and returns a list
+  of commit maps ordered from newest to oldest.
+
+  Each map contains `:hash`, `:message`, `:author`, `:tree`, and `:parent`.
+
+  Returns `{:error, :not_found}` if the starting hash does not exist.
+  """
+  @spec log(GenServer.server(), String.t()) ::
+          {:ok, [map()]} | {:error, :not_found}
+  def log(server, commit_hash) when is_binary(commit_hash) do
+    GenServer.call(server, {:log, commit_hash})
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(state) do
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:store, content}, _from, state) do
+    {hash, state} = do_store(state, content)
+    {:reply, {:ok, hash}, state}
+  end
+
+  def handle_call({:retrieve, hash}, _from, state) do
+    case Map.fetch(state, hash) do
+      {:ok, content} -> {:reply, {:ok, content}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:tree, entries}, _from, state) do
+    serialized =
+      entries
+      |> Enum.sort_by(& &1.name)
+      |> Enum.map_join("\n", fn entry ->
+        type_str = Atom.to_string(entry.type)
+        "#{type_str} #{entry.hash} #{entry.name}"
+      end)
+
+    {hash, state} = do_store(state, serializ (truncated)
+13:13:34.504 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `parse_commit/1`
+
+Implement the private `parse_commit/1` function.
+
+It receives the raw serialized content of a commit object — the exact binary that
+was produced when the commit was created. That content has the form:
+
+```
+tree <tree_hash>
+parent <parent_hash_or_the_literal_string_nil>
+author <author>
+message <message>
+```
+
+`parse_commit/1` must turn that binary back into a map with the keys `:tree`,
+`:parent`, `:author`, and `:message`.
+
+Split the content on `"\n"` into at most 4 parts (so a multi-line message stays
+intact as the final part). Then extract each field by stripping its leading label
+from the corresponding line, using the existing `strip_prefix/2` helper:
+
+* line 0 → `:tree`, stripping the `"tree "` prefix
+* line 1 → `:parent`, stripping the `"parent "` prefix; if the resulting string is
+  `"nil"`, the parent must be the atom `nil`, otherwise keep the hash string
+* line 2 → `:author`, stripping the `"author "` prefix
+* line 3 → `:message`, stripping the `"message "` prefix
+
+Return a map `%{tree: ..., parent: ..., author: ..., message: ...}`.
+
+```elixir
+defmodule ObjectStore do
+  @moduledoc """
+  A content-addressable object store implemented as a GenServer,
+  similar in spirit to Git's object model.
+
+  All objects (blobs, trees, commits) are stored in a single flat
+  map keyed by their SHA-1 hex digest. Storing identical content
+  is idempotent — it always returns the same hash.
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the ObjectStore process.
+
+  ## Options
+    * `:name` — optional process registration name.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, _rest} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, %{}, server_opts)
+  end
+
+  @doc """
+  Stores an arbitrary binary and returns its SHA-1 hex digest.
+
+  Idempotent — storing the same content twice returns the same hash
+  without duplicating data.
+  """
+  @spec store(GenServer.server(), binary()) :: {:ok, String.t()}
+  def store(server, content) when is_binary(content) do
+    GenServer.call(server, {:store, content})
+  end
+
+  @doc """
+  Retrieves previously-stored content by its SHA-1 hex digest.
+
+  Returns `{:ok, content}` or `{:error, :not_found}`.
+  """
+  @spec retrieve(GenServer.server(), String.t()) :: {:ok, binary()} | {:error, :not_found}
+  def retrieve(server, hash) when is_binary(hash) do
+    GenServer.call(server, {:retrieve, hash})
+  end
+
+  @doc """
+  Creates a tree object from a list of entry maps.
+
+  Each entry must contain:
+    * `:name`  — filename (string)
+    * `:hash`  — SHA-1 hex of an already-stored object
+    * `:type`  — `:blob` or `:tree`
+
+  Entries are sorted alphabetically by `:name` before serialization,
+  so the resulting hash is independent of input order.
+  """
+  @spec tree(GenServer.server(), [map()]) :: {:ok, String.t()}
+  def tree(server, entries) when is_list(entries) do
+    GenServer.call(server, {:tree, entries})
+  end
+
+  @doc """
+  Creates a commit object.
+
+  * `tree_hash`   — SHA-1 of the tree object for this commit
+  * `parent_hash` — SHA-1 of the parent commit, or `nil` for the initial commit
+  * `message`     — commit message (string)
+  * `author`      — author name (string)
+  """
+  @spec commit(GenServer.server(), String.t(), String.t() | nil, String.t(), String.t()) ::
+          {:ok, String.t()}
+  def commit(server, tree_hash, parent_hash, message, author) do
+    GenServer.call(server, {:commit, tree_hash, parent_hash, message, author})
+  end
+
+  @doc """
+  Walks the parent chain starting from `commit_hash` and returns a list
+  of commit maps ordered from newest to oldest.
+
+  Each map contains `:hash`, `:message`, `:author`, `:tree`, and `:parent`.
+
+  Returns `{:error, :not_found}` if the starting hash does not exist.
+  """
+  @spec log(GenServer.server(), String.t()) ::
+          {:ok, [map()]} | {:error, :not_found}
+  def log(server, commit_hash) when is_binary(commit_hash) do
+    GenServer.call(server, {:log, commit_hash})
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(state) do
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:store, content}, _from, state) do
+    {hash, state} = do_store(state, content)
+    {:reply, {:ok, hash}, state}
+  end
+
+  def handle_call({:retrieve, hash}, _from, state) do
+    case Map.fetch(state, hash) do
+      {:ok, content} -> {:reply, {:ok, content}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:tree, entries}, _from, state) do
+    serialized =
+      entries
+      |> Enum.sort_by(& &1.name)
+      |> Enum.map_join("\n", fn entry ->
+        type_str = Atom.to_string(entry.type)
+        "#{type_str} #{entry.hash} #{entry.name}"
+      end)
+
+    {hash, state} = do_store(state, serialized)
+    {:reply, {:ok, hash}, state}
+  end
+
+  def handle_call({:commit, tree_hash, parent_hash, message, author}, _from, state) do
+    parent_str = parent_hash || "nil"
+
+    serialized =
+      "tree #{tree_hash}\nparent #{parent_str}\nauthor #{author}\nmessage #{message}"
+
+    {hash, state} = do_store(state, serialized)
+    {:reply, {:ok, hash}, state}
+  end
+
+  def handle_call({:log, commit_hash}, _from, state) do
+    case walk_log(state, commit_hash, []) do
+      {:ok, entries} -> {:reply, {:ok, entries}, state}
+      {:error, _} = err -> {:reply, err, state}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  defp do_store(state, content) do
+    hash = sha1(content)
+    {hash, Map.put_new(state, hash, content)}
+  end
+
+  defp sha1(content) do
+    :crypto.hash(:sha, content)
+    |> Base.encode16(case: :lower)
+  end
+
+  defp walk_log(_state, nil, acc), do: {:ok, Enum.reverse(acc)}
+
+  defp walk_log(state, hash, acc) do
+    case Map.fetch(state, hash) do
+      :error when acc == [] ->
+        {:error, :not_found}
+
+      :error ->
+        # Dangling parent reference — stop gracefully.
+        {:ok, Enum.reverse(acc)}
+
+      {:ok, content} ->
+        parsed = parse_commit(content)
+
+        entry = %{
+          hash: hash,
+          tree: parsed.tree,
+          parent: parsed.parent,
+          author: parsed.author,
+          message: parsed.message
+        }
+
+        walk_log(state, parsed.parent, [entry | acc])
+    end
+  end
+
+  defp parse_commit(content) do
+    # TODO
+  end
+
+  defp strip_prefix(str, prefix) do
+    String.replace_prefix(str, prefix, "")
+  end
+end
+```
+</file>
+<file path="solution.ex">
+defp parse_commit(content) do
+  lines = String.split(content, "\n", parts: 4)
+
+  raw_parent = strip_prefix(Enum.at(lines, 1), "parent ")
+  parent = if raw_parent == "nil", do: nil, else: raw_parent
+
+  %{
+    tree: strip_prefix(Enum.at(lines, 0), "tree "),
+    parent: parent,
+    author: strip_prefix(Enum.at(lines, 2), "author "),
+    message: strip_prefix(Enum.at(lines, 3), "message ")
+  }
+end
+</file>
+13:13:34.505 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7704, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7704, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7704, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7704, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 3290, "type" => "message"}], "output_tokens" => 3290, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:13:34.524 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_624_001_mini_git_like_object_store_03/624_001_mini_git_like_object_store_03 solution.ex
+13:13:35.275 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":13,"lines_over_98":0,"max_line_length":60,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"624_001_mini_git_like_object_store_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_624_001_mini_git_like_object_store_03/624_001_mini_git_like_object_store_03/solution.ex","task":"624_001_mini_git_like_object_store_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-11T11:13:35.249041Z"}
+13:13:35.275 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_624_001_mini_git_like_object_store_03/624_001_mini_git_like_object_store_03 .gen_staging/fim_624_001_mini_git_like_object_store_03/mutant.ex
+13:13:36.020 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":29,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"parent":"624_001_mini_git_like_object_store_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.7,"mode":"fim","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 4/20 failed"],"tests":0.8},"shape":"fim","solution_file":".gen_staging/fim_624_001_mini_git_like_object_store_03/mutant.ex","task":"624_001_mini_git_like_object_store_03","test_failures":[{"message":"{:EXIT, #PID<0.232.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :parse_commit, 1, [file: ~c\"/tmp/evalfim_1836154_2626.ex\", line: 188, error_info: %{module: Exception}]}, {ObjectStore, :walk_log, 3, [file: ~c\"/tmp/evalfim_1836154_2626.ex\", line: 173]}, {ObjectStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_1836154_2626.ex\", line: 141]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test log of a single root commit returns one entry"},{"message":"{:EXIT, #PID<0.234.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :parse_commit, 1, [file: ~c\"/tmp/evalfim_1836154_2626.ex\", line: 188, error_info: %{module: Exception}]}, {ObjectStore, :walk_log, 3, [file: ~c\"/tmp/evalfim_1836154_2626.ex\", line: 173]}, {ObjectStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_1836154_2626.ex\", line: 141]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test log walks a chain of three commits newest-to-oldest"},{"message":"{:EXIT, #PID<0.244.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :parse_commit, 1, [file: ~c\"/tmp/evalfim_1836154_2626.ex\", line: 188, error_info: %{module: Exception}]}, {ObjectStore, :walk_log, 3, [file: ~c\"/tmp/evalfim_1836154_2626.ex\", line: 173]}, {ObjectStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_1836154_2626.ex\", line: 141]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test commit messages can contain newlines and special characters"},{"message":"{:EXIT, #PID<0.246.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :parse_commit, 1, [file: ~c\"/tmp/evalfim_1836154_2626.ex\", line: 188, error_info: %{module: Exception}]}, {ObjectStore, :walk_log, 3, [file: ~c\"/tmp/evalfim_1836154_2626.ex\", line: 173]}, {ObjectStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_1836154_2626.ex\", line: 141]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test full workflow: blobs → trees → commits → log"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-11T11:13:35.996346Z"}
+13:13:36.020 [debug] fim mutation gate: killed
+13:13:36.021 [info] promoted 624_001_mini_git_like_object_store_03 -> tasks/624_001_mini_git_like_object_store_03

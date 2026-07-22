@@ -1,0 +1,1317 @@
+02:08:13.596 [info] VARIATION 022_004_invitation_gated_nested_membership_with_capacity_limits_01: Invitation Gated Nested Membership With Capacity Limits
+02:08:13.596 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:08:13.596 [debug] claude -p USER prompt:
+Write me a set of Elixir modules that implement **invitation-gated nested resource endpoints for team membership with capacity limits**, using only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Membership is a two-step handshake instead of a direct add. An existing active member *invites* a user, which creates a **pending invitation**. The invited user (and only that user) *accepts* their own invitation, which promotes them to an **active member** — but only if the team is not already at capacity. Teams have a fixed maximum number of active members.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer that holds all application state in memory (users, teams, active members, pending invitations, and per-team capacity). It should support these public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option for registration.
+- `TeamStore.create_user(server, id, token)` — stores a user with the given ID and bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id, capacity)` — creates a team with an empty active-member list, no invitations, and the given integer `capacity` (maximum number of active members). Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — adds a user directly to a team's active members (for seeding; ignores capacity). Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true` or `false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true` if the user is an **active** member, else `false`.
+- `TeamStore.has_invitation?(server, team_id, user_id)` — returns `true` if the user has a **pending** invitation on the team, else `false`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, list_of_active_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.list_invitations(server, team_id)` — returns `{:ok, list_of_pending_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.invite(server, team_id, user_id)` — records a pending invitation. Checks in order: team missing → `{:error, :not_found}`; the user is already an active member → `{:error, :already_member}`; the user already has a pending invitation → `{:error, :already_invited}`; otherwise add the pending invitation and return `{:ok, user_id}`.
+- `TeamStore.accept(server, team_id, user_id)` — promotes the user's own pending invitation to active membership. Checks in order: team missing → `{:error, :not_found}`; the user has no pending invitation → `{:error, :no_invitation}`; the team already has `capacity` active members → `{:error, :team_full}`; otherwise move the user from invitations to active members and return `{:ok, team_id}`.
+
+**`AuthPlug`** — a Plug that reads the `authorization` header, expects `Bearer <token>`, looks the user up via `TeamStore.get_user_by_token/2`, and assigns `:current_user` to the conn. If the token is missing or invalid, it halts the connection with a 401 JSON response `{"error": "unauthorized"}`. It should accept a `:store` option at init time to know which TeamStore process to call.
+
+**`TeamRouter`** — a `Plug.Router` that serves the following endpoints. It should accept a `:store` option and plug `AuthPlug` before route matching. Note that the endpoints have **different authorization requirements**: listing and inviting require the caller to be an active member, but accepting is done by the invited (non-member) user.
+
+- `GET /api/teams/:team_id/members` — If the team doesn't exist, return 404 `{"error": "not_found"}`. If the current user is not an active member, return 403 `{"error": "forbidden"}`. Otherwise return 200 `{"members": [list_of_active_user_ids]}`.
+
+- `GET /api/teams/:team_id/invitations` — Same 404/403 rules (caller must be an active member). Otherwise return 200 `{"invitations": [list_of_pending_user_ids]}`.
+
+- `POST /api/teams/:team_id/invitations` — Reads a JSON body with `{"user_id": "..."}`. Decided in order: team missing → 404 `{"error": "not_found"}`; caller is not an active member → 403 `{"error": "forbidden"}`; body missing a string `"user_id"` → 400 `{"error": "bad_request"}`; then call `invite/3` and map its result: `{:error, :already_member}` → 409 `{"error": "already_member"}`; `{:error, :already_invited}` → 409 `{"error": "already_invited"}`; `{:error, :not_found}` → 404 `{"error": "not_found"}`; `{:ok, user_id}` → 201 `{"invited": user_id}`.
+
+- `POST /api/teams/:team_id/members` — This is the **accept** endpoint; the current user accepts their own pending invitation. No request body is required. Decided in order: team missing → 404 `{"error": "not_found"}`; then call `accept/3` for the current user and map its result: `{:error, :no_invitation}` → 403 `{"error": "forbidden"}`; `{:error, :team_full}` → 409 `{"error": "team_full"}`; `{:error, :not_found}` → 404 `{"error": "not_found"}`; `{:ok, team_id}` → 201 `{"joined": team_id}`.
+
+All error and success responses must be `application/json`. Give me all modules in a single file. Use only `plug`, `jason`, and the OTP standard library.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+02:09:09.767 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TeamStore do
+  @moduledoc """
+  In-memory state store for invitation-gated team membership.
+
+  Holds all application state — users (keyed by id), tokens (mapping
+  bearer token to user id), and teams. Each team tracks its active
+  members, its pending invitations, and its capacity (the maximum number
+  of active members allowed).
+
+  Membership is a two-step handshake: an active member invites a user,
+  creating a pending invitation; the invited user later accepts, which
+  promotes them to an active member if the team has spare capacity.
+  """
+
+  use GenServer
+
+  @typedoc "Opaque server reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  @typedoc "Internal team record."
+  @type team :: %{members: [String.t()], invitations: [String.t()], capacity: integer()}
+
+  # ----------------------------------------------------------------------
+  # Client API
+  # ----------------------------------------------------------------------
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option used to register the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, server_opts)
+  end
+
+  @doc "Stores a user with the given `id` and bearer `token`."
+  @spec create_user(server(), String.t(), String.t()) :: :ok
+  def create_user(server, id, token) do
+    GenServer.call(server, {:create_user, id, token})
+  end
+
+  @doc "Creates a team with an empty member list and the given `capacity`."
+  @spec create_team(server(), String.t(), integer()) :: :ok
+  def create_team(server, team_id, capacity) do
+    GenServer.call(server, {:create_team, team_id, capacity})
+  end
+
+  @doc "Directly adds `user_id` to the team's active members (ignores capacity)."
+  @spec add_member(server(), String.t(), String.t()) :: :ok
+  def add_member(server, team_id, user_id) do
+    GenServer.call(server, {:add_member, team_id, user_id})
+  end
+
+  @doc "Looks up a user id by bearer `token`."
+  @spec get_user_by_token(server(), String.t()) :: {:ok, String.t()} | :error
+  def get_user_by_token(server, token) do
+    GenServer.call(server, {:get_user_by_token, token})
+  end
+
+  @doc "Returns whether a team with `team_id` exists."
+  @spec team_exists?(server(), String.t()) :: boolean()
+  def team_exists?(server, team_id) do
+    GenServer.call(server, {:team_exists?, team_id})
+  end
+
+  @doc "Returns whether `user_id` is an active member of the team."
+  @spec is_member?(server(), String.t(), String.t()) :: boolean()
+  def is_member?(server, team_id, user_id) do
+    GenServer.call(server, {:is_member?, team_id, user_id})
+  end
+
+  @doc "Returns whether `user_id` has a pending invitation on the team."
+  @spec has_invitation?(server(), String.t(), String.t()) :: boolean()
+  def has_invitation?(server, team_id, user_id) do
+    GenServer.call(server, {:has_invitation?, team_id, user_id})
+  end
+
+  @doc "Lists the active member ids of the team."
+  @spec list_members(server(), String.t()) :: {:ok, [String.t()]} | {:error, :not_found}
+  def list_members(server, team_id) do
+    GenServer.call(server, {:list_members, team_id})
+  end
+
+  @doc "Lists the pending invitation user ids of the team."
+  @spec list_invitations(server(), String.t()) :: {:ok, [String.t()]} | {:error, :not_found}
+  def list_invitations(server, team_id) do
+    GenServer.call(server, {:list_invitations, team_id})
+  end
+
+  @doc """
+  Records a pending invitation for `user_id` on the team.
+
+  Returns `{:error, :not_found}` if the team is missing,
+  `{:error, :already_member}` if the user is already active,
+  `{:error, :already_invited}` if the user is already invited,
+  otherwise `{:ok, user_id}`.
+  """
+  @spec invite(server(), String.t(), String.t()) ::
+          {:ok, String.t()}
+          | {:error, :not_found | :already_member | :already_invited}
+  def invite(server, team_id, user_id) do
+    GenServer.call(server, {:invite, team_id, user_id})
+  end
+
+  @doc """
+  Promotes `user_id`'s own pending invitation to active membership.
+
+  Returns `{:error, :not_found}` if the team is missing,
+  `{:error, :no_invitation}` if the user has no pending invitation,
+  `{:error, :team_full}` if the team is at capacity,
+  otherwise `{:ok, team_id}`.
+  """
+  @spec accept(server(), String.t(), String.t()) ::
+          {:ok, String.t()}
+          | {:error, :not_found | :no_invitation | :team_full}
+  def accept(server, team_id, user_id) do
+    GenServer.call(server, {:accept, team_id, user_id})
+  end
+
+  # ----------------------------------------------------------------------
+  # Server callbacks
+  # ----------------------------------------------------------------------
+
+  @impl true
+  @spec init(keyword()) :: {:ok, map()}
+  def init(_opts) do
+    {:ok, %{users: %{}, tokens: %{}, teams: %{}}}
+  end
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    state =
+      state
+      |> put_in([:users, id], %{id: id, token: token})
+      |> put_in([:tokens, token], id)
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:create_team, team_id, capacity}, _from, state) do
+    team = %{members: [], invitations: [], capacity: capacity}
+    {:reply, :ok, put_in(state, [:teams, team_id], team)}
+  end
+
+  def handle_call({:add_member, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} ->
+        team = %{team | members: add_unique(team.members, user_id)}
+        {:reply, :ok, put_in(state, [:teams, team_id], team)}
+
+      :error ->
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:get_user_by_token, token}, _from, state) do
+    case Map.fetch(state.tokens, token) do
+      {:ok, user_id} -> {:reply, {:ok, user_id}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:team_exists?, team_id}, _from, state) do
+    {:reply, Map.has_key?(state.teams, team_id), state}
+  end
+
+  def handle_call({:is_member?, team_id, user_id}, _from, state) do
+    result =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, team} -> user_id in team.members
+        :error -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:has_invitation?, team_id, user_id}, _from, state) do
+    result =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, team} -> user_id in team.invitations
+        :error -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:list_members, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} -> {:reply, {:ok, team.members}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:list_invitations, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} -> {:reply, {:ok, team.invitations}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:invite, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, team} ->
+        cond do
+          user_id in team.members ->
+            {:reply, {:error, :already_member}, state}
+
+          user_id in team.invitations ->
+            {:reply, {:error, :already_invited}, state}
+
+          true ->
+            team = %{team | invitations: team.invitations ++ [user_id]}
+            {:reply, {:ok, user_id}, put_in(state, [:teams, team_id], team)}
+        end
+    end
+  end
+
+  def handle_call({:accept, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, team} ->
+        cond do
+          user_id not in team.invitations ->
+            {:reply, {:error, :no_invitation}, state}
+
+          length(team.members) >= team.capacity ->
+            {:reply, {:error, :team_full}, state}
+
+          true ->
+            team = %{
+              team
+              | invitations (truncated)
+02:09:09.768 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2686, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2686, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2686, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2686, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 5836, "type" => "message"}], "output_tokens" => 5836, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:09:09.796 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_gated_nested_membership_with_capacity_limits_01 solution.ex
+02:09:10.679 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":446,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":7,"public_fn_count":28,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_004_invitation_gated_nested_membership_with_capacity_limits_01/solution.ex","task":"022_004_invitation_gated_nested_membership_with_capacity_limits_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":27,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-10T00:09:10.653116Z"}
+02:09:10.680 [info] cycle 022_004_invitation_gated_nested_membership_with_capacity_limits_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+02:09:10.680 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:09:10.680 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement **invitation-gated nested resource endpoints for team membership with capacity limits**, using only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Membership is a two-step handshake instead of a direct add. An existing active member *invites* a user, which creates a **pending invitation**. The invited user (and only that user) *accepts* their own invitation, which promotes them to an **active member** — but only if the team is not already at capacity. Teams have a fixed maximum number of active members.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer that holds all application state in memory (users, teams, active members, pending invitations, and per-team capacity). It should support these public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option for registration.
+- `TeamStore.create_user(server, id, token)` — stores a user with the given ID and bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id, capacity)` — creates a team with an empty active-member list, no invitations, and the given integer `capacity` (maximum number of active members). Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — adds a user directly to a team's active members (for seeding; ignores capacity). Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true` or `false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true` if the user is an **active** member, else `false`.
+- `TeamStore.has_invitation?(server, team_id, user_id)` — returns `true` if the user has a **pending** invitation on the team, else `false`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, list_of_active_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.list_invitations(server, team_id)` — returns `{:ok, list_of_pending_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.invite(server, team_id, user_id)` — records a pending invitation. Checks in order: team missing → `{:error, :not_found}`; the user is already an active member → `{:error, :already_member}`; the user already has a pending invitation → `{:error, :already_invited}`; otherwise add the pending invitation and return `{:ok, user_id}`.
+- `TeamStore.accept(server, team_id, user_id)` — promotes the user's own pending invitation to active membership. Checks in order: team missing → `{:error, :not_found}`; the user has no pending invitation → `{:error, :no_invitation}`; the team already has `capacity` active members → `{:error, :team_full}`; otherwise move the user from invitations to active members and return `{:ok, team_id}`.
+
+**`AuthPlug`** — a Plug that reads the `authorization` header, expects `Bearer <token>`, looks the user up via `TeamStore.get_user_by_token/2`, and assigns `:current_user` to the conn. If the token is missing or invalid, it halts the connection with a 401 JSON response `{"error": "unauthorized"}`. It should accept a `:store` option at init time to know which TeamStore process to call.
+
+**`TeamRouter`** — a `Plug.Router` that serves the following endpoints. It should accept a `:store` option and plug `AuthPlug` before route matching. Note that the endpoints have **different authorization requirements**: listing and inviting require the caller to be an active member, but accepting is done by the invited (non-member) user.
+
+- `GET /api/teams/:team_id/members` — If the team doesn't exist, return 404 `{"error": "not_found"}`. If the current user is not an active member, return 403 `{"error": "forbidden"}`. Otherwise return 200 `{"members": [list_of_active_user_ids]}`.
+
+- `GET /api/teams/:team_id/invitations` — Same 404/403 rules (caller must be an active member). Otherwise return 200 `{"invitations": [list_of_pending_user_ids]}`.
+
+- `POST /api/teams/:team_id/invitations` — Reads a JSON body with `{"user_id": "..."}`. Decided in order: team missing → 404 `{"error": "not_found"}`; caller is not an active member → 403 `{"error": "forbidden"}`; body missing a string `"user_id"` → 400 `{"error": "bad_request"}`; then call `invite/3` and map its result: `{:error, :already_member}` → 409 `{"error": "already_member"}`; `{:error, :already_invited}` → 409 `{"error": "already_invited"}`; `{:error, :not_found}` → 404 `{"error": "not_found"}`; `{:ok, user_id}` → 201 `{"invited": user_id}`.
+
+- `POST /api/teams/:team_id/members` — This is the **accept** endpoint; the current user accepts their own pending invitation. No request body is required. Decided in order: team missing → 404 `{"error": "not_found"}`; then call `accept/3` for the current user and map its result: `{:error, :no_invitation}` → 403 `{"error": "forbidden"}`; `{:error, :team_full}` → 409 `{"error": "team_full"}`; `{:error, :not_found}` → 404 `{"error": "not_found"}`; `{:ok, team_id}` → 201 `{"joined": team_id}`.
+
+All error and success responses must be `application/json`. Give me all modules in a single file. Use only `plug`, `jason`, and the OTP standard library.
+
+----- solution.ex -----
+defmodule TeamStore do
+  @moduledoc """
+  In-memory state store for invitation-gated team membership.
+
+  Holds all application state — users (keyed by id), tokens (mapping
+  bearer token to user id), and teams. Each team tracks its active
+  members, its pending invitations, and its capacity (the maximum number
+  of active members allowed).
+
+  Membership is a two-step handshake: an active member invites a user,
+  creating a pending invitation; the invited user later accepts, which
+  promotes them to an active member if the team has spare capacity.
+  """
+
+  use GenServer
+
+  @typedoc "Opaque server reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  @typedoc "Internal team record."
+  @type team :: %{members: [String.t()], invitations: [String.t()], capacity: integer()}
+
+  # ----------------------------------------------------------------------
+  # Client API
+  # ----------------------------------------------------------------------
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option used to register the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, server_opts)
+  end
+
+  @doc "Stores a user with the given `id` and bearer `token`."
+  @spec create_user(server(), String.t(), String.t()) :: :ok
+  def create_user(server, id, token) do
+    GenServer.call(server, {:create_user, id, token})
+  end
+
+  @doc "Creates a team with an empty member list and the given `capacity`."
+  @spec create_team(server(), String.t(), integer()) :: :ok
+  def create_team(server, team_id, capacity) do
+    GenServer.call(se (truncated)
+02:16:15.228 [debug] claude -p RESULT (stop="end_turn"):
+Looking at the code, I need to find the single compile warning. After carefully checking every variable, import, function, and callback, the code is clean except for one thing: the module attribute `@type team` is defined but **never referenced** by any `@spec` or other type. Unused types trigger a compiler warning. The fix is to remove the dead type (it's purely internal documentation and referencing it nowhere makes it dead code) — behavior is completely unchanged.
+
+<file path="solution.ex">
+defmodule TeamStore do
+  @moduledoc """
+  In-memory state store for invitation-gated team membership.
+
+  Holds all application state — users (keyed by id), tokens (mapping
+  bearer token to user id), and teams. Each team tracks its active
+  members, its pending invitations, and its capacity (the maximum number
+  of active members allowed).
+
+  Membership is a two-step handshake: an active member invites a user,
+  creating a pending invitation; the invited user later accepts, which
+  promotes them to an active member if the team has spare capacity.
+  """
+
+  use GenServer
+
+  @typedoc "Opaque server reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  # ----------------------------------------------------------------------
+  # Client API
+  # ----------------------------------------------------------------------
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option used to register the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, server_opts)
+  end
+
+  @doc "Stores a user with the given `id` and bearer `token`."
+  @spec create_user(server(), String.t(), String.t()) :: :ok
+  def create_user(server, id, token) do
+    GenServer.call(server, {:create_user, id, token})
+  end
+
+  @doc "Creates a team with an empty member list and the given `capacity`."
+  @spec create_team(server(), String.t(), integer()) :: :ok
+  def create_team(server, team_id, capacity) do
+    GenServer.call(server, {:create_team, team_id, capacity})
+  end
+
+  @doc "Directly adds `user_id` to the team's active members (ignores capacity)."
+  @spec add_member(server(), String.t(), String.t()) :: :ok
+  def add_member(server, team_id, user_id) do
+    GenServer.call(server, {:add_member, team_id, user_id})
+  end
+
+  @doc "Looks up a user id by bearer `token`."
+  @spec get_user_by_token(server(), String.t()) :: {:ok, String.t()} | :error
+  def get_user_by_token(server, token) do
+    GenServer.call(server, {:get_user_by_token, token})
+  end
+
+  @doc "Returns whether a team with `team_id` exists."
+  @spec team_exists?(server(), String.t()) :: boolean()
+  def team_exists?(server, team_id) do
+    GenServer.call(server, {:team_exists?, team_id})
+  end
+
+  @doc "Returns whether `user_id` is an active member of the team."
+  @spec is_member?(server(), String.t(), String.t()) :: boolean()
+  def is_member?(server, team_id, user_id) do
+    GenServer.call(server, {:is_member?, team_id, user_id})
+  end
+
+  @doc "Returns whether `user_id` has a pending invitation on the team."
+  @spec has_invitation?(server(), String.t(), String.t()) :: boolean()
+  def has_invitation?(server, team_id, user_id) do
+    GenServer.call(server, {:has_invitation?, team_id, user_id})
+  end
+
+  @doc "Lists the active member ids of the team."
+  @spec list_members(server(), String.t()) :: {:ok, [String.t()]} | {:error, :not_found}
+  def list_members(server, team_id) do
+    GenServer.call(server, {:list_members, team_id})
+  end
+
+  @doc "Lists the pending invitation user ids of the team."
+  @spec list_invitations(server(), String.t()) :: {:ok, [String.t()]} | {:error, :not_found}
+  def list_invitations(server, team_id) do
+    GenServer.call(server, {:list_invitations, team_id})
+  end
+
+  @doc """
+  Records a pending invitation for `user_id` on the team.
+
+  Returns `{:error, :not_found}` if the team is missing,
+  `{:error, :already_member}` if the user is already active,
+  `{:error, :already_invited}` if the user is already invited,
+  otherwise `{:ok, user_id}`.
+  """
+  @spec invite(server(), String.t(), String.t()) ::
+          {:ok, String.t()}
+          | {:error, :not_found | :already_member | :already_invited}
+  def invite(server, team_id, user_id) do
+    GenServer.call(server, {:invite, team_id, user_id})
+  end
+
+  @doc """
+  Promotes `user_id`'s own pending invitation to active membership.
+
+  Returns `{:error, :not_found}` if the team is missing,
+  `{:error, :no_invitation}` if the user has no pending invitation,
+  `{:error, :team_full}` if the team is at capacity,
+  otherwise `{:ok, team_id}`.
+  """
+  @spec accept(server(), String.t(), String.t()) ::
+          {:ok, String.t()}
+          | {:error, :not_found | :no_invitation | :team_full}
+  def accept(server, team_id, user_id) do
+    GenServer.call(server, {:accept, team_id, user_id})
+  end
+
+  # ----------------------------------------------------------------------
+  # Server callbacks
+  # ----------------------------------------------------------------------
+
+  @impl true
+  @spec init(keyword()) :: {:ok, map()}
+  def init(_opts) do
+    {:ok, %{users: %{}, tokens: %{}, teams: %{}}}
+  end
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    state =
+      state
+      |> put_in([:users, id], %{id: id, token: token})
+      |> put_in([:tokens, token], id)
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:create_team, team_id, capacity}, _from, state) do
+    team = %{members: [], invitations: [], capacity: capacity}
+    {:reply, :ok, put_in(state, [:teams, team_id], team)}
+  end
+
+  def handle_call({:add_member, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} ->
+        team = %{team | members: add_unique(team.members, user_id)}
+        {:reply, :ok, put_in(state, [:teams, team_id], team)}
+
+      :error ->
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:get_user_by_token, token}, _from, state) do
+    case Map.fetch(state.tokens, token) do
+      {:ok, user_id} -> {:reply, {:ok, user_id}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:team_exists?, team_id}, _from, state) do
+    {:reply, Map.has_key?(state.teams, team_id), state}
+  end
+
+  def handle_call({:is_member?, team_id, user_id}, _from, state) do
+    result =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, team} -> user_id in team.members
+        :error -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:has_invitation?, team_id, user_id}, _from, state) do
+    result =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, team} -> user_id in team.invitations
+        :error -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:list_members, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} -> {:reply, {:ok, team.members}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:list_invitations, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} -> {:reply, {:ok, team.invitations}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:invite, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, team} ->
+        cond do
+          user_id in team.members ->
+            {:reply, {:error, :already_member}, state}
+
+          user_id in team.invitations ->
+            {:reply, {:error, :already_invited}, state}
+
+          true ->
+            team = %{team | invitations: team.invitations ++ [user_id]}
+            {:reply, {:ok, user_id}, put_in(state, [:teams, team_id], team)}
+        end
+    end
+  end
+
+  def handle_call({:accept, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:err (truncated)
+02:16:15.228 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12664, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12664, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12664, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12664, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 32429, "type" => "message"}], "output_tokens" => 32429, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:16:15.256 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_gated_nested_membership_with_capacity_limits_01 solution.ex
+02:16:16.146 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":443,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":7,"public_fn_count":28,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_004_invitation_gated_nested_membership_with_capacity_limits_01/solution.ex","task":"022_004_invitation_gated_nested_membership_with_capacity_limits_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":27,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-10T00:16:16.120696Z"}
+02:16:16.148 [info] cycle 022_004_invitation_gated_nested_membership_with_capacity_limits_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+02:16:16.148 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:16:16.148 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement **invitation-gated nested resource endpoints for team membership with capacity limits**, using only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Membership is a two-step handshake instead of a direct add. An existing active member *invites* a user, which creates a **pending invitation**. The invited user (and only that user) *accepts* their own invitation, which promotes them to an **active member** — but only if the team is not already at capacity. Teams have a fixed maximum number of active members.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer that holds all application state in memory (users, teams, active members, pending invitations, and per-team capacity). It should support these public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option for registration.
+- `TeamStore.create_user(server, id, token)` — stores a user with the given ID and bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id, capacity)` — creates a team with an empty active-member list, no invitations, and the given integer `capacity` (maximum number of active members). Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — adds a user directly to a team's active members (for seeding; ignores capacity). Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true` or `false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true` if the user is an **active** member, else `false`.
+- `TeamStore.has_invitation?(server, team_id, user_id)` — returns `true` if the user has a **pending** invitation on the team, else `false`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, list_of_active_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.list_invitations(server, team_id)` — returns `{:ok, list_of_pending_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.invite(server, team_id, user_id)` — records a pending invitation. Checks in order: team missing → `{:error, :not_found}`; the user is already an active member → `{:error, :already_member}`; the user already has a pending invitation → `{:error, :already_invited}`; otherwise add the pending invitation and return `{:ok, user_id}`.
+- `TeamStore.accept(server, team_id, user_id)` — promotes the user's own pending invitation to active membership. Checks in order: team missing → `{:error, :not_found}`; the user has no pending invitation → `{:error, :no_invitation}`; the team already has `capacity` active members → `{:error, :team_full}`; otherwise move the user from invitations to active members and return `{:ok, team_id}`.
+
+**`AuthPlug`** — a Plug that reads the `authorization` header, expects `Bearer <token>`, looks the user up via `TeamStore.get_user_by_token/2`, and assigns `:current_user` to the conn. If the token is missing or invalid, it halts the connection with a 401 JSON response `{"error": "unauthorized"}`. It should accept a `:store` option at init time to know which TeamStore process to call.
+
+**`TeamRouter`** — a `Plug.Router` that serves the following endpoints. It should accept a `:store` option and plug `AuthPlug` before route matching. Note that the endpoints have **different authorization requirements**: listing and inviting require the caller to be an active member, but accepting is done by the invited (non-member) user.
+
+- `GET /api/teams/:team_id/members` — If the team doesn't exist, return 404 `{"error": "not_found"}`. If the current user is not an active member, return 403 `{"error": "forbidden"}`. Otherwise return 200 `{"members": [list_of_active_user_ids]}`.
+
+- `GET /api/teams/:team_id/invitations` — Same 404/403 rules (caller must be an active member). Otherwise return 200 `{"invitations": [list_of_pending_user_ids]}`.
+
+- `POST /api/teams/:team_id/invitations` — Reads a JSON body with `{"user_id": "..."}`. Decided in order: team missing → 404 `{"error": "not_found"}`; caller is not an active member → 403 `{"error": "forbidden"}`; body missing a string `"user_id"` → 400 `{"error": "bad_request"}`; then call `invite/3` and map its result: `{:error, :already_member}` → 409 `{"error": "already_member"}`; `{:error, :already_invited}` → 409 `{"error": "already_invited"}`; `{:error, :not_found}` → 404 `{"error": "not_found"}`; `{:ok, user_id}` → 201 `{"invited": user_id}`.
+
+- `POST /api/teams/:team_id/members` — This is the **accept** endpoint; the current user accepts their own pending invitation. No request body is required. Decided in order: team missing → 404 `{"error": "not_found"}`; then call `accept/3` for the current user and map its result: `{:error, :no_invitation}` → 403 `{"error": "forbidden"}`; `{:error, :team_full}` → 409 `{"error": "team_full"}`; `{:error, :not_found}` → 404 `{"error": "not_found"}`; `{:ok, team_id}` → 201 `{"joined": team_id}`.
+
+All error and success responses must be `application/json`. Give me all modules in a single file. Use only `plug`, `jason`, and the OTP standard library.
+
+----- solution.ex -----
+defmodule TeamStore do
+  @moduledoc """
+  In-memory state store for invitation-gated team membership.
+
+  Holds all application state — users (keyed by id), tokens (mapping
+  bearer token to user id), and teams. Each team tracks its active
+  members, its pending invitations, and its capacity (the maximum number
+  of active members allowed).
+
+  Membership is a two-step handshake: an active member invites a user,
+  creating a pending invitation; the invited user later accepts, which
+  promotes them to an active member if the team has spare capacity.
+  """
+
+  use GenServer
+
+  @typedoc "Opaque server reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  # ----------------------------------------------------------------------
+  # Client API
+  # ----------------------------------------------------------------------
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option used to register the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, server_opts)
+  end
+
+  @doc "Stores a user with the given `id` and bearer `token`."
+  @spec create_user(server(), String.t(), String.t()) :: :ok
+  def create_user(server, id, token) do
+    GenServer.call(server, {:create_user, id, token})
+  end
+
+  @doc "Creates a team with an empty member list and the given `capacity`."
+  @spec create_team(server(), String.t(), integer()) :: :ok
+  def create_team(server, team_id, capacity) do
+    GenServer.call(server, {:create_team, team_id, capacity})
+  end
+
+  @doc "Directly adds `user_id` to the team's active members (ignores capacit (truncated)
+02:31:16.175 [warning] transient error (no JSON on stdout (exit 137)) on fix (022_004_invitation_gated_nested_membership_with_capacity_limits_01) — retry 1/5 after 2000ms
+02:41:54.140 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the solution is green (all tests pass) but emits a compile warning. I analyzed every module carefully for unused variables, unused imports, `@impl` inconsistencies, unreachable clauses, and cross-module reference issues — the only two constructs that are non-standard enough to plausibly trigger a benign compile warning are the `with/else` control flow in `AuthPlug.call/2` and the custom `init/1` override in `TeamRouter` (whose `super(opts)` is exactly equal to the default `Plug.Builder` init).
+
+I'll silence the warning by simplifying both to plain, warning-free idioms, keeping behavior identical and all tests intact.
+
+<file path="solution.ex">
+defmodule TeamStore do
+  @moduledoc """
+  In-memory state store for invitation-gated team membership.
+
+  Holds all application state — users (keyed by id), tokens (mapping
+  bearer token to user id), and teams. Each team tracks its active
+  members, its pending invitations, and its capacity (the maximum number
+  of active members allowed).
+
+  Membership is a two-step handshake: an active member invites a user,
+  creating a pending invitation; the invited user later accepts, which
+  promotes them to an active member if the team has spare capacity.
+  """
+
+  use GenServer
+
+  @typedoc "Opaque server reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  # ----------------------------------------------------------------------
+  # Client API
+  # ----------------------------------------------------------------------
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option used to register the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, server_opts)
+  end
+
+  @doc "Stores a user with the given `id` and bearer `token`."
+  @spec create_user(server(), String.t(), String.t()) :: :ok
+  def create_user(server, id, token) do
+    GenServer.call(server, {:create_user, id, token})
+  end
+
+  @doc "Creates a team with an empty member list and the given `capacity`."
+  @spec create_team(server(), String.t(), integer()) :: :ok
+  def create_team(server, team_id, capacity) do
+    GenServer.call(server, {:create_team, team_id, capacity})
+  end
+
+  @doc "Directly adds `user_id` to the team's active members (ignores capacity)."
+  @spec add_member(server(), String.t(), String.t()) :: :ok
+  def add_member(server, team_id, user_id) do
+    GenServer.call(server, {:add_member, team_id, user_id})
+  end
+
+  @doc "Looks up a user id by bearer `token`."
+  @spec get_user_by_token(server(), String.t()) :: {:ok, String.t()} | :error
+  def get_user_by_token(server, token) do
+    GenServer.call(server, {:get_user_by_token, token})
+  end
+
+  @doc "Returns whether a team with `team_id` exists."
+  @spec team_exists?(server(), String.t()) :: boolean()
+  def team_exists?(server, team_id) do
+    GenServer.call(server, {:team_exists?, team_id})
+  end
+
+  @doc "Returns whether `user_id` is an active member of the team."
+  @spec is_member?(server(), String.t(), String.t()) :: boolean()
+  def is_member?(server, team_id, user_id) do
+    GenServer.call(server, {:is_member?, team_id, user_id})
+  end
+
+  @doc "Returns whether `user_id` has a pending invitation on the team."
+  @spec has_invitation?(server(), String.t(), String.t()) :: boolean()
+  def has_invitation?(server, team_id, user_id) do
+    GenServer.call(server, {:has_invitation?, team_id, user_id})
+  end
+
+  @doc "Lists the active member ids of the team."
+  @spec list_members(server(), String.t()) :: {:ok, [String.t()]} | {:error, :not_found}
+  def list_members(server, team_id) do
+    GenServer.call(server, {:list_members, team_id})
+  end
+
+  @doc "Lists the pending invitation user ids of the team."
+  @spec list_invitations(server(), String.t()) :: {:ok, [String.t()]} | {:error, :not_found}
+  def list_invitations(server, team_id) do
+    GenServer.call(server, {:list_invitations, team_id})
+  end
+
+  @doc """
+  Records a pending invitation for `user_id` on the team.
+
+  Returns `{:error, :not_found}` if the team is missing,
+  `{:error, :already_member}` if the user is already active,
+  `{:error, :already_invited}` if the user is already invited,
+  otherwise `{:ok, user_id}`.
+  """
+  @spec invite(server(), String.t(), String.t()) ::
+          {:ok, String.t()}
+          | {:error, :not_found | :already_member | :already_invited}
+  def invite(server, team_id, user_id) do
+    GenServer.call(server, {:invite, team_id, user_id})
+  end
+
+  @doc """
+  Promotes `user_id`'s own pending invitation to active membership.
+
+  Returns `{:error, :not_found}` if the team is missing,
+  `{:error, :no_invitation}` if the user has no pending invitation,
+  `{:error, :team_full}` if the team is at capacity,
+  otherwise `{:ok, team_id}`.
+  """
+  @spec accept(server(), String.t(), String.t()) ::
+          {:ok, String.t()}
+          | {:error, :not_found | :no_invitation | :team_full}
+  def accept(server, team_id, user_id) do
+    GenServer.call(server, {:accept, team_id, user_id})
+  end
+
+  # ----------------------------------------------------------------------
+  # Server callbacks
+  # ----------------------------------------------------------------------
+
+  @impl true
+  @spec init(keyword()) :: {:ok, map()}
+  def init(_opts) do
+    {:ok, %{users: %{}, tokens: %{}, teams: %{}}}
+  end
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    state =
+      state
+      |> put_in([:users, id], %{id: id, token: token})
+      |> put_in([:tokens, token], id)
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:create_team, team_id, capacity}, _from, state) do
+    team = %{members: [], invitations: [], capacity: capacity}
+    {:reply, :ok, put_in(state, [:teams, team_id], team)}
+  end
+
+  def handle_call({:add_member, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} ->
+        team = %{team | members: add_unique(team.members, user_id)}
+        {:reply, :ok, put_in(state, [:teams, team_id], team)}
+
+      :error ->
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:get_user_by_token, token}, _from, state) do
+    case Map.fetch(state.tokens, token) do
+      {:ok, user_id} -> {:reply, {:ok, user_id}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:team_exists?, team_id}, _from, state) do
+    {:reply, Map.has_key?(state.teams, team_id), state}
+  end
+
+  def handle_call({:is_member?, team_id, user_id}, _from, state) do
+    result =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, team} -> user_id in team.members
+        :error -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:has_invitation?, team_id, user_id}, _from, state) do
+    result =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, team} -> user_id in team.invitations
+        :error -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:list_members, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} -> {:reply, {:ok, team.members}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:list_invitations, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} -> {:reply, {:ok, team.invitations}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:invite, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, team} ->
+        cond do
+          user_id in team.members ->
+            {:reply, {:error, :already_member}, state}
+
+          user_id in team.invitations ->
+            {:reply, {:error, :already_invited}, state}
+
+          true ->
+            team = %{team | invitations: team.invitations ++ [user_id]}
+            {:reply, {:ok, user_id}, put_in(state, [:teams, team_id], team)}
+    (truncated)
+02:41:54.140 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 27505, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 27505, "input_tokens" => 2972, "output_tokens" => 47882, "type" => "message"}], "output_tokens" => 47882, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:41:54.167 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_gated_nested_membership_with_capacity_limits_01 solution.ex
+02:41:55.047 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":440,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":7,"public_fn_count":27,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_004_invitation_gated_nested_membership_with_capacity_limits_01/solution.ex","task":"022_004_invitation_gated_nested_membership_with_capacity_limits_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":27,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-10T00:41:55.020108Z"}
+02:41:55.048 [info] cycle 022_004_invitation_gated_nested_membership_with_capacity_limits_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+02:41:55.048 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:41:55.048 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement **invitation-gated nested resource endpoints for team membership with capacity limits**, using only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Membership is a two-step handshake instead of a direct add. An existing active member *invites* a user, which creates a **pending invitation**. The invited user (and only that user) *accepts* their own invitation, which promotes them to an **active member** — but only if the team is not already at capacity. Teams have a fixed maximum number of active members.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer that holds all application state in memory (users, teams, active members, pending invitations, and per-team capacity). It should support these public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option for registration.
+- `TeamStore.create_user(server, id, token)` — stores a user with the given ID and bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id, capacity)` — creates a team with an empty active-member list, no invitations, and the given integer `capacity` (maximum number of active members). Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — adds a user directly to a team's active members (for seeding; ignores capacity). Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true` or `false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true` if the user is an **active** member, else `false`.
+- `TeamStore.has_invitation?(server, team_id, user_id)` — returns `true` if the user has a **pending** invitation on the team, else `false`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, list_of_active_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.list_invitations(server, team_id)` — returns `{:ok, list_of_pending_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.invite(server, team_id, user_id)` — records a pending invitation. Checks in order: team missing → `{:error, :not_found}`; the user is already an active member → `{:error, :already_member}`; the user already has a pending invitation → `{:error, :already_invited}`; otherwise add the pending invitation and return `{:ok, user_id}`.
+- `TeamStore.accept(server, team_id, user_id)` — promotes the user's own pending invitation to active membership. Checks in order: team missing → `{:error, :not_found}`; the user has no pending invitation → `{:error, :no_invitation}`; the team already has `capacity` active members → `{:error, :team_full}`; otherwise move the user from invitations to active members and return `{:ok, team_id}`.
+
+**`AuthPlug`** — a Plug that reads the `authorization` header, expects `Bearer <token>`, looks the user up via `TeamStore.get_user_by_token/2`, and assigns `:current_user` to the conn. If the token is missing or invalid, it halts the connection with a 401 JSON response `{"error": "unauthorized"}`. It should accept a `:store` option at init time to know which TeamStore process to call.
+
+**`TeamRouter`** — a `Plug.Router` that serves the following endpoints. It should accept a `:store` option and plug `AuthPlug` before route matching. Note that the endpoints have **different authorization requirements**: listing and inviting require the caller to be an active member, but accepting is done by the invited (non-member) user.
+
+- `GET /api/teams/:team_id/members` — If the team doesn't exist, return 404 `{"error": "not_found"}`. If the current user is not an active member, return 403 `{"error": "forbidden"}`. Otherwise return 200 `{"members": [list_of_active_user_ids]}`.
+
+- `GET /api/teams/:team_id/invitations` — Same 404/403 rules (caller must be an active member). Otherwise return 200 `{"invitations": [list_of_pending_user_ids]}`.
+
+- `POST /api/teams/:team_id/invitations` — Reads a JSON body with `{"user_id": "..."}`. Decided in order: team missing → 404 `{"error": "not_found"}`; caller is not an active member → 403 `{"error": "forbidden"}`; body missing a string `"user_id"` → 400 `{"error": "bad_request"}`; then call `invite/3` and map its result: `{:error, :already_member}` → 409 `{"error": "already_member"}`; `{:error, :already_invited}` → 409 `{"error": "already_invited"}`; `{:error, :not_found}` → 404 `{"error": "not_found"}`; `{:ok, user_id}` → 201 `{"invited": user_id}`.
+
+- `POST /api/teams/:team_id/members` — This is the **accept** endpoint; the current user accepts their own pending invitation. No request body is required. Decided in order: team missing → 404 `{"error": "not_found"}`; then call `accept/3` for the current user and map its result: `{:error, :no_invitation}` → 403 `{"error": "forbidden"}`; `{:error, :team_full}` → 409 `{"error": "team_full"}`; `{:error, :not_found}` → 404 `{"error": "not_found"}`; `{:ok, team_id}` → 201 `{"joined": team_id}`.
+
+All error and success responses must be `application/json`. Give me all modules in a single file. Use only `plug`, `jason`, and the OTP standard library.
+
+----- solution.ex -----
+defmodule TeamStore do
+  @moduledoc """
+  In-memory state store for invitation-gated team membership.
+
+  Holds all application state — users (keyed by id), tokens (mapping
+  bearer token to user id), and teams. Each team tracks its active
+  members, its pending invitations, and its capacity (the maximum number
+  of active members allowed).
+
+  Membership is a two-step handshake: an active member invites a user,
+  creating a pending invitation; the invited user later accepts, which
+  promotes them to an active member if the team has spare capacity.
+  """
+
+  use GenServer
+
+  @typedoc "Opaque server reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  # ----------------------------------------------------------------------
+  # Client API
+  # ----------------------------------------------------------------------
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option used to register the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, server_opts)
+  end
+
+  @doc "Stores a user with the given `id` and bearer `token`."
+  @spec create_user(server(), String.t(), String.t()) :: :ok
+  def create_user(server, id, token) do
+    GenServer.call(server, {:create_user, id, token})
+  end
+
+  @doc "Creates a team with an empty member list and the given `capacity`."
+  @spec create_team(server(), String.t(), integer()) :: :ok
+  def create_team(server, team_id, capacity) do
+    GenServer.call(server, {:create_team, team_id, capacity})
+  end
+
+  @doc "Directly adds `user_id` to the team's active members (ignores capacit (truncated)
+02:46:47.959 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the one compile warning comes from the hand-written `TeamRouter.call/2` override: `use Plug.Router` already declares `@behaviour Plug` and generates its own `call/2`, so defining our own public `call/2` (with `@doc`/`@spec` metadata that collides with the generated clause) triggers a warning. I'll inject the store via a private function plug using `builder_opts()` instead — this keeps behavior identical (store still comes from the init opts) and removes the conflicting override.
+
+<file path="solution.ex">
+defmodule TeamStore do
+  @moduledoc """
+  In-memory state store for invitation-gated team membership.
+
+  Holds all application state — users (keyed by id), tokens (mapping
+  bearer token to user id), and teams. Each team tracks its active
+  members, its pending invitations, and its capacity (the maximum number
+  of active members allowed).
+
+  Membership is a two-step handshake: an active member invites a user,
+  creating a pending invitation; the invited user later accepts, which
+  promotes them to an active member if the team has spare capacity.
+  """
+
+  use GenServer
+
+  @typedoc "Opaque server reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  # ----------------------------------------------------------------------
+  # Client API
+  # ----------------------------------------------------------------------
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option used to register the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, server_opts)
+  end
+
+  @doc "Stores a user with the given `id` and bearer `token`."
+  @spec create_user(server(), String.t(), String.t()) :: :ok
+  def create_user(server, id, token) do
+    GenServer.call(server, {:create_user, id, token})
+  end
+
+  @doc "Creates a team with an empty member list and the given `capacity`."
+  @spec create_team(server(), String.t(), integer()) :: :ok
+  def create_team(server, team_id, capacity) do
+    GenServer.call(server, {:create_team, team_id, capacity})
+  end
+
+  @doc "Directly adds `user_id` to the team's active members (ignores capacity)."
+  @spec add_member(server(), String.t(), String.t()) :: :ok
+  def add_member(server, team_id, user_id) do
+    GenServer.call(server, {:add_member, team_id, user_id})
+  end
+
+  @doc "Looks up a user id by bearer `token`."
+  @spec get_user_by_token(server(), String.t()) :: {:ok, String.t()} | :error
+  def get_user_by_token(server, token) do
+    GenServer.call(server, {:get_user_by_token, token})
+  end
+
+  @doc "Returns whether a team with `team_id` exists."
+  @spec team_exists?(server(), String.t()) :: boolean()
+  def team_exists?(server, team_id) do
+    GenServer.call(server, {:team_exists?, team_id})
+  end
+
+  @doc "Returns whether `user_id` is an active member of the team."
+  @spec is_member?(server(), String.t(), String.t()) :: boolean()
+  def is_member?(server, team_id, user_id) do
+    GenServer.call(server, {:is_member?, team_id, user_id})
+  end
+
+  @doc "Returns whether `user_id` has a pending invitation on the team."
+  @spec has_invitation?(server(), String.t(), String.t()) :: boolean()
+  def has_invitation?(server, team_id, user_id) do
+    GenServer.call(server, {:has_invitation?, team_id, user_id})
+  end
+
+  @doc "Lists the active member ids of the team."
+  @spec list_members(server(), String.t()) :: {:ok, [String.t()]} | {:error, :not_found}
+  def list_members(server, team_id) do
+    GenServer.call(server, {:list_members, team_id})
+  end
+
+  @doc "Lists the pending invitation user ids of the team."
+  @spec list_invitations(server(), String.t()) :: {:ok, [String.t()]} | {:error, :not_found}
+  def list_invitations(server, team_id) do
+    GenServer.call(server, {:list_invitations, team_id})
+  end
+
+  @doc """
+  Records a pending invitation for `user_id` on the team.
+
+  Returns `{:error, :not_found}` if the team is missing,
+  `{:error, :already_member}` if the user is already active,
+  `{:error, :already_invited}` if the user is already invited,
+  otherwise `{:ok, user_id}`.
+  """
+  @spec invite(server(), String.t(), String.t()) ::
+          {:ok, String.t()}
+          | {:error, :not_found | :already_member | :already_invited}
+  def invite(server, team_id, user_id) do
+    GenServer.call(server, {:invite, team_id, user_id})
+  end
+
+  @doc """
+  Promotes `user_id`'s own pending invitation to active membership.
+
+  Returns `{:error, :not_found}` if the team is missing,
+  `{:error, :no_invitation}` if the user has no pending invitation,
+  `{:error, :team_full}` if the team is at capacity,
+  otherwise `{:ok, team_id}`.
+  """
+  @spec accept(server(), String.t(), String.t()) ::
+          {:ok, String.t()}
+          | {:error, :not_found | :no_invitation | :team_full}
+  def accept(server, team_id, user_id) do
+    GenServer.call(server, {:accept, team_id, user_id})
+  end
+
+  # ----------------------------------------------------------------------
+  # Server callbacks
+  # ----------------------------------------------------------------------
+
+  @impl true
+  @spec init(keyword()) :: {:ok, map()}
+  def init(_opts) do
+    {:ok, %{users: %{}, tokens: %{}, teams: %{}}}
+  end
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    state =
+      state
+      |> put_in([:users, id], %{id: id, token: token})
+      |> put_in([:tokens, token], id)
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:create_team, team_id, capacity}, _from, state) do
+    team = %{members: [], invitations: [], capacity: capacity}
+    {:reply, :ok, put_in(state, [:teams, team_id], team)}
+  end
+
+  def handle_call({:add_member, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} ->
+        team = %{team | members: add_unique(team.members, user_id)}
+        {:reply, :ok, put_in(state, [:teams, team_id], team)}
+
+      :error ->
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:get_user_by_token, token}, _from, state) do
+    case Map.fetch(state.tokens, token) do
+      {:ok, user_id} -> {:reply, {:ok, user_id}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:team_exists?, team_id}, _from, state) do
+    {:reply, Map.has_key?(state.teams, team_id), state}
+  end
+
+  def handle_call({:is_member?, team_id, user_id}, _from, state) do
+    result =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, team} -> user_id in team.members
+        :error -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:has_invitation?, team_id, user_id}, _from, state) do
+    result =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, team} -> user_id in team.invitations
+        :error -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:list_members, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} -> {:reply, {:ok, team.members}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:list_invitations, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} -> {:reply, {:ok, team.invitations}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:invite, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, team} ->
+        cond do
+          user_id in team.members ->
+            {:reply, {:error, :already_member}, state}
+
+          user_id in team.invitations ->
+            {:reply, {:error, :already_invited}, state}
+
+          true ->
+            team = %{team | invitations: team.invitations ++ [user_id]}
+            {:reply, {:ok, user_id}, put_in(state, [:teams, team_id], team)}
+        end
+    end
+  end
+
+  def handle_call({:accept, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :er (truncated)
+02:46:47.959 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12563, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12563, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12563, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12563, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 22750, "type" => "message"}], "output_tokens" => 22750, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:46:47.986 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_gated_nested_membership_with_capacity_limits_01 solution.ex
+02:46:48.847 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":440,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":7,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_004_invitation_gated_nested_membership_with_capacity_limits_01/solution.ex","task":"022_004_invitation_gated_nested_membership_with_capacity_limits_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":27,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-10T00:46:48.822747Z"}
+02:46:48.848 [info] cycle 022_004_invitation_gated_nested_membership_with_capacity_limits_01: REJECTED after 4 attempt(s)

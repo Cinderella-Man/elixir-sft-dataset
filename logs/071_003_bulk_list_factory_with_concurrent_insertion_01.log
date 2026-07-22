@@ -1,0 +1,427 @@
+18:04:10.675 [info] VARIATION 071_003_bulk_list_factory_with_concurrent_insertion_01: Bulk List Factory with Concurrent Insertion
+18:04:10.675 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01 solution.ex
+18:04:11.398 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":false,"line_count":151,"lines_over_98":0,"max_line_length":82,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.75,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.95,"reasons":["analysis: @spec annotations present → 0/2 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:11.375451Z"}
+18:04:11.399 [info] cycle 071_003_bulk_list_factory_with_concurrent_insertion_01: repairing — The solution is green but does not meet the house style: no @spec on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+18:04:11.399 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+18:04:11.399 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @spec on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Factory` that generates test data similarly to
+ExMachina, but simpler and self-contained — with first-class support for
+**bulk (list) generation** and **params extraction**.
+
+I need these functions in the public API:
+
+- `Factory.build(factory_name)` / `build(factory_name, overrides)` — returns a
+  struct for the named factory (merging a keyword list of field overrides),
+  without touching the database.
+- `Factory.insert(factory_name)` / `insert(factory_name, overrides)` — builds the
+  struct and persists it via `MyApp.Repo.insert!`, returning the persisted struct.
+- `Factory.build_list(count, factory_name)` /
+  `build_list(count, factory_name, overrides)` — returns a list of `count` built
+  structs. Each element must be built independently, so sequence-driven fields
+  (like default emails) stay unique across the list. A `count` of `0` returns `[]`.
+- `Factory.insert_list(count, factory_name)` /
+  `insert_list(count, factory_name, overrides)` — persists `count` structs and
+  returns the list of persisted structs. Insertion must run **concurrently** (one
+  `Task` per record) while keeping every generated sequence value and every
+  assigned id unique. A `count` of `0` returns `[]`.
+- `Factory.params_for(factory_name)` /
+  `params_for(factory_name, overrides)` — returns a plain `map` of the factory's
+  fields (not a struct) with the `:id` key removed, suitable for feeding into a
+  request/changeset. Associations are still resolved to their persisted ids.
+- `Factory.sequence(name, formatter_fn)` — returns the next value for a named
+  sequence by calling `formatter_fn.(n)` where `n` is a monotonically increasing
+  integer starting at 1. Each `name` has its own independent counter, and
+  sequences must remain unique across the whole test run even under concurrent
+  (`async: true`) access, backed by a named `Agent`.
+
+At minimum define factories for `:user` (fields `name`, `email`) and `:post`
+(fields `title`, `body`, `user_id`). The `:post` factory must automatically call
+`Factory.insert(:user)` to populate `user_id`, unless `user_id` is supplied as an
+override.
+
+Use only the Elixir standard library and assume `Repo` is available as
+`MyApp.Repo`. Deliver everything in a single file.
+
+----- solution.ex -----
+defmodule Factory do
+  @moduledoc """
+  A lightweight, self-contained test-data factory with **bulk generation**.
+
+  Adds `build_list/2,3`, `insert_list/2,3` (concurrent), and `params_for/1,2`
+  on top of the usual `build`, `insert`, and `sequence` API.
+
+  ## Usage
+
+      Factory.build_list(3, :user)
+      Factory.insert_list(100, :user)          # concurrent inserts
+      Factory.params_for(:user, name: "Ada")   # plain map, no :id
+  """
+
+  @compile {:no_warn_undefined, MyApp.Repo}
+
+  @agent __MODULE__.SequenceAgent
+
+  # -------------------------------------------------------------------------
+  # Agent lifecycle + sequences
+  # -------------------------------------------------------------------------
+
+  @doc "Starts the named Agent backing all sequence counters."
+  def start do
+    Agent.start_link(fn -> %{} end, name: @agent)
+  end
+
+  @doc "Returns the next value for the named sequence."
+  def sequence(name, formatter_fn) when is_function(formatter_fn, 1) do
+    ensure_agent_started()
+
+    n =
+      Agent.get_and_update(@agent, fn counters ->
+        next = Map.get(counters, name, 0) + 1
+        {next, Map.put(counters, name, next)}
+      end)
+
+    formatter_fn.(n)
+  end
+
+  # -------------------------------------------------------------------------
+  # Singular build / insert
+  # -------------------------------------------------------------------------
+
+  @doc "Builds a struct for `name` without touching the database."
+  def build(name), do: build(name, [])
+
+  @doc "Builds a struct for `name`, merging `overrides`."
+  def build(name, overrides) do
+    name
+    |> factory()
+    |> merge_overrides(overrides)
+    |> resolve_thunks()
+  end
+
+  @doc "Builds and persists a struct for `name`."
+  def insert(name), do: insert(name, [])
+
+  @doc "Builds with `overrides`, then persists via `MyApp.Repo`."
+  def insert(name, overrides) do
+    name
+    |> build(overrides)
+    |> MyApp.Repo.insert!()
+  end
+
+  # -------------------------------------------------------------------------
+  # Bulk build / insert
+  # -------------------------------------------------------------------------
+
+  @doc "Builds a list of `count` structs for `name`."
+  def build_list(count, name), do: build_list(count, name, [])
+
+  @doc "Builds a list of `count` structs for `name`, each with `overrides`."
+  def build_list(count, name, overrides) when is_integer(count) and count >= 0 do
+    Enum.map(1..count//1, fn _ -> build(name, overrides) end)
+  end
+
+  @doc "Persists `count` structs for `name` concurrently."
+  def insert_list(count, name), do: insert_list(count, name, [])
+
+  @doc "Persists `count` structs for `name` concurrently, each with `overrides`."
+  def insert_list(count, name, overrides) when is_integer(count) and count >= 0 do
+    1..count//1
+    |> Enum.map(fn _ -> Task.async(fn -> insert(name, overrides) end) end)
+    |> Task.await_many()
+  end
+
+  # -------------------------------------------------------------------------
+  # params_for
+  # -------------------------------------------------------------------------
+
+  @doc "Returns a plain map of `name`'s fields (no struct, no `:id`)."
+  def params_for(name), do: params_for(name, [])
+
+  @doc "Returns a plain map of `name`'s fields with `overrides`, minus `:id`."
+  def params_for(name, overrides) do
+    name
+    |> build(overrides)
+    |> Map.from_struct()
+    |> Map.delete(:id)
+  end
+
+  # -------------------------------------------------------------------------
+  # Internal helpers
+  # -------------------------------------------------------------------------
+
+  defp merge_overrides(base, []), do: base
+  defp merge_overrides(base, overrides), do: struct(base, overrides)
+
+  defp resolve_thunks(%mod{} = s) do
+    resolved =
+      s
+      |> Map.from_struct()
+      |> Enum.map(fn
+        {key, fun} when is_function(fun, 0) -> {key, fun.()}
+        pair -> pair
+      end)
+
+    struct(mod, resolved)
+  end
+
+  defp ensure_agent_started do
+    case Process.whereis(@agent) do
+      nil -> Agent.start_link(fn -> %{} end, name: @agent)
+      _pid -> :ok
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Factory definitions
+  # -------------------------------------------------------------------------
+
+  defp factory(:user) do
+    struct!(MyApp.User,
+      name: sequence(:user_name, &"User #{&1}"),
+      email: sequence(:user_email, &"user-#{&1}@example.com")
+    )
+  end
+
+  defp factory(:post) do
+    struct!(MyApp.Post,
+      title: sequence(:post_title, &"Post title #{&1}"),
+      body: sequence(:post_body, &"Post body #{&1}. Lorem ipsum dolor sit amet."),
+      user_id: fn -> insert(:user).id end
+    )
+  end
+
+  defp factory(name) do
+    raise ArgumentError, "No factory defined for #{inspect(name)}."
+  end
+end
+
+----- test_harness.exs -----
+# --------------------------------------------------------------- (truncated)
+18:04:41.330 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule Factory do
+  @moduledoc """
+  A lightweight, self-contained test-data factory with **bulk generation**.
+
+  Adds `build_list/2,3`, `insert_list/2,3` (concurrent), and `params_for/1,2`
+  on top of the usual `build`, `insert`, and `sequence` API.
+
+  ## Usage
+
+      Factory.build_list(3, :user)
+      Factory.insert_list(100, :user)          # concurrent inserts
+      Factory.params_for(:user, name: "Ada")   # plain map, no :id
+  """
+
+  @compile {:no_warn_undefined, MyApp.Repo}
+
+  @agent __MODULE__.SequenceAgent
+
+  @typedoc "The name identifying a factory definition."
+  @type factory_name :: atom()
+
+  @typedoc "A keyword list of field overrides applied to a built struct."
+  @type overrides :: keyword()
+
+  # -------------------------------------------------------------------------
+  # Agent lifecycle + sequences
+  # -------------------------------------------------------------------------
+
+  @doc "Starts the named Agent backing all sequence counters."
+  @spec start() :: Agent.on_start()
+  def start do
+    Agent.start_link(fn -> %{} end, name: @agent)
+  end
+
+  @doc "Returns the next value for the named sequence."
+  @spec sequence(term(), (pos_integer() -> value)) :: value when value: term()
+  def sequence(name, formatter_fn) when is_function(formatter_fn, 1) do
+    ensure_agent_started()
+
+    n =
+      Agent.get_and_update(@agent, fn counters ->
+        next = Map.get(counters, name, 0) + 1
+        {next, Map.put(counters, name, next)}
+      end)
+
+    formatter_fn.(n)
+  end
+
+  # -------------------------------------------------------------------------
+  # Singular build / insert
+  # -------------------------------------------------------------------------
+
+  @doc "Builds a struct for `name` without touching the database."
+  @spec build(factory_name()) :: struct()
+  def build(name), do: build(name, [])
+
+  @doc "Builds a struct for `name`, merging `overrides`."
+  @spec build(factory_name(), overrides()) :: struct()
+  def build(name, overrides) do
+    name
+    |> factory()
+    |> merge_overrides(overrides)
+    |> resolve_thunks()
+  end
+
+  @doc "Builds and persists a struct for `name`."
+  @spec insert(factory_name()) :: struct()
+  def insert(name), do: insert(name, [])
+
+  @doc "Builds with `overrides`, then persists via `MyApp.Repo`."
+  @spec insert(factory_name(), overrides()) :: struct()
+  def insert(name, overrides) do
+    name
+    |> build(overrides)
+    |> MyApp.Repo.insert!()
+  end
+
+  # -------------------------------------------------------------------------
+  # Bulk build / insert
+  # -------------------------------------------------------------------------
+
+  @doc "Builds a list of `count` structs for `name`."
+  @spec build_list(non_neg_integer(), factory_name()) :: [struct()]
+  def build_list(count, name), do: build_list(count, name, [])
+
+  @doc "Builds a list of `count` structs for `name`, each with `overrides`."
+  @spec build_list(non_neg_integer(), factory_name(), overrides()) :: [struct()]
+  def build_list(count, name, overrides) when is_integer(count) and count >= 0 do
+    Enum.map(1..count//1, fn _ -> build(name, overrides) end)
+  end
+
+  @doc "Persists `count` structs for `name` concurrently."
+  @spec insert_list(non_neg_integer(), factory_name()) :: [struct()]
+  def insert_list(count, name), do: insert_list(count, name, [])
+
+  @doc "Persists `count` structs for `name` concurrently, each with `overrides`."
+  @spec insert_list(non_neg_integer(), factory_name(), overrides()) :: [struct()]
+  def insert_list(count, name, overrides) when is_integer(count) and count >= 0 do
+    1..count//1
+    |> Enum.map(fn _ -> Task.async(fn -> insert(name, overrides) end) end)
+    |> Task.await_many()
+  end
+
+  # -------------------------------------------------------------------------
+  # params_for
+  # -------------------------------------------------------------------------
+
+  @doc "Returns a plain map of `name`'s fields (no struct, no `:id`)."
+  @spec params_for(factory_name()) :: map()
+  def params_for(name), do: params_for(name, [])
+
+  @doc "Returns a plain map of `name`'s fields with `overrides`, minus `:id`."
+  @spec params_for(factory_name(), overrides()) :: map()
+  def params_for(name, overrides) do
+    name
+    |> build(overrides)
+    |> Map.from_struct()
+    |> Map.delete(:id)
+  end
+
+  # -------------------------------------------------------------------------
+  # Internal helpers
+  # -------------------------------------------------------------------------
+
+  @spec merge_overrides(struct(), overrides()) :: struct()
+  defp merge_overrides(base, []), do: base
+  defp merge_overrides(base, overrides), do: struct(base, overrides)
+
+  @spec resolve_thunks(struct()) :: struct()
+  defp resolve_thunks(%mod{} = s) do
+    resolved =
+      s
+      |> Map.from_struct()
+      |> Enum.map(fn
+        {key, fun} when is_function(fun, 0) -> {key, fun.()}
+        pair -> pair
+      end)
+
+    struct(mod, resolved)
+  end
+
+  @spec ensure_agent_started() :: :ok
+  defp ensure_agent_started do
+    case Process.whereis(@agent) do
+      nil ->
+        Agent.start_link(fn -> %{} end, name: @agent)
+        :ok
+
+      _pid ->
+        :ok
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Factory definitions
+  # -------------------------------------------------------------------------
+
+  @spec factory(factory_name()) :: struct()
+  defp factory(:user) do
+    struct!(MyApp.User,
+      name: sequence(:user_name, &"User #{&1}"),
+      email: sequence(:user_email, &"user-#{&1}@example.com")
+    )
+  end
+
+  defp factory(:post) do
+    struct!(MyApp.Post,
+      title: sequence(:post_title, &"Post title #{&1}"),
+      body: sequence(:post_body, &"Post body #{&1}. Lorem ipsum dolor sit amet."),
+      user_id: fn -> insert(:user).id end
+    )
+  end
+
+  defp factory(name) do
+    raise ArgumentError, "No factory defined for #{inspect(name)}."
+  end
+end
+</file>
+18:04:41.330 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5344, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5344, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5344, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5344, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 2819, "type" => "message"}], "output_tokens" => 2819, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+18:04:41.349 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01 solution.ex
+18:04:42.020 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":177,"lines_over_98":0,"max_line_length":82,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:41.997789Z"}
+18:04:42.025 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut solution.ex
+18:04:42.899 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":144,"lines_over_98":1,"max_line_length":412,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 17/17 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01_mut","test_failures":[{"message":"{:invalid, %ExUnit.TestModule{file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", name: FactoryTest, setup_all?: true, state: {:failed, [{:error, %RuntimeError{message: \"MUTATION\"}, [{Factory, :start, 0, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 12, error_info: %{module: Exception}]}, {FactoryTest, :__ex_unit_setup_all_0, 1, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", line: 46]}, {FactoryTest, :__ex_unit__, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", line: 41]}]}]}, parameters: %{}, tags: %{}, tests: [%ExUnit.Test{name: :\"test build/1 returns a struct without touching the DB\", description: \"test build/1 returns a struct without touching the DB\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 52, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test insert/2 persists with overrides\", description: \"test insert/2 persists with overrides\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 59, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test build_list/2 returns the requested count\", description: \"test build_list/2 returns the requested count\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 67, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test build_list elements have unique sequence-driven emails\", description: \"test build_list elements have unique sequence-driven emails\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 72, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test build_list/3 applies overrides to every element\", description: \"test build_list/3 applies overrides to every element\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 78, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test build_list of 0 returns an empty list\", description: \"test build_list of 0 returns an empty list\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 83, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test build_list does not persist anything by itself\", description: \"test build_list does not persist anything by itself\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 87, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test insert_list/2 persists the requested count\", description: \"test insert_list/2 persists the requested count\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 95, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test insert_list assigns unique ids under concurrency\", description: \"test insert_list assigns unique ids under concurrency\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 103, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test insert_list keeps sequence-driven emails unique under concurrency\", description: \"test insert_list keeps sequence-driven emails unique under concurrency\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 109, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test insert_list of 0 returns an empty list\", description: \"test insert_list of 0 returns an empty list\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 115, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test params_for returns a plain map without :id\", description: \"test params_for returns a plain map without :id\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 123, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test params_for applies overrides\", description: \"test params_for applies overrides\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 131, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test params_for(:post) resolves the association to an integer user_id\", description: \"test params_for(:post) resolves the association to an integer user_id\", case: FactoryTest, module: FactoryTest, state: nil, time: 0, tags: %{line: 136, registered: %{}, file: \"/home/kamil/projects/elixir-sft-dataset/.gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/test_harness.exs\", describe: nil, describe_line: nil, test_type: :test}, logs: \"\", parameters: %{}}, %ExUnit.Test{name: :\"test insert(:post) inserts both pos (truncated)
+18:04:42.903 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut solution.ex
+18:04:43.621 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":136,"lines_over_98":1,"max_line_length":412,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.33,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 15/17 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.12},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01_mut","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test build/1 returns a struct without touching the DB"},{"message":"MUTATION","module":"FactoryTest","test":"test insert/2 persists with overrides"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list/2 returns the requested count"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list elements have unique sequence-driven emails"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list/3 applies overrides to every element"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list does not persist anything by itself"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :sequence, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 18, error_info: %{module: Exception}]}, {Factory, :factory, 1, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 120]}, {Factory, :build, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 30]}, {Factory, :insert, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 42]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test insert_list/2 persists the requested count"},{"message":"{:EXIT, #PID<0.240.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :sequence, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 18, error_info: %{module: Exception}]}, {Factory, :factory, 1, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 120]}, {Factory, :build, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 30]}, {Factory, :insert, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 42]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test insert_list assigns unique ids under concurrency"},{"message":"{:EXIT, #PID<0.291.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :sequence, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 18, error_info: %{module: Exception}]}, {Factory, :factory, 1, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 120]}, {Factory, :build, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 30]}, {Factory, :insert, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 42]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test insert_list keeps sequence-driven emails unique under concurrency"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for returns a plain map without :id"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for applies overrides"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for(:post) resolves the association to an integer user_id"},{"message":"MUTATION","module":"FactoryTest","test":"test insert(:post) inserts both post and user"},{"message":"MUTATION","module":"FactoryTest","test":"test sequence/2 returns distinct consecutive values"},{"message":"{:EXIT, #PID<0.348.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :sequence, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 18, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test sequences are safe under concurrent access"}],"tests_errors":0,"tests_excluded":0,"tests_failed":15,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:43.596620Z"}
+18:04:43.625 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut solution.ex
+18:04:44.307 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":144,"lines_over_98":1,"max_line_length":412,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.92,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 1/17 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.94},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01_mut","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test build/1 returns a struct without touching the DB"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:44.283959Z"}
+18:04:44.311 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut solution.ex
+18:04:44.997 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":144,"lines_over_98":1,"max_line_length":412,"mode":"full","pipe_chain_count":9,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.38,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 13/17 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.24},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01_mut","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test build/1 returns a struct without touching the DB"},{"message":"MUTATION","module":"FactoryTest","test":"test insert/2 persists with overrides"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list/2 returns the requested count"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list elements have unique sequence-driven emails"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list/3 applies overrides to every element"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list does not persist anything by itself"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :build, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 38, error_info: %{module: Exception}]}, {Factory, :insert, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 50]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test insert_list/2 persists the requested count"},{"message":"{:EXIT, #PID<0.240.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :build, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 38, error_info: %{module: Exception}]}, {Factory, :insert, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 50]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test insert_list assigns unique ids under concurrency"},{"message":"{:EXIT, #PID<0.291.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :build, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 38, error_info: %{module: Exception}]}, {Factory, :insert, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 50]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test insert_list keeps sequence-driven emails unique under concurrency"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for returns a plain map without :id"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for applies overrides"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for(:post) resolves the association to an integer user_id"},{"message":"MUTATION","module":"FactoryTest","test":"test insert(:post) inserts both post and user"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":4,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:44.974513Z"}
+18:04:45.001 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut solution.ex
+18:04:45.683 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":144,"lines_over_98":1,"max_line_length":412,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.87,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 2/17 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.88},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01_mut","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test params_for(:post) resolves the association to an integer user_id"},{"message":"MUTATION","module":"FactoryTest","test":"test insert(:post) inserts both post and user"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:45.661471Z"}
+18:04:45.687 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut solution.ex
+18:04:46.379 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":144,"lines_over_98":1,"max_line_length":412,"mode":"full","pipe_chain_count":10,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.7,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 6/17 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.65},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01_mut","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test insert/2 persists with overrides"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :insert, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 50, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test insert_list/2 persists the requested count"},{"message":"{:EXIT, #PID<0.240.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :insert, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 50, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test insert_list assigns unique ids under concurrency"},{"message":"{:EXIT, #PID<0.291.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :insert, 2, [file: ~c\".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex\", line: 50, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test insert_list keeps sequence-driven emails unique under concurrency"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for(:post) resolves the association to an integer user_id"},{"message":"MUTATION","module":"FactoryTest","test":"test insert(:post) inserts both post and user"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:46.355775Z"}
+18:04:46.384 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut solution.ex
+18:04:47.076 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":144,"lines_over_98":1,"max_line_length":412,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.79,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 4/17 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.76},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01_mut","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test build_list/2 returns the requested count"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list elements have unique sequence-driven emails"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list of 0 returns an empty list"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list does not persist anything by itself"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:47.054173Z"}
+18:04:47.080 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut solution.ex
+18:04:47.732 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":144,"lines_over_98":1,"max_line_length":412,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.75,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 5/17 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.71},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01_mut","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test build_list/2 returns the requested count"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list elements have unique sequence-driven emails"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list/3 applies overrides to every element"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list of 0 returns an empty list"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list does not persist anything by itself"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:47.709300Z"}
+18:04:47.736 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut solution.ex
+18:04:48.403 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":144,"lines_over_98":1,"max_line_length":412,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.79,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 4/17 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.76},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01_mut","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test insert_list/2 persists the requested count"},{"message":"MUTATION","module":"FactoryTest","test":"test insert_list assigns unique ids under concurrency"},{"message":"MUTATION","module":"FactoryTest","test":"test insert_list keeps sequence-driven emails unique under concurrency"},{"message":"MUTATION","module":"FactoryTest","test":"test insert_list of 0 returns an empty list"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:48.380144Z"}
+18:04:48.407 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut solution.ex
+18:04:49.091 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":142,"lines_over_98":1,"max_line_length":412,"mode":"full","pipe_chain_count":10,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.79,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 4/17 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.76},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01_mut","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test insert_list/2 persists the requested count"},{"message":"MUTATION","module":"FactoryTest","test":"test insert_list assigns unique ids under concurrency"},{"message":"MUTATION","module":"FactoryTest","test":"test insert_list keeps sequence-driven emails unique under concurrency"},{"message":"MUTATION","module":"FactoryTest","test":"test insert_list of 0 returns an empty list"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:49.069101Z"}
+18:04:49.095 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut solution.ex
+18:04:49.786 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":144,"lines_over_98":1,"max_line_length":412,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.88,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 2/17 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.88},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01_mut","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test params_for returns a plain map without :id"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for(:post) resolves the association to an integer user_id"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:49.762815Z"}
+18:04:49.790 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut solution.ex
+18:04:50.439 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":144,"lines_over_98":1,"max_line_length":412,"mode":"full","pipe_chain_count":9,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.83,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 3/17 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.82},"shape":"single","solution_file":".gen_staging/071_003_bulk_list_factory_with_concurrent_insertion_01_mut/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_01_mut","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test params_for returns a plain map without :id"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for applies overrides"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for(:post) resolves the association to an integer user_id"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:04:50.416817Z"}
+18:04:50.440 [info] cycle 071_003_bulk_list_factory_with_concurrent_insertion_01: ACCEPTED on attempt 1
+18:04:50.442 [info] promoted 071_003_bulk_list_factory_with_concurrent_insertion_01 -> tasks/071_003_bulk_list_factory_with_concurrent_insertion_01

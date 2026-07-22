@@ -1,0 +1,421 @@
+08:32:41.309 [info] FIM 037_001_data_anonymizer_fim01 → 037_001_data_anonymizer_02: target generate_fake/2
+08:32:41.309 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+08:32:41.309 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `generate_fake/2`.
+
+Generate a prompt describing how to implement `generate_fake/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `generate_fake/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `generate_fake/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `generate_fake/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Anonymizer` that takes a list of maps (representing records) and anonymizes specified fields according to configurable rules.
+
+I need this function in the public API:
+- `Anonymizer.anonymize(records, rules)` where `records` is a list of maps and `rules` is a map whose keys are field names (atoms) and whose values are one of the following rule atoms or tuples:
+  - `:hash` — replace the value with its SHA-256 hex digest
+  - `:mask` — keep the first and last character of the string, replace every middle character with `*`. A string of 2 characters should show both with no masking. A string of 1 character should be fully masked as `*`.
+  - `:redact` — replace the value with the string `"[REDACTED]"`
+  - `{:fake, seed}` — generate a deterministic fake value (a realistic-looking but fabricated string) derived solely from the original value and the given `seed`. The same input value + seed must always produce the same fake output across calls.
+
+The function must return a list of maps of the same length and structure, with the specified fields transformed in place. Fields not mentioned in `rules` must be left untouched.
+
+Referential integrity must be preserved across the entire list: if two records share the same original value for a field, their anonymized outputs for that field must also be identical. This must hold for all four rule types.
+
+Use only the Elixir/OTP standard library — no external dependencies.
+
+Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Anonymizer do
+  @moduledoc """
+  Anonymizes specified fields in a list of record maps according to configurable rules.
+
+  Supported rules (values in the `rules` map):
+
+    * `:hash`         – Replace the value with its SHA-256 hex digest.
+    * `:mask`         – Keep the first and last character; replace every middle
+                        character with `*`. A 2-character string is left as-is.
+                        A 1-character string becomes `"*"`.
+    * `:redact`       – Replace the value with the string `"[REDACTED]"`.
+    * `{:fake, seed}` – Produce a deterministic, realistic-looking fake value
+                        derived from the original value and the given seed.
+                        The same (value, seed) pair always yields the same output.
+
+  Referential integrity is guaranteed across the entire list: because every rule
+  is a pure function of its inputs, two records that share the same original
+  value for a field will always receive the same anonymized output.
+
+  Only OTP/stdlib modules are used (`:crypto`, `Base`, `String`, `Enum`, `Map`).
+  """
+
+  @typedoc "A single anonymisation rule."
+  @type rule :: :hash | :mask | :redact | {:fake, term()}
+
+  # ---------------------------------------------------------------------------
+  # Word lists for deterministic fake-value generation
+  # ---------------------------------------------------------------------------
+
+  @first_names ~w(
+    Alice Bob Carol Dave Eve Frank Grace Henry Iris Jack
+    Karen Leo Maya Noah Olivia Paul Quinn Rose Sam Tara
+    Uma Victor Wendy Xander Yara Zoe Adrian Blair Casey
+    Dana Elliot Faye Glenn Harper Indira Jules
+  )
+
+  @last_names ~w(
+    Smith Jones Williams Brown Taylor Davies Evans Wilson
+    Thomas Roberts Johnson Lee Walker Hall Allen Young
+    Hernandez King Wright Scott Baker Green Adams Nelson
+    Carter Mitchell Perez Turner Campbell Parker Edwards
+  )
+
+  @domains ~w(
+    example.com mail.net webhost.org fakemail.io testdomain.com
+    inbox.dev sample.org placeholder.net demo.io fictitious.com
+  )
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Anonymizes `records` in accordance with `rules`.
+
+  ## Parameters
+
+    * `records` – a list of maps (each map represents one record).
+    * `rules`   – a map whose keys are field-name atoms and whose values are
+                  rule atoms or tuples (see module doc for supported rules).
+
+  ## Returns
+
+  A list of maps of the same length and structure as `records`. Fields named
+  in `rules` are transformed; all other fields are left untouched. If a record
+  does not contain a field named in `rules`, that entry is silently skipped.
+
+  ## Examples
+
+      iex> records = [
+      ...>   %{name: "Alice", email: "alice@example.com", age: 30},
+      ...>   %{name: "Bob",   email: "bob@example.com",   age: 25},
+      ...>   %{name: "Alice", email: "alice@example.com", age: 42},
+      ...> ]
+      iex> rules = %{name: :mask, email: :redact}
+      iex> Anonymizer.anonymize(records, rules)
+      [
+        %{name: "A***e", email: "[REDACTED]", age: 30},
+        %{name: "B*b",   email: "[REDACTED]", age: 25},
+        %{name: "A***e", email: "[REDACTED]", age: 42}
+      ]
+
+  Note that both records with `name: "Alice"` produce the same masked output,
+  demonstrating referential integrity.
+  """
+  @spec anonymize([map()], %{atom() => rule()}) :: [map()]
+  def anonymize(records, rules) when is_list(records) and is_map(rules) do
+    Enum.map(records, &anonymize_record(&1, rules))
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private – per-record transformation
+  # ---------------------------------------------------------------------------
+
+  defp anonymize_record(record, rules) do
+    Enum.reduce(rules, record, fn {field, rule}, acc ->
+      case Map.fetch(acc, field) do
+        {:ok, value} -> Map.put(acc, field, apply_rule(value, rule))
+        :error       -> acc
+      end
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private – rule dispatch
+  # ---------------------------------------------------------------------------
+
+  # :redact ----------------------------------------------------------------
+  defp apply_rule(_value, :redact), do: "[REDACTED]"
+
+  # :hash ------------------------------------------------------------------
+  defp apply_rule(value, :hash) do
+    value
+    |> to_string()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+  end
+
+  # :mask ------------------------------------------------------------------
+  defp apply_rule(value, :mask) do
+    str = to_string(value)
+
+    case String.length(str) do
+      0 ->
+        str
+
+      1 ->
+        "*"
+
+      2 ->
+        str
+
+      len ->
+        first  = String.at(str, 0)
+        last   = String.at(str, len - 1)
+        middle = String.duplicate("*", len - 2)
+        first <> middle <> last
+    end
+  end
+
+  # {:fake, seed} ----------------------------------------------------------
+  defp apply_rule(value, {:fake, seed}) do
+    generate_fake(to_string(value), seed)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private – deterministic fake-value generator
+  #
+  # Strategy: hash "#{inspect(seed)}:#{value}" with (truncated)
+08:33:19.291 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `generate_fake/2` function.
+
+It receives a string `value` (the original field value, already converted to a
+string) and a `seed` term, and must return a deterministic, realistic-looking
+fake string derived solely from those two inputs. The same `(value, seed)` pair
+must always produce the same output, so that referential integrity is preserved
+for the `{:fake, seed}` rule.
+
+The function must:
+
+  1. Compute a SHA-256 digest of the string `"#{inspect(seed)}:#{value}"` and
+     bind its first seven bytes to `b0, b1, b2, b3, b4, b5, b6` (ignoring the
+     rest of the binary).
+  2. Use `b0` (modulo the list length) as an index into `@first_names` to pick a
+     `first` name, and `b1` similarly into `@last_names` to pick a `last` name.
+  3. Use `rem(b2, 4)` to select one of four output formats:
+     * `0` → `"First Last"` (e.g. `"Grace Hall"`).
+     * `1` → `"first.last@domain"` where both names are downcased and the domain
+       is chosen from `@domains` using `b3` (modulo the list length)
+       (e.g. `"grace.hall@example.com"`).
+     * `2` → the `first` name followed by a 4-digit numeric suffix in the range
+       `1000..9999`, computed as `rem(b3 * 256 + b4, 9000) + 1000`
+       (e.g. `"Grace1847"`).
+     * `3` → `"first-last-NN"` with both names downcased and a 2-digit suffix in
+       the range `10..99`, computed as `rem(b5 * 256 + b6, 90) + 10`
+       (e.g. `"grace-hall-42"`).
+
+Use only the Elixir/OTP standard library.
+
+```elixir
+defmodule Anonymizer do
+  @moduledoc """
+  Anonymizes specified fields in a list of record maps according to configurable rules.
+
+  Supported rules (values in the `rules` map):
+
+    * `:hash`         – Replace the value with its SHA-256 hex digest.
+    * `:mask`         – Keep the first and last character; replace every middle
+                        character with `*`. A 2-character string is left as-is.
+                        A 1-character string becomes `"*"`.
+    * `:redact`       – Replace the value with the string `"[REDACTED]"`.
+    * `{:fake, seed}` – Produce a deterministic, realistic-looking fake value
+                        derived from the original value and the given seed.
+                        The same (value, seed) pair always yields the same output.
+
+  Referential integrity is guaranteed across the entire list: because every rule
+  is a pure function of its inputs, two records that share the same original
+  value for a field will always receive the same anonymized output.
+
+  Only OTP/stdlib modules are used (`:crypto`, `Base`, `String`, `Enum`, `Map`).
+  """
+
+  @typedoc "A single anonymisation rule."
+  @type rule :: :hash | :mask | :redact | {:fake, term()}
+
+  # ---------------------------------------------------------------------------
+  # Word lists for deterministic fake-value generation
+  # ---------------------------------------------------------------------------
+
+  @first_names ~w(
+    Alice Bob Carol Dave Eve Frank Grace Henry Iris Jack
+    Karen Leo Maya Noah Olivia Paul Quinn Rose Sam Tara
+    Uma Victor Wendy Xander Yara Zoe Adrian Blair Casey
+    Dana Elliot Faye Glenn Harper Indira Jules
+  )
+
+  @last_names ~w(
+    Smith Jones Williams Brown Taylor Davies Evans Wilson
+    Thomas Roberts Johnson Lee Walker Hall Allen Young
+    Hernandez King Wright Scott Baker Green Adams Nelson
+    Carter Mitchell Perez Turner Campbell Parker Edwards
+  )
+
+  @domains ~w(
+    example.com mail.net webhost.org fakemail.io testdomain.com
+    inbox.dev sample.org placeholder.net demo.io fictitious.com
+  )
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Anonymizes `records` in accordance with `rules`.
+
+  ## Parameters
+
+    * `records` – a list of maps (each map represents one record).
+    * `rules`   – a map whose keys are field-name atoms and whose values are
+                  rule atoms or tuples (see module doc for supported rules).
+
+  ## Returns
+
+  A list of maps of the same length and structure as `records`. Fields named
+  in `rules` are transformed; all other fields are left untouched. If a record
+  does not contain a field named in `rules`, that entry is silently skipped.
+
+  ## Examples
+
+      iex> records = [
+      ...>   %{name: "Alice", email: "alice@example.com", age: 30},
+      ...>   %{name: "Bob",   email: "bob@example.com",   age: 25},
+      ...>   %{name: "Alice", email: "alice@example.com", age: 42},
+      ...> ]
+      iex> rules = %{name: :mask, email: :redact}
+      iex> Anonymizer.anonymize(records, rules)
+      [
+        %{name: "A***e", email: "[REDACTED]", age: 30},
+        %{name: "B*b",   email: "[REDACTED]", age: 25},
+        %{name: "A***e", email: "[REDACTED]", age: 42}
+      ]
+
+  Note that both records with `name: "Alice"` produce the same masked output,
+  demonstrating referential integrity.
+  """
+  @spec anonymize([map()], %{atom() => rule()}) :: [map()]
+  def anonymize(records, rules) when is_list(records) and is_map(rules) do
+    Enum.map(records, &anonymize_record(&1, rules))
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private – per-record transformation
+  # ---------------------------------------------------------------------------
+
+  defp anonymize_record(record, rules) do
+    Enum.reduce(rules, record, fn {field, rule}, acc ->
+      case Map.fetch(acc, field) do
+        {:ok, value} -> Map.put(acc, field, apply_rule(value, rule))
+        :error       -> acc
+      end
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private – rule dispatch
+  # ---------------------------------------------------------------------------
+
+  # :redact ----------------------------------------------------------------
+  defp apply_rule(_value, :redact), do: "[REDACTED]"
+
+  # :hash ------------------------------------------------------------------
+  defp apply_rule(value, :hash) do
+    value
+    |> to_string()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+  end
+
+  # :mask ------------------------------------------------------------------
+  defp apply_rule(value, :mask) do
+    str = to_string(value)
+
+    case String.length(str) do
+      0 ->
+        str
+
+      1 ->
+        "*"
+
+      2 ->
+        str
+
+      len ->
+        first  = String.at(str, 0)
+        last   = String.at(str, len - 1)
+        middle = String.duplicate("*", len - 2)
+        first <> middle <> last
+    end
+  end
+
+  # {:fake, seed} ----------------------------------------------------------
+  defp apply_rule(value, {:fake, seed}) do
+    generate_fake(to_string(value), seed)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private – deterministic fake-value generator
+  #
+  # Strategy: hash "#{inspect(seed)}:#{value}" with SHA-256, then use successive
+  # bytes as indices into word-lists / number ranges to assemble a
+  # realistic-looking string.  Because the hash is deterministic, the same
+  # (value, seed) always produces the same output, satisfying the referential-
+  # integrity requirement for :fake.
+  # ---------------------------------------------------------------------------
+
+  defp generate_fake(value, seed) do
+    # TODO
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp generate_fake(value, seed) do
+    <<b0, b1, b2, b3, b4, b5, b6, _rest::binary>> =
+      :crypto.hash(:sha256, "#{inspect(seed)}:#{value}")
+
+    first_names = @first_names
+    last_names  = @last_names
+    domains     = @domains
+
+    first = Enum.at(first_names, rem(b0, length(first_names)))
+    last  = Enum.at(last_names,  rem(b1, length(last_names)))
+
+    # Use b2 to pick one of four output formats for variety
+    case rem(b2, 4) do
+      # "Grace Hall"
+      0 ->
+        "#{first} #{last}"
+
+      # "grace.hall@example.com"
+      1 ->
+        domain = Enum.at(domains, rem(b3, length(domains)))
+        "#{String.downcase(first)}.#{String.do (truncated)
+08:33:19.292 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3855, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3855, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3855, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3855, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3500, "type" => "message"}], "output_tokens" => 3500, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:33:19.314 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_037_001_data_anonymizer_02/037_001_data_anonymizer_02 solution.ex
+08:33:20.001 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":33,"lines_over_98":0,"max_line_length":70,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"037_001_data_anonymizer_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_037_001_data_anonymizer_02/037_001_data_anonymizer_02/solution.ex","task":"037_001_data_anonymizer_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T06:33:19.977178Z"}
+08:33:20.002 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_037_001_data_anonymizer_02/037_001_data_anonymizer_02 .gen_staging/fim_037_001_data_anonymizer_02/mutant.ex
+08:33:20.663 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":34,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"parent":"037_001_data_anonymizer_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.5,"mode":"fim","overall":0.78,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 5/21 failed"],"tests":0.76},"shape":"fim","solution_file":".gen_staging/fim_037_001_data_anonymizer_02/mutant.ex","task":"037_001_data_anonymizer_02","test_failures":[{"message":"MUTATION","module":"AnonymizerTest","test":"test {:fake, seed} returns a non-empty string different from the original"},{"message":"MUTATION","module":"AnonymizerTest","test":"test {:fake, seed} deterministic: same value + seed always produces the same fake"},{"message":"MUTATION","module":"AnonymizerTest","test":"test {:fake, seed} referential integrity: same value maps to same fake across records in one call"},{"message":"MUTATION","module":"AnonymizerTest","test":"test {:fake, seed} different seeds produce different fakes for the same value"},{"message":"MUTATION","module":"AnonymizerTest","test":"test {:fake, seed} different input values produce different fakes with the same seed"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T06:33:20.639359Z"}
+08:33:20.663 [debug] fim mutation gate: killed
+08:33:20.664 [info] promoted 037_001_data_anonymizer_02 -> tasks/037_001_data_anonymizer_02

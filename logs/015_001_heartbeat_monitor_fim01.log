@@ -1,0 +1,404 @@
+15:59:33.793 [info] FIM 015_001_heartbeat_monitor_fim01 → 015_001_heartbeat_monitor_02: target run_check/2
+15:59:33.793 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+15:59:33.793 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `run_check/2`.
+
+Generate a prompt describing how to implement `run_check/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `run_check/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `run_check/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `run_check/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Heartbeat Monitor
+
+Write me an Elixir module called `Monitor` — a `GenServer` that supervises a set of
+registered services by calling a check function for each one on a periodic
+interval, tracking each service's status, and firing a notification when a service
+goes down. Use only the OTP standard library, no external dependencies, and give me
+the complete module in a single file.
+
+## The singleton and its lifecycle
+
+`Monitor` is a singleton process. The convenience functions below
+(`register`, `status`, `statuses`, `check_now`) take **no server argument** — they
+operate on the process registered under the module name `Monitor`.
+
+- `Monitor.start_link(opts \\ [])` starts and links the process and returns the
+  usual `GenServer.on_start()` result. `opts` is a keyword list defaulting to `[]`.
+  The process must be registered under the name `Monitor` (i.e. `__MODULE__`) so the
+  no-argument convenience API can find it. A `:name` option may override the
+  registered name, but the convenience functions always target `Monitor`.
+- Starting the server does no monitoring work; a freshly started server tracks zero
+  services, and `Monitor.statuses()` returns `%{}`.
+
+## Registering services
+
+`Monitor.register(service_name, check_func, interval_ms, opts \\ [])`
+
+- `service_name` is any term used as the key (strings, atoms, tuples all work and
+  are compared by value).
+- `check_func` is a **zero-arity** function returning either `:ok` (healthy) or
+  `{:error, reason}` (unhealthy), where `reason` is any term.
+- `interval_ms` is a **positive integer**: how often, in milliseconds, the monitor
+  calls `check_func` after registration.
+- `opts` is a keyword list:
+  - `:threshold` — a **positive integer** `N`. The service is marked `:down` after
+    `N` **consecutive** failed checks. Defaults to `3`.
+  - `:notify` — a **two-arity** function `notify.(service_name, reason)` invoked
+    when the service transitions from `:up` to `:down` (see below). Defaults to a
+    no-op.
+
+`register/4` returns `:ok`.
+
+Guards: `check_func` must be a zero-arity function and `interval_ms` must be a
+positive integer. Calling `register` with a non-positive or non-integer
+`interval_ms` is outside the contract and may raise `FunctionClauseError` — guard
+the public function accordingly.
+
+On registration:
+
+- The service's status starts as `:up` with a consecutive-failure count of `0`.
+- Registration itself does **not** run the check function. The first check happens
+  one `interval_ms` later, then repeats every `interval_ms` thereafter (implemented
+  with `Process.send_after/3`, re-scheduling itself after each check).
+
+Re-registering an already-registered `service_name` **replaces** its configuration
+(check function, interval, threshold, notify) and **resets** its status to `:up`
+with a failure count of `0`.
+
+### Lifecycle rule for re-registration (important)
+
+When a service is re-registered, the **previous registration's scheduled checks
+must never run again**. After a re-registration:
+
+- The old check function is never called again by any leftover/previously-scheduled
+  timer.
+- Checks for that service happen only at the **new** interval, calling the **new**
+  check function.
+
+In other words, superseded timer chains are dead. (A robust way to achieve this is
+to tag each registration with a generation token and ignore scheduled check
+messages whose token no longer matches the current registration.)
+
+## Performing a check
+
+Each check — whether triggered by the periodic timer or by `check_now/1` below —
+does exactly the following, calling `check_func.()` once:
+
+- If the result is `:ok`: the consecutive-failure count is reset to `0`. If the
+  service was `:down`, it recovers to `:up`. (Recovery does **not** call the notify
+  function — only down transitions do.)
+- If the result is `{:error, reason}`: the consecutive-failure count is incremented
+  by one.
+  - If, as a result, the count **reaches the threshold `N`** and the service's
+    current status is `:up`, the service transitions to `:down` and the notify
+    function is called **exactly once** as `notify.(service_name, reason)`, where
+    `reason` is the reason from this failing check (the `N`-th consecutive
+    failure).
+  - If the service is **already `:down`**, further failed checks keep it `:down`
+    and do **not** call the notify function again.
+  - If the count is still below `N`, the status stays `:up`.
+
+"Consecutive" means any `:ok` result resets the counter to zero. A service that
+recovers to `:up` and then fails `N` more times in a row transitions to `:down`
+again and fires the notify function **again** (once per distinct down transition).
+
+## Deterministic single check
+
+`Monitor.check_now(service_name)` synchronously performs **one** check for the
+named service immediately — identical work to a scheduled interval tick (calling
+the check function, updating the failure count and status, and firing the notify
+function on an `:up` → `:down` transition). It returns `{:ok, status}` where
+`status` is the resulting status (`:up` or `:down`), or `{:error, :not_found}` if
+no such service is registered. `check_now/1` does not alter or reschedule the
+periodic timer.
+
+## Querying status
+
+- `Monitor.status(service_name)` returns `:up` or `:down` for a registered service,
+  or `{:error, :not_found}` if the service is unknown.
+- `Monitor.statuses()` returns a map `%{service_name => status}` containing every
+  currently registered service and its `:up`/`:down` status. With no services
+  registered it returns `%{}`.
+
+## Robustness
+
+Any unexpected message sent to the server (anything other than the messages it uses
+for its own scheduling) must be ignored: it must not crash the process or alter
+state.
+
+Services are fully independent: exhausting failures for one service never affects
+another service's status or failure count.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Monitor do
+  @moduledoc """
+  A singleton `GenServer` that supervises registered services by periodically
+  calling a zero-arity check function for each one, tracking each service's
+  `:up`/`:down` status, and firing a notification when a service transitions
+  from `:up` to `:down`.
+
+  The server is registered under the name `Monitor` (`__MODULE__`) so that the
+  no-argument convenience API (`register/4`, `status/1`, `statuses/0`,
+  `check_now/1`) can locate it without an explicit server reference.
+
+  Each registration is tagged with a generation token (a `make_ref/0` value).
+  Scheduled check messages whose token no longer matches the current
+  registration are ignored, guaranteeing that a re-registration's superseded
+  timer chain is dead and can never call the old check function again.
+  """
+
+  use GenServer
+
+  @typedoc "The status of a monitored service."
+  @type status :: :up | :down
+
+  @typedoc "A zero-arity check function returning health of a service."
+  @type check_func :: (-> :ok | {:error, term()})
+
+  @typedoc "A two-arity notification function invoked on a down transition." (truncated)
+16:00:11.655 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `run_check/2` function.
+
+`run_check(service, name)` performs exactly one check for a single service and
+returns a `{updated_service, resulting_status}` tuple. It is the shared engine used
+both by scheduled interval ticks (`handle_info/2`) and by the synchronous
+`check_now/1` path, so it must do the full check-and-update in one place.
+
+It calls the service's `check_func.()` exactly once and branches on the result:
+
+- If the result is `:ok`: reset the consecutive-failure count to `0` and set the
+  status to `:up` (recovering the service if it was `:down`). Recovery must **not**
+  call the notify function. Return the updated service with status `:up`.
+- If the result is `{:error, reason}`: increment the consecutive-failure count by
+  one.
+  - If the incremented count **reaches the threshold** (`failures >= threshold`)
+    **and** the service is currently `:up`, transition it to `:down`, call
+    `notify.(name, reason)` exactly once (with the `reason` from this failing
+    check), and return the updated service with status `:down`.
+  - Otherwise (still below threshold, or already `:down`), keep the current status
+    and do **not** call the notify function. Return the service with the updated
+    failure count and its unchanged status.
+
+Return the resulting status as the second element of the tuple in every branch.
+
+```elixir
+defmodule Monitor do
+  @moduledoc """
+  A singleton `GenServer` that supervises registered services by periodically
+  calling a zero-arity check function for each one, tracking each service's
+  `:up`/`:down` status, and firing a notification when a service transitions
+  from `:up` to `:down`.
+
+  The server is registered under the name `Monitor` (`__MODULE__`) so that the
+  no-argument convenience API (`register/4`, `status/1`, `statuses/0`,
+  `check_now/1`) can locate it without an explicit server reference.
+
+  Each registration is tagged with a generation token (a `make_ref/0` value).
+  Scheduled check messages whose token no longer matches the current
+  registration are ignored, guaranteeing that a re-registration's superseded
+  timer chain is dead and can never call the old check function again.
+  """
+
+  use GenServer
+
+  @typedoc "The status of a monitored service."
+  @type status :: :up | :down
+
+  @typedoc "A zero-arity check function returning health of a service."
+  @type check_func :: (-> :ok | {:error, term()})
+
+  @typedoc "A two-arity notification function invoked on a down transition."
+  @type notify_func :: (term(), term() -> any())
+
+  # Internal per-service record kept in the server state map.
+  @typep service :: %{
+           check_func: check_func(),
+           interval_ms: pos_integer(),
+           threshold: pos_integer(),
+           notify: notify_func(),
+           status: status(),
+           failures: non_neg_integer(),
+           generation: reference()
+         }
+
+  # --- Public API --------------------------------------------------------
+
+  @doc """
+  Starts and links the `Monitor` singleton.
+
+  `opts` is a keyword list (default `[]`). A `:name` option may override the
+  registered name, but the convenience functions always target `Monitor`.
+  A freshly started server tracks zero services.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  @doc """
+  Registers (or re-registers) `service_name` with the given zero-arity
+  `check_func`, positive `interval_ms`, and options.
+
+  Options:
+
+    * `:threshold` — positive integer `N`; the service is marked `:down` after
+      `N` consecutive failed checks (default `3`).
+    * `:notify` — a two-arity function `notify.(service_name, reason)` invoked
+      once on each `:up` -> `:down` transition (default no-op).
+
+  Registration resets the status to `:up` with a failure count of `0` and does
+  not itself run `check_func`; the first check happens one `interval_ms` later.
+  Re-registering replaces the configuration and resets status. Always returns
+  `:ok`.
+  """
+  @spec register(term(), check_func(), pos_integer(), keyword()) :: :ok
+  def register(service_name, check_func, interval_ms, opts \\ [])
+      when is_function(check_func, 0) and is_integer(interval_ms) and interval_ms > 0 do
+    GenServer.call(__MODULE__, {:register, service_name, check_func, interval_ms, opts})
+  end
+
+  @doc """
+  Returns `:up` or `:down` for a registered service, or `{:error, :not_found}`
+  if the service is unknown.
+  """
+  @spec status(term()) :: status() | {:error, :not_found}
+  def status(service_name) do
+    GenServer.call(__MODULE__, {:status, service_name})
+  end
+
+  @doc """
+  Returns a map `%{service_name => status}` for every currently registered
+  service. Returns `%{}` when no services are registered.
+  """
+  @spec statuses() :: %{optional(term()) => status()}
+  def statuses do
+    GenServer.call(__MODULE__, :statuses)
+  end
+
+  @doc """
+  Synchronously performs exactly one check for `service_name` immediately,
+  doing identical work to a scheduled interval tick (calling the check
+  function, updating the failure count and status, and firing the notify
+  function on an `:up` -> `:down` transition).
+
+  Returns `{:ok, status}` with the resulting status, or `{:error, :not_found}`
+  if the service is unknown. Does not alter or reschedule the periodic timer.
+  """
+  @spec check_now(term()) :: {:ok, status()} | {:error, :not_found}
+  def check_now(service_name) do
+    GenServer.call(__MODULE__, {:check_now, service_name})
+  end
+
+  # --- GenServer callbacks ----------------------------------------------
+
+  @impl true
+  @spec init(keyword()) :: {:ok, %{optional(term()) => service()}}
+  def init(_opts) do
+    {:ok, %{}}
+  end
+
+  @impl true
+  def handle_call({:register, name, func, interval, opts}, _from, state) do
+    generation = make_ref()
+    threshold = Keyword.get(opts, :threshold, 3)
+    notify = Keyword.get(opts, :notify, fn _name, _reason -> :ok end)
+
+    service = %{
+      check_func: func,
+      interval_ms: interval,
+      threshold: threshold,
+      notify: notify,
+      status: :up,
+      failures: 0,
+      generation: generation
+    }
+
+    schedule(name, generation, interval)
+    {:reply, :ok, Map.put(state, name, service)}
+  end
+
+  def handle_call({:status, name}, _from, state) do
+    case Map.get(state, name) do
+      nil -> {:reply, {:error, :not_found}, state}
+      service -> {:reply, service.status, state}
+    end
+  end
+
+  def handle_call(:statuses, _from, state) do
+    result = Map.new(state, fn {name, service} -> {name, service.status} end)
+    {:reply, result, state}
+  end
+
+  def handle_call({:check_now, name}, _from, state) do
+    case Map.get(state, name) do
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      service ->
+        {updated, status} = run_check(service, name)
+        {:reply, {:ok, status}, Map.put(state, name, updated)}
+    end
+  end
+
+  def handle_call(_request, _from, state) do
+    {:reply, {:error, :unknown_request}, state}
+  end
+
+  @impl true
+  def handle_info({:check, name, generation}, state) do
+    case Map.get(state, name) do
+      %{generation: ^generation} = service ->
+        {updated, _status} = run_check(service, name)
+        schedule(name, generation, updated.interval_ms)
+        {:noreply, Map.put(state, name, updated)}
+
+      _other ->
+        # Unknown service or a superseded generation token: ignore.
+        {:noreply, state}
+    end
+  end
+
+  def handle_info(_msg, state) do
+    {:noreply, state}
+  end
+
+  # --- Internal helpers --------------------------------------------------
+
+  # Schedules the next check tick for `name` under the given generation token.
+  @spec schedule(term(), reference(), pos_integer()) :: reference()
+  defp schedule(name, generation, interval) do
+    Process.send_after(self(), {:check, name, generation}, interval)
+  end
+
+  # Runs one check, updating failure count/status and firing notify on an
+  # `:up` -> `:down` transition. Returns `{updated_service,  (truncated)
+16:00:11.655 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9020, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9020, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9020, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9020, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 3516, "type" => "message"}], "output_tokens" => 3516, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+16:00:11.684 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_015_001_heartbeat_monitor_02/015_001_heartbeat_monitor_02 solution.ex
+16:00:13.083 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":19,"lines_over_98":0,"max_line_length":79,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"015_001_heartbeat_monitor_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_015_001_heartbeat_monitor_02/015_001_heartbeat_monitor_02/solution.ex","task":"015_001_heartbeat_monitor_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-15T14:00:13.054624Z","warning_details":[]}
+16:00:13.101 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_015_001_heartbeat_monitor_02/015_001_heartbeat_monitor_02 .gen_staging/fim_015_001_heartbeat_monitor_02/mutant.ex
+16:00:14.959 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":59,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"parent":"015_001_heartbeat_monitor_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.6,"mode":"fim","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 10/16 failed"],"tests":0.38},"shape":"fim","solution_file":".gen_staging/fim_015_001_heartbeat_monitor_02/mutant.ex","task":"015_001_heartbeat_monitor_02","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Monitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 192, error_info: %{module: Exception}]}, {Monitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [Monitor, {:check_now, \"svc\"}, 5000]}}","module":"MonitorTest","test":"test default threshold of 3 consecutive failures marks the service :down"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Monitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 192, error_info: %{module: Exception}]}, {Monitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [Monitor, {:check_now, \"svc\"}, 5000]}}","module":"MonitorTest","test":"test a custom threshold of 1 goes :down on the first failure"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Monitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 192, error_info: %{module: Exception}]}, {Monitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [Monitor, {:check_now, \"svc\"}, 5000]}}","module":"MonitorTest","test":"test an :ok result resets the consecutive-failure counter"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Monitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 192, error_info: %{module: Exception}]}, {Monitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [Monitor, {:check_now, \"svc\"}, 5000]}}","module":"MonitorTest","test":"test notify fires exactly once on the :up -> :down transition"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Monitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 192, error_info: %{module: Exception}]}, {Monitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [Monitor, {:check_now, \"svc\"}, 5000]}}","module":"MonitorTest","test":"test recovery then re-failure notifies again (once per distinct transition)"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Monitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 192, error_info: %{module: Exception}]}, {Monitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [Monitor, {:check_now, \"svc\"}, 5000]}}","module":"MonitorTest","test":"test re-registering resets status to :up and applies the new config"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Monitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 192, error_info: %{module: Exception}]}, {Monitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [Monitor, {:check_now, \"a\"}, 5000]}}","module":"MonitorTest","test":"test services are independent"},{"message":"\n\nAssertion failed, no matching message after 1000ms\n     The process mailbox is empty.\ncode: assert_receive {:tick, :a}\n","module":"MonitorTest","test":"test periodic checks run, and re-registration kills the previous schedule"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Monitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 192, error_info: %{module: Exception}]}, {Monitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [Monitor, {:check_now, \"svc\"}, 5000]}}","module":"MonitorTest","test":"test the down notification carries the Nth consecutive failure's reason"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Monitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 192, error_info: %{module: Exception}]}, {Monitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3054534_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [Monitor, {:check_now, {:svc, 1}}, 5000]}}","module":"MonitorTest","test":"test atom and tuple service names work and compare by value"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-15T14:00:14.933682Z","warning_details":["evalfim_3054534_2629.ex: line 191: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","evalfim_3054534_2629.ex: line 191: variable \"service\" is unused (if the variable is not meant to be used, prefix it with an underscore)","evalfim_3054534_2629.ex: line 168: the following pattern will never match: {updated, _status} = run_check(service, name) because the right-hand side has type: none() where \"name\" was given the type: # type: dynamic() # from: /tmp/evalf","evalfim_3054534_2629.ex: line 155: the following pattern will never match: {updated, status} = run_check(service, name) because the right-hand side has type: none() where \"name\" was given the type: # type: dynamic() # from: /tmp/evalfi"]}
+16:00:14.959 [debug] fim mutation gate: killed
+16:00:14.978 [info] promoted 015_001_heartbeat_monitor_02 -> tasks/015_001_heartbeat_monitor_02

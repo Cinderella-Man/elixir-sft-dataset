@@ -1,0 +1,31 @@
+======== rescreen 005_003_replayeventbus_01
+keep_land: 005_003_replayeventbus_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test cleanup drops topics with empty history and no subscribers: 
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+
+21:33:31.325 [warning] transient error (error_max_turns ) on keep_land_judge (005_003_replayeventbus_01) — retry 1/5 after 2000ms
+
+21:34:00.580 [warning] transient error (error_max_turns ) on keep_land_judge (005_003_replayeventbus_01) — retry 2/5 after 4000ms
+  NOT ENTAILED — the candidate itself under-specifies this demand:
+  The assertion requires a per-topic `set_history_size` override (10) to still be in force after the topic entry has been dropped/never materialized — the solver fell back to the configured default (3), yielding only the last 3 events. The prompt never states where overrides live or that they outlive a topic's history; in fact its only relevant sentence, "Topics whose history becomes empty AND who have zero subscribers are dropped entirely (indistinguishable from a never-seen topic)", points a careful reader toward discarding the override with the topic, so the expected behavior is not derivable from the prompt alone.
+  Missing contract: Per-topic history-size overrides set via `set_history_size/3` are stored independently of topic history: they apply even to topics that have never been published to, and they survive a topic being dropped by the cleanup sweep (only the history and subscriber state are discarded).
+  Packet saved for reference: logs/keep_review/005_003_replayeventbus_01. Nothing landed.
+
+======== rescreen 043_001_ets_based_leaderboard_01
+keep_land: 043_001_ets_based_leaderboard_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — eval timed out or crashed
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "All operations must work correctly when called from multiple processes concurrently. Since ETS provides concurrency for free on `:public` tables, you do not need a GenServer unless you want one."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/043_001_ets_based_leaderboard_01
+  To land: mix run scripts/keep_land.exs -- --approve 043_001_ets_based_leaderboard_01
+
+======== rescreen 102_001_genserver_based_state_machine_with_persistence_01
+keep_land: 102_001_genserver_based_state_machine_with_persistence_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test start/2 returns :pending for a brand-new entity: no match of right hand side value:
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "`StateMachine.start(server, entity_id)` — loads the latest persisted state for the given entity from the database. If no record exists, the entity starts in the `:pending` state. Returns `{:ok, current_state}`. ... The test environment provides a real, already-configured SQLite Ecto repo and injects it into your GenServer via the `repo:` option — do NOT define a repo module or any repo configuration."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/102_001_genserver_based_state_machine_with_persistence_01
+  To land: mix run scripts/keep_land.exs -- --approve 102_001_genserver_based_state_machine_with_persistence_01
+

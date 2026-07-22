@@ -1,0 +1,862 @@
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 119 needing top-up → next: 001_003_hierarchical_limiter_01, 004_004_calendarscheduler_01, 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01, …
+  2. new bases:      490 → next: 135_001_data_quality_scorer_01, 136_001_xml_to_map_parser_with_namespace_handling_01, 137_001_delta_diff_synchronization_01, …
+=============================================
+
+
+Backfill: 119 seed(s) needing derivatives.
+[  1/119] 001_003_hierarchical_limiter_01 (backfill) ...
+[  2/119] 004_004_calendarscheduler_01 (backfill) ...
+[  3/119] 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01 (backfill) ...
+[  4/119] 016_001_paginated_list_endpoint_01 (backfill) ...
+    warning: variable "params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 18 │   def list_items(params \\ %{}) do
+    │                  ~~~~~~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/items.ex:18:18: PaginatedList.Items.list_items/1
+
+    warning: variable "raw" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 22 │   defp parse_page(%{"page" => raw}) do
+    │                               ~~~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/items.ex:22:31: PaginatedList.Items.parse_page/1
+
+    warning: variable "raw" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 30 │   defp parse_page_size(%{"page_size" => raw}) do
+    │                                         ~~~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/items.ex:30:41: PaginatedList.Items.parse_page_size/1
+
+    warning: variable "page_size" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 42 │   defp compute_total_pages(total_count, page_size) do
+    │                                         ~~~~~~~~~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/items.ex:42:41: PaginatedList.Items.compute_total_pages/2
+
+    warning: variable "total_count" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 42 │   defp compute_total_pages(total_count, page_size) do
+    │                            ~~~~~~~~~~~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/items.ex:42:28: PaginatedList.Items.compute_total_pages/2
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def changeset(item, attrs) do
+    │                       ~~~~~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/item.ex:11:23: PaginatedList.Item.changeset/2
+
+    warning: variable "item" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def changeset(item, attrs) do
+    │                 ~~~~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/item.ex:11:17: PaginatedList.Item.changeset/2
+
+    warning: function parse_page_size/1 is unused
+    │
+ 30 │   defp parse_page_size(%{"page_size" => raw}) do
+    │        ~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/items.ex:30:8: PaginatedList.Items (module)
+
+    warning: function parse_page/1 is unused
+    │
+ 22 │   defp parse_page(%{"page" => raw}) do
+    │        ~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/items.ex:22:8: PaginatedList.Items (module)
+
+    warning: function compute_total_pages/2 is unused
+    │
+ 38 │   defp compute_total_pages(0, _page_size) do
+    │        ~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/items.ex:38:8: PaginatedList.Items (module)
+
+    warning: module attribute @max_page_size was set but never used
+    │
+  8 │   @max_page_size 100
+    │   ~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/items.ex:8: PaginatedList.Items (module)
+
+    warning: module attribute @default_page_size was set but never used
+    │
+  7 │   @default_page_size 20
+    │   ~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/items.ex:7: PaginatedList.Items (module)
+
+    warning: module attribute @default_page was set but never used
+    │
+  6 │   @default_page 1
+    │   ~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/items.ex:6: PaginatedList.Items (module)
+
+    warning: unused alias Repo
+    │
+  5 │   alias PaginatedList.Repo
+    │   ~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/items.ex:5:3
+
+    warning: unused import Ecto.Changeset
+    │
+  3 │   import Ecto.Changeset
+    │   ~
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list/item.ex:3:3
+
+    error: module PaginatedListWeb is not loaded and could not be found. This may be happening because the module you are trying to load directly or indirectly depends on the current module
+    │
+  2 │   use PaginatedListWeb, :router
+    │   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list_web/router.ex:2: PaginatedListWeb.Router (module)
+
+    error: module PaginatedListWeb is not loaded and could not be found. This may be happening because the module you are trying to load directly or indirectly depends on the current module
+    │
+  2 │   use PaginatedListWeb, :controller
+    │   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    │
+    └─ /tmp/eval_588702_2628/lib/paginated_list_web/controllers/item_controller.ex:2: PaginatedListWeb.ItemController (module)
+
+
+== Compilation error in file /tmp/eval_588702_2628/lib/paginated_list_web/router.ex ==
+** (CompileError) /tmp/eval_588702_2628/lib/paginated_list_web/router.ex: cannot compile module PaginatedListWeb.Router (errors have been logged)
+    (elixir 1.20.2) expanding macro: Kernel.use/2
+    /tmp/eval_588702_2628/lib/paginated_list_web/router.ex:2: PaginatedListWeb.Router (module)
+
+01:14:26.267 [warning] backfill seed 016_001_paginated_list_endpoint_01: its own harness does NOT kill a mutant (the whole-module raise-mutant graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified) — BLOCKING wt_/tfim_ derivation until test_harness.exs is fixed (verdict cached in logs/seed_verdicts.jsonl; the content hash re-checks on change)
+
+01:24:02.128 [warning] fim 016_001_paginated_list_endpoint_fim03: contract violation: FIM prompt.md must contain a fenced ```elixir skeleton — reminding
+      016_001_paginated_list_endpoint_fim01 (fim) ... REJECTED (tests failed)
+      016_001_paginated_list_endpoint_fim02 (fim) ... REJECTED (tests failed)
+      016_001_paginated_list_endpoint_fim03 (fim) ... REJECTED (tests failed)
+[  5/119] 016_002_cursor_based_list_pagination_01 (backfill) ...
+[  6/119] 016_004_concurrent_ets_backed_list_pagination_with_page_clamping_01 (backfill) ...
+[  7/119] 018_001_crud_with_soft_delete_01 (backfill) ...
+    warning: variable "changeset" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  6 │   def render("422.json", %{changeset: changeset}) do
+    │                                       ~~~~~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud_web/controllers/error_json.ex:6:39: SoftCrudWeb.ErrorJSON.render/2
+
+    warning: variable "documents" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  4 │   def index(%{documents: documents}) do
+    │                          ~~~~~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud_web/controllers/document_json.ex:4:26: SoftCrudWeb.DocumentJSON.index/1
+
+    warning: variable "template" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 10 │   def render(template, _assigns) do
+    │              ~~~~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud_web/controllers/error_json.ex:10:14: SoftCrudWeb.ErrorJSON.render/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def show(%{document: document}) do
+    │                        ~~~~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud_web/controllers/document_json.ex:8:24: SoftCrudWeb.DocumentJSON.show/1
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 12 │   defp data(%Document{} = document) do
+    │                           ~~~~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud_web/controllers/document_json.ex:12:27: SoftCrudWeb.DocumentJSON.data/1
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def list_documents(opts \\ []) do
+    │                      ~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:7:22: SoftCrud.Documents.list_documents/1
+
+    warning: variable "id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def get_document(id, opts \\ []) do
+    │                    ~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:11:20: SoftCrud.Documents.get_document/2
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def get_document(id, opts \\ []) do
+    │                        ~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:11:24: SoftCrud.Documents.get_document/2
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 15 │   def create_document(attrs) do
+    │                       ~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:15:23: SoftCrud.Documents.create_document/1
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def update_document(%Document{} = document, attrs) do
+    │                                               ~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:19:47: SoftCrud.Documents.update_document/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def update_document(%Document{} = document, attrs) do
+    │                                     ~~~~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:19:37: SoftCrud.Documents.update_document/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 23 │   def soft_delete_document(%Document{deleted_at: deleted_at} = document)
+    │                                                                ~~~~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:23:64: SoftCrud.Documents.soft_delete_document/1
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 28 │   def soft_delete_document(%Document{} = document) do
+    │                                          ~~~~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:28:42: SoftCrud.Documents.soft_delete_document/1
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 32 │   def restore_document(%Document{deleted_at: nil} = document) do
+    │                                                     ~~~~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:32:53: SoftCrud.Documents.restore_document/1
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 36 │   def restore_document(%Document{} = document) do
+    │                                      ~~~~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:36:38: SoftCrud.Documents.restore_document/1
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 40 │   defp maybe_exclude_deleted(query, true) do
+    │                              ~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:40:30: SoftCrud.Documents.maybe_exclude_deleted/2
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 44 │   defp maybe_exclude_deleted(query, false) do
+    │                              ~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:44:30: SoftCrud.Documents.maybe_exclude_deleted/2
+
+    warning: function data/1 is unused
+    │
+ 12 │   defp data(%Document{} = document) do
+    │        ~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud_web/controllers/document_json.ex:12:8: SoftCrudWeb.DocumentJSON (module)
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 14 │   def changeset(document, attrs) do
+    │                           ~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents/document.ex:14:27: SoftCrud.Documents.Document.changeset/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 14 │   def changeset(document, attrs) do
+    │                 ~~~~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents/document.ex:14:17: SoftCrud.Documents.Document.changeset/2
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def soft_delete_changeset(document, attrs) do
+    │                                       ~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents/document.ex:19:39: SoftCrud.Documents.Document.soft_delete_changeset/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def soft_delete_changeset(document, attrs) do
+    │                             ~~~~~~~~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents/document.ex:19:29: SoftCrud.Documents.Document.soft_delete_changeset/2
+
+    warning: function maybe_exclude_deleted/2 is unused
+    │
+ 40 │   defp maybe_exclude_deleted(query, true) do
+    │        ~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:40:8: SoftCrud.Documents (module)
+
+    warning: unused import Ecto.Changeset
+    │
+  3 │   import Ecto.Changeset
+    │   ~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents/document.ex:3:3
+
+    warning: unused alias Repo
+    │
+  4 │   alias SoftCrud.Repo
+    │   ~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:4:3
+
+    warning: unused import Ecto.Query
+    │
+  3 │   import Ecto.Query
+    │   ~
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud/documents.ex:3:3
+
+    error: module SoftCrudWeb is not loaded and could not be found. This may be happening because the module you are trying to load directly or indirectly depends on the current module
+    │
+  2 │   use SoftCrudWeb, :router
+    │   ^^^^^^^^^^^^^^^^^^^^^^^^
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud_web/router.ex:2: SoftCrudWeb.Router (module)
+
+    error: module SoftCrudWeb is not loaded and could not be found. This may be happening because the module you are trying to load directly or indirectly depends on the current module
+    │
+  2 │   use SoftCrudWeb, :controller
+    │   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud_web/controllers/document_controller.ex:2: SoftCrudWeb.DocumentController (module)
+
+    error: module SoftCrudWeb is not loaded and could not be found. This may be happening because the module you are trying to load directly or indirectly depends on the current module
+    │
+  2 │   use SoftCrudWeb, :controller
+    │   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    │
+    └─ /tmp/eval_601350_2626/lib/soft_crud_web/controllers/fallback_controller.ex:2: SoftCrudWeb.FallbackController (module)
+
+
+== Compilation error in file /tmp/eval_601350_2626/lib/soft_crud_web/router.ex ==
+** (CompileError) /tmp/eval_601350_2626/lib/soft_crud_web/router.ex: cannot compile module SoftCrudWeb.Router (errors have been logged)
+    (elixir 1.20.2) expanding macro: Kernel.use/2
+    /tmp/eval_601350_2626/lib/soft_crud_web/router.ex:2: SoftCrudWeb.Router (module)
+
+01:26:16.213 [warning] backfill seed 018_001_crud_with_soft_delete_01: its own harness does NOT kill a mutant (the whole-module raise-mutant graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified) — BLOCKING wt_/tfim_ derivation until test_harness.exs is fixed (verdict cached in logs/seed_verdicts.jsonl; the content hash re-checks on change)
+    · attempt 0: tests failed (0/36 passed) — asking for a fix
+    · attempt 1: tests failed (0/36 passed) — asking for a fix
+    · attempt 2: tests failed (0/36 passed) — asking for a fix
+    · attempt 3: tests failed (0/36 passed) — retries exhausted
+      018_003_cascading_soft_delete_across_parent_child_resources_01 (variation) ... REJECTED (tests failed (0/36 passed))
+
+01:44:42.392 [warning] fim 018_001_crud_with_soft_delete_fim01: contract violation: FIM prompt.md must contain a fenced ```elixir skeleton — reminding
+
+01:45:15.311 [warning] fim 018_001_crud_with_soft_delete_fim01: contract violation: FIM prompt.md must contain a fenced ```elixir skeleton — reminding
+
+01:45:56.473 [warning] fim 018_001_crud_with_soft_delete_fim02: contract violation: FIM prompt.md must contain a fenced ```elixir skeleton — reminding
+
+01:46:35.216 [warning] fim 018_001_crud_with_soft_delete_fim02: contract violation: FIM prompt.md must contain a fenced ```elixir skeleton — reminding
+      018_001_crud_with_soft_delete_fim01 (fim) ... REJECTED (:contract)
+      018_001_crud_with_soft_delete_fim02 (fim) ... REJECTED (:contract)
+      018_001_crud_with_soft_delete_fim03 (fim) ... REJECTED (compile failed)
+      018_001_crud_with_soft_delete_01 (test_fim) ... SKIPPED (vacuous seed harness — fix test_harness.exs (see logs/seed_verdicts.jsonl))
+[  8/119] 018_002_trash_and_purge_soft_delete_with_retention_window_01 (backfill) ...
+[  9/119] 018_004_optimistic_concurrency_soft_delete_with_version_guards_01 (backfill) ...
+[ 10/119] 019_001_bulk_create_endpoint_with_partial_failure_reporting_01 (backfill) ...
+    warning: variable "list_of_attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def bulk_create_items(list_of_attrs, opts \\ []) do
+    │                         ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog.ex:7:25: MyApp.Catalog.bulk_create_items/2
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def bulk_create_items(list_of_attrs, opts \\ []) do
+    │                                        ~~~~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog.ex:7:40: MyApp.Catalog.bulk_create_items/2
+
+    warning: variable "list_of_attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   defp all_or_nothing(list_of_attrs) do
+    │                       ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog.ex:11:23: MyApp.Catalog.all_or_nothing/1
+
+    warning: variable "list_of_attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 15 │   defp partial_create(list_of_attrs) do
+    │                       ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog.ex:15:23: MyApp.Catalog.partial_create/1
+
+    warning: variable "list_of_attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   defp insert_each(list_of_attrs) do
+    │                    ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog.ex:19:20: MyApp.Catalog.insert_each/1
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 23 │   defp insert_item(attrs) do
+    │                    ~~~~~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog.ex:23:20: MyApp.Catalog.insert_item/1
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 13 │   def changeset(item, attrs) do
+    │                       ~~~~~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog/item.ex:13:23: MyApp.Catalog.Item.changeset/2
+
+    warning: variable "item" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 13 │   def changeset(item, attrs) do
+    │                 ~~~~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog/item.ex:13:17: MyApp.Catalog.Item.changeset/2
+
+    warning: function partial_create/1 is unused
+    │
+ 15 │   defp partial_create(list_of_attrs) do
+    │        ~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog.ex:15:8: MyApp.Catalog (module)
+
+    warning: function insert_item/1 is unused
+    │
+ 23 │   defp insert_item(attrs) do
+    │        ~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog.ex:23:8: MyApp.Catalog (module)
+
+    warning: function insert_each/1 is unused
+    │
+ 19 │   defp insert_each(list_of_attrs) do
+    │        ~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog.ex:19:8: MyApp.Catalog (module)
+
+    warning: function all_or_nothing/1 is unused
+    │
+ 11 │   defp all_or_nothing(list_of_attrs) do
+    │        ~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog.ex:11:8: MyApp.Catalog (module)
+
+    warning: unused alias Item
+    │
+  4 │   alias MyApp.Catalog.Item
+    │   ~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog.ex:4:3
+
+    warning: unused alias Repo
+    │
+  3 │   alias MyApp.Repo
+    │   ~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog.ex:3:3
+
+    warning: unused import Ecto.Changeset
+    │
+  3 │   import Ecto.Changeset
+    │   ~
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app/catalog/item.ex:3:3
+
+    error: module MyAppWeb is not loaded and could not be found. This may be happening because the module you are trying to load directly or indirectly depends on the current module
+    │
+  2 │   use MyAppWeb, :router
+    │   ^^^^^^^^^^^^^^^^^^^^^
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app_web/router.ex:2: MyAppWeb.Router (module)
+
+    error: module MyAppWeb is not loaded and could not be found. This may be happening because the module you are trying to load directly or indirectly depends on the current module
+    │
+  2 │   use MyAppWeb, :controller
+    │   ^^^^^^^^^^^^^^^^^^^^^^^^^
+    │
+    └─ /tmp/eval_644103_2626/lib/my_app_web/controllers/bulk_item_controller.ex:2: MyAppWeb.BulkItemController (module)
+
+
+== Compilation error in file /tmp/eval_644103_2626/lib/my_app_web/router.ex ==
+** (CompileError) /tmp/eval_644103_2626/lib/my_app_web/router.ex: cannot compile module MyAppWeb.Router (errors have been logged)
+    (elixir 1.20.2) expanding macro: Kernel.use/2
+    /tmp/eval_644103_2626/lib/my_app_web/router.ex:2: MyAppWeb.Router (module)
+
+01:49:16.965 [warning] backfill seed 019_001_bulk_create_endpoint_with_partial_failure_reporting_01: its own harness does NOT kill a mutant (the whole-module raise-mutant graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified) — BLOCKING wt_/tfim_ derivation until test_harness.exs is fixed (verdict cached in logs/seed_verdicts.jsonl; the content hash re-checks on change)
+
+01:58:20.826 [warning] fim 019_001_bulk_create_endpoint_with_partial_failure_reporting_fim03: contract violation: FIM prompt.md must contain a fenced ```elixir skeleton — reminding
+
+01:58:55.746 [warning] fim 019_001_bulk_create_endpoint_with_partial_failure_reporting_fim03: contract violation: FIM prompt.md must contain a fenced ```elixir skeleton — reminding
+      019_001_bulk_create_endpoint_with_partial_failure_reporting_fim01 (fim) ... REJECTED (compile failed)
+      019_001_bulk_create_endpoint_with_partial_failure_reporting_fim02 (fim) ... REJECTED (compile failed)
+      019_001_bulk_create_endpoint_with_partial_failure_reporting_fim03 (fim) ... REJECTED (:contract)
+      019_001_bulk_create_endpoint_with_partial_failure_reporting_01 (test_fim) ... SKIPPED (vacuous seed harness — fix test_harness.exs (see logs/seed_verdicts.jsonl))
+[ 11/119] 019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01 (backfill) ...
+[ 12/119] 021_001_versioned_api_with_content_negotiation_01 (backfill) ...
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def call(conn, opts) do
+    │            ~~~~
+    │
+    └─ /tmp/eval_653769_2632/lib/versioned_api/plugs/api_version.ex:8:12: VersionedApi.Plugs.ApiVersion.call/2
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def call(conn, opts) do
+    │                  ~~~~
+    │
+    └─ /tmp/eval_653769_2632/lib/versioned_api/plugs/api_version.ex:8:18: VersionedApi.Plugs.ApiVersion.call/2
+
+    warning: variable "u" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  5 │   def render("v1", u) do
+    │                    ~
+    │
+    └─ /tmp/eval_653769_2632/lib/versioned_api/views/user_view.ex:5:20: VersionedApi.Views.UserView.render/2
+
+    warning: variable "u" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  9 │   def render("v2", u) do
+    │                    ~
+    │
+    └─ /tmp/eval_653769_2632/lib/versioned_api/views/user_view.ex:9:20: VersionedApi.Views.UserView.render/2
+
+    warning: variable "body" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 37 │   defp send_json(conn, status, body) do
+    │                                ~~~~
+    │
+    └─ /tmp/eval_653769_2632/lib/versioned_api/router.ex:37:32: VersionedApi.Router.send_json/3
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 37 │   defp send_json(conn, status, body) do
+    │                  ~~~~
+    │
+    └─ /tmp/eval_653769_2632/lib/versioned_api/router.ex:37:18: VersionedApi.Router.send_json/3
+
+    warning: variable "status" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 37 │   defp send_json(conn, status, body) do
+    │                        ~~~~~~
+    │
+    └─ /tmp/eval_653769_2632/lib/versioned_api/router.ex:37:24: VersionedApi.Router.send_json/3
+
+    warning: unused import Plug.Conn
+    │
+  2 │   import Plug.Conn
+    │   ~
+    │
+    └─ /tmp/eval_653769_2632/lib/versioned_api/plugs/api_version.ex:2:3
+
+    warning: the following pattern will never match:
+
+        rendered = VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+
+    because the right-hand side has type:
+
+        none()
+
+    where "conn" was given the type:
+
+        # type: dynamic(%{..., assigns: %{..., api_version: binary()}})
+        # from: deps/plug/lib/plug/router.ex:28:48
+        VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+
+    where "user" was given the type:
+
+        # type: dynamic(%{created_at: binary(), email: binary(), first_name: binary(), last_name: binary()})
+        # from: deps/plug/lib/plug/router.ex:27:7
+        user
+
+    type warning found at:
+    │
+ 28 │ 
+    │                  ~
+    │
+    └─ deps/plug/lib/plug/router.ex:28:18: VersionedApi.Router.do_match/4
+
+      021_001_versioned_api_with_content_negotiation_04 (fim) ... ACCEPTED (20 passed, mutant killed, 3 attempt(s))
+[ 13/119] 022_001_nested_resource_endpoint_with_authorization_01 (backfill) ...
+    · attempt 0: compile failed — asking for a fix
+    · attempt 1: green (25/25) — all gates passed
+    · attempt 0: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 1: house style: 1 compile warning(s) — silence them — asking for a fix
+/usr/bin/bash: line 1: 670289 Killed                  timeout --signal=KILL 900 claude -p --output-format json --model 'opus' --max-turns 2 --allowedTools '' --system-prompt-file '/tmp/gen_sys_587088_6146.txt' --setting-sources '' --strict-mcp-config --no-session-persistence < '/tmp/gen_user_587088_6210.txt'
+
+02:31:16.175 [warning] transient error (no JSON on stdout (exit 137)) on fix (022_004_invitation_gated_nested_membership_with_capacity_limits_01) — retry 1/5 after 2000ms
+    · attempt 2: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 3: house style: 2 compile warning(s) — silence them — retries exhausted
+      022_003_etag_versioned_nested_membership_with_optimistic_concurrency_01 (variation) ... ACCEPTED (25 passed, mutant killed, 2 attempt(s))
+      022_004_invitation_gated_nested_membership_with_capacity_limits_01 (variation) ... REJECTED (house style: 2 compile warning(s) — silence them)
+
+02:49:04.740 [warning] usage limit / out of credits on fim_candidate (022_003_etag_versioned_nested_membership_with_optimistic_concurrency_fim03) — waiting 900000ms (attempt 1, ~0 min waited so far)
+
+03:04:06.203 [warning] usage limit / out of credits on fim_candidate (022_003_etag_versioned_nested_membership_with_optimistic_concurrency_fim03) — waiting 900000ms (attempt 2, ~15 min waited so far)
+
+03:19:07.671 [warning] usage limit / out of credits on fim_candidate (022_003_etag_versioned_nested_membership_with_optimistic_concurrency_fim03) — waiting 900000ms (attempt 3, ~30 min waited so far)
+
+03:34:09.196 [warning] usage limit / out of credits on fim_candidate (022_003_etag_versioned_nested_membership_with_optimistic_concurrency_fim03) — waiting 900000ms (attempt 4, ~45 min waited so far)
+
+03:49:10.799 [warning] usage limit / out of credits on fim_candidate (022_003_etag_versioned_nested_membership_with_optimistic_concurrency_fim03) — waiting 900000ms (attempt 5, ~60 min waited so far)
+
+04:04:12.287 [warning] usage limit / out of credits on fim_candidate (022_003_etag_versioned_nested_membership_with_optimistic_concurrency_fim03) — waiting 900000ms (attempt 6, ~75 min waited so far)
+
+04:19:13.997 [warning] usage limit / out of credits on fim_candidate (022_003_etag_versioned_nested_membership_with_optimistic_concurrency_fim03) — waiting 900000ms (attempt 7, ~90 min waited so far)
+
+04:34:15.637 [warning] usage limit / out of credits on fim_candidate (022_003_etag_versioned_nested_membership_with_optimistic_concurrency_fim03) — waiting 900000ms (attempt 8, ~105 min waited so far)
+
+04:49:17.145 [warning] usage limit / out of credits on fim_candidate (022_003_etag_versioned_nested_membership_with_optimistic_concurrency_fim03) — waiting 900000ms (attempt 9, ~120 min waited so far)
+
+05:04:18.509 [warning] usage limit / out of credits on fim_candidate (022_003_etag_versioned_nested_membership_with_optimistic_concurrency_fim03) — waiting 900000ms (attempt 10, ~135 min waited so far)
+
+05:19:20.351 [warning] usage limit / out of credits on fim_candidate (022_003_etag_versioned_nested_membership_with_optimistic_concurrency_fim03) — waiting 900000ms (attempt 11, ~150 min waited so far)
+      022_003_etag_versioned_nested_membership_with_optimistic_concurrency_02 (fim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      022_003_etag_versioned_nested_membership_with_optimistic_concurrency_03 (fim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      022_003_etag_versioned_nested_membership_with_optimistic_concurrency_04 (fim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      wt_022_003_etag_versioned_nested_membership_with_optimistic_concurrency (wtest) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_022_003_etag_versioned_nested_membership_with_optimistic_concurrency_02 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_022_003_etag_versioned_nested_membership_with_optimistic_concurrency_03 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_022_003_etag_versioned_nested_membership_with_optimistic_concurrency_04 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_022_003_etag_versioned_nested_membership_with_optimistic_concurrency_05 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_022_003_etag_versioned_nested_membership_with_optimistic_concurrency_06 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_022_003_etag_versioned_nested_membership_with_optimistic_concurrency_07 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_022_003_etag_versioned_nested_membership_with_optimistic_concurrency_08 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_022_003_etag_versioned_nested_membership_with_optimistic_concurrency_09 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_022_003_etag_versioned_nested_membership_with_optimistic_concurrency_10 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_022_003_etag_versioned_nested_membership_with_optimistic_concurrency_11 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+[ 14/119] 032_001_json_to_ecto_bulk_ingestion_pipeline_01 (backfill) ...
+[ 15/119] 032_002_csv_to_ecto_batch_ingestion_with_changeset_validation_01 (backfill) ...
+[ 16/119] 032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_01 (backfill) ...
+[ 17/119] 034_001_data_reconciliation_engine_01 (backfill) ...
+    · attempt 0: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 1: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 2: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 3: house style: 1 compile warning(s) — silence them — retries exhausted
+    · attempt 0: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 1: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 2: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 3: house style: 1 compile warning(s) — silence them — retries exhausted
+    · attempt 0: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 1: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 2: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 3: house style: 1 compile warning(s) — silence them — retries exhausted
+      034_002_tolerant_field_comparator_reconciler_01 (variation) ... REJECTED (house style: 1 compile warning(s) — silence them)
+      034_003_incremental_stateful_reconciler_genserver_01 (variation) ... REJECTED (house style: 1 compile warning(s) — silence them)
+      034_004_duplicate_aware_multiset_reconciler_01 (variation) ... REJECTED (house style: 1 compile warning(s) — silence them)
+[ 18/119] 035_001_time_series_resampler_01 (backfill) ...
+      035_001_time_series_resampler_04 (fim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+[ 19/119] 035_004_counter_rate_resampler_01 (backfill) ...
+      035_004_counter_rate_resampler_04 (fim) ... ACCEPTED (12 passed, mutant killed, 1 attempt(s))
+[ 20/119] 036_001_markdown_to_structured_data_parser_01 (backfill) ...
+      036_001_markdown_to_structured_data_parser_04 (fim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+[ 21/119] 037_001_data_anonymizer_01 (backfill) ...
+[ 22/119] 037_002_path_addressed_nested_record_anonymizer_01 (backfill) ...
+      tfim_037_002_path_addressed_nested_record_anonymizer_02 (tfim) ... ACCEPTED (14 passed, mutant killed, 1 attempt(s))
+      tfim_037_002_path_addressed_nested_record_anonymizer_03 (tfim) ... ACCEPTED (14 passed, mutant killed, 1 attempt(s))
+      tfim_037_002_path_addressed_nested_record_anonymizer_04 (tfim) ... ACCEPTED (14 passed, mutant killed, 1 attempt(s))
+      tfim_037_002_path_addressed_nested_record_anonymizer_05 (tfim) ... ACCEPTED (14 passed, mutant killed, 1 attempt(s))
+[ 23/119] 037_003_reversible_tokenization_vault_anonymizer_01 (backfill) ...
+[ 24/119] 037_004_stateful_concurrent_consistent_pseudonymizer_01 (backfill) ...
+[ 25/119] 061_002_fail_fast_parallel_map_with_cancellation_01 (backfill) ...
+[ 26/119] 061_003_timeout_and_retry_parallel_map_01 (backfill) ...
+[ 27/119] 062_004_batch_pipeline_with_error_collection_01 (backfill) ...
+[ 28/119] 063_001_concurrent_data_fetcher_with_timeout_01 (backfill) ...
+[ 29/119] 063_002_quorum_first_n_concurrent_fetcher_01 (backfill) ...
+[ 30/119] 063_003_fallback_chain_concurrent_fetcher_01 (backfill) ...
+[ 31/119] 063_004_bounded_concurrency_concurrent_fetcher_01 (backfill) ...
+[ 32/119] 064_003_priority_aware_work_stealing_queue_01 (backfill) ...
+[ 33/119] 065_001_saga_compensating_transaction_coordinator_01 (backfill) ...
+[ 34/119] 065_004_policy_driven_saga_coordinator_01 (backfill) ...
+[ 35/119] 070_003_nested_sub_saga_composition_01 (backfill) ...
+[ 36/119] 070_004_resumable_journaled_saga_01 (backfill) ...
+[ 37/119] 072_001_test_helper_for_time_dependent_code_01 (backfill) ...
+[ 38/119] 072_002_deferred_timer_virtual_clock_01 (backfill) ...
+[ 39/119] 072_003_monotonic_measurement_clock_01 (backfill) ...
+[ 40/119] 072_004_scripted_sequence_clock_01 (backfill) ...
+[ 41/119] 073_001_database_cleaner_for_integration_tests_01 (backfill) ...
+      tfim_073_001_database_cleaner_for_integration_tests_10 (tfim) ... REJECTED (vacuous test block (no mutant killed / not independent))
+      tfim_073_001_database_cleaner_for_integration_tests_10 (tfim) ... REJECTED (vacuous test block (no mutant killed / not independent))
+      tfim_073_001_database_cleaner_for_integration_tests_10 (tfim) ... REJECTED (vacuous test block (no mutant killed / not independent))
+      tfim_073_001_database_cleaner_for_integration_tests_10 (tfim) ... ACCEPTED (20 passed, mutant killed, 1 attempt(s))
+      tfim_073_001_database_cleaner_for_integration_tests_11 (tfim) ... ACCEPTED (20 passed, mutant killed, 1 attempt(s))
+[ 42/119] 073_003_sandbox_ownership_cleaner_for_async_tests_01 (backfill) ...
+[ 43/119] 074_001_custom_exunit_assertion_helpers_01 (backfill) ...
+
+06:48:15.577 [warning] backfill seed 074_001_custom_exunit_assertion_helpers_01: its own harness does NOT kill a mutant (the whole-module raise-mutant graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified) — BLOCKING wt_/tfim_ derivation until test_harness.exs is fixed (verdict cached in logs/seed_verdicts.jsonl; the content hash re-checks on change)
+
+06:48:47.578 [warning] fim select: dropped hallucinated target(s) not defined in the module: __using__/1
+      074_001_custom_exunit_assertion_helpers_01 (test_fim) ... SKIPPED (vacuous seed harness — fix test_harness.exs (see logs/seed_verdicts.jsonl))
+[ 44/119] 074_002_collection_and_structural_assertion_helpers_01 (backfill) ...
+
+06:48:48.148 [warning] backfill seed 074_002_collection_and_structural_assertion_helpers_01: its own harness does NOT kill a mutant (the whole-module raise-mutant graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified) — BLOCKING wt_/tfim_ derivation until test_harness.exs is fixed (verdict cached in logs/seed_verdicts.jsonl; the content hash re-checks on change)
+      074_002_collection_and_structural_assertion_helpers_01 (test_fim) ... SKIPPED (vacuous seed harness — fix test_harness.exs (see logs/seed_verdicts.jsonl))
+[ 45/119] 074_003_concurrency_and_message_assertion_helpers_01 (backfill) ...
+      tfim_074_003_concurrency_and_message_assertion_helpers_02 (tfim) ... ACCEPTED (28 passed, mutant killed, 1 attempt(s))
+      tfim_074_003_concurrency_and_message_assertion_helpers_03 (tfim) ... ACCEPTED (28 passed, mutant killed, 1 attempt(s))
+      tfim_074_003_concurrency_and_message_assertion_helpers_04 (tfim) ... ACCEPTED (28 passed, mutant killed, 1 attempt(s))
+      tfim_074_003_concurrency_and_message_assertion_helpers_05 (tfim) ... ACCEPTED (28 passed, mutant killed, 1 attempt(s))
+      tfim_074_003_concurrency_and_message_assertion_helpers_06 (tfim) ... ACCEPTED (28 passed, mutant killed, 1 attempt(s))
+      tfim_074_003_concurrency_and_message_assertion_helpers_07 (tfim) ... ACCEPTED (28 passed, mutant killed, 1 attempt(s))
+      tfim_074_003_concurrency_and_message_assertion_helpers_08 (tfim) ... ACCEPTED (28 passed, mutant killed, 1 attempt(s))
+      tfim_074_003_concurrency_and_message_assertion_helpers_09 (tfim) ... ACCEPTED (28 passed, mutant killed, 1 attempt(s))
+[ 46/119] 074_004_numeric_tolerance_and_exception_assertion_helpers_01 (backfill) ...
+
+06:50:25.117 [warning] backfill seed 074_004_numeric_tolerance_and_exception_assertion_helpers_01: its own harness does NOT kill a mutant (the whole-module raise-mutant graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified) — BLOCKING wt_/tfim_ derivation until test_harness.exs is fixed (verdict cached in logs/seed_verdicts.jsonl; the content hash re-checks on change)
+
+06:50:39.120 [warning] fim select: dropped hallucinated target(s) not defined in the module: assert_monotonic/2
+      074_004_numeric_tolerance_and_exception_assertion_helpers_01 (test_fim) ... SKIPPED (vacuous seed harness — fix test_harness.exs (see logs/seed_verdicts.jsonl))
+[ 47/119] 075_001_property_based_test_generators_01 (backfill) ...
+[ 48/119] 075_002_recursive_json_value_generators_with_bounded_depth_01 (backfill) ...
+      tfim_075_002_recursive_json_value_generators_with_bounded_depth_02 (tfim) ... ACCEPTED (21 passed, mutant killed, 1 attempt(s))
+      tfim_075_002_recursive_json_value_generators_with_bounded_depth_03 (tfim) ... ACCEPTED (21 passed, mutant killed, 1 attempt(s))
+      tfim_075_002_recursive_json_value_generators_with_bounded_depth_04 (tfim) ... ACCEPTED (21 passed, mutant killed, 1 attempt(s))
+      tfim_075_002_recursive_json_value_generators_with_bounded_depth_05 (tfim) ... ACCEPTED (21 passed, mutant killed, 1 attempt(s))
+[ 49/119] 075_003_stateful_command_sequence_generators_01 (backfill) ...
+      tfim_075_003_stateful_command_sequence_generators_02 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+      tfim_075_003_stateful_command_sequence_generators_03 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+      tfim_075_003_stateful_command_sequence_generators_04 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+      tfim_075_003_stateful_command_sequence_generators_05 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+      tfim_075_003_stateful_command_sequence_generators_06 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+      tfim_075_003_stateful_command_sequence_generators_07 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+[ 50/119] 075_004_schema_driven_generator_interpreter_01 (backfill) ...
+[ 51/119] 077_001_interval_tree_for_overlapping_range_queries_01 (backfill) ...
+      077_001_interval_tree_for_overlapping_range_queries_04 (fim) ... ACCEPTED (20 passed, mutant killed, 1 attempt(s))
+[ 52/119] 079_001_bloom_filter_01 (backfill) ...
+      079_001_bloom_filter_04 (fim) ... ACCEPTED (11 passed, mutant killed, 1 attempt(s))
+[ 53/119] 079_003_scalable_bloom_filter_01 (backfill) ...
+[ 54/119] 079_004_concurrent_bloom_filter_01 (backfill) ...
+[ 55/119] 080_002_weighted_critical_path_dag_scheduler_01 (backfill) ...
+[ 56/119] 086_002_tiered_bracket_cart_with_shipping_thresholds_01 (backfill) ...
+[ 57/119] 086_004_concurrent_genserver_backed_cart_01 (backfill) ...
+      086_004_concurrent_genserver_backed_cart_04 (fim) ... ACCEPTED (7 passed, mutant killed, 1 attempt(s))
+[ 58/119] 087_001_permission_system_with_role_based_access_01 (backfill) ...
+[ 59/119] 087_002_deny_override_policy_list_access_control_01 (backfill) ...
+[ 60/119] 087_003_multi_role_grant_with_wildcard_permissions_01 (backfill) ...
+[ 61/119] 087_004_genserver_role_graph_registry_with_runtime_grants_01 (backfill) ...
+[ 62/119] 092_001_scoring_ranking_algorithm_01 (backfill) ...
+[ 63/119] 092_002_reddit_style_logarithmic_hot_ranking_01 (backfill) ...
+[ 64/119] 092_003_wilson_lower_bound_confidence_ranking_01 (backfill) ...
+[ 65/119] 096_001_input_sanitizer_module_01 (backfill) ...
+      096_001_input_sanitizer_module_04 (fim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+[ 66/119] 096_002_schema_driven_nested_params_sanitizer_01 (backfill) ...
+[ 67/119] 096_003_stateful_sanitizer_server_with_policy_and_metrics_01 (backfill) ...
+[ 68/119] 096_004_reporting_sanitizer_with_strict_and_lenient_modes_01 (backfill) ...
+[ 69/119] 097_002_weighted_strength_score_password_policy_01 (backfill) ...
+[ 70/119] 097_004_stateful_password_policy_server_with_reuse_history_01 (backfill) ...
+[ 71/119] 098_001_token_generator_and_validator_01 (backfill) ...
+    · attempt 0: house style: 1 line(s) over 98 columns — wrap them — asking for a fix
+    · attempt 1: house style: 1 line(s) over 98 columns — wrap them — asking for a fix
+    · attempt 2: house style: 1 line(s) over 98 columns — wrap them — asking for a fix
+    · attempt 3: house style: 1 line(s) over 98 columns — wrap them — retries exhausted
+    · attempt 0: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 1: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 2: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 3: house style: 1 compile warning(s) — silence them — retries exhausted
+    · attempt 0: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 1: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 2: house style: 1 compile warning(s) — silence them — asking for a fix
+    · attempt 3: house style: 1 compile warning(s) — silence them — retries exhausted
+      098_002_aead_encrypted_confidential_token_01 (variation) ... REJECTED (house style: 1 line(s) over 98 columns — wrap them)
+      098_003_revocable_stateful_token_server_01 (variation) ... REJECTED (house style: 1 compile warning(s) — silence them)
+      098_004_key_rotation_keyring_token_01 (variation) ... REJECTED (house style: 1 compile warning(s) — silence them)
+
+07:54:53.646 [warning] fim select: dropped hallucinated target(s) not defined in the module: constant_time_equal?/2
+      098_001_token_generator_and_validator_03 (fim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+      tfim_098_001_token_generator_and_validator_05 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+      tfim_098_001_token_generator_and_validator_06 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+      tfim_098_001_token_generator_and_validator_07 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+      tfim_098_001_token_generator_and_validator_08 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+      tfim_098_001_token_generator_and_validator_09 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+      tfim_098_001_token_generator_and_validator_10 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+      tfim_098_001_token_generator_and_validator_11 (tfim) ... ACCEPTED (18 passed, mutant killed, 1 attempt(s))
+[ 72/119] 099_001_data_masking_for_logs_01 (backfill) ...
+    · attempt 0: green (15/15) — all gates passed
+    · attempt 0: green (17/17) — all gates passed
+    · attempt 0: green (15/15) — all gates passed
+      099_002_redaction_with_match_count_reporting_01 (variation) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      099_003_per_field_masking_strategies_01 (variation) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      099_004_concurrent_masking_server_with_runtime_patterns_01 (variation) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      099_001_data_masking_for_logs_02 (fim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      099_001_data_masking_for_logs_03 (fim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      099_001_data_masking_for_logs_04 (fim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      099_002_redaction_with_match_count_reporting_02 (fim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      099_002_redaction_with_match_count_reporting_03 (fim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      099_002_redaction_with_match_count_reporting_04 (fim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      099_003_per_field_masking_strategies_02 (fim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      099_003_per_field_masking_strategies_03 (fim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      099_003_per_field_masking_strategies_04 (fim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      099_004_concurrent_masking_server_with_runtime_patterns_02 (fim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      099_004_concurrent_masking_server_with_runtime_patterns_03 (fim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      099_004_concurrent_masking_server_with_runtime_patterns_04 (fim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      wt_099_002_redaction_with_match_count_reporting (wtest) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      wt_099_003_per_field_masking_strategies (wtest) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      wt_099_004_concurrent_masking_server_with_runtime_patterns (wtest) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_001_data_masking_for_logs_05 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_099_001_data_masking_for_logs_06 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_099_001_data_masking_for_logs_07 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_099_001_data_masking_for_logs_08 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_099_001_data_masking_for_logs_09 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_099_001_data_masking_for_logs_10 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_099_001_data_masking_for_logs_11 (tfim) ... ACCEPTED (25 passed, mutant killed, 1 attempt(s))
+      tfim_099_002_redaction_with_match_count_reporting_02 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_002_redaction_with_match_count_reporting_03 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_002_redaction_with_match_count_reporting_04 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_002_redaction_with_match_count_reporting_05 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_002_redaction_with_match_count_reporting_06 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_002_redaction_with_match_count_reporting_07 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_002_redaction_with_match_count_reporting_08 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_002_redaction_with_match_count_reporting_09 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_002_redaction_with_match_count_reporting_10 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_002_redaction_with_match_count_reporting_11 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_003_per_field_masking_strategies_02 (tfim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      tfim_099_003_per_field_masking_strategies_03 (tfim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      tfim_099_003_per_field_masking_strategies_04 (tfim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      tfim_099_003_per_field_masking_strategies_05 (tfim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      tfim_099_003_per_field_masking_strategies_06 (tfim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      tfim_099_003_per_field_masking_strategies_07 (tfim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      tfim_099_003_per_field_masking_strategies_08 (tfim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      tfim_099_003_per_field_masking_strategies_09 (tfim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      tfim_099_003_per_field_masking_strategies_10 (tfim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      tfim_099_003_per_field_masking_strategies_11 (tfim) ... ACCEPTED (17 passed, mutant killed, 1 attempt(s))
+      tfim_099_004_concurrent_masking_server_with_runtime_patterns_02 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_004_concurrent_masking_server_with_runtime_patterns_03 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_004_concurrent_masking_server_with_runtime_patterns_04 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_004_concurrent_masking_server_with_runtime_patterns_05 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_004_concurrent_masking_server_with_runtime_patterns_06 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_004_concurrent_masking_server_with_runtime_patterns_07 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_004_concurrent_masking_server_with_runtime_patterns_08 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_004_concurrent_masking_server_with_runtime_patterns_09 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_004_concurrent_masking_server_with_runtime_patterns_10 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+      tfim_099_004_concurrent_masking_server_with_runtime_patterns_11 (tfim) ... ACCEPTED (15 passed, mutant killed, 1 attempt(s))
+[ 73/119] 100_001_totp_time_based_one_time_password_implementation_01 (backfill) ...
+
+08:25:33.162 [warning] usage limit / out of credits on variation_blind_solve (100_002_hotp_counter_based_otp_with_resynchronization_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+
+08:40:34.930 [warning] usage limit / out of credits on variation_blind_solve (100_002_hotp_counter_based_otp_with_resynchronization_01) — waiting 900000ms (attempt 2, ~15 min waited so far)
+
+08:55:36.677 [warning] usage limit / out of credits on variation_blind_solve (100_002_hotp_counter_based_otp_with_resynchronization_01) — waiting 900000ms (attempt 3, ~30 min waited so far)
+
+09:10:38.495 [warning] usage limit / out of credits on variation_blind_solve (100_002_hotp_counter_based_otp_with_resynchronization_01) — waiting 900000ms (attempt 4, ~45 min waited so far)
+
+09:25:39.952 [warning] usage limit / out of credits on variation_blind_solve (100_002_hotp_counter_based_otp_with_resynchronization_01) — waiting 900000ms (attempt 5, ~60 min waited so far)
+
+09:40:41.503 [warning] usage limit / out of credits on variation_blind_solve (100_002_hotp_counter_based_otp_with_resynchronization_01) — waiting 900000ms (attempt 6, ~75 min waited so far)

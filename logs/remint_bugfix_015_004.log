@@ -1,0 +1,43 @@
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 1 needing top-up → next: 015_004_monitor_with_maintenance_windows_and_pause_resume_01
+  2. new bases:      0 (every tasks.md idea already has a tasks/ dir)
+=============================================
+
+
+Backfill: 1 seed(s) needing derivatives.
+[1/1] 015_004_monitor_with_maintenance_windows_and_pause_resume_01 (backfill) ...
+      mutant [1/11] start_link/1 gutted to raise ... killed
+      mutant [2/11] register/5 gutted to raise ... killed
+      mutant [3/11] status/2 gutted to raise ... killed
+      mutant [4/11] statuses/1 gutted to raise ... killed
+      mutant [5/11] deregister/2 gutted to raise ... killed
+      mutant [6/11] pause/2 gutted to raise ... killed
+      mutant [7/11] resume/2 gutted to raise ... killed
+      mutant [8/11] maintenance/3 gutted to raise ... killed
+      mutant [9/11] init/1 gutted to raise ... killed
+      mutant [10/11] handle_call/3 gutted to raise ... killed
+      mutant [11/11] handle_info/2 gutted to raise ... killed
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L50 s155: {:ok, _} -> {:error, _} not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L65 s216: 3 -> 4 killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_015_004_monitor_with_maintenance_windows_and_pause_resume_01
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L302 s1298: >= -> > killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_015_004_monitor_with_maintenance_windows_and_pause_resume_02
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L111 s457: {:ok, _} -> {:error, _} killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_015_004_monitor_with_maintenance_windows_and_pause_resume_03
+      bugfix_015_004_monitor_with_maintenance_windows_and_pause_resume_01 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_015_004_monitor_with_maintenance_windows_and_pause_resume_01 (bugfix) ... ACCEPTED (30 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_015_004_monitor_with_maintenance_windows_and_pause_resume_02 (bugfix) ... ACCEPTED (30 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_015_004_monitor_with_maintenance_windows_and_pause_resume_03 (bugfix) ... ACCEPTED (30 passed, mutant killed (semantic_killed), 1 attempt(s))
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 777 | mintable (rejected → accepted) pairs: 105 | minted: %{exists: 17, unverified: 88}
+
+Done.

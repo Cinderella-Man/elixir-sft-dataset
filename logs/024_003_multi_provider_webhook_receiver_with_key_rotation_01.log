@@ -1,0 +1,907 @@
+02:35:07.397 [info] VARIATION 024_003_multi_provider_webhook_receiver_with_key_rotation_01: Multi-Provider Webhook Receiver with Key Rotation
+02:35:07.398 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01 solution.ex
+02:35:08.128 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":false,"line_count":192,"lines_over_98":2,"max_line_length":101,"mode":"full","pipe_chain_count":5,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.5,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.85,"reasons":["tests: 1/15 failed","analysis: no lines over 98 chars (found 2) → 0/1 pts","analysis: @doc on public functions → 0/1 pts","analysis: @spec annotations present → 0/2 pts"],"tests":0.93},"shape":"single","solution_file":".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01/solution.ex","task":"024_003_multi_provider_webhook_receiver_with_key_rotation_01","test_failures":[{"message":"\n\nmatch (=) failed\ncode:  assert :ok = WebhookReceiver.Signature.verify_any(payload, sig, [@gh_new, @gh_old], \"sha256=\")\nleft:  :ok\nright: :error\n","module":"WebhookReceiverMultiProviderTest","test":"test Signature.verify_any/4 succeeds on any matching secret"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:35:08.105400Z"}
+02:35:08.129 [info] cycle 024_003_multi_provider_webhook_receiver_with_key_rotation_01: repairing — Tests failed (1 failed, 0 errors):
+  - test Signature.verify_any/4 succeeds on any matching secret (WebhookReceiverMultiProviderTest): 
+
+match (=) failed
+code:  assert :ok = WebhookReceiver.Signature.verify_any(payload, sig, [@gh_new, @gh_old], "sha256=")
+left:  :ok
+right: :error
+
+02:35:08.129 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:35:08.129 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Tests failed (1 failed, 0 errors):
+  - test Signature.verify_any/4 succeeds on any matching secret (WebhookReceiverMultiProviderTest): 
+
+match (=) failed
+code:  assert :ok = WebhookReceiver.Signature.verify_any(payload, sig, [@gh_new, @gh_old], "sha256=")
+left:  :ok
+right: :error
+
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `WebhookReceiver` that implements a Plug-based **multi-provider** webhook endpoint with HMAC-SHA256 signature verification and support for **secret rotation** (multiple simultaneously-valid keys per provider).
+
+I need these modules:
+
+1. `WebhookReceiver.Signature` — a module with:
+   - `verify(payload, signature, secret, prefix \\ "")` — compute the lowercase hex HMAC-SHA256 of `payload` with `secret`, prepend `prefix` (e.g. `"sha256="`), and constant-time compare against `signature`. Return `:ok` or `:error`. Non-binary inputs return `:error`.
+   - `verify_any(payload, signature, secrets, prefix \\ "")` — return `:ok` if `verify/4` succeeds for ANY secret in the `secrets` list, else `:error`.
+
+2. `WebhookReceiver.Store` — a behaviour with callbacks:
+   - `store_event(store, provider, event_id, payload)` — persist keyed by `{provider, event_id}` with status `:pending`; `{:ok, :duplicate}` if that provider/id pair exists, `{:ok, :created}` otherwise.
+   - `get_event(store, provider, event_id)` — `{:ok, event}` or `:error`.
+   - `all_events(store)` — all stored events as a list.
+
+3. `WebhookReceiver.MemoryStore` — a GenServer implementing the behaviour. Each event is a map with at least `:provider`, `:event_id`, `:payload`, and `:status` (`:pending`).
+
+4. `WebhookReceiver.Router` — a `Plug.Router` exposing `POST /api/webhooks/:provider`. Options:
+   - `:providers` — a map from provider name (string) to a config map `%{secrets: [binary, ...], header: header_name, prefix: prefix}` where `prefix` is optional (default `""`). `secrets` is a list; the FIRST is current, later ones are being rotated out but still accepted.
+   - `:store` — the store process (required).
+
+Router behaviour:
+- Look up `provider` from the path. If it isn't in `:providers`, return **404** `{"error": "unknown_provider"}`.
+- Read the raw body once and the provider's configured signature header.
+- Missing/empty header or no secret matches → **401** `{"error": "invalid_signature"}`.
+- On success decode the JSON, extract `"id"`:
+  - already stored for this provider → **200** `{"status": "duplicate"}`
+  - new → store and **200** `{"status": "received"}`
+- Malformed JSON or missing `"id"` → **400** `{"error": "bad_payload"}`.
+
+Two different providers may share the same event id without colliding. Use only Plug and Jason (plus `:crypto`). No Phoenix, no Ecto. Give me all modules in a single file.
+
+----- solution.ex -----
+defmodule WebhookReceiver.Signature do
+  @moduledoc """
+  HMAC-SHA256 verification supporting an optional prefix and multiple valid
+  secrets (key rotation).
+  """
+
+  def verify(payload, signature, secret, prefix \\ "")
+
+  def verify(payload, signature, secret, prefix)
+      when is_binary(payload) and is_binary(signature) and is_binary(secret) and is_binary(prefix) do
+    expected = prefix <> lower_hex_hmac(secret, payload)
+
+    if Plug.Crypto.secure_compare(expected, signature) do
+      :ok
+    else
+      :error
+    end
+  end
+
+  def verify(_payload, _signature, _secret, _prefix), do: :error
+
+  def verify_any(payload, signature, secrets, prefix \\ "") when is_list(secrets) do
+    if Enum.any?(secrets, fn s -> verify(payload, signature, s, prefix) == :ok end) do
+      :ok
+    else
+      :error
+    end
+  end
+
+  defp lower_hex_hmac(secret, payload) do
+    :crypto.mac(:hmac, :sha256, secret, payload) |> Base.encode16(case: :lower)
+  end
+end
+
+defmodule WebhookReceiver.Store do
+  @moduledoc """
+  Behaviour describing a provider-namespaced webhook event store.
+  """
+
+  @callback store_event(
+              store :: pid() | atom(),
+              provider :: String.t(),
+              event_id :: String.t(),
+              payload :: map()
+            ) :: {:ok, :created | :duplicate}
+  @callback get_event(store :: pid() | atom(), provider :: String.t(), event_id :: String.t()) ::
+              {:ok, map()} | :error
+  @callback all_events(store :: pid() | atom()) :: [map()]
+
+  def store_event(store, provider, event_id, payload) do
+    GenServer.call(store, {:store_event, provider, event_id, payload})
+  end
+
+  def get_event(store, provider, event_id) do
+    GenServer.call(store, {:get_event, provider, event_id})
+  end
+
+  def all_events(store) do
+    GenServer.call(store, :all_events)
+  end
+end
+
+defmodule WebhookReceiver.MemoryStore do
+  @moduledoc """
+  In-memory `GenServer` implementation of `WebhookReceiver.Store`.
+  """
+
+  @behaviour WebhookReceiver.Store
+  use GenServer
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @impl WebhookReceiver.Store
+  def store_event(store, provider, event_id, payload) do
+    GenServer.call(store, {:store_event, provider, event_id, payload})
+  end
+
+  @impl WebhookReceiver.Store
+  def get_event(store, provider, event_id) do
+    GenServer.call(store, {:get_event, provider, event_id})
+  end
+
+  @impl WebhookReceiver.Store
+  def all_events(store) do
+    GenServer.call(store, :all_events)
+  end
+
+  @impl GenServer
+  def init(_opts), do: {:ok, %{events: %{}}}
+
+  @impl GenServer
+  def handle_call({:store_event, provider, event_id, payload}, _from, %{events: events} = state) do
+    key = {provider, event_id}
+
+    if Map.has_key?(events, key) do
+      {:reply, {:ok, :duplicate}, state}
+    else
+      event = %{provider: provider, event_id: event_id, payload: payload, status: :pending}
+      {:reply, {:ok, :created}, %{state | events: Map.put(events, key, event)}}
+    end
+  end
+
+  @impl GenServer
+  def handle_call({:get_event, provider, event_id}, _from, %{events: events} = state) do
+    case Map.fetch(events, {provider, event_id}) do
+      {:ok, event} -> {:reply, {:ok, event}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  @impl GenServer
+  def handle_call(:all_events, _from, %{events: events} = state) do
+    {:reply, Map.values(events), state}
+  end
+end
+
+defmodule WebhookReceiver.Router do
+  @moduledoc """
+  `Plug.Router` receiving webhooks for multiple providers at
+  `POST /api/webhooks/:provider`, each with its own header/prefix and a
+  rotatable list of secrets.
+  """
+
+  use Plug.Router, copy_opts_to_assign: :webhook_opts
+
+  alias WebhookReceiver.{Signature, Store}
+
+  plug :match
+  plug :dispatch
+
+  post "/api/webhooks/:provider" do
+    opts = conn.assigns.webhook_opts
+    providers = Keyword.fetch!(opts, :providers)
+    store = Keyword.fetch!(opts, :store)
+
+    case Map.fetch(providers, provider) do
+      :error ->
+        send_json(conn, 404, %{error: "unknown_provider"})
+
+      {:ok, config} ->
+        handle_provider(conn, provider, config, store)
+    end
+  end
+
+  match _ do
+    send_resp(conn, 404, "not found")
+  end
+
+  defp handle_provider(conn, provider, config, store) do
+    header_name = Map.fetch!(config, :header)
+    secrets = Map.fetch!(config, :secrets)
+    prefix = Map.get(config, :prefix, "")
+
+    {:ok, body, conn} = read_body(conn)
+    signature = conn |> get_req_header(header_name) |> List.first()
+
+    cond do
+      is_nil(signature) or signature == "" ->
+        send_json(conn, 401, %{error: "invalid_signature"})
+
+      Signature.verify_any(body, signat (truncated)
+02:35:56.204 [debug] claude -p RESULT (stop="end_turn"):
+The test has an operator-precedence bug: `"sha256=" <> :crypto.mac(...) |> Base.encode16(...)` parses as `Base.encode16("sha256=" <> mac, ...)`, hex-encoding the prefix along with the MAC, so the signature never matches. The solution is correct. I'll fix the test.
+
+<file path="test_harness.exs">
+defmodule WebhookReceiverMultiProviderTest do
+  use ExUnit.Case, async: false
+  import Plug.Test
+  import Plug.Conn
+
+  @stripe "whsec_stripe_secret"
+  @gh_new "gh_new_secret"
+  @gh_old "gh_old_secret"
+
+  defp hmac_hex(payload, secret) do
+    :crypto.mac(:hmac, :sha256, secret, payload) |> Base.encode16(case: :lower)
+  end
+
+  defp stripe_sig(payload, secret), do: hmac_hex(payload, secret)
+  defp gh_sig(payload, secret), do: "sha256=" <> hmac_hex(payload, secret)
+
+  defp build_event(id, type \\ "charge.completed") do
+    Jason.encode!(%{"id" => id, "type" => type, "data" => %{"amount" => 100}})
+  end
+
+  defp json_body(conn), do: Jason.decode!(conn.resp_body)
+
+  setup do
+    {:ok, store} = WebhookReceiver.MemoryStore.start_link([])
+
+    providers = %{
+      "stripe" => %{secrets: [@stripe], header: "stripe-signature", prefix: ""},
+      "github" => %{secrets: [@gh_new, @gh_old], header: "x-hub-signature-256", prefix: "sha256="}
+    }
+
+    %{store: store, opts: [providers: providers, store: store]}
+  end
+
+  defp do_request(opts, method, path, payload, headers \\ []) do
+    conn = conn(method, path, payload)
+
+    conn =
+      Enum.reduce(headers, conn, fn {k, v}, acc -> put_req_header(acc, k, v) end)
+
+    conn = put_req_header(conn, "content-type", "application/json")
+    WebhookReceiver.Router.call(conn, WebhookReceiver.Router.init(opts))
+  end
+
+  defp post_webhook(opts, provider, payload, headers) do
+    do_request(opts, :post, "/api/webhooks/#{provider}", payload, headers)
+  end
+
+  test "stripe provider verifies and stores", %{opts: opts, store: store} do
+    payload = build_event("evt_s1")
+    conn = post_webhook(opts, "stripe", payload, [{"stripe-signature", stripe_sig(payload, @stripe)}])
+
+    assert conn.status == 200
+    assert json_body(conn)["status"] == "received"
+    assert {:ok, event} = WebhookReceiver.Store.get_event(store, "stripe", "evt_s1")
+    assert event.provider == "stripe"
+    assert event.status == :pending
+  end
+
+  test "github provider verifies with prefix and current secret", %{opts: opts} do
+    payload = build_event("evt_g1")
+    conn =
+      post_webhook(opts, "github", payload, [{"x-hub-signature-256", gh_sig(payload, @gh_new)}])
+
+    assert conn.status == 200
+    assert json_body(conn)["status"] == "received"
+  end
+
+  test "github accepts a rotated-out (old) secret", %{opts: opts} do
+    payload = build_event("evt_g2")
+    conn =
+      post_webhook(opts, "github", payload, [{"x-hub-signature-256", gh_sig(payload, @gh_old)}])
+
+    assert conn.status == 200
+    assert json_body(conn)["status"] == "received"
+  end
+
+  test "github rejects an unknown secret", %{opts: opts} do
+    payload = build_event("evt_g3")
+    conn =
+      post_webhook(opts, "github", payload, [{"x-hub-signature-256", gh_sig(payload, "rogue")}])
+
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "invalid_signature"
+  end
+
+  test "stripe rejects wrong signature", %{opts: opts} do
+    payload = build_event("evt_s2")
+    conn =
+      post_webhook(opts, "stripe", payload, [{"stripe-signature", stripe_sig(payload, "wrong")}])
+
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "invalid_signature"
+  end
+
+  test "unknown provider returns 404 unknown_provider", %{opts: opts} do
+    payload = build_event("evt_x")
+    conn =
+      post_webhook(opts, "paypal", payload, [{"stripe-signature", stripe_sig(payload, @stripe)}])
+
+    assert conn.status == 404
+    assert json_body(conn)["error"] == "unknown_provider"
+  end
+
+  test "missing header returns invalid_signature", %{opts: opts} do
+    conn = post_webhook(opts, "stripe", build_event("evt_s3"), [])
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "invalid_signature"
+  end
+
+  test "github signature sent to stripe (wrong header) is rejected", %{opts: opts} do
+    payload = build_event("evt_s4")
+    conn =
+      post_webhook(opts, "stripe", payload, [{"x-hub-signature-256", gh_sig(payload, @stripe)}])
+
+    assert conn.status == 401
+  end
+
+  test "same id under different providers stored independently", %{opts: opts, store: store} do
+    payload = build_event("shared_id")
+
+    c1 = post_webhook(opts, "stripe", payload, [{"stripe-signature", stripe_sig(payload, @stripe)}])
+    c2 = post_webhook(opts, "github", payload, [{"x-hub-signature-256", gh_sig(payload, @gh_new)}])
+
+    assert json_body(c1)["status"] == "received"
+    assert json_body(c2)["status"] == "received"
+
+    assert {:ok, _} = WebhookReceiver.Store.get_event(store, "stripe", "shared_id")
+    assert {:ok, _} = WebhookReceiver.Store.get_event(store, "github", "shared_id")
+    assert length(WebhookReceiver.Store.all_events(store)) == 2
+  end
+
+  test "duplicate within provider returns duplicate", %{opts: opts, store: store} do
+    payload = build_event("evt_dup")
+    sig = stripe_sig(payload, @stripe)
+
+    c1 = post_webhook(opts, "stripe", payload, [{"stripe-signature", sig}])
+    c2 = post_webhook(opts, "stripe", payload, [{"stripe-signature", sig}])
+
+    assert json_body(c1)["status"] == "received"
+    assert json_body(c2)["status"] == "duplicate"
+
+    events = WebhookReceiver.Store.all_events(store)
+    assert length(Enum.filter(events, &(&1.event_id == "evt_dup"))) == 1
+  end
+
+  test "malformed JSON returns bad_payload", %{opts: opts} do
+    bad = "nope {{"
+    conn = post_webhook(opts, "stripe", bad, [{"stripe-signature", stripe_sig(bad, @stripe)}])
+    assert conn.status == 400
+    assert json_body(conn)["error"] == "bad_payload"
+  end
+
+  test "missing id returns bad_payload", %{opts: opts} do
+    payload = Jason.encode!(%{"type" => "x"})
+    conn =
+      post_webhook(opts, "stripe", payload, [{"stripe-signature", stripe_sig(payload, @stripe)}])
+
+    assert conn.status == 400
+    assert json_body(conn)["error"] == "bad_payload"
+  end
+
+  test "Signature.verify_any/4 succeeds on any matching secret" do
+    payload = "hello"
+    hex = :crypto.mac(:hmac, :sha256, @gh_old, payload) |> Base.encode16(case: :lower)
+    sig = "sha256=" <> hex
+    assert :ok = WebhookReceiver.Signature.verify_any(payload, sig, [@gh_new, @gh_old], "sha256=")
+    assert :error = WebhookReceiver.Signature.verify_any(payload, sig, [@gh_new], "sha256=")
+  end
+
+  test "Signature.verify/4 returns :error for non-binary input" do
+    assert :error = WebhookReceiver.Signature.verify(nil, "x", "y")
+  end
+
+  test "POST to unknown path returns 404", %{opts: opts} do
+    conn = do_request(opts, :post, "/api/other/stripe", build_event("evt_z"), [])
+    assert conn.status == 404
+  end
+end
+</file>
+02:35:56.205 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6982, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6982, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6982, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6982, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 4785, "type" => "message"}], "output_tokens" => 4785, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:35:56.223 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01 solution.ex
+02:35:56.951 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":false,"line_count":192,"lines_over_98":2,"max_line_length":101,"mode":"full","pipe_chain_count":5,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.5,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.9,"reasons":["analysis: no lines over 98 chars (found 2) → 0/1 pts","analysis: @doc on public functions → 0/1 pts","analysis: @spec annotations present → 0/2 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01/solution.ex","task":"024_003_multi_provider_webhook_receiver_with_key_rotation_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:35:56.928411Z"}
+02:35:56.952 [info] cycle 024_003_multi_provider_webhook_receiver_with_key_rotation_01: repairing — The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function; 2 line(s) over 98 columns — wrap them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+02:35:56.952 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:35:56.952 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function; 2 line(s) over 98 columns — wrap them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `WebhookReceiver` that implements a Plug-based **multi-provider** webhook endpoint with HMAC-SHA256 signature verification and support for **secret rotation** (multiple simultaneously-valid keys per provider).
+
+I need these modules:
+
+1. `WebhookReceiver.Signature` — a module with:
+   - `verify(payload, signature, secret, prefix \\ "")` — compute the lowercase hex HMAC-SHA256 of `payload` with `secret`, prepend `prefix` (e.g. `"sha256="`), and constant-time compare against `signature`. Return `:ok` or `:error`. Non-binary inputs return `:error`.
+   - `verify_any(payload, signature, secrets, prefix \\ "")` — return `:ok` if `verify/4` succeeds for ANY secret in the `secrets` list, else `:error`.
+
+2. `WebhookReceiver.Store` — a behaviour with callbacks:
+   - `store_event(store, provider, event_id, payload)` — persist keyed by `{provider, event_id}` with status `:pending`; `{:ok, :duplicate}` if that provider/id pair exists, `{:ok, :created}` otherwise.
+   - `get_event(store, provider, event_id)` — `{:ok, event}` or `:error`.
+   - `all_events(store)` — all stored events as a list.
+
+3. `WebhookReceiver.MemoryStore` — a GenServer implementing the behaviour. Each event is a map with at least `:provider`, `:event_id`, `:payload`, and `:status` (`:pending`).
+
+4. `WebhookReceiver.Router` — a `Plug.Router` exposing `POST /api/webhooks/:provider`. Options:
+   - `:providers` — a map from provider name (string) to a config map `%{secrets: [binary, ...], header: header_name, prefix: prefix}` where `prefix` is optional (default `""`). `secrets` is a list; the FIRST is current, later ones are being rotated out but still accepted.
+   - `:store` — the store process (required).
+
+Router behaviour:
+- Look up `provider` from the path. If it isn't in `:providers`, return **404** `{"error": "unknown_provider"}`.
+- Read the raw body once and the provider's configured signature header.
+- Missing/empty header or no secret matches → **401** `{"error": "invalid_signature"}`.
+- On success decode the JSON, extract `"id"`:
+  - already stored for this provider → **200** `{"status": "duplicate"}`
+  - new → store and **200** `{"status": "received"}`
+- Malformed JSON or missing `"id"` → **400** `{"error": "bad_payload"}`.
+
+Two different providers may share the same event id without colliding. Use only Plug and Jason (plus `:crypto`). No Phoenix, no Ecto. Give me all modules in a single file.
+
+----- solution.ex -----
+defmodule WebhookReceiver.Signature do
+  @moduledoc """
+  HMAC-SHA256 verification supporting an optional prefix and multiple valid
+  secrets (key rotation).
+  """
+
+  def verify(payload, signature, secret, prefix \\ "")
+
+  def verify(payload, signature, secret, prefix)
+      when is_binary(payload) and is_binary(signature) and is_binary(secret) and is_binary(prefix) do
+    expected = prefix <> lower_hex_hmac(secret, payload)
+
+    if Plug.Crypto.secure_compare(expected, signature) do
+      :ok
+    else
+      :error
+    end
+  end
+
+  def verify(_payload, _signature, _secret, _prefix), do: :error
+
+  def verify_any(payload, signature, secrets, prefix \\ "") when is_list(secrets) do
+    if Enum.any?(secrets, fn s -> verify(payload, signature, s, prefix) == :ok end) do
+      :ok
+    else
+      :error
+    end
+  end
+
+  defp lower_hex_hmac(secret, payload) do
+    :crypto.mac(:hmac, :sha256, secret, payload) |> Base.encode16(case: :lower)
+  end
+end
+
+defmodule WebhookReceiver.Store do
+  @moduledoc """
+  Behaviour describing a provider-namespaced webhook event store.
+  """
+
+  @callback store_event(
+              store :: pid() | atom(),
+              provider :: String.t(),
+              event_id :: String.t(),
+              payload :: map()
+            ) :: {:ok, :created | :duplicate}
+  @callback get_event(store :: pid() | atom(), provider :: String.t(), event_id :: String.t()) ::
+              {:ok, map()} | :error
+  @callback all_events(store :: pid() | atom()) :: [map()]
+
+  def store_event(store, provider, event_id, payload) do
+    GenServer.call(store, {:store_event, provider, event_id, payload})
+  end
+
+  def get_event(store, provider, event_id) do
+    GenServer.call(store, {:get_event, provider, event_id})
+  end
+
+  def all_events(store) do
+    GenServer.call(store, :all_events)
+  end
+end
+
+defmodule WebhookReceiver.MemoryStore do
+  @moduledoc """
+  In-memory `GenServer` implementation of `WebhookReceiver.Store`.
+  """
+
+  @behaviour WebhookReceiver.Store
+  use GenServer
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @impl WebhookReceiver.Store
+  def store_event(store, provider, event_id, payload) do
+    GenServer.call(store, {:store_event, provider, event_id, payload})
+  end
+
+  @impl WebhookReceiver.Store
+  def get_event(store, provider, event_id) do
+    GenServer.call(store, {:get_event, provider, event_id})
+  end
+
+  @impl WebhookReceiver.Store
+  def all_events(store) do
+    GenServer.call(store, :all_events)
+  end
+
+  @impl GenServer
+  def init(_opts), do: {:ok, %{events: %{}}}
+
+  @impl GenServer
+  def handle_call({:store_event, provider, event_id, payload}, _from, %{events: events} = state) do
+    key = {provider, event_id}
+
+    if Map.has_key?(events, key) do
+      {:reply, {:ok, :duplicate}, state}
+    else
+      event = %{provider: provider, event_id: event_id, payload: payload, status: :pending}
+      {:reply, {:ok, :created}, %{state | events: Map.put(events, key, event)}}
+    end
+  end
+
+  @impl GenServer
+  def handle_call({:get_event, provider, event_id}, _from, %{events: events} = state) do
+    case Map.fetch(events, {provider, event_id}) do
+      {:ok, event} -> {:reply, {:ok, event}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  @impl GenServer
+  def handle_call(:all_events, _from, %{events: events} = state) do
+    {:reply, Map.values(events), state}
+  end
+end
+
+defmodule WebhookReceiver.Router do
+  @moduledoc """
+  `Plug.Router` receiving webhooks for multiple providers at
+  `POST /api/webhooks/:provider`, each with its own header/prefix and a
+  rotatable list of secrets.
+  """
+
+  use Plug.Router, copy_opts_to_assign: :webhook_opts
+
+  alias WebhookReceiver.{Signature, Store}
+
+  plug :match
+  plug :dispatch
+
+  post "/api/webhooks/:provider" do
+    opts = conn.assigns.webhook_opts
+    providers = Keyword.fetch!(opts, :providers)
+    store = Keyword.fetch!(opts, :store)
+
+    case Map.fetch(providers, provider) do
+      :error ->
+        send_json(conn, 404, %{error: "unknown_provider"})
+
+      {:ok, config} ->
+        handle_provider(conn, provider, config, store)
+    end
+  end
+
+  match _ do
+    send_resp(conn, 404, "not found")
+  end
+
+  defp handle_provider(conn, provider, config, store) do
+    header_name = Map.fetch!(config, :header)
+    secrets = Map.fetch!(config, :secrets)
+    prefix = Map.get(config, :prefix, "")
+
+    {:ok, body, conn} = read_body(conn)
+    signature = conn |> get_req_header(header_name) |> List.first()
+
+    cond do
+      is_nil(signature) or signature == "" ->
+        send_json( (truncated)
+02:37:21.221 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule WebhookReceiver.Signature do
+  @moduledoc """
+  HMAC-SHA256 verification supporting an optional prefix and multiple valid
+  secrets (key rotation).
+  """
+
+  @doc """
+  Verify `signature` against the lowercase hex HMAC-SHA256 of `payload` keyed
+  by `secret`, with an optional `prefix` (e.g. `"sha256="`). The comparison is
+  constant-time. Returns `:ok` on a match, `:error` otherwise (including for
+  any non-binary input).
+  """
+  @spec verify(term(), term(), term(), term()) :: :ok | :error
+  def verify(payload, signature, secret, prefix \\ "")
+
+  def verify(payload, signature, secret, prefix)
+      when is_binary(payload) and is_binary(signature) and
+             is_binary(secret) and is_binary(prefix) do
+    expected = prefix <> lower_hex_hmac(secret, payload)
+
+    if Plug.Crypto.secure_compare(expected, signature) do
+      :ok
+    else
+      :error
+    end
+  end
+
+  def verify(_payload, _signature, _secret, _prefix), do: :error
+
+  @doc """
+  Return `:ok` if `verify/4` succeeds for ANY secret in the `secrets` list,
+  otherwise `:error`. Useful for accepting a rotatable set of secrets.
+  """
+  @spec verify_any(term(), term(), [binary()], binary()) :: :ok | :error
+  def verify_any(payload, signature, secrets, prefix \\ "") when is_list(secrets) do
+    if Enum.any?(secrets, fn s -> verify(payload, signature, s, prefix) == :ok end) do
+      :ok
+    else
+      :error
+    end
+  end
+
+  defp lower_hex_hmac(secret, payload) do
+    :crypto.mac(:hmac, :sha256, secret, payload) |> Base.encode16(case: :lower)
+  end
+end
+
+defmodule WebhookReceiver.Store do
+  @moduledoc """
+  Behaviour describing a provider-namespaced webhook event store.
+  """
+
+  @callback store_event(
+              store :: pid() | atom(),
+              provider :: String.t(),
+              event_id :: String.t(),
+              payload :: map()
+            ) :: {:ok, :created | :duplicate}
+  @callback get_event(store :: pid() | atom(), provider :: String.t(), event_id :: String.t()) ::
+              {:ok, map()} | :error
+  @callback all_events(store :: pid() | atom()) :: [map()]
+
+  @doc """
+  Persist an event keyed by `{provider, event_id}` with status `:pending`.
+  Returns `{:ok, :duplicate}` if the pair exists, `{:ok, :created}` otherwise.
+  """
+  @spec store_event(pid() | atom(), String.t(), String.t(), map()) ::
+          {:ok, :created | :duplicate}
+  def store_event(store, provider, event_id, payload) do
+    GenServer.call(store, {:store_event, provider, event_id, payload})
+  end
+
+  @doc """
+  Fetch a previously stored event, returning `{:ok, event}` or `:error`.
+  """
+  @spec get_event(pid() | atom(), String.t(), String.t()) :: {:ok, map()} | :error
+  def get_event(store, provider, event_id) do
+    GenServer.call(store, {:get_event, provider, event_id})
+  end
+
+  @doc """
+  Return all stored events as a list.
+  """
+  @spec all_events(pid() | atom()) :: [map()]
+  def all_events(store) do
+    GenServer.call(store, :all_events)
+  end
+end
+
+defmodule WebhookReceiver.MemoryStore do
+  @moduledoc """
+  In-memory `GenServer` implementation of `WebhookReceiver.Store`.
+  """
+
+  @behaviour WebhookReceiver.Store
+  use GenServer
+
+  @doc """
+  Start the in-memory store. Accepts standard `GenServer` options such as
+  `:name`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc """
+  Persist an event; see `WebhookReceiver.Store.store_event/4`.
+  """
+  @spec store_event(pid() | atom(), String.t(), String.t(), map()) ::
+          {:ok, :created | :duplicate}
+  @impl WebhookReceiver.Store
+  def store_event(store, provider, event_id, payload) do
+    GenServer.call(store, {:store_event, provider, event_id, payload})
+  end
+
+  @doc """
+  Fetch an event; see `WebhookReceiver.Store.get_event/3`.
+  """
+  @spec get_event(pid() | atom(), String.t(), String.t()) :: {:ok, map()} | :error
+  @impl WebhookReceiver.Store
+  def get_event(store, provider, event_id) do
+    GenServer.call(store, {:get_event, provider, event_id})
+  end
+
+  @doc """
+  Return all events; see `WebhookReceiver.Store.all_events/1`.
+  """
+  @spec all_events(pid() | atom()) :: [map()]
+  @impl WebhookReceiver.Store
+  def all_events(store) do
+    GenServer.call(store, :all_events)
+  end
+
+  @doc """
+  Initialize the store with an empty event map.
+  """
+  @spec init(keyword()) :: {:ok, %{events: map()}}
+  @impl GenServer
+  def init(_opts), do: {:ok, %{events: %{}}}
+
+  @doc """
+  Handle synchronous store calls (`:store_event`, `:get_event`, `:all_events`).
+  """
+  @spec handle_call(term(), GenServer.from(), %{events: map()}) ::
+          {:reply, term(), %{events: map()}}
+  @impl GenServer
+  def handle_call(
+        {:store_event, provider, event_id, payload},
+        _from,
+        %{events: events} = state
+      ) do
+    key = {provider, event_id}
+
+    if Map.has_key?(events, key) do
+      {:reply, {:ok, :duplicate}, state}
+    else
+      event = %{provider: provider, event_id: event_id, payload: payload, status: :pending}
+      {:reply, {:ok, :created}, %{state | events: Map.put(events, key, event)}}
+    end
+  end
+
+  @impl GenServer
+  def handle_call({:get_event, provider, event_id}, _from, %{events: events} = state) do
+    case Map.fetch(events, {provider, event_id}) do
+      {:ok, event} -> {:reply, {:ok, event}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  @impl GenServer
+  def handle_call(:all_events, _from, %{events: events} = state) do
+    {:reply, Map.values(events), state}
+  end
+end
+
+defmodule WebhookReceiver.Router do
+  @moduledoc """
+  `Plug.Router` receiving webhooks for multiple providers at
+  `POST /api/webhooks/:provider`, each with its own header/prefix and a
+  rotatable list of secrets.
+  """
+
+  use Plug.Router, copy_opts_to_assign: :webhook_opts
+
+  alias WebhookReceiver.{Signature, Store}
+
+  plug :match
+  plug :dispatch
+
+  post "/api/webhooks/:provider" do
+    opts = conn.assigns.webhook_opts
+    providers = Keyword.fetch!(opts, :providers)
+    store = Keyword.fetch!(opts, :store)
+
+    case Map.fetch(providers, provider) do
+      :error ->
+        send_json(conn, 404, %{error: "unknown_provider"})
+
+      {:ok, config} ->
+        handle_provider(conn, provider, config, store)
+    end
+  end
+
+  match _ do
+    send_resp(conn, 404, "not found")
+  end
+
+  defp handle_provider(conn, provider, config, store) do
+    header_name = Map.fetch!(config, :header)
+    secrets = Map.fetch!(config, :secrets)
+    prefix = Map.get(config, :prefix, "")
+
+    {:ok, body, conn} = read_body(conn)
+    signature = conn |> get_req_header(header_name) |> List.first()
+
+    cond do
+      is_nil(signature) or signature == "" ->
+        send_json(conn, 401, %{error: "invalid_signature"})
+
+      Signature.verify_any(body, signature, secrets, prefix) != :ok ->
+        send_json(conn, 401, %{error: "invalid_signature"})
+
+      true ->
+        handle_verified(conn, provider, body, store)
+    end
+  end
+
+  defp handle_verified(conn, provider, body, store) do
+    case Jason.decode(body) do
+      {:ok, %{"id" => event_id} = payload} when is_binary(event_id) ->
+        case Store.store_event(store, provider, event_id, payload) do
+          {:ok, :created} -> send_json(conn, 200, %{status: "received"})
+          {:ok, :duplicate} -> send_json(conn, 200, %{status: "duplicate"})
+        end
+
+      {:ok, _decoded} ->
+        send_json(conn, 400, %{error: "bad_payload"})
+
+      {:error, _reason} ->
+        send_json(conn, 400, %{error: "bad_payload"})
+    end
+  end
+
+  defp send_json(conn, status, data) do
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(status, Jason.encode!(data))
+  end
+end
+</file>
+02:37:21.221 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6990, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6990, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6990, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6990, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 7406, "type" => "message"}], "output_tokens" => 7406, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:37:21.241 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01 solution.ex
+02:37:21.997 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":250,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":5,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01/solution.ex","task":"024_003_multi_provider_webhook_receiver_with_key_rotation_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:37:21.973965Z"}
+02:37:22.002 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut solution.ex
+02:37:22.744 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":192,"lines_over_98":6,"max_line_length":266,"mode":"full","pipe_chain_count":5,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.44,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 11/15 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.27},"shape":"single","solution_file":".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex","task":"024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test stripe provider verifies and stores"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test github provider verifies with prefix and current secret"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test github accepts a rotated-out (old) secret"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test github rejects an unknown secret"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test stripe rejects wrong signature"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test same id under different providers stored independently"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test duplicate within provider returns duplicate"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test malformed JSON returns bad_payload"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test missing id returns bad_payload"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test Signature.verify_any/4 succeeds on any matching secret"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test Signature.verify/4 returns :error for non-binary input"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":4,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:37:22.721785Z"}
+02:37:22.748 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut solution.ex
+02:37:23.469 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":194,"lines_over_98":6,"max_line_length":266,"mode":"full","pipe_chain_count":5,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.47,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 10/15 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.33},"shape":"single","solution_file":".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex","task":"024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test stripe provider verifies and stores"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test github provider verifies with prefix and current secret"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test github accepts a rotated-out (old) secret"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test github rejects an unknown secret"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test stripe rejects wrong signature"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test same id under different providers stored independently"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test duplicate within provider returns duplicate"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test malformed JSON returns bad_payload"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test missing id returns bad_payload"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test Signature.verify_any/4 succeeds on any matching secret"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:37:23.447384Z"}
+02:37:23.476 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut solution.ex
+02:37:24.213 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":198,"lines_over_98":6,"max_line_length":266,"mode":"full","pipe_chain_count":5,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":10,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.64,"reasons":["compilation: 10 warning(s) → -1.0 pts","tests: 5/15 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.67},"shape":"single","solution_file":".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex","task":"024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test stripe provider verifies and stores"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test github provider verifies with prefix and current secret"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test github accepts a rotated-out (old) secret"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test same id under different providers stored independently"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test duplicate within provider returns duplicate"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:37:24.191326Z"}
+02:37:24.221 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut solution.ex
+02:37:24.976 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":198,"lines_over_98":6,"max_line_length":266,"mode":"full","pipe_chain_count":5,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.82,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 2/15 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.87},"shape":"single","solution_file":".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex","task":"024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut","test_failures":[{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test stripe provider verifies and stores"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test same id under different providers stored independently"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:37:24.953748Z"}
+02:37:24.983 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut solution.ex
+02:37:25.709 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":198,"lines_over_98":6,"max_line_length":266,"mode":"full","pipe_chain_count":5,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.86,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 2/15 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.87},"shape":"single","solution_file":".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex","task":"024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut","test_failures":[{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test same id under different providers stored independently"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test duplicate within provider returns duplicate"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:37:25.685391Z"}
+02:37:25.716 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut solution.ex
+02:37:26.435 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":198,"lines_over_98":6,"max_line_length":266,"mode":"full","pipe_chain_count":5,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 15/15 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex","task":"024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut","test_failures":[{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test stripe provider verifies and stores"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test github provider verifies with prefix and current secret"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test github accepts a rotated-out (old) secret"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test github rejects an unknown secret"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test stripe rejects wrong signature"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test unknown provider returns 404 unknown_provider"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test missing header returns invalid_signature"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test github signature sent to stripe (wrong header) is rejected"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test same id under different providers stored independently"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test duplicate within provider returns duplicate"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test malformed JSON returns bad_payload"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test missing id returns bad_payload"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test Signature.verify_any/4 succeeds on any matching secret"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test Signature.verify/4 returns :error for non-binary input"},{"message":"MUTATION","module":"WebhookReceiverMultiProviderTest","test":"test POST to unknown path returns 404"}],"tests_errors":0,"tests_excluded":0,"tests_failed":15,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:37:26.413559Z"}
+02:37:26.442 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut solution.ex
+02:37:27.185 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":198,"lines_over_98":6,"max_line_length":266,"mode":"full","pipe_chain_count":5,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 15/15 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex","task":"024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test stripe provider verifies and stores"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test github provider verifies with prefix and current secret"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test github accepts a rotated-out (old) secret"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test github rejects an unknown secret"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test stripe rejects wrong signature"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test unknown provider returns 404 unknown_provider"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test missing header returns invalid_signature"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test github signature sent to stripe (wrong header) is rejected"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test same id under different providers stored independently"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test duplicate within provider returns duplicate"},{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test malformed JSON returns bad_payload"},{"message":"{:EXIT, #PID<0.239.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test missing id returns bad_payload"},{"message":"{:EXIT, #PID<0.241.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :ini (truncated)
+02:37:27.191 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut solution.ex
+02:37:27.935 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":188,"lines_over_98":6,"max_line_length":266,"mode":"full","pipe_chain_count":5,"public_fn_count":15,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":11,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.64,"reasons":["compilation: 11 warning(s) → -1.1 pts","tests: 5/15 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.67},"shape":"single","solution_file":".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex","task":"024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 114, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test stripe provider verifies and stores"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 114, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test github provider verifies with prefix and current secret"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 114, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test github accepts a rotated-out (old) secret"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 114, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test same id under different providers stored independently"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_003_multi_provider_webhook_receiver_with_key_rotation_01_mut/solution.ex\", line: 114, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverMultiProviderTest","test":"test duplicate within provider returns duplicate"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:37:27.909950Z"}
+02:37:27.936 [info] cycle 024_003_multi_provider_webhook_receiver_with_key_rotation_01: ACCEPTED on attempt 2
+02:37:27.936 [info] promoted 024_003_multi_provider_webhook_receiver_with_key_rotation_01 -> tasks/024_003_multi_provider_webhook_receiver_with_key_rotation_01

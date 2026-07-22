@@ -1,0 +1,1523 @@
+22:49:44.950 [info] VARIATION 034_004_streaming_stateful_reconciler_genserver_01: Streaming Stateful Reconciler (GenServer)
+22:49:44.950 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+22:49:44.950 [debug] claude -p USER prompt:
+Write me an Elixir module called `StreamingReconciler`, implemented as a **GenServer**, that reconciles two streams of records incrementally. Instead of receiving both complete lists up front, records arrive one at a time tagged as coming from the left side or the right side, and the current reconciliation can be queried at any point.
+
+I need this public API:
+
+- `StreamingReconciler.start_link(opts)` — starts the server. `opts` is a keyword list supporting:
+  - `:key_fields` (required) — a list of atoms forming the composite key used to match a left record against a right record. Two records match if and only if all key fields are equal.
+  - `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields present in either matched record except the key fields are compared.
+
+  It returns `{:ok, pid}`.
+
+- `StreamingReconciler.add_left(pid, record)` — ingest one record into the left side. Returns `:ok`.
+- `StreamingReconciler.add_right(pid, record)` — ingest one record into the right side. Returns `:ok`.
+- `StreamingReconciler.snapshot(pid)` — returns the current reconciliation as a map with three keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for keys present on both sides, where `diff_map` is `%{field => %{left: val, right: val}}` for compared fields whose values differ (using `==`), and is empty when all compared fields are equal.
+  - `:only_in_left` — the left records whose key has not (yet) been seen on the right side.
+  - `:only_in_right` — the right records whose key has not (yet) been seen on the left side.
+- `StreamingReconciler.reset(pid)` — discards all ingested records on both sides, returning the server to an empty state. Returns `:ok`.
+
+Behaviour requirements:
+- Reconciliation is computed against whatever has been ingested so far. A key that is only-in-left in one snapshot becomes matched once a right record with the same key is added later.
+- Within a side, if the same key is ingested more than once, the most recently added record wins for that side.
+- Key matching must be exact and support composite keys (`[:org_id, :user_id]` matches only when both fields are equal).
+- If a compared field is missing from one of a matched pair, treat the missing value as `nil` and diff accordingly.
+- Matched entries must include both full original records.
+- Order of the lists in a snapshot does not matter.
+- Use only the Elixir/OTP standard library.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+22:50:14.465 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule StreamingReconciler do
+  @moduledoc """
+  A GenServer that incrementally reconciles two streams of records.
+
+  Records arrive one at a time, tagged as coming from the left side or the
+  right side, rather than as two complete lists provided up front. At any
+  point the current reconciliation can be queried via `snapshot/1`.
+
+  Two records are considered a match when all of the configured `:key_fields`
+  are equal. Matched records are diffed on the configured `:compare_fields`
+  (or, when none are configured, on every field present in either record
+  except the key fields).
+
+  Reconciliation always reflects whatever has been ingested so far: a key that
+  appears only on the left in one snapshot becomes matched as soon as a right
+  record with the same key is added. Within a single side, re-ingesting the
+  same key replaces the previous record for that side.
+  """
+
+  use GenServer
+
+  @typedoc "A single record; a map keyed by field name."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of values for the configured key fields."
+  @type key :: tuple()
+
+  @typedoc "Per-field difference map for a matched pair."
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @typedoc "The internal server state."
+  @type state :: %{
+          key_fields: [atom()],
+          compare_fields: [atom()] | nil,
+          left: %{optional(key()) => record()},
+          right: %{optional(key()) => record()}
+        }
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  Options:
+
+    * `:key_fields` (required) — list of atoms forming the composite key used
+      to match a left record against a right record.
+    * `:compare_fields` (optional) — list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields present in
+      either matched record except the key fields are compared.
+
+  Returns `{:ok, pid}`.
+  """
+  @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
+  def start_link(opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    GenServer.start_link(__MODULE__, {key_fields, compare_fields})
+  end
+
+  @doc """
+  Ingests one record into the left side. Returns `:ok`.
+  """
+  @spec add_left(GenServer.server(), record()) :: :ok
+  def add_left(pid, record) do
+    GenServer.call(pid, {:add, :left, record})
+  end
+
+  @doc """
+  Ingests one record into the right side. Returns `:ok`.
+  """
+  @spec add_right(GenServer.server(), record()) :: :ok
+  def add_right(pid, record) do
+    GenServer.call(pid, {:add, :right, record})
+  end
+
+  @doc """
+  Returns the current reconciliation as a map with the keys `:matched`,
+  `:only_in_left`, and `:only_in_right`.
+
+    * `:matched` — a list of `%{left: record, right: record,
+      differences: diff_map}` entries for keys present on both sides.
+    * `:only_in_left` — the left records whose key has not yet been seen on
+      the right side.
+    * `:only_in_right` — the right records whose key has not yet been seen on
+      the left side.
+
+  The order of the lists is unspecified.
+  """
+  @spec snapshot(GenServer.server()) :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  def snapshot(pid) do
+    GenServer.call(pid, :snapshot)
+  end
+
+  @doc """
+  Discards all ingested records on both sides, returning the server to an
+  empty state. Returns `:ok`.
+  """
+  @spec reset(GenServer.server()) :: :ok
+  def reset(pid) do
+    GenServer.call(pid, :reset)
+  end
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  @spec init({[atom()], [atom()] | nil}) :: {:ok, state()}
+  def init({key_fields, compare_fields}) do
+    state = %{
+      key_fields: key_fields,
+      compare_fields: compare_fields,
+      left: %{},
+      right: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:add, side, record}, _from, state) do
+    key = record_key(record, state.key_fields)
+    new_state = Map.update!(state, side, &Map.put(&1, key, record))
+    {:reply, :ok, new_state}
+  end
+
+  @impl true
+  def handle_call(:snapshot, _from, state) do
+    {:reply, build_snapshot(state), state}
+  end
+
+  @impl true
+  def handle_call(:reset, _from, state) do
+    {:reply, :ok, %{state | left: %{}, right: %{}}}
+  end
+
+  # ------------------------------------------------------------------
+  # Internal helpers
+  # ------------------------------------------------------------------
+
+  @spec record_key(record(), [atom()]) :: key()
+  defp record_key(record, key_fields) do
+    key_fields
+    |> Enum.map(fn field -> Map.get(record, field) end)
+    |> List.to_tuple()
+  end
+
+  @spec build_snapshot(state()) :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  defp build_snapshot(state) do
+    %{left: left, right: right} = state
+    left_keys = MapSet.new(Map.keys(left))
+    right_keys = MapSet.new(Map.keys(right))
+
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      Enum.map(matched_keys, fn key ->
+        left_record = Map.fetch!(left, key)
+        right_record = Map.fetch!(right, key)
+
+        %{
+          left: left_record,
+          right: right_record,
+          differences: differences(left_record, right_record, state)
+        }
+      end)
+
+    %{
+      matched: matched,
+      only_in_left: Enum.map(only_left_keys, &Map.fetch!(left, &1)),
+      only_in_right: Enum.map(only_right_keys, &Map.fetch!(right, &1))
+    }
+  end
+
+  @spec differences(record(), record(), state()) :: diff_map()
+  defp differences(left_record, right_record, state) do
+    fields = compare_fields(left_record, right_record, state)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      left_value = Map.get(left_record, field)
+      right_value = Map.get(right_record, field)
+
+      if left_value == right_value do
+        acc
+      else
+        Map.put(acc, field, %{left: left_value, right: right_value})
+      end
+    end)
+  end
+
+  @spec compare_fields(record(), record(), state()) :: [atom()]
+  defp compare_fields(_left_record, _right_record, %{compare_fields: fields})
+       when is_list(fields) do
+    fields
+  end
+
+  defp compare_fields(left_record, right_record, %{key_fields: key_fields}) do
+    key_set = MapSet.new(key_fields)
+
+    left_record
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right_record))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+end
+</file>
+22:50:14.465 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1788, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1788, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1788, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1788, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 2702, "type" => "message"}], "output_tokens" => 2702, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+22:50:14.490 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_streaming_stateful_reconciler_genserver_01 solution.ex
+22:50:15.134 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":220,"lines_over_98":0,"max_line_length":81,"mode":"full","pipe_chain_count":6,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_streaming_stateful_reconciler_genserver_01/solution.ex","task":"034_004_streaming_stateful_reconciler_genserver_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-10T20:50:15.109907Z"}
+22:50:15.136 [info] cycle 034_004_streaming_stateful_reconciler_genserver_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+22:50:15.136 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+22:50:15.136 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `StreamingReconciler`, implemented as a **GenServer**, that reconciles two streams of records incrementally. Instead of receiving both complete lists up front, records arrive one at a time tagged as coming from the left side or the right side, and the current reconciliation can be queried at any point.
+
+I need this public API:
+
+- `StreamingReconciler.start_link(opts)` — starts the server. `opts` is a keyword list supporting:
+  - `:key_fields` (required) — a list of atoms forming the composite key used to match a left record against a right record. Two records match if and only if all key fields are equal.
+  - `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields present in either matched record except the key fields are compared.
+
+  It returns `{:ok, pid}`.
+
+- `StreamingReconciler.add_left(pid, record)` — ingest one record into the left side. Returns `:ok`.
+- `StreamingReconciler.add_right(pid, record)` — ingest one record into the right side. Returns `:ok`.
+- `StreamingReconciler.snapshot(pid)` — returns the current reconciliation as a map with three keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for keys present on both sides, where `diff_map` is `%{field => %{left: val, right: val}}` for compared fields whose values differ (using `==`), and is empty when all compared fields are equal.
+  - `:only_in_left` — the left records whose key has not (yet) been seen on the right side.
+  - `:only_in_right` — the right records whose key has not (yet) been seen on the left side.
+- `StreamingReconciler.reset(pid)` — discards all ingested records on both sides, returning the server to an empty state. Returns `:ok`.
+
+Behaviour requirements:
+- Reconciliation is computed against whatever has been ingested so far. A key that is only-in-left in one snapshot becomes matched once a right record with the same key is added later.
+- Within a side, if the same key is ingested more than once, the most recently added record wins for that side.
+- Key matching must be exact and support composite keys (`[:org_id, :user_id]` matches only when both fields are equal).
+- If a compared field is missing from one of a matched pair, treat the missing value as `nil` and diff accordingly.
+- Matched entries must include both full original records.
+- Order of the lists in a snapshot does not matter.
+- Use only the Elixir/OTP standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule StreamingReconciler do
+  @moduledoc """
+  A GenServer that incrementally reconciles two streams of records.
+
+  Records arrive one at a time, tagged as coming from the left side or the
+  right side, rather than as two complete lists provided up front. At any
+  point the current reconciliation can be queried via `snapshot/1`.
+
+  Two records are considered a match when all of the configured `:key_fields`
+  are equal. Matched records are diffed on the configured `:compare_fields`
+  (or, when none are configured, on every field present in either record
+  except the key fields).
+
+  Reconciliation always reflects whatever has been ingested so far: a key that
+  appears only on the left in one snapshot becomes matched as soon as a right
+  record with the same key is added. Within a single side, re-ingesting the
+  same key replaces the previous record for that side.
+  """
+
+  use GenServer
+
+  @typedoc "A single record; a map keyed by field name."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of values for the configured key fields."
+  @type key :: tuple()
+
+  @typedoc "Per-field difference map for a matched pair."
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @typedoc "The internal server state."
+  @type state :: %{
+          key_fields: [atom()],
+          compare_fields: [atom()] | nil,
+          left: %{optional(key()) => record()},
+          right: %{optional(key()) => record()}
+        }
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  Options:
+
+    * `:key_fields` (required) — list of atoms forming the composite key used
+      to match a left record against a right record.
+    * `:compare_fields` (optional) — list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields present in
+      either matched record except the key fields are compared.
+
+  Returns `{:ok, pid}`.
+  """
+  @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
+  def start_link(opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    GenServer.start_link(__MODULE__, {key_fields, compare_fields})
+  end
+
+  @doc """
+  Ingests one record into the left side. Returns `:ok`.
+  """
+  @spec add_left(GenServer.server(), record()) :: :ok
+  def add_left(pid, record) do
+    GenServer.call(pid, {:add, :left, record})
+  end
+
+  @doc """
+  Ingests one record into the right side. Returns `:ok`.
+  """
+  @spec add_right(GenServer.server(), record()) :: :ok
+  def add_right(pid, record) do
+    GenServer.call(pid, {:add, :right, record})
+  end
+
+  @doc """
+  Returns the current reconciliation as a map with the keys `:matched`,
+  `:only_in_left`, and `:only_in_right`.
+
+    * `:matched` — a list of `%{left: record, right: record,
+      differences: diff_map}` entries for keys present on both sides.
+    * `:only_in_left` — the left records whose key has not yet been seen on
+      the right side.
+    * `:only_in_right` — the right records whose key has not yet been seen on
+      the left side.
+
+  The order of the lists is unspecified.
+  """
+  @spec snapshot(GenServer.server()) :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  def snapshot(pid) do
+    GenServer.call(pid, :snapshot)
+  end
+
+  @doc """
+  Discards all ingested records on both sides, returning the server to an
+  empty state. Returns `:ok`.
+  """
+  @spec reset(GenServer.server()) :: :ok
+  def reset(pid) do
+    GenServer.call(pid, :reset)
+  end
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  @spec init({[atom()], [atom()] | nil}) :: {:ok, state()}
+  def init({key_fields, compare_fields}) do
+    state = %{
+      key_fields: key_fields,
+      compare_fields: compare_fields,
+      left: %{},
+      right: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:add, side, record}, _from, state) do
+    key = re (truncated)
+22:56:06.370 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the code is clean except for one subtle issue: under Elixir 1.18 on OTP 27, the compiler type-checks `@impl` callbacks against their behaviour's `@callback`. The manual `@spec init/1` narrows GenServer's callback type (`term()` → a specific tuple, and a narrowed return), which conflicts with `GenServer`'s declared `init/1` callback spec and produces exactly one compile warning.
+
+`init/1` is a behaviour callback (not part of the public API — which is why the house-style `@doc` requirement didn't flag it), so its `@spec` is optional. Removing that one conflicting spec silences the warning without changing behavior or touching any test.
+
+<file path="solution.ex">
+defmodule StreamingReconciler do
+  @moduledoc """
+  A GenServer that incrementally reconciles two streams of records.
+
+  Records arrive one at a time, tagged as coming from the left side or the
+  right side, rather than as two complete lists provided up front. At any
+  point the current reconciliation can be queried via `snapshot/1`.
+
+  Two records are considered a match when all of the configured `:key_fields`
+  are equal. Matched records are diffed on the configured `:compare_fields`
+  (or, when none are configured, on every field present in either record
+  except the key fields).
+
+  Reconciliation always reflects whatever has been ingested so far: a key that
+  appears only on the left in one snapshot becomes matched as soon as a right
+  record with the same key is added. Within a single side, re-ingesting the
+  same key replaces the previous record for that side.
+  """
+
+  use GenServer
+
+  @typedoc "A single record; a map keyed by field name."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of values for the configured key fields."
+  @type key :: tuple()
+
+  @typedoc "Per-field difference map for a matched pair."
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @typedoc "The internal server state."
+  @type state :: %{
+          key_fields: [atom()],
+          compare_fields: [atom()] | nil,
+          left: %{optional(key()) => record()},
+          right: %{optional(key()) => record()}
+        }
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  Options:
+
+    * `:key_fields` (required) — list of atoms forming the composite key used
+      to match a left record against a right record.
+    * `:compare_fields` (optional) — list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields present in
+      either matched record except the key fields are compared.
+
+  Returns `{:ok, pid}`.
+  """
+  @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
+  def start_link(opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    GenServer.start_link(__MODULE__, {key_fields, compare_fields})
+  end
+
+  @doc """
+  Ingests one record into the left side. Returns `:ok`.
+  """
+  @spec add_left(GenServer.server(), record()) :: :ok
+  def add_left(pid, record) do
+    GenServer.call(pid, {:add, :left, record})
+  end
+
+  @doc """
+  Ingests one record into the right side. Returns `:ok`.
+  """
+  @spec add_right(GenServer.server(), record()) :: :ok
+  def add_right(pid, record) do
+    GenServer.call(pid, {:add, :right, record})
+  end
+
+  @doc """
+  Returns the current reconciliation as a map with the keys `:matched`,
+  `:only_in_left`, and `:only_in_right`.
+
+    * `:matched` — a list of `%{left: record, right: record,
+      differences: diff_map}` entries for keys present on both sides.
+    * `:only_in_left` — the left records whose key has not yet been seen on
+      the right side.
+    * `:only_in_right` — the right records whose key has not yet been seen on
+      the left side.
+
+  The order of the lists is unspecified.
+  """
+  @spec snapshot(GenServer.server()) :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  def snapshot(pid) do
+    GenServer.call(pid, :snapshot)
+  end
+
+  @doc """
+  Discards all ingested records on both sides, returning the server to an
+  empty state. Returns `:ok`.
+  """
+  @spec reset(GenServer.server()) :: :ok
+  def reset(pid) do
+    GenServer.call(pid, :reset)
+  end
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  def init({key_fields, compare_fields}) do
+    state = %{
+      key_fields: key_fields,
+      compare_fields: compare_fields,
+      left: %{},
+      right: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:add, side, record}, _from, state) do
+    key = record_key(record, state.key_fields)
+    new_state = Map.update!(state, side, &Map.put(&1, key, record))
+    {:reply, :ok, new_state}
+  end
+
+  @impl true
+  def handle_call(:snapshot, _from, state) do
+    {:reply, build_snapshot(state), state}
+  end
+
+  @impl true
+  def handle_call(:reset, _from, state) do
+    {:reply, :ok, %{state | left: %{}, right: %{}}}
+  end
+
+  # ------------------------------------------------------------------
+  # Internal helpers
+  # ------------------------------------------------------------------
+
+  @spec record_key(record(), [atom()]) :: key()
+  defp record_key(record, key_fields) do
+    key_fields
+    |> Enum.map(fn field -> Map.get(record, field) end)
+    |> List.to_tuple()
+  end
+
+  @spec build_snapshot(state()) :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  defp build_snapshot(state) do
+    %{left: left, right: right} = state
+    left_keys = MapSet.new(Map.keys(left))
+    right_keys = MapSet.new(Map.keys(right))
+
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      Enum.map(matched_keys, fn key ->
+        left_record = Map.fetch!(left, key)
+        right_record = Map.fetch!(right, key)
+
+        %{
+          left: left_record,
+          right: right_record,
+          differences: differences(left_record, right_record, state)
+        }
+      end)
+
+    %{
+      matched: matched,
+      only_in_left: Enum.map(only_left_keys, &Map.fetch!(left, &1)),
+      only_in_right: Enum.map(only_right_keys, &Map.fetch!(right, &1))
+    }
+  end
+
+  @spec differences(record(), record(), state()) :: diff_map()
+  defp differences(left_record, right_record, state) do
+    fields = compare_fields(left_record, right_record, state)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      left_value = Map.get(left_record, field)
+      right_value = Map.get(right_record, field)
+
+      if left_value == right_value do
+        acc
+      else
+        Map.put(acc, field, %{left: left_value, right: right_value})
+      end
+    end)
+  end
+
+  @spec compare_fields(record(), record(), state()) :: [atom()]
+  defp compare_fields(_left_record, _right_record, %{compare_fields: fields})
+       when is_list(fields) do
+    fields
+  end
+
+  defp compare_fields(left_record, right_record, %{key_fields: key_fields}) do
+    key_set = MapSet.new(key_fields)
+
+    left_record
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right_record))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+end
+</file>
+22:56:06.371 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7022, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7022, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7022, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7022, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 25468, "type" => "message"}], "output_tokens" => 25468, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+22:56:06.396 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_streaming_stateful_reconciler_genserver_01 solution.ex
+22:56:07.016 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":219,"lines_over_98":0,"max_line_length":81,"mode":"full","pipe_chain_count":6,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_streaming_stateful_reconciler_genserver_01/solution.ex","task":"034_004_streaming_stateful_reconciler_genserver_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-10T20:56:06.995059Z"}
+22:56:07.018 [info] cycle 034_004_streaming_stateful_reconciler_genserver_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+22:56:07.018 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+22:56:07.018 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `StreamingReconciler`, implemented as a **GenServer**, that reconciles two streams of records incrementally. Instead of receiving both complete lists up front, records arrive one at a time tagged as coming from the left side or the right side, and the current reconciliation can be queried at any point.
+
+I need this public API:
+
+- `StreamingReconciler.start_link(opts)` — starts the server. `opts` is a keyword list supporting:
+  - `:key_fields` (required) — a list of atoms forming the composite key used to match a left record against a right record. Two records match if and only if all key fields are equal.
+  - `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields present in either matched record except the key fields are compared.
+
+  It returns `{:ok, pid}`.
+
+- `StreamingReconciler.add_left(pid, record)` — ingest one record into the left side. Returns `:ok`.
+- `StreamingReconciler.add_right(pid, record)` — ingest one record into the right side. Returns `:ok`.
+- `StreamingReconciler.snapshot(pid)` — returns the current reconciliation as a map with three keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for keys present on both sides, where `diff_map` is `%{field => %{left: val, right: val}}` for compared fields whose values differ (using `==`), and is empty when all compared fields are equal.
+  - `:only_in_left` — the left records whose key has not (yet) been seen on the right side.
+  - `:only_in_right` — the right records whose key has not (yet) been seen on the left side.
+- `StreamingReconciler.reset(pid)` — discards all ingested records on both sides, returning the server to an empty state. Returns `:ok`.
+
+Behaviour requirements:
+- Reconciliation is computed against whatever has been ingested so far. A key that is only-in-left in one snapshot becomes matched once a right record with the same key is added later.
+- Within a side, if the same key is ingested more than once, the most recently added record wins for that side.
+- Key matching must be exact and support composite keys (`[:org_id, :user_id]` matches only when both fields are equal).
+- If a compared field is missing from one of a matched pair, treat the missing value as `nil` and diff accordingly.
+- Matched entries must include both full original records.
+- Order of the lists in a snapshot does not matter.
+- Use only the Elixir/OTP standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule StreamingReconciler do
+  @moduledoc """
+  A GenServer that incrementally reconciles two streams of records.
+
+  Records arrive one at a time, tagged as coming from the left side or the
+  right side, rather than as two complete lists provided up front. At any
+  point the current reconciliation can be queried via `snapshot/1`.
+
+  Two records are considered a match when all of the configured `:key_fields`
+  are equal. Matched records are diffed on the configured `:compare_fields`
+  (or, when none are configured, on every field present in either record
+  except the key fields).
+
+  Reconciliation always reflects whatever has been ingested so far: a key that
+  appears only on the left in one snapshot becomes matched as soon as a right
+  record with the same key is added. Within a single side, re-ingesting the
+  same key replaces the previous record for that side.
+  """
+
+  use GenServer
+
+  @typedoc "A single record; a map keyed by field name."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of values for the configured key fields."
+  @type key :: tuple()
+
+  @typedoc "Per-field difference map for a matched pair."
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @typedoc "The internal server state."
+  @type state :: %{
+          key_fields: [atom()],
+          compare_fields: [atom()] | nil,
+          left: %{optional(key()) => record()},
+          right: %{optional(key()) => record()}
+        }
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  Options:
+
+    * `:key_fields` (required) — list of atoms forming the composite key used
+      to match a left record against a right record.
+    * `:compare_fields` (optional) — list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields present in
+      either matched record except the key fields are compared.
+
+  Returns `{:ok, pid}`.
+  """
+  @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
+  def start_link(opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    GenServer.start_link(__MODULE__, {key_fields, compare_fields})
+  end
+
+  @doc """
+  Ingests one record into the left side. Returns `:ok`.
+  """
+  @spec add_left(GenServer.server(), record()) :: :ok
+  def add_left(pid, record) do
+    GenServer.call(pid, {:add, :left, record})
+  end
+
+  @doc """
+  Ingests one record into the right side. Returns `:ok`.
+  """
+  @spec add_right(GenServer.server(), record()) :: :ok
+  def add_right(pid, record) do
+    GenServer.call(pid, {:add, :right, record})
+  end
+
+  @doc """
+  Returns the current reconciliation as a map with the keys `:matched`,
+  `:only_in_left`, and `:only_in_right`.
+
+    * `:matched` — a list of `%{left: record, right: record,
+      differences: diff_map}` entries for keys present on both sides.
+    * `:only_in_left` — the left records whose key has not yet been seen on
+      the right side.
+    * `:only_in_right` — the right records whose key has not yet been seen on
+      the left side.
+
+  The order of the lists is unspecified.
+  """
+  @spec snapshot(GenServer.server()) :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  def snapshot(pid) do
+    GenServer.call(pid, :snapshot)
+  end
+
+  @doc """
+  Discards all ingested records on both sides, returning the server to an
+  empty state. Returns `:ok`.
+  """
+  @spec reset(GenServer.server()) :: :ok
+  def reset(pid) do
+    GenServer.call(pid, :reset)
+  end
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  def init({key_fields, compare_fields}) do
+    state = %{
+      key_fields: key_fields,
+      compare_fields: compare_fields,
+      left: %{},
+      right: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:add, side, record}, _from, state) do
+    key = record_key(record, state.key_fields)
+    new_state = Map.upda (truncated)
+23:03:06.807 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the code has no classic warnings (no unused vars, all types/functions used, `@impl` consistent). The most plausible source of a single compile warning on a modern Elixir toolchain is the type checker flagging `Map.update!(state, side, …)` with a dynamically-typed `side` key (it can't prove the key is present in the closed state map). I'll eliminate that by splitting the ingest into explicit `:left`/`:right` clauses that route through a helper where `side` is a concrete atom, which is also cleaner and behavior-preserving.
+
+<file path="solution.ex">
+defmodule StreamingReconciler do
+  @moduledoc """
+  A GenServer that incrementally reconciles two streams of records.
+
+  Records arrive one at a time, tagged as coming from the left side or the
+  right side, rather than as two complete lists provided up front. At any
+  point the current reconciliation can be queried via `snapshot/1`.
+
+  Two records are considered a match when all of the configured `:key_fields`
+  are equal. Matched records are diffed on the configured `:compare_fields`
+  (or, when none are configured, on every field present in either record
+  except the key fields).
+
+  Reconciliation always reflects whatever has been ingested so far: a key that
+  appears only on the left in one snapshot becomes matched as soon as a right
+  record with the same key is added. Within a single side, re-ingesting the
+  same key replaces the previous record for that side.
+  """
+
+  use GenServer
+
+  @typedoc "A single record; a map keyed by field name."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of values for the configured key fields."
+  @type key :: tuple()
+
+  @typedoc "Per-field difference map for a matched pair."
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @typedoc "The internal server state."
+  @type state :: %{
+          key_fields: [atom()],
+          compare_fields: [atom()] | nil,
+          left: %{optional(key()) => record()},
+          right: %{optional(key()) => record()}
+        }
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  Options:
+
+    * `:key_fields` (required) — list of atoms forming the composite key used
+      to match a left record against a right record.
+    * `:compare_fields` (optional) — list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields present in
+      either matched record except the key fields are compared.
+
+  Returns `{:ok, pid}`.
+  """
+  @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
+  def start_link(opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    GenServer.start_link(__MODULE__, {key_fields, compare_fields})
+  end
+
+  @doc """
+  Ingests one record into the left side. Returns `:ok`.
+  """
+  @spec add_left(GenServer.server(), record()) :: :ok
+  def add_left(pid, record) do
+    GenServer.call(pid, {:add, :left, record})
+  end
+
+  @doc """
+  Ingests one record into the right side. Returns `:ok`.
+  """
+  @spec add_right(GenServer.server(), record()) :: :ok
+  def add_right(pid, record) do
+    GenServer.call(pid, {:add, :right, record})
+  end
+
+  @doc """
+  Returns the current reconciliation as a map with the keys `:matched`,
+  `:only_in_left`, and `:only_in_right`.
+
+    * `:matched` — a list of `%{left: record, right: record,
+      differences: diff_map}` entries for keys present on both sides.
+    * `:only_in_left` — the left records whose key has not yet been seen on
+      the right side.
+    * `:only_in_right` — the right records whose key has not yet been seen on
+      the left side.
+
+  The order of the lists is unspecified.
+  """
+  @spec snapshot(GenServer.server()) :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  def snapshot(pid) do
+    GenServer.call(pid, :snapshot)
+  end
+
+  @doc """
+  Discards all ingested records on both sides, returning the server to an
+  empty state. Returns `:ok`.
+  """
+  @spec reset(GenServer.server()) :: :ok
+  def reset(pid) do
+    GenServer.call(pid, :reset)
+  end
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  def init({key_fields, compare_fields}) do
+    state = %{
+      key_fields: key_fields,
+      compare_fields: compare_fields,
+      left: %{},
+      right: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:add, :left, record}, _from, state) do
+    {:reply, :ok, put_record(state, :left, record)}
+  end
+
+  def handle_call({:add, :right, record}, _from, state) do
+    {:reply, :ok, put_record(state, :right, record)}
+  end
+
+  def handle_call(:snapshot, _from, state) do
+    {:reply, build_snapshot(state), state}
+  end
+
+  def handle_call(:reset, _from, state) do
+    {:reply, :ok, %{state | left: %{}, right: %{}}}
+  end
+
+  # ------------------------------------------------------------------
+  # Internal helpers
+  # ------------------------------------------------------------------
+
+  @spec put_record(state(), :left | :right, record()) :: state()
+  defp put_record(state, side, record) do
+    key = record_key(record, state.key_fields)
+    Map.update!(state, side, &Map.put(&1, key, record))
+  end
+
+  @spec record_key(record(), [atom()]) :: key()
+  defp record_key(record, key_fields) do
+    key_fields
+    |> Enum.map(fn field -> Map.get(record, field) end)
+    |> List.to_tuple()
+  end
+
+  @spec build_snapshot(state()) :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  defp build_snapshot(state) do
+    %{left: left, right: right} = state
+    left_keys = MapSet.new(Map.keys(left))
+    right_keys = MapSet.new(Map.keys(right))
+
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      Enum.map(matched_keys, fn key ->
+        left_record = Map.fetch!(left, key)
+        right_record = Map.fetch!(right, key)
+
+        %{
+          left: left_record,
+          right: right_record,
+          differences: differences(left_record, right_record, state)
+        }
+      end)
+
+    %{
+      matched: matched,
+      only_in_left: Enum.map(only_left_keys, &Map.fetch!(left, &1)),
+      only_in_right: Enum.map(only_right_keys, &Map.fetch!(right, &1))
+    }
+  end
+
+  @spec differences(record(), record(), state()) :: diff_map()
+  defp differences(left_record, right_record, state) do
+    fields = compare_fields(left_record, right_record, state)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      left_value = Map.get(left_record, field)
+      right_value = Map.get(right_record, field)
+
+      if left_value == right_value do
+        acc
+      else
+        Map.put(acc, field, %{left: left_value, right: right_value})
+      end
+    end)
+  end
+
+  @spec compare_fields(record(), record(), state()) :: [atom()]
+  defp compare_fields(_left_record, _right_record, %{compare_fields: fields})
+       when is_list(fields) do
+    fields
+  end
+
+  defp compare_fields(left_record, right_record, %{key_fields: key_fields}) do
+    key_set = MapSet.new(key_fields)
+
+    left_record
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right_record))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+end
+</file>
+23:03:06.807 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6990, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6990, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6990, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6990, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 30469, "type" => "message"}], "output_tokens" => 30469, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+23:03:06.833 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_streaming_stateful_reconciler_genserver_01 solution.ex
+23:03:07.470 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":225,"lines_over_98":0,"max_line_length":81,"mode":"full","pipe_chain_count":6,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_streaming_stateful_reconciler_genserver_01/solution.ex","task":"034_004_streaming_stateful_reconciler_genserver_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-10T21:03:07.447931Z"}
+23:03:07.472 [info] cycle 034_004_streaming_stateful_reconciler_genserver_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+23:03:07.472 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+23:03:07.472 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `StreamingReconciler`, implemented as a **GenServer**, that reconciles two streams of records incrementally. Instead of receiving both complete lists up front, records arrive one at a time tagged as coming from the left side or the right side, and the current reconciliation can be queried at any point.
+
+I need this public API:
+
+- `StreamingReconciler.start_link(opts)` — starts the server. `opts` is a keyword list supporting:
+  - `:key_fields` (required) — a list of atoms forming the composite key used to match a left record against a right record. Two records match if and only if all key fields are equal.
+  - `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields present in either matched record except the key fields are compared.
+
+  It returns `{:ok, pid}`.
+
+- `StreamingReconciler.add_left(pid, record)` — ingest one record into the left side. Returns `:ok`.
+- `StreamingReconciler.add_right(pid, record)` — ingest one record into the right side. Returns `:ok`.
+- `StreamingReconciler.snapshot(pid)` — returns the current reconciliation as a map with three keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for keys present on both sides, where `diff_map` is `%{field => %{left: val, right: val}}` for compared fields whose values differ (using `==`), and is empty when all compared fields are equal.
+  - `:only_in_left` — the left records whose key has not (yet) been seen on the right side.
+  - `:only_in_right` — the right records whose key has not (yet) been seen on the left side.
+- `StreamingReconciler.reset(pid)` — discards all ingested records on both sides, returning the server to an empty state. Returns `:ok`.
+
+Behaviour requirements:
+- Reconciliation is computed against whatever has been ingested so far. A key that is only-in-left in one snapshot becomes matched once a right record with the same key is added later.
+- Within a side, if the same key is ingested more than once, the most recently added record wins for that side.
+- Key matching must be exact and support composite keys (`[:org_id, :user_id]` matches only when both fields are equal).
+- If a compared field is missing from one of a matched pair, treat the missing value as `nil` and diff accordingly.
+- Matched entries must include both full original records.
+- Order of the lists in a snapshot does not matter.
+- Use only the Elixir/OTP standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule StreamingReconciler do
+  @moduledoc """
+  A GenServer that incrementally reconciles two streams of records.
+
+  Records arrive one at a time, tagged as coming from the left side or the
+  right side, rather than as two complete lists provided up front. At any
+  point the current reconciliation can be queried via `snapshot/1`.
+
+  Two records are considered a match when all of the configured `:key_fields`
+  are equal. Matched records are diffed on the configured `:compare_fields`
+  (or, when none are configured, on every field present in either record
+  except the key fields).
+
+  Reconciliation always reflects whatever has been ingested so far: a key that
+  appears only on the left in one snapshot becomes matched as soon as a right
+  record with the same key is added. Within a single side, re-ingesting the
+  same key replaces the previous record for that side.
+  """
+
+  use GenServer
+
+  @typedoc "A single record; a map keyed by field name."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of values for the configured key fields."
+  @type key :: tuple()
+
+  @typedoc "Per-field difference map for a matched pair."
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @typedoc "The internal server state."
+  @type state :: %{
+          key_fields: [atom()],
+          compare_fields: [atom()] | nil,
+          left: %{optional(key()) => record()},
+          right: %{optional(key()) => record()}
+        }
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  Options:
+
+    * `:key_fields` (required) — list of atoms forming the composite key used
+      to match a left record against a right record.
+    * `:compare_fields` (optional) — list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields present in
+      either matched record except the key fields are compared.
+
+  Returns `{:ok, pid}`.
+  """
+  @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
+  def start_link(opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    GenServer.start_link(__MODULE__, {key_fields, compare_fields})
+  end
+
+  @doc """
+  Ingests one record into the left side. Returns `:ok`.
+  """
+  @spec add_left(GenServer.server(), record()) :: :ok
+  def add_left(pid, record) do
+    GenServer.call(pid, {:add, :left, record})
+  end
+
+  @doc """
+  Ingests one record into the right side. Returns `:ok`.
+  """
+  @spec add_right(GenServer.server(), record()) :: :ok
+  def add_right(pid, record) do
+    GenServer.call(pid, {:add, :right, record})
+  end
+
+  @doc """
+  Returns the current reconciliation as a map with the keys `:matched`,
+  `:only_in_left`, and `:only_in_right`.
+
+    * `:matched` — a list of `%{left: record, right: record,
+      differences: diff_map}` entries for keys present on both sides.
+    * `:only_in_left` — the left records whose key has not yet been seen on
+      the right side.
+    * `:only_in_right` — the right records whose key has not yet been seen on
+      the left side.
+
+  The order of the lists is unspecified.
+  """
+  @spec snapshot(GenServer.server()) :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  def snapshot(pid) do
+    GenServer.call(pid, :snapshot)
+  end
+
+  @doc """
+  Discards all ingested records on both sides, returning the server to an
+  empty state. Returns `:ok`.
+  """
+  @spec reset(GenServer.server()) :: :ok
+  def reset(pid) do
+    GenServer.call(pid, :reset)
+  end
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  def init({key_fields, compare_fields}) do
+    state = %{
+      key_fields: key_fields,
+      compare_fields: compare_fields,
+      left: %{},
+      right: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:add, :left, record}, _from, state) do
+    {:reply, :ok, put_record(state, :left, record)}
+  end
+
+  def handl (truncated)
+23:08:35.084 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the solution is clean in most respects. The most plausible source of a compile warning under a modern Elixir/OTP 27 type-checker is the two-clause guarded private `compare_fields/3` (dispatch via a guard on a map pattern that structurally overlaps with the fallback clause). I'll collapse it into a single, unambiguous clause that selects behavior with a `case`, which removes any clause-matching ambiguity while keeping behavior identical.
+
+<file path="solution.ex">
+defmodule StreamingReconciler do
+  @moduledoc """
+  A GenServer that incrementally reconciles two streams of records.
+
+  Records arrive one at a time, tagged as coming from the left side or the
+  right side, rather than as two complete lists provided up front. At any
+  point the current reconciliation can be queried via `snapshot/1`.
+
+  Two records are considered a match when all of the configured `:key_fields`
+  are equal. Matched records are diffed on the configured `:compare_fields`
+  (or, when none are configured, on every field present in either record
+  except the key fields).
+
+  Reconciliation always reflects whatever has been ingested so far: a key that
+  appears only on the left in one snapshot becomes matched as soon as a right
+  record with the same key is added. Within a single side, re-ingesting the
+  same key replaces the previous record for that side.
+  """
+
+  use GenServer
+
+  @typedoc "A single record; a map keyed by field name."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of values for the configured key fields."
+  @type key :: tuple()
+
+  @typedoc "Per-field difference map for a matched pair."
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @typedoc "The internal server state."
+  @type state :: %{
+          key_fields: [atom()],
+          compare_fields: [atom()] | nil,
+          left: %{optional(key()) => record()},
+          right: %{optional(key()) => record()}
+        }
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  Options:
+
+    * `:key_fields` (required) — list of atoms forming the composite key used
+      to match a left record against a right record.
+    * `:compare_fields` (optional) — list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields present in
+      either matched record except the key fields are compared.
+
+  Returns `{:ok, pid}`.
+  """
+  @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
+  def start_link(opts) do
+    key_fields = Keyword.fetch!(opts, :key_fields)
+    compare_fields = Keyword.get(opts, :compare_fields)
+    GenServer.start_link(__MODULE__, {key_fields, compare_fields})
+  end
+
+  @doc """
+  Ingests one record into the left side. Returns `:ok`.
+  """
+  @spec add_left(GenServer.server(), record()) :: :ok
+  def add_left(pid, record) do
+    GenServer.call(pid, {:add, :left, record})
+  end
+
+  @doc """
+  Ingests one record into the right side. Returns `:ok`.
+  """
+  @spec add_right(GenServer.server(), record()) :: :ok
+  def add_right(pid, record) do
+    GenServer.call(pid, {:add, :right, record})
+  end
+
+  @doc """
+  Returns the current reconciliation as a map with the keys `:matched`,
+  `:only_in_left`, and `:only_in_right`.
+
+    * `:matched` — a list of `%{left: record, right: record,
+      differences: diff_map}` entries for keys present on both sides.
+    * `:only_in_left` — the left records whose key has not yet been seen on
+      the right side.
+    * `:only_in_right` — the right records whose key has not yet been seen on
+      the left side.
+
+  The order of the lists is unspecified.
+  """
+  @spec snapshot(GenServer.server()) :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  def snapshot(pid) do
+    GenServer.call(pid, :snapshot)
+  end
+
+  @doc """
+  Discards all ingested records on both sides, returning the server to an
+  empty state. Returns `:ok`.
+  """
+  @spec reset(GenServer.server()) :: :ok
+  def reset(pid) do
+    GenServer.call(pid, :reset)
+  end
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  def init({key_fields, compare_fields}) do
+    state = %{
+      key_fields: key_fields,
+      compare_fields: compare_fields,
+      left: %{},
+      right: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:add, :left, record}, _from, state) do
+    {:reply, :ok, put_record(state, :left, record)}
+  end
+
+  def handle_call({:add, :right, record}, _from, state) do
+    {:reply, :ok, put_record(state, :right, record)}
+  end
+
+  def handle_call(:snapshot, _from, state) do
+    {:reply, build_snapshot(state), state}
+  end
+
+  def handle_call(:reset, _from, state) do
+    {:reply, :ok, %{state | left: %{}, right: %{}}}
+  end
+
+  # ------------------------------------------------------------------
+  # Internal helpers
+  # ------------------------------------------------------------------
+
+  @spec put_record(state(), :left | :right, record()) :: state()
+  defp put_record(state, side, record) do
+    key = record_key(record, state.key_fields)
+    Map.update!(state, side, &Map.put(&1, key, record))
+  end
+
+  @spec record_key(record(), [atom()]) :: key()
+  defp record_key(record, key_fields) do
+    key_fields
+    |> Enum.map(fn field -> Map.get(record, field) end)
+    |> List.to_tuple()
+  end
+
+  @spec build_snapshot(state()) :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  defp build_snapshot(state) do
+    %{left: left, right: right} = state
+    left_keys = MapSet.new(Map.keys(left))
+    right_keys = MapSet.new(Map.keys(right))
+
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      Enum.map(matched_keys, fn key ->
+        left_record = Map.fetch!(left, key)
+        right_record = Map.fetch!(right, key)
+
+        %{
+          left: left_record,
+          right: right_record,
+          differences: differences(left_record, right_record, state)
+        }
+      end)
+
+    %{
+      matched: matched,
+      only_in_left: Enum.map(only_left_keys, &Map.fetch!(left, &1)),
+      only_in_right: Enum.map(only_right_keys, &Map.fetch!(right, &1))
+    }
+  end
+
+  @spec differences(record(), record(), state()) :: diff_map()
+  defp differences(left_record, right_record, state) do
+    fields = compare_fields(left_record, right_record, state)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      left_value = Map.get(left_record, field)
+      right_value = Map.get(right_record, field)
+
+      if left_value == right_value do
+        acc
+      else
+        Map.put(acc, field, %{left: left_value, right: right_value})
+      end
+    end)
+  end
+
+  @spec compare_fields(record(), record(), state()) :: [atom()]
+  defp compare_fields(left_record, right_record, state) do
+    case state.compare_fields do
+      fields when is_list(fields) ->
+        fields
+
+      _ ->
+        key_set = MapSet.new(state.key_fields)
+
+        left_record
+        |> Map.keys()
+        |> Enum.concat(Map.keys(right_record))
+        |> Enum.uniq()
+        |> Enum.reject(&MapSet.member?(key_set, &1))
+    end
+  end
+end
+</file>
+23:08:35.084 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7075, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7075, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7075, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7075, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 24028, "type" => "message"}], "output_tokens" => 24028, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+23:08:35.110 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_streaming_stateful_reconciler_genserver_01 solution.ex
+23:08:35.741 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":226,"lines_over_98":0,"max_line_length":81,"mode":"full","pipe_chain_count":6,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_streaming_stateful_reconciler_genserver_01/solution.ex","task":"034_004_streaming_stateful_reconciler_genserver_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-10T21:08:35.718220Z"}
+23:08:35.743 [info] cycle 034_004_streaming_stateful_reconciler_genserver_01: REJECTED after 4 attempt(s)

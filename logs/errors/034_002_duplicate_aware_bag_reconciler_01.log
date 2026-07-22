@@ -1,0 +1,1433 @@
+17:15:04.125 [info] VARIATION 034_002_duplicate_aware_bag_reconciler_01: Duplicate-Aware Bag Reconciler
+17:15:04.125 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+17:15:04.125 [debug] claude -p USER prompt:
+Write me an Elixir module called `BagReconciler` that reconciles two lists of records whose keys may **repeat**. Unlike a set-based reconciler (where a key identifies at most one record per side), here each side is a *bag* (multiset): the same key may occur several times in `left` and/or `right`, and the reconciler must pair occurrences up one-by-one and report the leftovers.
+
+I need these functions in the public API:
+
+- `BagReconciler.reconcile_bags(left, right, opts)` — `left` and `right` are lists of maps, `opts` is a keyword list. Returns a map with exactly these four keys:
+  - `:pairs` — a list of `%{key: key_map, index: i, left: record, right: record, differences: diff_map}` entries, one per paired-up occurrence.
+  - `:unmatched_left` — a list of `%{key: key_map, record: record}` entries for left occurrences that had no right occurrence left to pair with.
+  - `:unmatched_right` — a list of `%{key: key_map, record: record}` entries for right occurrences that had no left occurrence left to pair with.
+  - `:duplicate_keys` — a list of `%{key: key_map, left_count: n, right_count: m}` entries, one for every key that occurs **more than once on at least one side**.
+
+- `BagReconciler.key_counts(records, key_fields)` — `records` is a list of maps and `key_fields` a list of atoms. Returns a map of `key_map => count`, giving how many records in `records` carry each key.
+
+Definitions:
+
+- A **key_map** is a map `%{field => value}` built from the key fields, e.g. `%{id: 1}` or `%{org_id: 1, user_id: 10}`. A key field missing from a record contributes `nil` as its value.
+- A **diff_map** is `%{field => %{left: left_value, right: right_value}}`, containing an entry only for fields whose values differ. It is `%{}` when the two records agree on all compared fields.
+
+The `opts` keyword list of `reconcile_bags/3` must support:
+
+- `:key_fields` (required) — a list of atoms forming the composite key. Passing no `:key_fields`, or a value that is not a non-empty list of atoms, must raise `ArgumentError`.
+- `:compare_fields` (optional) — a list of atoms to diff on paired records. If omitted or `nil`, compare every field present in either record of the pair except the key fields.
+
+Pairing rules (this is the heart of the task):
+
+- Group each side by key, preserving the order in which the records appear in the input list.
+- For a given key with `n` left occurrences and `m` right occurrences, pair the 1st left with the 1st right, the 2nd left with the 2nd right, and so on, for `min(n, m)` pairs. The `:index` of a pair is its zero-based position within that key's group (so the first pair for a key has `index: 0`).
+- The remaining `n - min(n, m)` left occurrences (the later ones, in input order) go to `:unmatched_left`; the remaining `m - min(n, m)` right occurrences go to `:unmatched_right`.
+- A key that appears on only one side puts all of its occurrences into that side's unmatched list.
+- `:duplicate_keys` contains an entry for a key if and only if `left_count > 1` or `right_count > 1`. `left_count`/`right_count` are the total occurrence counts on each side (either may be `0`). Keys with at most one occurrence on each side are not reported.
+
+Other behaviour requirements:
+
+- Key matching is exact — all key fields must be equal (`==`) for two records to share a key. Composite keys must work: `[:org_id, :user_id]` only groups records that agree on both.
+- Field comparison is value-exact, using `==`.
+- A record in `:pairs` must carry the full original left and right maps, even if some of their fields are excluded from comparison.
+- A compare field missing from one or both records is treated as `nil` and diffed accordingly.
+- The order of entries within `:pairs`, `:unmatched_left`, `:unmatched_right` and `:duplicate_keys` does not matter.
+- The module must be pure — no processes, no side effects, no external dependencies. Elixir standard library only.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+17:15:33.361 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule BagReconciler do
+  @moduledoc """
+  Reconciles two lists of records (maps) whose keys may repeat.
+
+  Unlike a set-based reconciler, each side is treated as a *bag* (multiset): the same key
+  may occur several times in `left` and/or `right`. Occurrences sharing a key are paired up
+  positionally — the 1st left occurrence with the 1st right occurrence, the 2nd with the 2nd,
+  and so on — and any leftovers are reported as unmatched.
+
+  Records are plain maps. A *key_map* is a map `%{field => value}` built from the configured
+  key fields (a missing field contributes `nil`). A *diff_map* is
+  `%{field => %{left: left_value, right: right_value}}` and contains an entry only for the
+  fields whose values differ.
+
+  The module is pure: no processes, no side effects, Elixir standard library only.
+  """
+
+  @type record :: map()
+  @type key_map :: map()
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @type pair :: %{
+          key: key_map(),
+          index: non_neg_integer(),
+          left: record(),
+          right: record(),
+          differences: diff_map()
+        }
+
+  @type unmatched :: %{key: key_map(), record: record()}
+
+  @type duplicate :: %{
+          key: key_map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+
+  @type result :: %{
+          pairs: [pair()],
+          unmatched_left: [unmatched()],
+          unmatched_right: [unmatched()],
+          duplicate_keys: [duplicate()]
+        }
+
+  @doc """
+  Reconciles the `left` and `right` bags of records.
+
+  ## Options
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the composite key.
+      Anything else raises `ArgumentError`.
+    * `:compare_fields` (optional) — a list of atoms to diff on paired records. When omitted
+      or `nil`, every field present in either record of the pair is compared, except the key
+      fields.
+
+  Returns a map with the keys `:pairs`, `:unmatched_left`, `:unmatched_right` and
+  `:duplicate_keys`. The order of entries within each list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}]
+      iex> right = [%{id: 1, v: :a}]
+      iex> result = BagReconciler.reconcile_bags(left, right, key_fields: [:id])
+      iex> Enum.map(result.pairs, & &1.index)
+      [0]
+      iex> result.unmatched_left
+      [%{key: %{id: 1}, record: %{id: 1, v: :b}}]
+      iex> result.duplicate_keys
+      [%{key: %{id: 1}, left_count: 2, right_count: 1}]
+
+  """
+  @spec reconcile_bags([record()], [record()], keyword()) :: result()
+  def reconcile_bags(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+    compare_fields = validate_compare_fields(Keyword.get(opts, :compare_fields))
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    keys =
+      left_groups
+      |> Map.keys()
+      |> Kernel.++(Map.keys(right_groups))
+      |> Enum.uniq()
+
+    initial = %{pairs: [], unmatched_left: [], unmatched_right: [], duplicate_keys: []}
+
+    Enum.reduce(keys, initial, fn key, acc ->
+      lefts = Map.get(left_groups, key, [])
+      rights = Map.get(right_groups, key, [])
+
+      acc
+      |> Map.update!(:pairs, &(build_pairs(key, lefts, rights, key_fields, compare_fields) ++ &1))
+      |> Map.update!(:unmatched_left, &(leftovers(key, lefts, length(rights)) ++ &1))
+      |> Map.update!(:unmatched_right, &(leftovers(key, rights, length(lefts)) ++ &1))
+      |> Map.update!(:duplicate_keys, &(duplicate_entry(key, lefts, rights) ++ &1))
+    end)
+  end
+
+  @doc """
+  Counts how many records in `records` carry each key built from `key_fields`.
+
+  Returns a map of `key_map => count`. Fields missing from a record contribute `nil`.
+
+  ## Examples
+
+      iex> BagReconciler.key_counts([%{id: 1}, %{id: 1}, %{id: 2}], [:id])
+      %{%{id: 1} => 2, %{id: 2} => 1}
+
+  """
+  @spec key_counts([record()], [atom()]) :: %{optional(key_map()) => pos_integer()}
+  def key_counts(records, key_fields) when is_list(records) do
+    fields = validate_key_fields(key_fields)
+
+    Enum.reduce(records, %{}, fn record, acc ->
+      Map.update(acc, key_of(record, fields), 1, &(&1 + 1))
+    end)
+  end
+
+  # -- internals -------------------------------------------------------------
+
+  @spec validate_key_fields(any()) :: [atom()]
+  defp validate_key_fields(fields) do
+    if is_list(fields) and fields != [] and Enum.all?(fields, &is_atom/1) do
+      fields
+    else
+      raise ArgumentError,
+            ":key_fields must be a non-empty list of atoms, got: #{inspect(fields)}"
+    end
+  end
+
+  @spec validate_compare_fields(any()) :: [atom()] | nil
+  defp validate_compare_fields(nil), do: nil
+
+  defp validate_compare_fields(fields) do
+    if is_list(fields) and Enum.all?(fields, &is_atom/1) do
+      fields
+    else
+      raise ArgumentError,
+            ":compare_fields must be a list of atoms or nil, got: #{inspect(fields)}"
+    end
+  end
+
+  @spec key_of(record(), [atom()]) :: key_map()
+  defp key_of(record, key_fields) do
+    Map.new(key_fields, fn field -> {field, Map.get(record, field)} end)
+  end
+
+  @spec group_by_key([record()], [atom()]) :: %{optional(key_map()) => [record()]}
+  defp group_by_key(records, key_fields) do
+    records
+    |> Enum.reduce(%{}, fn record, acc ->
+      Map.update(acc, key_of(record, key_fields), [record], &[record | &1])
+    end)
+    |> Map.new(fn {key, records} -> {key, Enum.reverse(records)} end)
+  end
+
+  @spec build_pairs(key_map(), [record()], [record()], [atom()], [atom()] | nil) :: [pair()]
+  defp build_pairs(key, lefts, rights, key_fields, compare_fields) do
+    lefts
+    |> Enum.zip(rights)
+    |> Enum.with_index()
+    |> Enum.map(fn {{left, right}, index} ->
+      %{
+        key: key,
+        index: index,
+        left: left,
+        right: right,
+        differences: diff(left, right, key_fields, compare_fields)
+      }
+    end)
+  end
+
+  @spec leftovers(key_map(), [record()], non_neg_integer()) :: [unmatched()]
+  defp leftovers(key, records, paired_count) do
+    records
+    |> Enum.drop(paired_count)
+    |> Enum.map(fn record -> %{key: key, record: record} end)
+  end
+
+  @spec duplicate_entry(key_map(), [record()], [record()]) :: [duplicate()]
+  defp duplicate_entry(key, lefts, rights) do
+    left_count = length(lefts)
+    right_count = length(rights)
+
+    if left_count > 1 or right_count > 1 do
+      [%{key: key, left_count: left_count, right_count: right_count}]
+    else
+      []
+    end
+  end
+
+  @spec diff(record(), record(), [atom()], [atom()] | nil) :: diff_map()
+  defp diff(left, right, key_fields, compare_fields) do
+    fields = fields_to_compare(left, right, key_fields, compare_fields)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      left_value = Map.get(left, field)
+      right_value = Map.get(right, field)
+
+      if left_value == right_value do
+        acc
+      else
+        Map.put(acc, field, %{left: left_value, right: right_value})
+      end
+    end)
+  end
+
+  @spec fields_to_compare(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  defp fields_to_compare(left, right, key_fields, nil) do
+    left
+    |> Map.keys()
+    |> Kernel.++(Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&(&1 in key_fields))
+  end
+
+  defp fields_to_compare(_left, _right, _key_fields, compare_fields), do: compare_fields
+end
+</file>
+17:15:33.361 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5204, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5204, "cache_read_input_tokens" => 14786, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5204, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5204, "cache_read_input_tokens" => 14786, "input_tokens" => 2, "output_tokens" => 3147, "type" => "message"}], "output_tokens" => 3147, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+17:15:33.390 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_duplicate_aware_bag_reconciler_01 solution.ex
+17:15:34.288 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":220,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_duplicate_aware_bag_reconciler_01/solution.ex","task":"034_002_duplicate_aware_bag_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-12T15:15:34.260812Z"}
+17:15:34.290 [info] cycle 034_002_duplicate_aware_bag_reconciler_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+17:15:34.290 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+17:15:34.290 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `BagReconciler` that reconciles two lists of records whose keys may **repeat**. Unlike a set-based reconciler (where a key identifies at most one record per side), here each side is a *bag* (multiset): the same key may occur several times in `left` and/or `right`, and the reconciler must pair occurrences up one-by-one and report the leftovers.
+
+I need these functions in the public API:
+
+- `BagReconciler.reconcile_bags(left, right, opts)` — `left` and `right` are lists of maps, `opts` is a keyword list. Returns a map with exactly these four keys:
+  - `:pairs` — a list of `%{key: key_map, index: i, left: record, right: record, differences: diff_map}` entries, one per paired-up occurrence.
+  - `:unmatched_left` — a list of `%{key: key_map, record: record}` entries for left occurrences that had no right occurrence left to pair with.
+  - `:unmatched_right` — a list of `%{key: key_map, record: record}` entries for right occurrences that had no left occurrence left to pair with.
+  - `:duplicate_keys` — a list of `%{key: key_map, left_count: n, right_count: m}` entries, one for every key that occurs **more than once on at least one side**.
+
+- `BagReconciler.key_counts(records, key_fields)` — `records` is a list of maps and `key_fields` a list of atoms. Returns a map of `key_map => count`, giving how many records in `records` carry each key.
+
+Definitions:
+
+- A **key_map** is a map `%{field => value}` built from the key fields, e.g. `%{id: 1}` or `%{org_id: 1, user_id: 10}`. A key field missing from a record contributes `nil` as its value.
+- A **diff_map** is `%{field => %{left: left_value, right: right_value}}`, containing an entry only for fields whose values differ. It is `%{}` when the two records agree on all compared fields.
+
+The `opts` keyword list of `reconcile_bags/3` must support:
+
+- `:key_fields` (required) — a list of atoms forming the composite key. Passing no `:key_fields`, or a value that is not a non-empty list of atoms, must raise `ArgumentError`.
+- `:compare_fields` (optional) — a list of atoms to diff on paired records. If omitted or `nil`, compare every field present in either record of the pair except the key fields.
+
+Pairing rules (this is the heart of the task):
+
+- Group each side by key, preserving the order in which the records appear in the input list.
+- For a given key with `n` left occurrences and `m` right occurrences, pair the 1st left with the 1st right, the 2nd left with the 2nd right, and so on, for `min(n, m)` pairs. The `:index` of a pair is its zero-based position within that key's group (so the first pair for a key has `index: 0`).
+- The remaining `n - min(n, m)` left occurrences (the later ones, in input order) go to `:unmatched_left`; the remaining `m - min(n, m)` right occurrences go to `:unmatched_right`.
+- A key that appears on only one side puts all of its occurrences into that side's unmatched list.
+- `:duplicate_keys` contains an entry for a key if and only if `left_count > 1` or `right_count > 1`. `left_count`/`right_count` are the total occurrence counts on each side (either may be `0`). Keys with at most one occurrence on each side are not reported.
+
+Other behaviour requirements:
+
+- Key matching is exact — all key fields must be equal (`==`) for two records to share a key. Composite keys must work: `[:org_id, :user_id]` only groups records that agree on both.
+- Field comparison is value-exact, using `==`.
+- A record in `:pairs` must carry the full original left and right maps, even if some of their fields are excluded from comparison.
+- A compare field missing from one or both records is treated as `nil` and diffed accordingly.
+- The order of entries within `:pairs`, `:unmatched_left`, `:unmatched_right` and `:duplicate_keys` does not matter.
+- The module must be pure — no processes, no side effects, no external dependencies. Elixir standard library only.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule BagReconciler do
+  @moduledoc """
+  Reconciles two lists of records (maps) whose keys may repeat.
+
+  Unlike a set-based reconciler, each side is treated as a *bag* (multiset): the same key
+  may occur several times in `left` and/or `right`. Occurrences sharing a key are paired up
+  positionally — the 1st left occurrence with the 1st right occurrence, the 2nd with the 2nd,
+  and so on — and any leftovers are reported as unmatched.
+
+  Records are plain maps. A *key_map* is a map `%{field => value}` built from the configured
+  key fields (a missing field contributes `nil`). A *diff_map* is
+  `%{field => %{left: left_value, right: right_value}}` and contains an entry only for the
+  fields whose values differ.
+
+  The module is pure: no processes, no side effects, Elixir standard library only.
+  """
+
+  @type record :: map()
+  @type key_map :: map()
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @type pair :: %{
+          key: key_map(),
+          index: non_neg_integer(),
+          left: record(),
+          right: record(),
+          differences: diff_map()
+        }
+
+  @type unmatched :: %{key: key_map(), record: record()}
+
+  @type duplicate :: %{
+          key: key_map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+
+  @type result :: %{
+          pairs: [pair()],
+          unmatched_left: [unmatched()],
+          unmatched_right: [unmatched()],
+          duplicate_keys: [duplicate()]
+        }
+
+  @doc """
+  Reconciles the `left` and `right` bags of records.
+
+  ## Options
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the composite key.
+      Anything else raises `ArgumentError`.
+    * `:compare_fields` (optional) — a list of atoms to diff on paired records. When omitted
+      or `nil`, every field present in either record of the pair is compared, except the key
+      fields.
+
+  Returns a map with the keys `:pairs`, `:unmatched_left`, `:unmatched_right` and
+  `:duplicate_keys`. The order of entries within each list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}]
+      iex> right = [%{id: 1, v: :a}]
+      iex> result = BagReconciler.reconcile_bags(left, right, key_fields: [:id])
+      iex> Enum.map(result.pairs, & &1.index)
+      [0]
+      iex> result.unmatched_left
+      [%{key: %{id: 1}, record: %{id: 1, v: :b}}]
+      iex> result.duplicate_keys
+      [%{key: %{id: 1}, left_count: 2, right_count: 1}]
+
+  """
+  @spec reconcile_bags([record()], [record()], keyword()) :: result()
+  def reconcile_bags(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+    compare_fields = validate_compare_fields(Keyword.get(opts, :compare_fields))
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups  (truncated)
+17:17:11.522 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule BagReconciler do
+  @moduledoc """
+  Reconciles two lists of records (maps) whose keys may repeat.
+
+  Unlike a set-based reconciler, each side is treated as a *bag* (multiset): the same key
+  may occur several times in `left` and/or `right`. Occurrences sharing a key are paired up
+  positionally — the 1st left occurrence with the 1st right occurrence, the 2nd with the
+  2nd, and so on — and any leftovers are reported as unmatched.
+
+  Records are plain maps. A *key_map* is a map `%{field => value}` built from the configured
+  key fields (a missing field contributes `nil`). A *diff_map* is
+  `%{field => %{left: left_value, right: right_value}}` and contains an entry only for the
+  fields whose values differ.
+
+  The module is pure: no processes, no side effects, Elixir standard library only.
+  """
+
+  @type record :: map()
+  @type key_map :: map()
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @type pair :: %{
+          key: key_map(),
+          index: non_neg_integer(),
+          left: record(),
+          right: record(),
+          differences: diff_map()
+        }
+
+  @type unmatched :: %{key: key_map(), record: record()}
+
+  @type duplicate :: %{
+          key: key_map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+
+  @type result :: %{
+          pairs: [pair()],
+          unmatched_left: [unmatched()],
+          unmatched_right: [unmatched()],
+          duplicate_keys: [duplicate()]
+        }
+
+  @doc """
+  Reconciles the `left` and `right` bags of records.
+
+  ## Options
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the composite key.
+      Anything else raises `ArgumentError`.
+    * `:compare_fields` (optional) — a list of atoms to diff on paired records. When omitted
+      or `nil`, every field present in either record of the pair is compared, except the key
+      fields.
+
+  Returns a map with the keys `:pairs`, `:unmatched_left`, `:unmatched_right` and
+  `:duplicate_keys`. The order of entries within each list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}]
+      iex> right = [%{id: 1, v: :a}]
+      iex> result = BagReconciler.reconcile_bags(left, right, key_fields: [:id])
+      iex> Enum.map(result.pairs, & &1.index)
+      [0]
+      iex> result.unmatched_left
+      [%{key: %{id: 1}, record: %{id: 1, v: :b}}]
+      iex> result.duplicate_keys
+      [%{key: %{id: 1}, left_count: 2, right_count: 1}]
+
+  """
+  @spec reconcile_bags([record()], [record()], keyword()) :: result()
+  def reconcile_bags(left, right, opts)
+      when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+    compare_fields = validate_compare_fields(Keyword.get(opts, :compare_fields))
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    keys = Enum.uniq(Map.keys(left_groups) ++ Map.keys(right_groups))
+
+    initial = %{pairs: [], unmatched_left: [], unmatched_right: [], duplicate_keys: []}
+
+    Enum.reduce(keys, initial, fn key, acc ->
+      lefts = Map.get(left_groups, key, [])
+      rights = Map.get(right_groups, key, [])
+      left_count = length(lefts)
+      right_count = length(rights)
+
+      %{
+        pairs: build_pairs(key, lefts, rights, key_fields, compare_fields) ++ acc.pairs,
+        unmatched_left: leftovers(key, lefts, right_count) ++ acc.unmatched_left,
+        unmatched_right: leftovers(key, rights, left_count) ++ acc.unmatched_right,
+        duplicate_keys:
+          duplicate_entry(key, left_count, right_count) ++ acc.duplicate_keys
+      }
+    end)
+  end
+
+  @doc """
+  Counts how many records in `records` carry each key built from `key_fields`.
+
+  Returns a map of `key_map => count`. Fields missing from a record contribute `nil`.
+
+  ## Examples
+
+      iex> BagReconciler.key_counts([%{id: 1}, %{id: 1}, %{id: 2}], [:id])
+      %{%{id: 1} => 2, %{id: 2} => 1}
+
+  """
+  @spec key_counts([record()], [atom()]) :: %{optional(key_map()) => pos_integer()}
+  def key_counts(records, key_fields) when is_list(records) do
+    fields = validate_key_fields(key_fields)
+
+    Enum.reduce(records, %{}, fn record, acc ->
+      Map.update(acc, key_of(record, fields), 1, &(&1 + 1))
+    end)
+  end
+
+  # -- internals -------------------------------------------------------------
+
+  @spec validate_key_fields(any()) :: [atom()]
+  defp validate_key_fields(fields) do
+    if is_list(fields) and fields != [] and Enum.all?(fields, &is_atom/1) do
+      fields
+    else
+      raise ArgumentError,
+            ":key_fields must be a non-empty list of atoms, got: #{inspect(fields)}"
+    end
+  end
+
+  @spec validate_compare_fields(any()) :: [atom()] | nil
+  defp validate_compare_fields(nil), do: nil
+
+  defp validate_compare_fields(fields) do
+    if is_list(fields) and Enum.all?(fields, &is_atom/1) do
+      fields
+    else
+      raise ArgumentError,
+            ":compare_fields must be a list of atoms or nil, got: #{inspect(fields)}"
+    end
+  end
+
+  @spec key_of(record(), [atom()]) :: key_map()
+  defp key_of(record, key_fields) do
+    Map.new(key_fields, fn field -> {field, Map.get(record, field)} end)
+  end
+
+  @spec group_by_key([record()], [atom()]) :: %{optional(key_map()) => [record()]}
+  defp group_by_key(records, key_fields) do
+    records
+    |> Enum.reduce(%{}, fn record, acc ->
+      Map.update(acc, key_of(record, key_fields), [record], &[record | &1])
+    end)
+    |> Map.new(fn {key, reversed} -> {key, Enum.reverse(reversed)} end)
+  end
+
+  @spec build_pairs(key_map(), [record()], [record()], [atom()], [atom()] | nil) :: [pair()]
+  defp build_pairs(key, lefts, rights, key_fields, compare_fields) do
+    lefts
+    |> Enum.zip(rights)
+    |> Enum.with_index()
+    |> Enum.map(fn {{left, right}, index} ->
+      %{
+        key: key,
+        index: index,
+        left: left,
+        right: right,
+        differences: diff(left, right, key_fields, compare_fields)
+      }
+    end)
+  end
+
+  @spec leftovers(key_map(), [record()], non_neg_integer()) :: [unmatched()]
+  defp leftovers(key, records, paired_count) do
+    records
+    |> Enum.drop(paired_count)
+    |> Enum.map(fn record -> %{key: key, record: record} end)
+  end
+
+  @spec duplicate_entry(key_map(), non_neg_integer(), non_neg_integer()) :: [duplicate()]
+  defp duplicate_entry(key, left_count, right_count)
+       when left_count > 1 or right_count > 1 do
+    [%{key: key, left_count: left_count, right_count: right_count}]
+  end
+
+  defp duplicate_entry(_key, _left_count, _right_count), do: []
+
+  @spec diff(record(), record(), [atom()], [atom()] | nil) :: diff_map()
+  defp diff(left, right, key_fields, compare_fields) do
+    left
+    |> fields_to_compare(right, key_fields, compare_fields)
+    |> Enum.reduce(%{}, fn field, acc ->
+      left_value = Map.get(left, field)
+      right_value = Map.get(right, field)
+
+      if left_value == right_value do
+        acc
+      else
+        Map.put(acc, field, %{left: left_value, right: right_value})
+      end
+    end)
+  end
+
+  @spec fields_to_compare(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  defp fields_to_compare(left, right, key_fields, nil) do
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(fn field -> field in key_fields end)
+  end
+
+  defp fields_to_compare(_left, _right, _key_fields, compare_fields), do: compare_fields
+end
+</file>
+17:17:11.522 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12773, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12773, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12773, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12773, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 8425, "type" => "message"}], "output_tokens" => 8425, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+17:17:11.550 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_duplicate_aware_bag_reconciler_01 solution.ex
+17:17:12.377 [debug] grade JSON: {"analysis":{"defp_count":12,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":214,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":11,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_duplicate_aware_bag_reconciler_01/solution.ex","task":"034_002_duplicate_aware_bag_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-12T15:17:12.349747Z"}
+17:17:12.379 [info] cycle 034_002_duplicate_aware_bag_reconciler_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+17:17:12.379 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+17:17:12.379 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `BagReconciler` that reconciles two lists of records whose keys may **repeat**. Unlike a set-based reconciler (where a key identifies at most one record per side), here each side is a *bag* (multiset): the same key may occur several times in `left` and/or `right`, and the reconciler must pair occurrences up one-by-one and report the leftovers.
+
+I need these functions in the public API:
+
+- `BagReconciler.reconcile_bags(left, right, opts)` — `left` and `right` are lists of maps, `opts` is a keyword list. Returns a map with exactly these four keys:
+  - `:pairs` — a list of `%{key: key_map, index: i, left: record, right: record, differences: diff_map}` entries, one per paired-up occurrence.
+  - `:unmatched_left` — a list of `%{key: key_map, record: record}` entries for left occurrences that had no right occurrence left to pair with.
+  - `:unmatched_right` — a list of `%{key: key_map, record: record}` entries for right occurrences that had no left occurrence left to pair with.
+  - `:duplicate_keys` — a list of `%{key: key_map, left_count: n, right_count: m}` entries, one for every key that occurs **more than once on at least one side**.
+
+- `BagReconciler.key_counts(records, key_fields)` — `records` is a list of maps and `key_fields` a list of atoms. Returns a map of `key_map => count`, giving how many records in `records` carry each key.
+
+Definitions:
+
+- A **key_map** is a map `%{field => value}` built from the key fields, e.g. `%{id: 1}` or `%{org_id: 1, user_id: 10}`. A key field missing from a record contributes `nil` as its value.
+- A **diff_map** is `%{field => %{left: left_value, right: right_value}}`, containing an entry only for fields whose values differ. It is `%{}` when the two records agree on all compared fields.
+
+The `opts` keyword list of `reconcile_bags/3` must support:
+
+- `:key_fields` (required) — a list of atoms forming the composite key. Passing no `:key_fields`, or a value that is not a non-empty list of atoms, must raise `ArgumentError`.
+- `:compare_fields` (optional) — a list of atoms to diff on paired records. If omitted or `nil`, compare every field present in either record of the pair except the key fields.
+
+Pairing rules (this is the heart of the task):
+
+- Group each side by key, preserving the order in which the records appear in the input list.
+- For a given key with `n` left occurrences and `m` right occurrences, pair the 1st left with the 1st right, the 2nd left with the 2nd right, and so on, for `min(n, m)` pairs. The `:index` of a pair is its zero-based position within that key's group (so the first pair for a key has `index: 0`).
+- The remaining `n - min(n, m)` left occurrences (the later ones, in input order) go to `:unmatched_left`; the remaining `m - min(n, m)` right occurrences go to `:unmatched_right`.
+- A key that appears on only one side puts all of its occurrences into that side's unmatched list.
+- `:duplicate_keys` contains an entry for a key if and only if `left_count > 1` or `right_count > 1`. `left_count`/`right_count` are the total occurrence counts on each side (either may be `0`). Keys with at most one occurrence on each side are not reported.
+
+Other behaviour requirements:
+
+- Key matching is exact — all key fields must be equal (`==`) for two records to share a key. Composite keys must work: `[:org_id, :user_id]` only groups records that agree on both.
+- Field comparison is value-exact, using `==`.
+- A record in `:pairs` must carry the full original left and right maps, even if some of their fields are excluded from comparison.
+- A compare field missing from one or both records is treated as `nil` and diffed accordingly.
+- The order of entries within `:pairs`, `:unmatched_left`, `:unmatched_right` and `:duplicate_keys` does not matter.
+- The module must be pure — no processes, no side effects, no external dependencies. Elixir standard library only.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule BagReconciler do
+  @moduledoc """
+  Reconciles two lists of records (maps) whose keys may repeat.
+
+  Unlike a set-based reconciler, each side is treated as a *bag* (multiset): the same key
+  may occur several times in `left` and/or `right`. Occurrences sharing a key are paired up
+  positionally — the 1st left occurrence with the 1st right occurrence, the 2nd with the
+  2nd, and so on — and any leftovers are reported as unmatched.
+
+  Records are plain maps. A *key_map* is a map `%{field => value}` built from the configured
+  key fields (a missing field contributes `nil`). A *diff_map* is
+  `%{field => %{left: left_value, right: right_value}}` and contains an entry only for the
+  fields whose values differ.
+
+  The module is pure: no processes, no side effects, Elixir standard library only.
+  """
+
+  @type record :: map()
+  @type key_map :: map()
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @type pair :: %{
+          key: key_map(),
+          index: non_neg_integer(),
+          left: record(),
+          right: record(),
+          differences: diff_map()
+        }
+
+  @type unmatched :: %{key: key_map(), record: record()}
+
+  @type duplicate :: %{
+          key: key_map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+
+  @type result :: %{
+          pairs: [pair()],
+          unmatched_left: [unmatched()],
+          unmatched_right: [unmatched()],
+          duplicate_keys: [duplicate()]
+        }
+
+  @doc """
+  Reconciles the `left` and `right` bags of records.
+
+  ## Options
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the composite key.
+      Anything else raises `ArgumentError`.
+    * `:compare_fields` (optional) — a list of atoms to diff on paired records. When omitted
+      or `nil`, every field present in either record of the pair is compared, except the key
+      fields.
+
+  Returns a map with the keys `:pairs`, `:unmatched_left`, `:unmatched_right` and
+  `:duplicate_keys`. The order of entries within each list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}]
+      iex> right = [%{id: 1, v: :a}]
+      iex> result = BagReconciler.reconcile_bags(left, right, key_fields: [:id])
+      iex> Enum.map(result.pairs, & &1.index)
+      [0]
+      iex> result.unmatched_left
+      [%{key: %{id: 1}, record: %{id: 1, v: :b}}]
+      iex> result.duplicate_keys
+      [%{key: %{id: 1}, left_count: 2, right_count: 1}]
+
+  """
+  @spec reconcile_bags([record()], [record()], keyword()) :: result()
+  def reconcile_bags(left, right, opts)
+      when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+    compare_fields = validate_compare_fields(Keyword.get(opts, :compare_fields))
+
+    left_groups = group_by_key(left, key_fields)
+    right_g (truncated)
+17:20:27.145 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule BagReconciler do
+  @moduledoc """
+  Reconciles two lists of records (maps) whose keys may repeat.
+
+  Unlike a set-based reconciler, each side is treated as a *bag* (multiset): the same key
+  may occur several times in `left` and/or `right`. Occurrences sharing a key are paired up
+  positionally — the 1st left occurrence with the 1st right occurrence, the 2nd with the
+  2nd, and so on — and any leftovers are reported as unmatched.
+
+  Records are plain maps. A *key_map* is a map `%{field => value}` built from the configured
+  key fields (a missing field contributes `nil`). A *diff_map* is
+  `%{field => %{left: left_value, right: right_value}}` and contains an entry only for the
+  fields whose values differ.
+
+  The module is pure: no processes, no side effects, Elixir standard library only.
+  """
+
+  @type record :: map()
+  @type key_map :: map()
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @type pair :: %{
+          key: key_map(),
+          index: non_neg_integer(),
+          left: record(),
+          right: record(),
+          differences: diff_map()
+        }
+
+  @type unmatched :: %{key: key_map(), record: record()}
+
+  @type duplicate :: %{
+          key: key_map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+
+  @type result :: %{
+          pairs: [pair()],
+          unmatched_left: [unmatched()],
+          unmatched_right: [unmatched()],
+          duplicate_keys: [duplicate()]
+        }
+
+  @doc """
+  Reconciles the `left` and `right` bags of records.
+
+  ## Options
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the composite key.
+      Anything else raises `ArgumentError`.
+    * `:compare_fields` (optional) — a list of atoms to diff on paired records. When omitted
+      or `nil`, every field present in either record of the pair is compared, except the key
+      fields.
+
+  Returns a map with the keys `:pairs`, `:unmatched_left`, `:unmatched_right` and
+  `:duplicate_keys`. The order of entries within each list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}]
+      iex> right = [%{id: 1, v: :a}]
+      iex> result = BagReconciler.reconcile_bags(left, right, key_fields: [:id])
+      iex> Enum.map(result.pairs, & &1.index)
+      [0]
+      iex> result.unmatched_left
+      [%{key: %{id: 1}, record: %{id: 1, v: :b}}]
+      iex> result.duplicate_keys
+      [%{key: %{id: 1}, left_count: 2, right_count: 1}]
+
+  """
+  @spec reconcile_bags([record()], [record()], keyword()) :: result()
+  def reconcile_bags(left, right, opts)
+      when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+    compare_fields = validate_compare_fields(Keyword.get(opts, :compare_fields))
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    keys = Enum.uniq(Map.keys(left_groups) ++ Map.keys(right_groups))
+
+    initial = %{pairs: [], unmatched_left: [], unmatched_right: [], duplicate_keys: []}
+
+    Enum.reduce(keys, initial, fn key, acc ->
+      lefts = Map.get(left_groups, key, [])
+      rights = Map.get(right_groups, key, [])
+      left_count = length(lefts)
+      right_count = length(rights)
+
+      %{
+        pairs: build_pairs(key, lefts, rights, key_fields, compare_fields) ++ acc.pairs,
+        unmatched_left: leftovers(key, lefts, right_count) ++ acc.unmatched_left,
+        unmatched_right: leftovers(key, rights, left_count) ++ acc.unmatched_right,
+        duplicate_keys: duplicate_entry(key, left_count, right_count) ++ acc.duplicate_keys
+      }
+    end)
+  end
+
+  @doc """
+  Counts how many records in `records` carry each key built from `key_fields`.
+
+  Returns a map of `key_map => count`. Fields missing from a record contribute `nil`.
+
+  ## Examples
+
+      iex> BagReconciler.key_counts([%{id: 1}, %{id: 1}, %{id: 2}], [:id])
+      %{%{id: 1} => 2, %{id: 2} => 1}
+
+  """
+  @spec key_counts([record()], [atom()]) :: %{optional(key_map()) => pos_integer()}
+  def key_counts(records, key_fields) when is_list(records) do
+    fields = validate_key_fields(key_fields)
+
+    Enum.reduce(records, %{}, fn record, acc ->
+      Map.update(acc, key_of(record, fields), 1, fn count -> count + 1 end)
+    end)
+  end
+
+  # -- internals -------------------------------------------------------------
+
+  defp validate_key_fields(fields) when is_list(fields) and fields != [] do
+    if Enum.all?(fields, &is_atom/1) do
+      fields
+    else
+      raise_key_fields(fields)
+    end
+  end
+
+  defp validate_key_fields(fields), do: raise_key_fields(fields)
+
+  defp raise_key_fields(fields) do
+    raise ArgumentError,
+          ":key_fields must be a non-empty list of atoms, got: #{inspect(fields)}"
+  end
+
+  defp validate_compare_fields(nil), do: nil
+
+  defp validate_compare_fields(fields) when is_list(fields) do
+    if Enum.all?(fields, &is_atom/1) do
+      fields
+    else
+      raise_compare_fields(fields)
+    end
+  end
+
+  defp validate_compare_fields(fields), do: raise_compare_fields(fields)
+
+  defp raise_compare_fields(fields) do
+    raise ArgumentError,
+          ":compare_fields must be a list of atoms or nil, got: #{inspect(fields)}"
+  end
+
+  defp key_of(record, key_fields) do
+    Map.new(key_fields, fn field -> {field, Map.get(record, field)} end)
+  end
+
+  defp group_by_key(records, key_fields) do
+    records
+    |> Enum.reduce(%{}, fn record, acc ->
+      Map.update(acc, key_of(record, key_fields), [record], fn kept -> [record | kept] end)
+    end)
+    |> Map.new(fn {key, reversed} -> {key, Enum.reverse(reversed)} end)
+  end
+
+  defp build_pairs(key, lefts, rights, key_fields, compare_fields) do
+    lefts
+    |> Enum.zip(rights)
+    |> Enum.with_index()
+    |> Enum.map(fn {{left, right}, index} ->
+      %{
+        key: key,
+        index: index,
+        left: left,
+        right: right,
+        differences: diff(left, right, key_fields, compare_fields)
+      }
+    end)
+  end
+
+  defp leftovers(key, records, paired_count) do
+    records
+    |> Enum.drop(paired_count)
+    |> Enum.map(fn record -> %{key: key, record: record} end)
+  end
+
+  defp duplicate_entry(key, left_count, right_count)
+       when left_count > 1 or right_count > 1 do
+    [%{key: key, left_count: left_count, right_count: right_count}]
+  end
+
+  defp duplicate_entry(_key, _left_count, _right_count), do: []
+
+  defp diff(left, right, key_fields, compare_fields) do
+    left
+    |> fields_to_compare(right, key_fields, compare_fields)
+    |> Enum.reduce(%{}, fn field, acc ->
+      left_value = Map.get(left, field)
+      right_value = Map.get(right, field)
+
+      if left_value == right_value do
+        acc
+      else
+        Map.put(acc, field, %{left: left_value, right: right_value})
+      end
+    end)
+  end
+
+  defp fields_to_compare(left, right, key_fields, nil) do
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(fn field -> field in key_fields end)
+  end
+
+  defp fields_to_compare(_left, _right, _key_fields, compare_fields), do: compare_fields
+end
+</file>
+
+<file path="test_harness.exs">
+defmodule BagReconcilerTest do
+  use ExUnit.Case, async: false
+
+  # ---------------------------------------------------------------------------
+  # Basic (single-occurrence) behaviour
+  # ---------------------------------------------------------------------------
+
+  test "single-occurrence keys pair up one-to-one" do
+    left = [%{id: 1, name: "Alice"}, %{id: 2, name: "Bob"}]
+    right = [%{id: 1, name: "Alice"}, %{id: 2, name: "Bob"}]
+
+    result = BagReconciler.reconcile_bags(left, right, key_fields: [:id])
+
+    assert length(result.pairs) == 2
+    assert result.unmatched_left == []
+    assert result.unmatched_right == []
+    assert result.duplicate_keys == []
+    assert Enum.all?(result.pairs, &(&1.differences == %{}))
+    assert Enum.all?(result.pairs, &(&1.index == 0))
+  end
+
+  test "keys present on only one side become unmatched entries carrying key and record" do
+    left = [%{id: 1}, %{id: 2, name (truncated)
+17:20:27.145 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12760, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12760, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12760, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12760, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 17842, "type" => "message"}], "output_tokens" => 17842, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+17:20:27.172 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_duplicate_aware_bag_reconciler_01 solution.ex
+17:20:28.000 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":217,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":11,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_duplicate_aware_bag_reconciler_01/solution.ex","task":"034_002_duplicate_aware_bag_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-12T15:20:27.973315Z"}
+17:20:28.002 [info] cycle 034_002_duplicate_aware_bag_reconciler_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+17:20:28.002 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+17:20:28.002 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `BagReconciler` that reconciles two lists of records whose keys may **repeat**. Unlike a set-based reconciler (where a key identifies at most one record per side), here each side is a *bag* (multiset): the same key may occur several times in `left` and/or `right`, and the reconciler must pair occurrences up one-by-one and report the leftovers.
+
+I need these functions in the public API:
+
+- `BagReconciler.reconcile_bags(left, right, opts)` — `left` and `right` are lists of maps, `opts` is a keyword list. Returns a map with exactly these four keys:
+  - `:pairs` — a list of `%{key: key_map, index: i, left: record, right: record, differences: diff_map}` entries, one per paired-up occurrence.
+  - `:unmatched_left` — a list of `%{key: key_map, record: record}` entries for left occurrences that had no right occurrence left to pair with.
+  - `:unmatched_right` — a list of `%{key: key_map, record: record}` entries for right occurrences that had no left occurrence left to pair with.
+  - `:duplicate_keys` — a list of `%{key: key_map, left_count: n, right_count: m}` entries, one for every key that occurs **more than once on at least one side**.
+
+- `BagReconciler.key_counts(records, key_fields)` — `records` is a list of maps and `key_fields` a list of atoms. Returns a map of `key_map => count`, giving how many records in `records` carry each key.
+
+Definitions:
+
+- A **key_map** is a map `%{field => value}` built from the key fields, e.g. `%{id: 1}` or `%{org_id: 1, user_id: 10}`. A key field missing from a record contributes `nil` as its value.
+- A **diff_map** is `%{field => %{left: left_value, right: right_value}}`, containing an entry only for fields whose values differ. It is `%{}` when the two records agree on all compared fields.
+
+The `opts` keyword list of `reconcile_bags/3` must support:
+
+- `:key_fields` (required) — a list of atoms forming the composite key. Passing no `:key_fields`, or a value that is not a non-empty list of atoms, must raise `ArgumentError`.
+- `:compare_fields` (optional) — a list of atoms to diff on paired records. If omitted or `nil`, compare every field present in either record of the pair except the key fields.
+
+Pairing rules (this is the heart of the task):
+
+- Group each side by key, preserving the order in which the records appear in the input list.
+- For a given key with `n` left occurrences and `m` right occurrences, pair the 1st left with the 1st right, the 2nd left with the 2nd right, and so on, for `min(n, m)` pairs. The `:index` of a pair is its zero-based position within that key's group (so the first pair for a key has `index: 0`).
+- The remaining `n - min(n, m)` left occurrences (the later ones, in input order) go to `:unmatched_left`; the remaining `m - min(n, m)` right occurrences go to `:unmatched_right`.
+- A key that appears on only one side puts all of its occurrences into that side's unmatched list.
+- `:duplicate_keys` contains an entry for a key if and only if `left_count > 1` or `right_count > 1`. `left_count`/`right_count` are the total occurrence counts on each side (either may be `0`). Keys with at most one occurrence on each side are not reported.
+
+Other behaviour requirements:
+
+- Key matching is exact — all key fields must be equal (`==`) for two records to share a key. Composite keys must work: `[:org_id, :user_id]` only groups records that agree on both.
+- Field comparison is value-exact, using `==`.
+- A record in `:pairs` must carry the full original left and right maps, even if some of their fields are excluded from comparison.
+- A compare field missing from one or both records is treated as `nil` and diffed accordingly.
+- The order of entries within `:pairs`, `:unmatched_left`, `:unmatched_right` and `:duplicate_keys` does not matter.
+- The module must be pure — no processes, no side effects, no external dependencies. Elixir standard library only.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule BagReconciler do
+  @moduledoc """
+  Reconciles two lists of records (maps) whose keys may repeat.
+
+  Unlike a set-based reconciler, each side is treated as a *bag* (multiset): the same key
+  may occur several times in `left` and/or `right`. Occurrences sharing a key are paired up
+  positionally — the 1st left occurrence with the 1st right occurrence, the 2nd with the
+  2nd, and so on — and any leftovers are reported as unmatched.
+
+  Records are plain maps. A *key_map* is a map `%{field => value}` built from the configured
+  key fields (a missing field contributes `nil`). A *diff_map* is
+  `%{field => %{left: left_value, right: right_value}}` and contains an entry only for the
+  fields whose values differ.
+
+  The module is pure: no processes, no side effects, Elixir standard library only.
+  """
+
+  @type record :: map()
+  @type key_map :: map()
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @type pair :: %{
+          key: key_map(),
+          index: non_neg_integer(),
+          left: record(),
+          right: record(),
+          differences: diff_map()
+        }
+
+  @type unmatched :: %{key: key_map(), record: record()}
+
+  @type duplicate :: %{
+          key: key_map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+
+  @type result :: %{
+          pairs: [pair()],
+          unmatched_left: [unmatched()],
+          unmatched_right: [unmatched()],
+          duplicate_keys: [duplicate()]
+        }
+
+  @doc """
+  Reconciles the `left` and `right` bags of records.
+
+  ## Options
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the composite key.
+      Anything else raises `ArgumentError`.
+    * `:compare_fields` (optional) — a list of atoms to diff on paired records. When omitted
+      or `nil`, every field present in either record of the pair is compared, except the key
+      fields.
+
+  Returns a map with the keys `:pairs`, `:unmatched_left`, `:unmatched_right` and
+  `:duplicate_keys`. The order of entries within each list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}]
+      iex> right = [%{id: 1, v: :a}]
+      iex> result = BagReconciler.reconcile_bags(left, right, key_fields: [:id])
+      iex> Enum.map(result.pairs, & &1.index)
+      [0]
+      iex> result.unmatched_left
+      [%{key: %{id: 1}, record: %{id: 1, v: :b}}]
+      iex> result.duplicate_keys
+      [%{key: %{id: 1}, left_count: 2, right_count: 1}]
+
+  """
+  @spec reconcile_bags([record()], [record()], keyword()) :: result()
+  def reconcile_bags(left, right, opts)
+      when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+    compare_fields = validate_compare_fields(Keyword.get(opts, :compare_fields))
+
+    left_groups = group_by_key(left, key_fields)
+    right_g (truncated)
+17:23:47.571 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule BagReconciler do
+  @moduledoc """
+  Reconciles two lists of records (maps) whose keys may repeat.
+
+  Unlike a set-based reconciler, each side is treated as a *bag* (multiset): the same key
+  may occur several times in `left` and/or `right`. Occurrences sharing a key are paired up
+  positionally — the 1st left occurrence with the 1st right occurrence, the 2nd with the
+  2nd, and so on — and any leftovers are reported as unmatched.
+
+  Records are plain maps. A *key_map* is a map `%{field => value}` built from the configured
+  key fields (a missing field contributes `nil`). A *diff_map* is
+  `%{field => %{left: left_value, right: right_value}}` and contains an entry only for the
+  fields whose values differ.
+
+  The module is pure: no processes, no side effects, Elixir standard library only.
+  """
+
+  @type record :: map()
+  @type key_map :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @type pair :: %{
+          key: key_map(),
+          index: non_neg_integer(),
+          left: record(),
+          right: record(),
+          differences: diff_map()
+        }
+
+  @type unmatched :: %{key: key_map(), record: record()}
+
+  @type duplicate :: %{
+          key: key_map(),
+          left_count: non_neg_integer(),
+          right_count: non_neg_integer()
+        }
+
+  @type result :: %{
+          pairs: [pair()],
+          unmatched_left: [unmatched()],
+          unmatched_right: [unmatched()],
+          duplicate_keys: [duplicate()]
+        }
+
+  @doc """
+  Reconciles the `left` and `right` bags of records.
+
+  ## Options
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the composite key.
+      Anything else raises `ArgumentError`.
+    * `:compare_fields` (optional) — a list of atoms to diff on paired records. When omitted
+      or `nil`, every field present in either record of the pair is compared, except the key
+      fields.
+
+  Returns a map with the keys `:pairs`, `:unmatched_left`, `:unmatched_right` and
+  `:duplicate_keys`. The order of entries within each list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}]
+      iex> right = [%{id: 1, v: :a}]
+      iex> result = BagReconciler.reconcile_bags(left, right, key_fields: [:id])
+      iex> Enum.map(result.pairs, & &1.index)
+      [0]
+      iex> result.unmatched_left
+      [%{key: %{id: 1}, record: %{id: 1, v: :b}}]
+      iex> result.duplicate_keys
+      [%{key: %{id: 1}, left_count: 2, right_count: 1}]
+
+  """
+  @spec reconcile_bags([record()], [record()], keyword()) :: result()
+  def reconcile_bags(left, right, opts)
+      when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields(opts)
+    compare_fields = fetch_compare_fields(opts)
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    left_groups
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right_groups))
+    |> Enum.uniq()
+    |> Enum.reduce(empty_result(), fn key, acc ->
+      lefts = Map.get(left_groups, key, [])
+      rights = Map.get(right_groups, key, [])
+
+      reconcile_key(acc, key, lefts, rights, key_fields, compare_fields)
+    end)
+  end
+
+  @doc """
+  Counts how many records in `records` carry each key built from `key_fields`.
+
+  Returns a map of `key_map => count`. Fields missing from a record contribute `nil`.
+  Raises `ArgumentError` when `key_fields` is not a non-empty list of atoms.
+
+  ## Examples
+
+      iex> BagReconciler.key_counts([%{id: 1}, %{id: 1}, %{id: 2}], [:id])
+      %{%{id: 1} => 2, %{id: 2} => 1}
+
+  """
+  @spec key_counts([record()], [atom()]) :: %{optional(key_map()) => pos_integer()}
+  def key_counts(records, key_fields) when is_list(records) do
+    fields = validate_key_fields(key_fields)
+
+    Enum.reduce(records, %{}, fn record, acc ->
+      Map.update(acc, key_of(record, fields), 1, fn count -> count + 1 end)
+    end)
+  end
+
+  # -- option handling -------------------------------------------------------
+
+  defp fetch_key_fields(opts) do
+    opts
+    |> Keyword.get(:key_fields)
+    |> validate_key_fields()
+  end
+
+  defp validate_key_fields(fields) do
+    if key_fields?(fields) do
+      fields
+    else
+      raise ArgumentError,
+            ":key_fields must be a non-empty list of atoms, got: #{inspect(fields)}"
+    end
+  end
+
+  defp key_fields?(fields) do
+    is_list(fields) and fields != [] and Enum.all?(fields, &is_atom/1)
+  end
+
+  defp fetch_compare_fields(opts) do
+    fields = Keyword.get(opts, :compare_fields)
+
+    if compare_fields?(fields) do
+      fields
+    else
+      raise ArgumentError,
+            ":compare_fields must be a list of atoms or nil, got: #{inspect(fields)}"
+    end
+  end
+
+  defp compare_fields?(nil), do: true
+  defp compare_fields?(fields) when is_list(fields), do: Enum.all?(fields, &is_atom/1)
+  defp compare_fields?(_fields), do: false
+
+  # -- reconciliation --------------------------------------------------------
+
+  defp empty_result do
+    %{pairs: [], unmatched_left: [], unmatched_right: [], duplicate_keys: []}
+  end
+
+  defp reconcile_key(acc, key, lefts, rights, key_fields, compare_fields) do
+    left_count = length(lefts)
+    right_count = length(rights)
+
+    %{
+      pairs: build_pairs(key, lefts, rights, key_fields, compare_fields) ++ acc.pairs,
+      unmatched_left: leftovers(key, lefts, right_count) ++ acc.unmatched_left,
+      unmatched_right: leftovers(key, rights, left_count) ++ acc.unmatched_right,
+      duplicate_keys: duplicate_entry(key, left_count, right_count) ++ acc.duplicate_keys
+    }
+  end
+
+  defp key_of(record, key_fields) do
+    Map.new(key_fields, fn field -> {field, Map.get(record, field)} end)
+  end
+
+  defp group_by_key(records, key_fields) do
+    records
+    |> Enum.reduce(%{}, fn record, acc ->
+      Map.update(acc, key_of(record, key_fields), [record], fn kept -> [record | kept] end)
+    end)
+    |> Map.new(fn {key, reversed} -> {key, Enum.reverse(reversed)} end)
+  end
+
+  defp build_pairs(key, lefts, rights, key_fields, compare_fields) do
+    lefts
+    |> Enum.zip(rights)
+    |> Enum.with_index()
+    |> Enum.map(fn {{left, right}, index} ->
+      %{
+        key: key,
+        index: index,
+        left: left,
+        right: right,
+        differences: diff(left, right, key_fields, compare_fields)
+      }
+    end)
+  end
+
+  defp leftovers(key, records, paired_count) do
+    records
+    |> Enum.drop(paired_count)
+    |> Enum.map(fn record -> %{key: key, record: record} end)
+  end
+
+  defp duplicate_entry(key, left_count, right_count) do
+    if left_count > 1 or right_count > 1 do
+      [%{key: key, left_count: left_count, right_count: right_count}]
+    else
+      []
+    end
+  end
+
+  # -- diffing ---------------------------------------------------------------
+
+  defp diff(left, right, key_fields, compare_fields) do
+    left
+    |> fields_to_compare(right, key_fields, compare_fields)
+    |> Enum.reduce(%{}, fn field, acc ->
+      left_value = Map.get(left, field)
+      right_value = Map.get(right, field)
+
+      if left_value == right_value do
+        acc
+      else
+        Map.put(acc, field, %{left: left_value, right: right_value})
+      end
+    end)
+  end
+
+  defp fields_to_compare(left, right, key_fields, nil) do
+    left
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(fn field -> Enum.member?(key_fields, field) end)
+  end
+
+  defp fields_to_compare(_left, _right, _key_fields, compare_fields), do: compare_fields
+end
+</file>
+17:23:47.572 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12579, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12579, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12579, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12579, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 17722, "type" => "message"}], "output_tokens" => 17722, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+17:23:47.598 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_duplicate_aware_bag_reconciler_01 solution.ex
+17:23:48.391 [debug] grade JSON: {"analysis":{"defp_count":17,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":236,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":19,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_duplicate_aware_bag_reconciler_01/solution.ex","task":"034_002_duplicate_aware_bag_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-12T15:23:48.364304Z"}
+17:23:48.394 [info] cycle 034_002_duplicate_aware_bag_reconciler_01: REJECTED after 4 attempt(s)

@@ -1,0 +1,23 @@
+Blind-solve screen: 3 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/3] 020_004_asynchronous_validation_pipeline_upload_01 ... RED (compile: /tmp/screen_1391757_7749.ex: cannot compile module FileUpload.Store (errors have been logged))
+[2/3] 104_002_health_validated_connection_pool_01 ... GREEN
+[3/3] 110_001_rolling_percentile_calculator_01 ... RED (test time-based window keeps live samples and expires old ones: 
+
+match (=) failed
+code:  assert {:ok, 200} = Percentile.query(:t, 0.0)
+left:  {:ok, 200}
+right: {:ok, 100}
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 3   green: 1   RED: 2   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 020_004_asynchronous_validation_pipeline_upload_01: compile: /tmp/screen_1391757_7749.ex: cannot compile module FileUpload.Store (errors have been logged)
+    - 110_001_rolling_percentile_calculator_01: test time-based window keeps live samples and expires old ones: 
+
+match (=) failed
+code:  assert {:ok, 200} = Percentile.query(:t, 0.0)
+left:  {:ok, 200}
+right: {:ok, 100}
+

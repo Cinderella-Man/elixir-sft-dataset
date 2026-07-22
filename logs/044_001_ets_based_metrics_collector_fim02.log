@@ -1,0 +1,388 @@
+13:31:48.615 [info] FIM 044_001_ets_based_metrics_collector_fim02 → 044_001_ets_based_metrics_collector_03: target get/1
+13:31:48.615 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:31:48.615 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `get/1`.
+
+Generate a prompt describing how to implement `get/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `get/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `get/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `get/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Metrics` that collects application metrics using ETS tables for fast, concurrent-safe storage.
+
+I need these functions in the public API:
+- `Metrics.start_link(opts \\ [])` to start the backing GenServer. It should accept a `:name` option for process registration, defaulting to `__MODULE__`.
+- `Metrics.increment(name, amount \\ 1)` to atomically increment a named counter by `amount`. Counters are monotonically increasing and should never decrease. Use `:ets.update_counter` for atomicity.
+- `Metrics.gauge(name, value)` to set a named gauge to an exact value. Gauges can go up or down freely — each call overwrites the previous value.
+- `Metrics.get(name)` to return the current value of a metric by name, or `nil` if it doesn't exist.
+- `Metrics.all()` to return all metrics as a map of `%{name => value}`.
+- `Metrics.reset(name)` to set a metric back to `0` regardless of whether it is a counter or gauge.
+- `Metrics.snapshot()` to return a point-in-time map of all current metrics, identical in shape to `all/0` but semantically communicating immutability of the returned data.
+
+Counters and gauges can coexist in the same table — there is no need to declare a metric's type upfront; `increment` creates or bumps a counter entry and `gauge` creates or overwrites a gauge entry. The ETS table should be public and named so that `increment` can bypass the GenServer process for maximum throughput (i.e., the hot path for incrementing must not serialize through a GenServer `call`). The GenServer is only needed for initialisation and owning the table.
+
+Give me the complete implementation in a single file. Use only OTP/stdlib — no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Metrics do
+  @moduledoc """
+  A concurrent-safe metrics collector backed by a named public ETS table.
+
+  Counters and gauges share the same table. The GenServer exists solely to
+  own the table and survive crashes — all hot-path reads and counter
+  increments go directly to ETS and never serialise through the process.
+
+  ## Quick start
+
+      {:ok, _pid} = Metrics.start_link()
+
+      Metrics.increment(:http_requests)          # => :ok
+      Metrics.increment(:http_requests, 4)        # => :ok
+      Metrics.gauge(:memory_mb, 412)             # => :ok
+      Metrics.get(:http_requests)                # => 5
+      Metrics.get(:does_not_exist)               # => nil
+      Metrics.all()                              # => %{http_requests: 5, memory_mb: 412}
+      Metrics.snapshot()                         # => %{http_requests: 5, memory_mb: 412}
+      Metrics.reset(:http_requests)              # => :ok
+      Metrics.get(:http_requests)                # => 0
+  """
+
+  use GenServer
+
+  # The ETS table name is fixed and module-scoped.  Because the table is
+  # :public and :named_table every caller can hit it directly without
+  # routing through the owning process.
+  @table __MODULE__
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the backing GenServer and creates the ETS table.
+
+  ## Options
+
+    * `:name` — registration name for the GenServer process.
+      Defaults to `#{__MODULE__}`.
+
+  Returns `{:ok, pid}` on success, or `{:error, {:already_started, pid}}`
+  if the server is already running.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, init_opts} = Keyword.pop(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, init_opts, name: name)
+  end
+
+  @doc """
+  Atomically increments the counter `name` by `amount` (default `1`).
+
+  If the counter does not yet exist it is initialised to `0` before the
+  increment is applied, so the first call returns `amount`. The increment
+  is performed with `:ets.update_counter/4`, which is atomic and requires
+  no round-trip to the GenServer.
+
+  `amount` must be a non-negative integer — counters are monotonically
+  increasing and never decrease.
+
+  Returns `:ok`.
+  """
+  @spec increment(term(), non_neg_integer()) :: :ok
+  def increment(name, amount \\ 1) when is_integer(amount) and amount >= 0 do
+    :ets.update_counter(@table, name, {2, amount}, {name, 0})
+    :ok
+  end
+
+  @doc """
+  Sets the gauge `name` to exactly `value`, overwriting any previous entry.
+
+  Gauges are free to move up or down. Unlike `increment/2` this write
+  is not atomic with respect to concurrent gauge writes for the same key,
+  which is acceptable for gauge semantics (last-write wins).
+  """
+  @spec gauge(term(), number()) :: :ok
+  def gauge(name, value) do
+    :ets.insert(@table, {name, value})
+    :ok
+  end
+
+  @doc """
+  Returns the current value of `name`, or `nil` if it has never been set.
+  """
+  @spec get(term()) :: number() | nil
+  def get(name) do
+    case :ets.lookup(@table, name) do
+      [{^name, value}] -> value
+      [] -> nil
+    end
+  end
+
+  @doc """
+  Returns all metrics as a map of `%{name => value}`.
+
+  The map is built from a full ETS table scan; prefer `snapshot/0` when
+  the intent is to capture a point-in-time view.
+  """
+  @spec all() :: %{term() => number()}
+  def all do
+    :ets.tab2list(@table)
+    |> Map.new()
+  end
+
+  @doc """
+  Returns a point-in-time snapshot of all metrics as `%{name => value}`.
+
+  Semantically identical to `all/0` but signals to the reader that the
+  returned map is an immutable capture — subsequent mutations do not
+  affect it.
+  """
+  @spec snapshot() :: %{term() => number()}
+  def snapshot, do: all()
+
+  @doc """
+  Resets the metric `name` to `0`.
+
+  Works for both counters and gauges. If `name` does not exist it is
+  created with the value `0`.
+  """
+  @spec reset(term()) :: :ok
+  def reset(name) do
+    :ets.insert(@table, {name, 0})
+    :ok
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(_opts) do
+    # :set          — one entry per key (duplicate keys overwrite)
+    # :named_table  — accessible by name from any process
+    # :public       — any process may read and write without going through the owner
+    # read_concurrency / write_concurrency — kernel-level optimisations for
+    #   the mixed read-heavy / write-heavy workloads typical of metrics
+    :ets.new(@table, [
+      :set,
+      :named_table,
+      :public,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
+
+    {:ok, %{}}
+  end
+end
+
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description (truncated)
+13:32:12.682 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `get/1` function.
+
+It should return the current value of the metric named `name` by reading directly
+from the module's public ETS table (the hot read path must not route through the
+GenServer). Look the key up with `:ets.lookup/2`. Because the table is a `:set`
+there is at most one matching entry: when a `{name, value}` tuple is found, return
+`value`; when the lookup returns an empty list (the metric has never been set),
+return `nil`.
+
+```elixir
+defmodule Metrics do
+  @moduledoc """
+  A concurrent-safe metrics collector backed by a named public ETS table.
+
+  Counters and gauges share the same table. The GenServer exists solely to
+  own the table and survive crashes — all hot-path reads and counter
+  increments go directly to ETS and never serialise through the process.
+
+  ## Quick start
+
+      {:ok, _pid} = Metrics.start_link()
+
+      Metrics.increment(:http_requests)          # => :ok
+      Metrics.increment(:http_requests, 4)        # => :ok
+      Metrics.gauge(:memory_mb, 412)             # => :ok
+      Metrics.get(:http_requests)                # => 5
+      Metrics.get(:does_not_exist)               # => nil
+      Metrics.all()                              # => %{http_requests: 5, memory_mb: 412}
+      Metrics.snapshot()                         # => %{http_requests: 5, memory_mb: 412}
+      Metrics.reset(:http_requests)              # => :ok
+      Metrics.get(:http_requests)                # => 0
+  """
+
+  use GenServer
+
+  # The ETS table name is fixed and module-scoped.  Because the table is
+  # :public and :named_table every caller can hit it directly without
+  # routing through the owning process.
+  @table __MODULE__
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the backing GenServer and creates the ETS table.
+
+  ## Options
+
+    * `:name` — registration name for the GenServer process.
+      Defaults to `#{__MODULE__}`.
+
+  Returns `{:ok, pid}` on success, or `{:error, {:already_started, pid}}`
+  if the server is already running.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, init_opts} = Keyword.pop(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, init_opts, name: name)
+  end
+
+  @doc """
+  Atomically increments the counter `name` by `amount` (default `1`).
+
+  If the counter does not yet exist it is initialised to `0` before the
+  increment is applied, so the first call returns `amount`. The increment
+  is performed with `:ets.update_counter/4`, which is atomic and requires
+  no round-trip to the GenServer.
+
+  `amount` must be a non-negative integer — counters are monotonically
+  increasing and never decrease.
+
+  Returns `:ok`.
+  """
+  @spec increment(term(), non_neg_integer()) :: :ok
+  def increment(name, amount \\ 1) when is_integer(amount) and amount >= 0 do
+    :ets.update_counter(@table, name, {2, amount}, {name, 0})
+    :ok
+  end
+
+  @doc """
+  Sets the gauge `name` to exactly `value`, overwriting any previous entry.
+
+  Gauges are free to move up or down. Unlike `increment/2` this write
+  is not atomic with respect to concurrent gauge writes for the same key,
+  which is acceptable for gauge semantics (last-write wins).
+  """
+  @spec gauge(term(), number()) :: :ok
+  def gauge(name, value) do
+    :ets.insert(@table, {name, value})
+    :ok
+  end
+
+  @doc """
+  Returns the current value of `name`, or `nil` if it has never been set.
+  """
+  @spec get(term()) :: number() | nil
+  def get(name) do
+    # TODO
+  end
+
+  @doc """
+  Returns all metrics as a map of `%{name => value}`.
+
+  The map is built from a full ETS table scan; prefer `snapshot/0` when
+  the intent is to capture a point-in-time view.
+  """
+  @spec all() :: %{term() => number()}
+  def all do
+    :ets.tab2list(@table)
+    |> Map.new()
+  end
+
+  @doc """
+  Returns a point-in-time snapshot of all metrics as `%{name => value}`.
+
+  Semantically identical to `all/0` but signals to the reader that the
+  returned map is an immutable capture — subsequent mutations do not
+  affect it.
+  """
+  @spec snapshot() :: %{term() => number()}
+  def snapshot, do: all()
+
+  @doc """
+  Resets the metric `name` to `0`.
+
+  Works for both counters and gauges. If `name` does not exist it is
+  created with the value `0`.
+  """
+  @spec reset(term()) :: :ok
+  def reset(name) do
+    :ets.insert(@table, {name, 0})
+    :ok
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(_opts) do
+    # :set          — one entry per key (duplicate keys overwrite)
+    # :named_table  — accessible by name from any process
+    # :public       — any process may read and write without going through the owner
+    # read_concurrency / write_concurrency — kernel-level optimisations for
+    #   the mixed read-heavy / write-heavy workloads typical of metrics
+    :ets.new(@table, [
+      :set,
+      :named_table,
+      :public,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
+
+    {:ok, %{}}
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+def get(name) do
+  case :ets.lookup(@table, name) do
+    [{^name, value}] -> value
+    [] -> nil
+  end
+end
+</file>
+13:32:12.682 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3206, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3206, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3206, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3206, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2087, "type" => "message"}], "output_tokens" => 2087, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:32:12.701 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_044_001_ets_based_metrics_collector_03/044_001_ets_based_metrics_collector_03 solution.ex
+13:32:13.322 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":6,"lines_over_98":0,"max_line_length":35,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"044_001_ets_based_metrics_collector_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_044_001_ets_based_metrics_collector_03/044_001_ets_based_metrics_collector_03/solution.ex","task":"044_001_ets_based_metrics_collector_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T11:32:13.297480Z"}
+13:32:13.323 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_044_001_ets_based_metrics_collector_03/044_001_ets_based_metrics_collector_03 .gen_staging/fim_044_001_ets_based_metrics_collector_03/mutant.ex
+13:32:13.939 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":18,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"parent":"044_001_ets_based_metrics_collector_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.9,"mode":"fim","overall":0.37,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 15/17 failed"],"tests":0.12},"shape":"fim","solution_file":".gen_staging/fim_044_001_ets_based_metrics_collector_03/mutant.ex","task":"044_001_ets_based_metrics_collector_03","test_failures":[{"message":"MUTATION","module":"MetricsTest","test":"test increment creates a counter starting at 1"},{"message":"MUTATION","module":"MetricsTest","test":"test increment adds the given amount"},{"message":"MUTATION","module":"MetricsTest","test":"test increment defaults amount to 1"},{"message":"MUTATION","module":"MetricsTest","test":"test counters are monotonically increasing — reset brings back to 0"},{"message":"MUTATION","module":"MetricsTest","test":"test gauge sets an exact value"},{"message":"MUTATION","module":"MetricsTest","test":"test gauge overwrites on repeated calls"},{"message":"MUTATION","module":"MetricsTest","test":"test gauge can decrease"},{"message":"MUTATION","module":"MetricsTest","test":"test gauge can be set to 0"},{"message":"MUTATION","module":"MetricsTest","test":"test get returns nil for unknown metric"},{"message":"MUTATION","module":"MetricsTest","test":"test reset sets a gauge back to 0"},{"message":"MUTATION","module":"MetricsTest","test":"test reset on unknown metric sets it to 0"},{"message":"MUTATION","module":"MetricsTest","test":"test snapshot is a point-in-time copy — mutating after doesn't change it"},{"message":"MUTATION","module":"MetricsTest","test":"test different metric names are completely independent"},{"message":"MUTATION","module":"MetricsTest","test":"test 100 concurrent tasks each incrementing by 1 produce a final value of 100"},{"message":"MUTATION","module":"MetricsTest","test":"test concurrent increments and gauge writes don't interfere with each other"}],"tests_errors":0,"tests_excluded":0,"tests_failed":15,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T11:32:13.917988Z"}
+13:32:13.939 [debug] fim mutation gate: killed
+13:32:13.940 [info] promoted 044_001_ets_based_metrics_collector_03 -> tasks/044_001_ets_based_metrics_collector_03

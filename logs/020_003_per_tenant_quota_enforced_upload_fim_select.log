@@ -1,0 +1,163 @@
+01:52:05.326 [info] FIM candidate-select for 020_003_per_tenant_quota_enforced_upload_01 (up to 1)
+01:52:05.326 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+01:52:05.326 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 1 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+Do NOT pick any of these — they are already covered or known to be untested by the harness:
+  - reserve_and_persist/7
+  - validate_csv/1
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir application composed of a few modules that implements a **multi-tenant, quota-enforced** file upload endpoint with validation, using only `Plug` (no Phoenix). The main entry point is a `Plug.Router` module called `FileUpload.Router` that exposes `POST /api/uploads` and `DELETE /api/uploads/:id`.
+
+The defining feature of this variation is a **per-account byte quota** with all-or-nothing, atomic failure semantics: every request is attributed to an account (via the `x-account-id` request header), each account has a fixed total-bytes budget configured on the `FileUpload.Store`, and an upload that would push an account over its budget is rejected with HTTP 507 **without consuming any quota or writing anything**. Deleting a file releases its bytes back to the owning account's budget.
+
+Here's what I need:
+
+**`FileUpload.Router`** — a `Plug.Router` that:
+
+- Reads the account id from the `x-account-id` request header. If it is missing or empty, return HTTP 400 with `{"error": "Missing account"}` (for both POST and DELETE).
+- **POST /api/uploads**: accepts a single file upload under the form field name `"file"`.
+  - Enforces a maximum single-file size of 5MB (`5_242_880` bytes) → HTTP 413 `{"error": "File too large", "max_bytes": 5242880}`.
+  - Delegates validation to `FileUpload.Validator` (422 on failure with `{"error": "<message>"}`).
+  - If the `"file"` field is missing → HTTP 422 `{"error": "No file provided"}`.
+  - Asks `FileUpload.Store` to reserve quota and save. On success (HTTP 201): `{"id", "original_name", "size", "content_type", "uploaded_at", "account_id", "used_bytes", "quota_bytes", "download_url"}` where `used_bytes` is the account's total AFTER this upload. The file is written to disk as `<id><ext>`.
+  - On quota rejection: HTTP 507 with `{"error": "Quota exceeded", "quota_bytes": Q, "used_bytes": U, "requested_bytes": S}` where `U` is the account's usage BEFORE the rejected request (unchanged). No file is written.
+- **DELETE /api/uploads/:id**: only the owning account may delete.
+  - Success → HTTP 200 `{"id", "freed_bytes", "used_bytes"}` (usage after release), and the disk file is removed.
+  - If the file exists but belongs to another account → HTTP 403 `{"error": "Forbidden"}`.
+  - If the file does not exist → HTTP 404 `{"error": "Not found"}`.
+
+The router accepts these options via `plug FileUpload.Router, opts`:
+- `:store` — the PID or name of the `FileUpload.Store` GenServer.
+- `:upload_dir` — the directory where files are saved.
+- `:base_url` — the URL prefix for download URLs (`"<base_url>/api/uploads/<id>"`).
+
+**`FileUpload.Validator`** — `validate(upload)` on a `%Plug.Upload{}`, returning `:ok` or `{:error, reason}`:
+  1. Only `.csv`/`.json` (case-insensitive) → else `{:error, "File type not allowed. Only .csv and .json files are accepted"}`.
+  2. CSV: at least two lines OR one comma-containing line, else `{:error, "Invalid CSV: file must contain a header row with multiple columns"}`.
+  3. JSON: must `Jason.decode`, else `{:error, "Invalid JSON: " <> description}`.
+
+**`FileUpload.Store`** — a GenServer that tracks per-account usage:
+
+- `start_link(opts)` accepts `:name` and `:quota_bytes` (the per-account budget; default `10_000_000`).
+- `save(server, account, metadata)` where `metadata` has `:size`. Atomically: if `used(account) + size > quota` return `{:error, :quota_exceeded, %{quota: q, used: used, requested: size}}` (no state change). Otherwise generate a UUID v4 `:id`, add `:uploaded_at` (ISO 8601 UTC) and `:account`, store it, add `size` to the account's usage, and return `{:ok, record, %{quota: q, used: new_used}}`.
+- `delete(server, account, id)` returns `{:ok, %{record: record, freed: size, used: new_used}}` (releasing quota, decrementing usage), `{:error, :forbidden}` if `id` belongs to a different account, or `{:error, :not_found}`.
+- `get(server, id)` → `{:ok, metadata}` | `{:error, :not_found}`.
+- `usage(server, account)` → the account's current used bytes (0 if unknown).
+- `list(server)` → all stored metadata.
+
+Use `Jason` for JSON, `:crypto` for the UUID. Only standard OTP plus `Plug` and `Jason`. One file, three modules, each with a `@moduledoc`.
+
+=== MODULE ===
+```elixir
+defmodule FileUpload.Store do
+  @moduledoc """
+  A multi-tenant `GenServer` store that enforces a per-account byte quota. Every
+  save reserves the file's bytes against the owning account's budget atomically,
+  rejecting over-budget uploads without any state change; deleting a file releases
+  its bytes back to the account.
+  """
+
+  use GenServer
+
+  @doc """
+  Starts the store. Accepts `:name` (registration) and `:quota_bytes` (per-account
+  budget, default `10_000_000`).
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc false
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
+  def child_spec(opts) do
+    %{id: Keyword.get(opts, :name, __MODULE__), start: {__MODULE__, :start_link, [opts]}}
+  end
+
+  @doc """
+  Reserves `metadata.size` against `account`'s quota and stores the record.
+  Returns `{:ok, record, %{quota, used}}` or `{:error, :quota_exceeded, %{quota,
+  used, requested}}` (no state change on rejection).
+  """
+  @spec save(GenServer.server(), String.t(), map()) ::
+          {:ok, map(), map()} | {:error, :quota_exceeded, map()}
+  def save(server, account, metadata), do: GenServer.call(server, {:save, account, metadata})
+
+  @doc """
+  Deletes file `id` on behalf of `account`, releasing its bytes. Returns
+  `{:ok, %{record, freed, used}}`, `{:error, :forbidden}`, or `{:error, :not_found}`.
+  """
+  @spec delete(GenServer.server(), String.t(), String.t()) ::
+          {:ok, map()} | {:error, :forbidden} | {:error, :not_found}
+  def delete(server, account, id), do: GenServer.call(server, {:delete, account, id})
+
+  @doc """
+  Fetches the stored metadata for file `id`.
+  """
+  @spec get(GenServer.server(), String.t()) :: {:ok, map()} | {:error, :not_found}
+  def get(server, id), do: GenServer.call(server, {:get, id})
+
+  @doc """
+  Returns the current used bytes for `account` (0 if unknown).
+  """
+  @spec usage(GenServer.server(), String.t()) :: non_neg_integer()
+  def usage(server, account), do: GenServer.call(server, {:usage, account})
+
+  @doc """
+  Returns all stored metadata records.
+  """
+  @spec list(GenServer.server()) :: [map()]
+  def list(server), do: GenServer.call(server, :list)
+
+  @impl true
+  def init(opts) do
+    quota = Keyword.get(opts, :quota_bytes, 10_000_000)
+    {:ok, %{quota: quota, files: %{}, usage: %{}}}
+  end
+
+  @impl true
+  def handle_call({:save, account, metadata}, _from, state) do
+    used = Map.get(state.usage, account, 0)
+    size = metadata.size
+
+    if used + size > state.quota do
+      info = %{quota: state.quota, used: used, requested: size}
+      {:reply, {:error, :quota_exceeded, info}, state}
+    else
+      record =
+        metadata
+        |> Map.put(:id, uuid_v4())
+        |> Map.put(:uploaded_at, DateTime.utc_now() |> DateTime.to_iso8601())
+        |> Map.put(:account, account)
+
+      new_used = used + size
+
+      state =
+        state
+        |> put_in([:files, record.id], record)
+        |> put_in([:usage, account], new_used)
+
+      {:reply, {:ok, record, %{quota: state.quota, used: new_used}}, state}
+    end
+  end
+
+  def handle_call({:delete, account, id}, _from, state) do
+   (truncated)
+01:52:20.678 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+handle_call/3
+</file>
+01:52:20.678 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6381, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6381, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6381, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6381, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 923, "type" => "message"}], "output_tokens" => 923, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

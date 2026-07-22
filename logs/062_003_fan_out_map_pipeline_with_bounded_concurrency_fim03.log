@@ -1,0 +1,304 @@
+14:30:46.871 [info] FIM 062_003_fan_out_map_pipeline_with_bounded_concurrency_fim03 → 062_003_fan_out_map_pipeline_with_bounded_concurrency_04: target execute/3
+14:30:46.871 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:30:46.871 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `execute/3`.
+
+Generate a prompt describing how to implement `execute/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `execute/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `execute/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `execute/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Pipeline` that builds and runs linear processing pipelines from composable stages, with support for **fan-out map stages** that process a collection concurrently.
+
+I need these functions in the public API:
+- `Pipeline.new()` — returns a fresh, empty pipeline struct.
+- `Pipeline.stage(pipeline, name, fun)` — appends a normal **sequential** stage. `name` is an atom; `fun` is a one-arity function that receives the current value and returns `{:ok, result}` or `{:error, reason}`.
+- `Pipeline.map_stage(pipeline, name, fun, opts \\ [])` — appends a **fan-out** stage. Its input must be a list. `fun` is a one-arity function applied to **each element** concurrently, returning `{:ok, element_result}` or `{:error, reason}`. `opts` may contain `:max_concurrency` (a positive integer); when omitted, all elements may run concurrently. Element results must be collected in **input order**. If every element succeeds, the stage's output is the list of element results (threaded to the next stage). If any element fails, the stage fails with the **first** failure by input index.
+- `Pipeline.run(pipeline, input)` — executes all stages in insertion order, threading each stage's output into the next. On full success return `{:ok, final_result, metadata}` where `metadata` is a list of entries in execution order:
+  - sequential stage: `%{stage: atom, duration_us: non_neg_integer, type: :sequential, count: 1}`
+  - map stage: `%{stage: atom, duration_us: non_neg_integer, type: :map, count: non_neg_integer}` where `count` is the number of input elements.
+  On the first failing stage, immediately halt and return `{:error, failed_stage_name, reason}` — do not run any later stages.
+
+Fan-out concurrency must use `Task.async_stream/3` (or equivalent) with ordered results and the requested `:max_concurrency`. Timing per stage must be measured with `:timer.tc/1` (microsecond resolution). If a map stage receives a non-list input, raise `ArgumentError`.
+
+Use only the standard library, no external dependencies. Give me the complete implementation in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Pipeline do
+  @moduledoc """
+  Composable linear pipelines with concurrent fan-out (`map`) stages.
+
+  Sequential stages thread a single value; a `map_stage/4` applies a function
+  to each element of a list concurrently (bounded by `:max_concurrency`),
+  collecting results in input order and failing on the first failing element.
+  """
+
+  defstruct stages: []
+
+  @type stage_fun :: (any() -> {:ok, any()} | {:error, any()})
+  @type t :: %__MODULE__{stages: list()}
+
+  @doc "Returns a fresh, empty pipeline."
+  @spec new() :: t()
+  def new, do: %__MODULE__{stages: []}
+
+  @doc "Appends a sequential stage."
+  @spec stage(t(), atom(), stage_fun()) :: t()
+  def stage(%__MODULE__{stages: stages} = pipeline, name, fun)
+      when is_atom(name) and is_function(fun, 1) do
+    %__MODULE__{pipeline | stages: stages ++ [{:seq, name, fun}]}
+  end
+
+  @doc """
+  Appends a fan-out map stage. Its input must be a list; `fun` is applied to
+  each element concurrently. Option `:max_concurrency` bounds parallelism.
+  """
+  @spec map_stage(t(), atom(), stage_fun(), keyword()) :: t()
+  def map_stage(%__MODULE__{stages: stages} = pipeline, name, fun, opts \\ [])
+      when is_atom(name) and is_function(fun, 1) and is_list(opts) do
+    mc = Keyword.get(opts, :max_concurrency, nil)
+    %__MODULE__{pipeline | stages: stages ++ [{:map, name, fun, mc}]}
+  end
+
+  @doc """
+  Runs all stages in order. Returns `{:ok, final, metadata}` or
+  `{:error, failed_stage, reason}`.
+  """
+  @spec run(t(), any()) ::
+          {:ok, any(), [map()]} | {:error, atom(), any()}
+  def run(%__MODULE__{stages: stages}, input) do
+    execute(stages, input, [])
+  end
+
+  # ---------------------------------------------------------------------------
+
+  defp execute([], value, meta_acc), do: {:ok, value, Enum.reverse(meta_acc)}
+
+  defp execute([stage | rest], value, meta_acc) do
+    case run_stage(stage, value) do
+      {:ok, next_value, meta} -> execute(rest, next_value, [meta | meta_acc])
+      {:error, name, reason} -> {:error, name, reason}
+    end
+  end
+
+  defp run_stage({:seq, name, fun}, value) do
+    {duration, result} = :timer.tc(fn -> fun.(value) end)
+
+    case result do
+      {:ok, next_value} ->
+        {:ok, next_value, %{stage: name, duration_us: duration, type: :sequential, count: 1}}
+
+      {:error, reason} ->
+        {:error, name, reason}
+
+      other ->
+        raise ArgumentError,
+              "stage #{inspect(name)} returned an invalid value: #{inspect(other)}."
+    end
+  end
+
+  defp run_stage({:map, name, fun, mc_opt}, value) do
+    unless is_list(value) do
+      raise ArgumentError,
+            "map stage #{inspect(name)} requires a list input, got: #{inspect(value)}"
+    end
+
+    count = length(value)
+    max_concurrency = mc_opt || max(count, 1)
+
+    {duration, results} =
+      :timer.tc(fn ->
+        value
+        |> Task.async_stream(fun,
+          max_concurrency: max_concurrency,
+          ordered: true,
+          timeout: :infinity
+        )
+        |> Enum.map(fn {:ok, element_result} -> element_result end)
+      end)
+
+    case Enum.find(results, &match?({:error, _}, &1)) do
+      nil ->
+        outputs = Enum.map(results, fn {:ok, v} -> v end)
+        {:ok, outputs, %{stage: name, duration_us: duration, type: :map, count: count}}
+
+      {:error, reason} ->
+        {:error, name, reason}
+    end
+  end
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description + skeleton module with a `# TODO` for execute/3
+  - solution.ex — just the execute/3 function
+
+
+14:31:16.909 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `execute/3` function. It is the recursive driver behind
+`run/2`: it walks the pipeline's stages in insertion order, threading each
+stage's output value into the next while accumulating per-stage metadata.
+
+`execute/3` receives the remaining list of stages, the current value, and an
+accumulator of metadata entries built up in **reverse** execution order (most
+recent first). It must handle two cases:
+
+- **Base case** — when there are no stages left, the pipeline is done: return
+  `{:ok, value, metadata}` where `metadata` is the accumulator reversed back
+  into execution order.
+- **Recursive case** — when there is at least one stage, run that stage against
+  the current value using `run_stage/2`. If it returns
+  `{:ok, next_value, meta}`, prepend `meta` to the accumulator and recurse on
+  the remaining stages with `next_value`. If it returns `{:error, name, reason}`,
+  halt immediately and return that error tuple unchanged — no later stages run.
+
+```elixir
+defmodule Pipeline do
+  @moduledoc """
+  Composable linear pipelines with concurrent fan-out (`map`) stages.
+
+  Sequential stages thread a single value; a `map_stage/4` applies a function
+  to each element of a list concurrently (bounded by `:max_concurrency`),
+  collecting results in input order and failing on the first failing element.
+  """
+
+  defstruct stages: []
+
+  @type stage_fun :: (any() -> {:ok, any()} | {:error, any()})
+  @type t :: %__MODULE__{stages: list()}
+
+  @doc "Returns a fresh, empty pipeline."
+  @spec new() :: t()
+  def new, do: %__MODULE__{stages: []}
+
+  @doc "Appends a sequential stage."
+  @spec stage(t(), atom(), stage_fun()) :: t()
+  def stage(%__MODULE__{stages: stages} = pipeline, name, fun)
+      when is_atom(name) and is_function(fun, 1) do
+    %__MODULE__{pipeline | stages: stages ++ [{:seq, name, fun}]}
+  end
+
+  @doc """
+  Appends a fan-out map stage. Its input must be a list; `fun` is applied to
+  each element concurrently. Option `:max_concurrency` bounds parallelism.
+  """
+  @spec map_stage(t(), atom(), stage_fun(), keyword()) :: t()
+  def map_stage(%__MODULE__{stages: stages} = pipeline, name, fun, opts \\ [])
+      when is_atom(name) and is_function(fun, 1) and is_list(opts) do
+    mc = Keyword.get(opts, :max_concurrency, nil)
+    %__MODULE__{pipeline | stages: stages ++ [{:map, name, fun, mc}]}
+  end
+
+  @doc """
+  Runs all stages in order. Returns `{:ok, final, metadata}` or
+  `{:error, failed_stage, reason}`.
+  """
+  @spec run(t(), any()) ::
+          {:ok, any(), [map()]} | {:error, atom(), any()}
+  def run(%__MODULE__{stages: stages}, input) do
+    execute(stages, input, [])
+  end
+
+  # ---------------------------------------------------------------------------
+
+  defp execute(stages, value, meta_acc) do
+    # TODO
+  end
+
+  defp run_stage({:seq, name, fun}, value) do
+    {duration, result} = :timer.tc(fn -> fun.(value) end)
+
+    case result do
+      {:ok, next_value} ->
+        {:ok, next_value, %{stage: name, duration_us: duration, type: :sequential, count: 1}}
+
+      {:error, reason} ->
+        {:error, name, reason}
+
+      other ->
+        raise ArgumentError,
+              "stage #{inspect(name)} returned an invalid value: #{inspect(other)}."
+    end
+  end
+
+  defp run_stage({:map, name, fun, mc_opt}, value) do
+    unless is_list(value) do
+      raise ArgumentError,
+            "map stage #{inspect(name)} requires a list input, got: #{inspect(value)}"
+    end
+
+    count = length(value)
+    max_concurrency = mc_opt || max(count, 1)
+
+    {duration, results} =
+      :timer.tc(fn ->
+        value
+        |> Task.async_stream(fun,
+          max_concurrency: max_concurrency,
+          ordered: true,
+          timeout: :infinity
+        )
+        |> Enum.map(fn {:ok, element_result} -> element_result end)
+      end)
+
+    case Enum.find(results, &match?({:error, _}, &1)) do
+      nil ->
+        outputs = Enum.map(results, fn {:ok, v} -> v end)
+        {:ok, outputs, %{stage: name, duration_us: duration, type: :map, count: count}}
+
+      {:error, reason} ->
+        {:error, name, reason}
+    end
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp execute([], value, meta_acc), do: {:ok, value, Enum.reverse(meta_acc)}
+
+  defp execute([stage | rest], value, meta_acc) do
+    case run_stage(stage, value) do
+      {:ok, next_value, meta} -> execute(rest, next_value, [meta | meta_acc])
+      {:error, name, reason} -> {:error, name, reason}
+    end
+  end
+</file>
+14:31:16.910 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2960, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2960, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2960, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2960, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2463, "type" => "message"}], "output_tokens" => 2463, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:31:16.929 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_062_003_fan_out_map_pipeline_with_bounded_concurrency_04/062_003_fan_out_map_pipeline_with_bounded_concurrency_04 solution.ex
+14:31:17.678 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":8,"lines_over_98":0,"max_line_length":77,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"062_003_fan_out_map_pipeline_with_bounded_concurrency_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_062_003_fan_out_map_pipeline_with_bounded_concurrency_04/062_003_fan_out_map_pipeline_with_bounded_concurrency_04/solution.ex","task":"062_003_fan_out_map_pipeline_with_bounded_concurrency_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T12:31:17.655549Z"}
+14:31:17.678 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_062_003_fan_out_map_pipeline_with_bounded_concurrency_04/062_003_fan_out_map_pipeline_with_bounded_concurrency_04 .gen_staging/fim_062_003_fan_out_map_pipeline_with_bounded_concurrency_04/mutant.ex
+14:31:18.337 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":7,"lines_over_98":0,"max_line_length":48,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"parent":"062_003_fan_out_map_pipeline_with_bounded_concurrency_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.3,"mode":"fim","overall":0.29,"reasons":["compilation: 7 warning(s) → -0.7 pts","tests: 11/12 failed"],"tests":0.08},"shape":"fim","solution_file":".gen_staging/fim_062_003_fan_out_map_pipeline_with_bounded_concurrency_04/mutant.ex","task":"062_003_fan_out_map_pipeline_with_bounded_concurrency_04","test_failures":[{"message":"MUTATION","module":"PipelineTest","test":"test empty pipeline returns input unchanged"},{"message":"MUTATION","module":"PipelineTest","test":"test sequential stages thread and report :sequential metadata"},{"message":"MUTATION","module":"PipelineTest","test":"test map stage processes every element and threads a list forward"},{"message":"MUTATION","module":"PipelineTest","test":"test map stage preserves input order in its output"},{"message":"MUTATION","module":"PipelineTest","test":"test map stage fails on the first failing element by index"},{"message":"MUTATION","module":"PipelineTest","test":"test stages after a failing map stage never run"},{"message":"MUTATION","module":"PipelineTest","test":"test map stage runs elements concurrently"},{"message":"MUTATION","module":"PipelineTest","test":"test max_concurrency: 1 serializes element processing"},{"message":"MUTATION","module":"PipelineTest","test":"test map stage on empty list yields empty output"},{"message":"\n\nExpected exception ArgumentError but got RuntimeError (MUTATION)\n","module":"PipelineTest","test":"test map stage with non-list input raises ArgumentError"},{"message":"MUTATION","module":"PipelineTest","test":"test a failing sequential stage halts with a 3-tuple error"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T12:31:18.315094Z"}
+14:31:18.337 [debug] fim mutation gate: killed
+14:31:18.339 [info] promoted 062_003_fan_out_map_pipeline_with_bounded_concurrency_04 -> tasks/062_003_fan_out_map_pipeline_with_bounded_concurrency_04

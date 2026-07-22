@@ -1,0 +1,2821 @@
+Concurrency: 16 (EVAL_CONCURRENCY to override)
+  corpus-integrity: all pass ✓
+Semantic mutants (report-only): 597 tasks, ≤40 mutants each ...
+....................................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_32194.ex:55: WorkerPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_34498.ex:60: CancellablePool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_34818.ex:63: PriorityWorkerPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+...warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_39234.ex:61: RetryPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.........    warning: function serialize_item/1 is unused
+    │
+ 19 │   defp serialize_item(item) do
+    │        ~
+    │
+    └─ /tmp/eval_3910090_2629/lib/paginated_list_web/controllers/item_controller.ex:19:8: PaginatedListWeb.ItemController (module)
+
+    error: undefined function serialize_item/2 (expected PaginatedListWeb.ItemController to define such a function or for it to be imported, but none are available)
+    │
+  9 │       data: Enum.map(items, &serialize_item/2),
+    │                              ^^^^^^^^^^^^^^
+    │
+    └─ /tmp/eval_3910090_2629/lib/paginated_list_web/controllers/item_controller.ex:9:30: PaginatedListWeb.ItemController.index/2
+
+
+== Compilation error in file /tmp/eval_3910090_2629/lib/paginated_list_web/controllers/item_controller.ex ==
+** (CompileError) /tmp/eval_3910090_2629/lib/paginated_list_web/controllers/item_controller.ex: cannot compile module PaginatedListWeb.ItemController (errors have been logged)
+
+    warning: function serialize_item/1 is unused
+    │
+ 19 │   defp serialize_item(item) do
+    │        ~
+    │
+    └─ /tmp/eval_3910542_388/lib/paginated_list_web/controllers/item_controller.ex:19:8: PaginatedListWeb.ItemController (module)
+
+    error: undefined function serialize_item/0 (expected PaginatedListWeb.ItemController to define such a function or for it to be imported, but none are available)
+    │
+  9 │       data: Enum.map(items, &serialize_item/0),
+    │                              ^^^^^^^^^^^^^^
+    │
+    └─ /tmp/eval_3910542_388/lib/paginated_list_web/controllers/item_controller.ex:9:30: PaginatedListWeb.ItemController.index/2
+
+
+== Compilation error in file /tmp/eval_3910542_388/lib/paginated_list_web/controllers/item_controller.ex ==
+** (CompileError) /tmp/eval_3910542_388/lib/paginated_list_web/controllers/item_controller.ex: cannot compile module PaginatedListWeb.ItemController (errors have been logged)
+
+.    warning: the following clause will never match:
+
+        {:ok, _} = err ->
+
+    because it attempts to match on the result of:
+
+        validate_sort(params)
+
+    which has type:
+
+        dynamic(:ok or {:error, :invalid_sort_field})
+
+    type warning found at:
+    │
+ 11 │       {:ok, _} = err ->
+    │                ~
+    │
+    └─ /tmp/eval_3911922_387/lib/my_app/products.ex:11:16: MyApp.Products.list_products/1
+
+.    warning: the following clause will never match:
+
+        {:ok, products} ->
+
+    because it attempts to match on the result of:
+
+        MyApp.Products.list_products(params)
+
+    which has type:
+
+        dynamic({:error, term()})
+
+    type warning found at:
+    │
+ 14 │       {:ok, products} ->
+    │       ~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_3912810_2630/lib/my_app_web/controllers/product_controller.ex:14: MyAppWeb.ProductController.index/2
+
+warning: using map.field notation (without parentheses) to invoke function :invalid_filter.min_age() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_59074.ex:105: QueryPaginator.apply_filters/2
+  /tmp/smut_59074.ex:15: QueryPaginator.paginate/2
+  tasks/016_003_validated_sortable_filterable_list_pagination_01/test_harness.exs:75: QueryPaginatorTest."test rejects a non-integer age filter"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.    warning: the following clause will never match:
+
+        {:error, _} = err ->
+
+    because it attempts to match on the result of:
+
+        validate_sort(params)
+
+    which has type:
+
+        dynamic(:ok or {:ok, :invalid_sort_field})
+
+    type warning found at:
+    │
+ 11 │       {:error, _} = err ->
+    │                   ~
+    │
+    └─ /tmp/eval_3913685_2632/lib/my_app/products.ex:11:19: MyApp.Products.list_products/1
+
+    warning: the following clause will never match:
+
+        :ok ->
+
+    because it attempts to match on the result of:
+
+        validate_sort(params)
+
+    which has type:
+
+        dynamic(:error or {:error, :invalid_sort_field})
+
+    type warning found at:
+    │
+ 14 │       :ok ->
+    │       ~~~~~~
+    │
+    └─ /tmp/eval_3914645_2649/lib/my_app/products.ex:14: MyApp.Products.list_products/1
+
+.    warning: this clause cannot match because a previous clause at line 8 matches the same pattern as this clause
+    │
+ 11 │       {:error, :invalid_sort_field} ->
+    │                                     ~
+    │
+    └─ /tmp/eval_3917994_2631/lib/my_app_web/controllers/product_controller.ex:11:37
+
+    warning: the following clause is redundant:
+
+        {:error, :invalid_sort_field} ->
+
+    previous clauses have already matched on the following types:
+
+        {:error, :invalid_sort_field}
+
+    type warning found at:
+    │
+ 11 │       {:error, :invalid_sort_field} ->
+    │                                     ~
+    │
+    └─ /tmp/eval_3917994_2631/lib/my_app_web/controllers/product_controller.ex:11:37: MyAppWeb.ProductController.index/2
+
+    warning: this clause cannot match because a previous clause at line 8 matches the same pattern as this clause
+    │
+ 11 │       {:ok, :invalid_sort_field} ->
+    │                                  ~
+    │
+    └─ /tmp/eval_3919182_2629/lib/my_app_web/controllers/product_controller.ex:11:34
+
+    warning: the following clause is redundant:
+
+        {:ok, :invalid_sort_field} ->
+
+    previous clauses have already matched on the following types:
+
+        {:ok, term()}
+
+    type warning found at:
+    │
+ 11 │       {:ok, :invalid_sort_field} ->
+    │                                  ~
+    │
+    └─ /tmp/eval_3919182_2629/lib/my_app_web/controllers/product_controller.ex:11:34: MyAppWeb.ProductController.index/2
+
+    warning: function product/1 is unused
+    │
+  9 │   defp product(%Product{} = p) do
+    │        ~
+    │
+    └─ /tmp/eval_3921393_7/lib/my_app_web/controllers/product_json.ex:9:8: MyAppWeb.ProductJSON (module)
+
+    error: undefined function product/2 (expected MyAppWeb.ProductJSON to define such a function or for it to be imported, but none are available)
+    │
+  6 │     %{data: Enum.map(products, &product/2)}
+    │                                 ^^^^^^^
+    │
+    └─ /tmp/eval_3921393_7/lib/my_app_web/controllers/product_json.ex:6:33: MyAppWeb.ProductJSON.index/1
+
+
+== Compilation error in file /tmp/eval_3921393_7/lib/my_app_web/controllers/product_json.ex ==
+** (CompileError) /tmp/eval_3921393_7/lib/my_app_web/controllers/product_json.ex: cannot compile module MyAppWeb.ProductJSON (errors have been logged)
+
+    warning: function product/1 is unused
+    │
+  9 │   defp product(%Product{} = p) do
+    │        ~
+    │
+    └─ /tmp/eval_3922072_2629/lib/my_app_web/controllers/product_json.ex:9:8: MyAppWeb.ProductJSON (module)
+
+    error: undefined function product/0 (expected MyAppWeb.ProductJSON to define such a function or for it to be imported, but none are available)
+    │
+  6 │     %{data: Enum.map(products, &product/0)}
+    │                                 ^^^^^^^
+    │
+    └─ /tmp/eval_3922072_2629/lib/my_app_web/controllers/product_json.ex:6:33: MyAppWeb.ProductJSON.index/1
+
+
+== Compilation error in file /tmp/eval_3922072_2629/lib/my_app_web/controllers/product_json.ex ==
+** (CompileError) /tmp/eval_3922072_2629/lib/my_app_web/controllers/product_json.ex: cannot compile module MyAppWeb.ProductJSON (errors have been logged)
+
+..    warning: the following pattern will never match:
+
+        {:ok, %SoftCrud.Documents.Document{} = document} <- SoftCrud.Documents.get_document(id, opts)
+
+    because the right-hand side has type:
+
+        dynamic({:error, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3927567_390/lib/soft_crud_web/controllers/document_controller.ex:21:32
+        %{"id" => id} = params
+
+    where "opts" was given the type:
+
+        # type: dynamic(list({:include_deleted, true}))
+        # from: /tmp/eval_3927567_390/lib/soft_crud_web/controllers/document_controller.ex:22:10
+        opts = parse_include_deleted(params)
+
+    type warning found at:
+    │
+ 24 │     with {:ok, %Document{} = document} <- Documents.get_document(id, opts) do
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_3927567_390/lib/soft_crud_web/controllers/document_controller.ex:24: SoftCrudWeb.DocumentController.show/2
+
+    warning: the following pattern will never match:
+
+        {:ok, %SoftCrud.Documents.Document{} = document} <- SoftCrud.Documents.get_document(id)
+
+    because the right-hand side has type:
+
+        dynamic({:error, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3927567_390/lib/soft_crud_web/controllers/document_controller.ex:29:20
+        %{"id" => id, "document" => document_params}
+
+    type warning found at:
+    │
+ 30 │     with {:ok, %Document{} = document} <- Documents.get_document(id),
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_3927567_390/lib/soft_crud_web/controllers/document_controller.ex:30: SoftCrudWeb.DocumentController.update/2
+
+    warning: the following pattern will never match:
+
+        {:ok, %SoftCrud.Documents.Document{} = document} <- SoftCrud.Documents.get_document(id)
+
+    because the right-hand side has type:
+
+        dynamic({:error, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3927567_390/lib/soft_crud_web/controllers/document_controller.ex:36:20
+        %{"id" => id}
+
+    type warning found at:
+    │
+ 37 │     with {:ok, %Document{} = document} <- Documents.get_document(id),
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_3927567_390/lib/soft_crud_web/controllers/document_controller.ex:37: SoftCrudWeb.DocumentController.delete/2
+
+    warning: the following pattern will never match:
+
+        {:ok, %SoftCrud.Documents.Document{} = document} <-
+          SoftCrud.Documents.get_document(id, include_deleted: true)
+
+    because the right-hand side has type:
+
+        dynamic({:error, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3927567_390/lib/soft_crud_web/controllers/document_controller.ex:43:21
+        %{"id" => id}
+
+    type warning found at:
+    │
+ 44 │     with {:ok, %Document{} = document} <- Documents.get_document(id, include_deleted: true) do
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_3927567_390/lib/soft_crud_web/controllers/document_controller.ex:44: SoftCrudWeb.DocumentController.restore/2
+
+..    warning: this clause cannot match because a previous clause at line 48 matches the same pattern as this clause
+    │
+ 52 │   defp maybe_exclude_deleted(query, false) do
+    │        ~
+    │
+    └─ /tmp/eval_3930389_2635/lib/soft_crud/documents.ex:52:8
+
+    warning: the following clause is redundant:
+
+        defp maybe_exclude_deleted(query, false)
+
+    it has type:
+
+        dynamic(), false
+
+    previous clauses have already matched on the following types:
+
+        term(), false
+
+    │
+ 52 │   defp maybe_exclude_deleted(query, false) do
+    │        ~
+    │
+    └─ /tmp/eval_3930389_2635/lib/soft_crud/documents.ex:52:8: SoftCrud.Documents.maybe_exclude_deleted/2
+
+    warning: this clause cannot match because a previous clause at line 48 matches the same pattern as this clause
+    │
+ 52 │   defp maybe_exclude_deleted(query, true) do
+    │        ~
+    │
+    └─ /tmp/eval_3931289_2629/lib/soft_crud/documents.ex:52:8
+
+    warning: the following clause is redundant:
+
+        defp maybe_exclude_deleted(query, true)
+
+    it has type:
+
+        dynamic(), true
+
+    previous clauses have already matched on the following types:
+
+        term(), true
+
+    │
+ 52 │   defp maybe_exclude_deleted(query, true) do
+    │        ~
+    │
+    └─ /tmp/eval_3931289_2629/lib/soft_crud/documents.ex:52:8: SoftCrud.Documents.maybe_exclude_deleted/2
+
+..    warning: the following pattern will never match:
+
+        {:error, %SoftCrud.Documents.Document{} = document} <- SoftCrud.Documents.get_document(id, opts)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_found} or {:ok, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3935051_2626/lib/soft_crud_web/controllers/document_controller.ex:19:32
+        %{"id" => id} = params
+
+    where "opts" was given the type:
+
+        # type: dynamic(list({:include_deleted, true}))
+        # from: /tmp/eval_3935051_2626/lib/soft_crud_web/controllers/document_controller.ex:20:10
+        opts = parse_include_deleted(params)
+
+    type warning found at:
+    │
+ 22 │     with {:error, %Document{} = document} <- Documents.get_document(id, opts) do
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_3935051_2626/lib/soft_crud_web/controllers/document_controller.ex:22: SoftCrudWeb.DocumentController.show/2
+
+    warning: the following pattern will never match:
+
+        {:error, %SoftCrud.Documents.Document{} = document} <- SoftCrud.Documents.get_document(id)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_found} or {:ok, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3936245_2649/lib/soft_crud_web/controllers/document_controller.ex:27:20
+        %{"id" => id, "document" => document_params}
+
+    type warning found at:
+    │
+ 28 │     with {:error, %Document{} = document} <- Documents.get_document(id),
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_3936245_2649/lib/soft_crud_web/controllers/document_controller.ex:28: SoftCrudWeb.DocumentController.update/2
+
+    warning: this clause cannot match because a previous clause at line 35 matches the same pattern as this clause
+    │
+ 36 │               {:error, changeset} -> Repo.rollback(changeset)
+    │                                   ~
+    │
+    └─ /tmp/eval_3937913_2626/lib/my_app/catalog.ex:36:35
+
+    warning: the following clause is redundant:
+
+        {:error, changeset} ->
+
+    previous clauses have already matched on the following types:
+
+        {:error, term()}
+
+    where "changeset" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3937913_2626/lib/my_app/catalog.ex
+        {:error, changeset}
+
+    type warning found at:
+    │
+ 36 │               {:error, changeset} -> Repo.rollback(changeset)
+    │                                   ~
+    │
+    └─ /tmp/eval_3937913_2626/lib/my_app/catalog.ex:36:35: MyApp.Catalog.partial_create/1
+
+    warning: the following pattern will never match:
+
+        {:error, %SoftCrud.Documents.Document{} = document} <- SoftCrud.Documents.get_document(id)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_found} or {:ok, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3938199_2628/lib/soft_crud_web/controllers/document_controller.ex:34:20
+        %{"id" => id}
+
+    type warning found at:
+    │
+ 35 │     with {:error, %Document{} = document} <- Documents.get_document(id),
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_3938199_2628/lib/soft_crud_web/controllers/document_controller.ex:35: SoftCrudWeb.DocumentController.delete/2
+
+.    warning: this clause cannot match because a previous clause at line 35 matches the same pattern as this clause
+    │
+ 36 │               {:ok, changeset} -> Repo.rollback(changeset)
+    │                                ~
+    │
+    └─ /tmp/eval_3938850_389/lib/my_app/catalog.ex:36:32
+
+    warning: the following clause is redundant:
+
+        {:ok, changeset} ->
+
+    previous clauses have already matched on the following types:
+
+        {:ok, term()}
+
+    where "changeset" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3938850_389/lib/my_app/catalog.ex
+        {:ok, changeset}
+
+    type warning found at:
+    │
+ 36 │               {:ok, changeset} -> Repo.rollback(changeset)
+    │                                ~
+    │
+    └─ /tmp/eval_3938850_389/lib/my_app/catalog.ex:36:32: MyApp.Catalog.partial_create/1
+
+    warning: this clause cannot match because a previous clause at line 41 matches the same pattern as this clause
+    │
+ 42 │           {:error, changeset} -> {index, :error, changeset}
+    │                               ~
+    │
+    └─ /tmp/eval_3939952_2628/lib/my_app/catalog.ex:42:31
+
+    warning: the following clause is redundant:
+
+        {:error, changeset} ->
+
+    previous clauses have already matched on the following types:
+
+        {:error, term()}
+
+    where "changeset" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3939952_2628/lib/my_app/catalog.ex
+        {:error, changeset}
+
+    type warning found at:
+    │
+ 42 │           {:error, changeset} -> {index, :error, changeset}
+    │                               ~
+    │
+    └─ /tmp/eval_3939952_2628/lib/my_app/catalog.ex:42:31: MyApp.Catalog.partial_create/1
+
+    warning: the following pattern will never match:
+
+        {:error, %SoftCrud.Documents.Document{} = document} <-
+          SoftCrud.Documents.get_document(id, include_deleted: true)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_found} or {:ok, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3940037_2626/lib/soft_crud_web/controllers/document_controller.ex:41:21
+        %{"id" => id}
+
+    type warning found at:
+    │
+ 42 │     with {:error, %Document{} = document} <- Documents.get_document(id, include_deleted: true) do
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_3940037_2626/lib/soft_crud_web/controllers/document_controller.ex:42: SoftCrudWeb.DocumentController.restore/2
+
+.    warning: this clause cannot match because a previous clause at line 41 matches the same pattern as this clause
+    │
+ 42 │           {:ok, changeset} -> {index, :error, changeset}
+    │                            ~
+    │
+    └─ /tmp/eval_3940593_2626/lib/my_app/catalog.ex:42:28
+
+    warning: the following clause is redundant:
+
+        {:ok, changeset} ->
+
+    previous clauses have already matched on the following types:
+
+        {:ok, term()}
+
+    where "changeset" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3940593_2626/lib/my_app/catalog.ex
+        {:ok, changeset}
+
+    type warning found at:
+    │
+ 42 │           {:ok, changeset} -> {index, :error, changeset}
+    │                            ~
+    │
+    └─ /tmp/eval_3940593_2626/lib/my_app/catalog.ex:42:28: MyApp.Catalog.partial_create/1
+
+    warning: this clause cannot match because a previous clause at line 54 matches the same pattern as this clause
+    │
+ 55 │         {:error, changeset} -> {index, :error, changeset}
+    │                             ~
+    │
+    └─ /tmp/eval_3942710_386/lib/my_app/catalog.ex:55:29
+
+    warning: the following clause is redundant:
+
+        {:error, changeset} ->
+
+    previous clauses have already matched on the following types:
+
+        {:error, term()}
+
+    where "changeset" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3942710_386/lib/my_app/catalog.ex
+        {:error, changeset}
+
+    type warning found at:
+    │
+ 55 │         {:error, changeset} -> {index, :error, changeset}
+    │                             ~
+    │
+    └─ /tmp/eval_3942710_386/lib/my_app/catalog.ex:55:29: MyApp.Catalog.insert_each/1
+
+.    warning: this clause cannot match because a previous clause at line 54 matches the same pattern as this clause
+    │
+ 55 │         {:ok, changeset} -> {index, :error, changeset}
+    │                          ~
+    │
+    └─ /tmp/eval_3943764_2626/lib/my_app/catalog.ex:55:26
+
+    warning: the following clause is redundant:
+
+        {:ok, changeset} ->
+
+    previous clauses have already matched on the following types:
+
+        {:ok, term()}
+
+    where "changeset" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3943764_2626/lib/my_app/catalog.ex
+        {:ok, changeset}
+
+    type warning found at:
+    │
+ 55 │         {:ok, changeset} -> {index, :error, changeset}
+    │                          ~
+    │
+    └─ /tmp/eval_3943764_2626/lib/my_app/catalog.ex:55:26: MyApp.Catalog.insert_each/1
+
+    warning: this clause cannot match because a previous clause at line 21 matches the same pattern as this clause
+    │
+ 26 │       {:error, results} ->
+    │                         ~
+    │
+    └─ /tmp/eval_3946449_2629/lib/my_app_web/controllers/bulk_item_controller.ex:26:25
+
+    warning: the following clause is redundant:
+
+        {:error, results} ->
+
+    previous clauses have already matched on the following types:
+
+        {:error, term()}
+
+    where "results" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3946449_2629/lib/my_app_web/controllers/bulk_item_controller.ex
+        {:error, results}
+
+    type warning found at:
+    │
+ 26 │       {:error, results} ->
+    │                         ~
+    │
+    └─ /tmp/eval_3946449_2629/lib/my_app_web/controllers/bulk_item_controller.ex:26:25: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+..    error: undefined function item_json/2 (expected MyAppWeb.BulkItemController to define such a function or for it to be imported, but none are available)
+    │
+ 24 │         |> json(%{"status" => "all_created", "items" => Enum.map(results, &item_json/2)})
+    │                                                                            ^^^^^^^^^
+    │
+    └─ /tmp/eval_3948986_5/lib/my_app_web/controllers/bulk_item_controller.ex:24:76: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+
+== Compilation error in file /tmp/eval_3948986_5/lib/my_app_web/controllers/bulk_item_controller.ex ==
+** (CompileError) /tmp/eval_3948986_5/lib/my_app_web/controllers/bulk_item_controller.ex: cannot compile module MyAppWeb.BulkItemController (errors have been logged)
+
+warning: using map.field notation (without parentheses) to invoke function :quota_exceeded.id() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_83266.ex:225: FileUpload.Router.reserve_and_persist/7
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_83266.ex:149: FileUpload.Router.plug_builder_call/2
+  tasks/020_003_per_tenant_quota_enforced_upload_01/test_harness.exs:62: FileUploadTest.upload_conn/5
+  tasks/020_003_per_tenant_quota_enforced_upload_01/test_harness.exs:101: FileUploadTest."test quota is enforced per-account and independent"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+    error: undefined function item_json/0 (expected MyAppWeb.BulkItemController to define such a function or for it to be imported, but none are available)
+    │
+ 24 │         |> json(%{"status" => "all_created", "items" => Enum.map(results, &item_json/0)})
+    │                                                                            ^^^^^^^^^
+    │
+    └─ /tmp/eval_3949523_2633/lib/my_app_web/controllers/bulk_item_controller.ex:24:76: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+
+== Compilation error in file /tmp/eval_3949523_2633/lib/my_app_web/controllers/bulk_item_controller.ex ==
+** (CompileError) /tmp/eval_3949523_2633/lib/my_app_web/controllers/bulk_item_controller.ex: cannot compile module MyAppWeb.BulkItemController (errors have been logged)
+
+.    warning: this clause cannot match because a previous clause at line 21 matches the same pattern as this clause
+    │
+ 26 │       {:ok, results} ->
+    │                      ~
+    │
+    └─ /tmp/eval_3950011_2630/lib/my_app_web/controllers/bulk_item_controller.ex:26:22
+
+    warning: the following clause is redundant:
+
+        {:ok, results} ->
+
+    previous clauses have already matched on the following types:
+
+        {:ok, term()}
+
+    where "results" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_3950011_2630/lib/my_app_web/controllers/bulk_item_controller.ex
+        {:ok, results}
+
+    type warning found at:
+    │
+ 26 │       {:ok, results} ->
+    │                      ~
+    │
+    └─ /tmp/eval_3950011_2630/lib/my_app_web/controllers/bulk_item_controller.ex:26:22: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+warning: using map.field notation (without parentheses) to invoke function :not_found.record() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_13891.ex:184: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_13891.ex:149: FileUpload.Router.plug_builder_call/2
+  tasks/020_003_per_tenant_quota_enforced_upload_01/test_harness.exs:176: FileUploadTest."test delete of unknown id returns 404"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :forbidden.record() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_84418.ex:184: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_84418.ex:149: FileUpload.Router.plug_builder_call/2
+  tasks/020_003_per_tenant_quota_enforced_upload_01/test_harness.exs:168: FileUploadTest."test delete by wrong account is forbidden"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.    warning: function result_json/1 is unused
+    │
+ 51 │   defp result_json({index, :ok, _item}) do
+    │        ~
+    │
+    └─ /tmp/eval_3952895_2628/lib/my_app_web/controllers/bulk_item_controller.ex:51:8: MyAppWeb.BulkItemController (module)
+
+    error: undefined function result_json/2 (expected MyAppWeb.BulkItemController to define such a function or for it to be imported, but none are available)
+    │
+ 29 │         |> json(%{"status" => "all_failed", "errors" => Enum.map(results, &result_json/2)})
+    │                                                                            ^^^^^^^^^^^
+    │
+    └─ /tmp/eval_3952895_2628/lib/my_app_web/controllers/bulk_item_controller.ex:29:76: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+
+== Compilation error in file /tmp/eval_3952895_2628/lib/my_app_web/controllers/bulk_item_controller.ex ==
+** (CompileError) /tmp/eval_3952895_2628/lib/my_app_web/controllers/bulk_item_controller.ex: cannot compile module MyAppWeb.BulkItemController (errors have been logged)
+
+    warning: function result_json/1 is unused
+    │
+ 51 │   defp result_json({index, :ok, _item}) do
+    │        ~
+    │
+    └─ /tmp/eval_3953659_2629/lib/my_app_web/controllers/bulk_item_controller.ex:51:8: MyAppWeb.BulkItemController (module)
+
+    error: undefined function result_json/0 (expected MyAppWeb.BulkItemController to define such a function or for it to be imported, but none are available)
+    │
+ 29 │         |> json(%{"status" => "all_failed", "errors" => Enum.map(results, &result_json/0)})
+    │                                                                            ^^^^^^^^^^^
+    │
+    └─ /tmp/eval_3953659_2629/lib/my_app_web/controllers/bulk_item_controller.ex:29:76: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+
+== Compilation error in file /tmp/eval_3953659_2629/lib/my_app_web/controllers/bulk_item_controller.ex ==
+** (CompileError) /tmp/eval_3953659_2629/lib/my_app_web/controllers/bulk_item_controller.ex: cannot compile module MyAppWeb.BulkItemController (errors have been logged)
+
+warning: using map.field notation (without parentheses) to invoke function :not_found.id() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_86594.ex:212: FileUpload.Router.status_body/1
+  /tmp/smut_86594.ex:144: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_86594.ex:122: FileUpload.Router.plug_builder_call/2
+  tasks/020_004_asynchronous_validation_pipeline_upload_01/test_harness.exs:172: FileUploadTest."test GET on unknown id returns 404"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.....warning: using map.field notation (without parentheses) to invoke function :forbidden.record() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_95874.ex:184: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_95874.ex:149: FileUpload.Router.plug_builder_call/2
+  tasks/020_003_per_tenant_quota_enforced_upload_01/test_harness.exs:168: FileUploadTest."test delete by wrong account is forbidden"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: using map.field notation (without parentheses) to invoke function :not_found.id() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_99330.ex:212: FileUpload.Router.status_body/1
+  /tmp/smut_99330.ex:144: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_99330.ex:122: FileUpload.Router.plug_builder_call/2
+  tasks/020_004_asynchronous_validation_pipeline_upload_01/test_harness.exs:172: FileUploadTest."test GET on unknown id returns 404"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+....warning: using map.field notation (without parentheses) to invoke function :valid.parent_id() is deprecated, you must add parentheses instead: remote.function()
+  tasks/019_002_dependency_ordered_bulk_create_with_cascade_skip_01/test_harness.exs:75: CatalogTest."test resolves an in-batch parent even when the child appears before the parent"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :valid.parent_id() is deprecated, you must add parentheses instead: remote.function()
+  tasks/019_002_dependency_ordered_bulk_create_with_cascade_skip_01/test_harness.exs:92: CatalogTest."test resolves a multi-level dependency chain"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :valid.parent_id() is deprecated, you must add parentheses instead: remote.function()
+  tasks/019_002_dependency_ordered_bulk_create_with_cascade_skip_01/test_harness.exs:160: CatalogTest."test partial mode still creates a valid dependent with the correct parent_id"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...........................................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_147714.ex:81: OrderedRecordDiff.lcs/2
+  /tmp/smut_147714.ex:24: OrderedRecordDiff.diff/3
+  tasks/039_003_ordered_record_diff_with_move_detection_01/test_harness.exs:12: OrderedRecordDiffTest."test two empty lists produce an empty diff"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_148354.ex:81: anonymous fn/3 in OrderedRecordDiff.lcs/2
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  /tmp/smut_148354.ex:81: OrderedRecordDiff.lcs/2
+  /tmp/smut_148354.ex:24: OrderedRecordDiff.diff/3
+  tasks/039_003_ordered_record_diff_with_move_detection_01/test_harness.exs:12: OrderedRecordDiffTest."test two empty lists produce an empty diff"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+........warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_161602.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_162306.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+....................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_38467.ex:74: ParallelMap.pmap/3
+  tasks/061_001_parallel_map_with_concurrency_limit_01/test_harness.exs:20: ParallelMapTest."test maps over an empty collection"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_42051.ex:94: WeightedMap.pmap/4
+  tasks/061_004_weight_budget_parallel_map_01/test_harness.exs:14: WeightedMapTest."test empty collection returns []"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_45251.ex:97: RetryMap.pmap/3
+  tasks/061_003_timeout_and_retry_parallel_map_01/test_harness.exs:9: RetryMapTest."test empty collection returns []"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_46019.ex:97: RetryMap.pmap/3
+  tasks/061_003_timeout_and_retry_parallel_map_01/test_harness.exs:56: RetryMapTest."test an element that always times out returns {:error, :timeout} after exhausting attempts"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+....warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_50947.ex:24: WorkStealQueue.run/4
+  tasks/064_004_instrumented_work_stealing_queue_with_steal_metrics_01/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_51395.ex:24: WorkStealQueue.run/4
+  tasks/064_004_instrumented_work_stealing_queue_with_steal_metrics_01/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+............warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_62083.ex:134: WorkStealQueue.build_metrics/2
+  /tmp/smut_62083.ex:34: WorkStealQueue.run/4
+  tasks/064_004_instrumented_work_stealing_queue_with_steal_metrics_01/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_62723.ex:134: WorkStealQueue.build_metrics/2
+  /tmp/smut_62723.ex:34: WorkStealQueue.run/4
+  tasks/064_004_instrumented_work_stealing_queue_with_steal_metrics_01/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_64131.ex:156: WorkStealQueue.partition/2
+  /tmp/smut_64131.ex:16: WorkStealQueue.run/4
+  tasks/064_004_instrumented_work_stealing_queue_with_steal_metrics_01/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_64643.ex:156: WorkStealQueue.partition/2
+  /tmp/smut_64643.ex:16: WorkStealQueue.run/4
+  tasks/064_004_instrumented_work_stealing_queue_with_steal_metrics_01/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+....................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_49667.ex:19: WorkStealQueue.run/3
+  tasks/064_003_priority_aware_work_stealing_queue_01/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_198146.ex:46: RingBuffer.to_list/1
+  tasks/078_001_ring_buffer_01/test_harness.exs:25: RingBufferTest."test new buffer returns empty list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_198722.ex:46: RingBuffer.to_list/1
+  tasks/078_001_ring_buffer_01/test_harness.exs:175: RingBufferTest."test capacity-1 buffer always holds exactly one item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_199170.ex:46: RingBuffer.to_list/1
+  tasks/078_001_ring_buffer_01/test_harness.exs:175: RingBufferTest."test capacity-1 buffer always holds exactly one item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.....warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_206018.ex:54: RejectingRingBuffer.to_list/1
+  tasks/078_002_reject_when_full_bounded_fifo_queue_01/test_harness.exs:76: RejectingRingBufferTest."test pop removes items oldest-first"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_207170.ex:54: RejectingRingBuffer.to_list/1
+  tasks/078_002_reject_when_full_bounded_fifo_queue_01/test_harness.exs:19: RejectingRingBufferTest."test new buffer returns :error for peeks and :empty for pop"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_207682.ex:54: RejectingRingBuffer.to_list/1
+  tasks/078_002_reject_when_full_bounded_fifo_queue_01/test_harness.exs:76: RejectingRingBufferTest."test pop removes items oldest-first"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_4612.ex:54: RejectingRingBuffer.to_list/1
+  tasks/078_002_reject_when_full_bounded_fifo_queue_01/test_harness.exs:76: RejectingRingBufferTest."test pop removes items oldest-first"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_4356.ex:98: ConcurrentRingBuffer.do_to_list/1
+  /tmp/smut_4356.ex:58: ConcurrentRingBuffer.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_5188.ex:98: ConcurrentRingBuffer.do_to_list/1
+  /tmp/smut_5188.ex:58: ConcurrentRingBuffer.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_208322.ex:98: ConcurrentRingBuffer.do_to_list/1
+  /tmp/smut_208322.ex:58: ConcurrentRingBuffer.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_210242.ex:74: RingDeque.to_list/1
+  tasks/078_003_double_ended_ring_buffer_deque_01/test_harness.exs:11: RingDequeTest."test new deque is empty"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_210818.ex:74: RingDeque.to_list/1
+  tasks/078_003_double_ended_ring_buffer_deque_01/test_harness.exs:151: RingDequeTest."test capacity-1 deque holds exactly one item from either end"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..............warning: using map.field notation (without parentheses) to invoke function :invalid_tiers.code() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_95427.ex:37: TieredPromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+..warning: using map.field notation (without parentheses) to invoke function :invalid_type.code() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_98243.ex:39: PromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.......warning: using map.field notation (without parentheses) to invoke function :expired.type() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_107459.ex:106: anonymous fn/1 in StackablePromoCodes.process/5
+  (elixir 1.20.2) lib/enum.ex:4542: Enum.filter_list/2
+  /tmp/smut_107459.ex:106: StackablePromoCodes.process/5
+  /tmp/smut_107459.ex:47: StackablePromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_107907.ex:52: Money.split/2
+  tasks/095_001_multi_currency_money_module_01/test_harness.exs:134: MoneyTest."test split/2 by 1 returns the original amount in a single-element list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_108739.ex:52: Money.split/2
+  tasks/095_001_multi_currency_money_module_01/test_harness.exs:134: MoneyTest."test split/2 by 1 returns the original amount in a single-element list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :max_uses_exceeded.type() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_111235.ex:106: anonymous fn/1 in StackablePromoCodes.process/5
+  (elixir 1.20.2) lib/enum.ex:4542: Enum.filter_list/2
+  /tmp/smut_111235.ex:106: StackablePromoCodes.process/5
+  /tmp/smut_111235.ex:47: StackablePromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+...warning: using map.field notation (without parentheses) to invoke function :max_uses_per_user_exceeded.type() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_113667.ex:106: anonymous fn/1 in StackablePromoCodes.process/5
+  (elixir 1.20.2) lib/enum.ex:4542: Enum.filter_list/2
+  /tmp/smut_113667.ex:106: StackablePromoCodes.process/5
+  /tmp/smut_113667.ex:47: StackablePromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+...warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_83459.ex:19: WorkStealQueue.run/3
+  tasks/064_003_priority_aware_work_stealing_queue_01/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.......warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_216386.ex:74: Money.split/2
+  tasks/095_003_currency_precision_money_module_01/test_harness.exs:108: anonymous fn/3 in MoneyTest."test split/2 always sums back to the original amount"/1
+  (elixir 1.20.2) lib/enum.ex:4659: Enum.reduce/3
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  tasks/095_003_currency_precision_money_module_01/test_harness.exs:107: MoneyTest."test split/2 always sums back to the original amount"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_217282.ex:74: Money.split/2
+  tasks/095_003_currency_precision_money_module_01/test_harness.exs:108: anonymous fn/3 in MoneyTest."test split/2 always sums back to the original amount"/1
+  (elixir 1.20.2) lib/enum.ex:4659: Enum.reduce/3
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  tasks/095_003_currency_precision_money_module_01/test_harness.exs:107: MoneyTest."test split/2 always sums back to the original amount"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..    warning: cannot import Ecto.Query.from/3 because it is undefined or private
+    │
+  4 │   import Ecto.Query, only: [from: 3]
+    │   ~
+    │
+    └─ /tmp/eval_107657_2627/lib/state_machine.ex:4:3: StateMachine (module)
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 98 │   def handle_call({:history, entity_id}, _from, state) do
+    │                              ~~~~~~~~~
+    │
+    └─ /tmp/eval_107657_2627/lib/state_machine.ex:98:30: StateMachine.handle_call/3
+
+     warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 128 │   defp load_latest_state(repo, entity_id) do
+     │                                ~~~~~~~~~
+     │
+     └─ /tmp/eval_107657_2627/lib/state_machine.ex:128:32: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 132 │         order_by: [desc: t.inserted_at],
+     │                          ^
+     │
+     └─ /tmp/eval_107657_2627/lib/state_machine.ex:132:26: StateMachine.load_latest_state/2
+
+     error: misplaced operator ^entity_id
+
+     The pin operator ^ is supported only inside matches or inside custom macros. Make sure you are inside a match or all necessary macros have been required
+     │
+ 131 │         where: t.entity_id == ^entity_id,
+     │                               ^
+     │
+     └─ /tmp/eval_107657_2627/lib/state_machine.ex:131:31: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 131 │         where: t.entity_id == ^entity_id,
+     │                ^
+     │
+     └─ /tmp/eval_107657_2627/lib/state_machine.ex:131:16: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 130 │       from(t in EntityTransition,
+     │            ^
+     │
+     └─ /tmp/eval_107657_2627/lib/state_machine.ex:130:12: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 102 │         order_by: [asc: t.inserted_at]
+     │                         ^
+     │
+     └─ /tmp/eval_107657_2627/lib/state_machine.ex:102:25: StateMachine.handle_call/3
+
+     error: misplaced operator ^entity_id
+
+     The pin operator ^ is supported only inside matches or inside custom macros. Make sure you are inside a match or all necessary macros have been required
+     │
+ 101 │         where: t.entity_id == ^entity_id,
+     │                               ^
+     │
+     └─ /tmp/eval_107657_2627/lib/state_machine.ex:101:31: StateMachine.handle_call/3
+
+     error: undefined variable "t"
+     │
+ 101 │         where: t.entity_id == ^entity_id,
+     │                ^
+     │
+     └─ /tmp/eval_107657_2627/lib/state_machine.ex:101:16: StateMachine.handle_call/3
+
+     error: undefined variable "t"
+     │
+ 100 │       from(t in EntityTransition,
+     │            ^
+     │
+     └─ /tmp/eval_107657_2627/lib/state_machine.ex:100:12: StateMachine.handle_call/3
+
+
+== Compilation error in file /tmp/eval_107657_2627/lib/state_machine.ex ==
+** (CompileError) /tmp/eval_107657_2627/lib/state_machine.ex: cannot compile module StateMachine (errors have been logged)
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 98 │   def handle_call({:history, entity_id}, _from, state) do
+    │                              ~~~~~~~~~
+    │
+    └─ /tmp/eval_108284_2631/lib/state_machine.ex:98:30: StateMachine.handle_call/3
+
+     warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 128 │   defp load_latest_state(repo, entity_id) do
+     │                                ~~~~~~~~~
+     │
+     └─ /tmp/eval_108284_2631/lib/state_machine.ex:128:32: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 132 │         order_by: [desc: t.inserted_at],
+     │                          ^
+     │
+     └─ /tmp/eval_108284_2631/lib/state_machine.ex:132:26: StateMachine.load_latest_state/2
+
+     error: misplaced operator ^entity_id
+
+     The pin operator ^ is supported only inside matches or inside custom macros. Make sure you are inside a match or all necessary macros have been required
+     │
+ 131 │         where: t.entity_id == ^entity_id,
+     │                               ^
+     │
+     └─ /tmp/eval_108284_2631/lib/state_machine.ex:131:31: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 131 │         where: t.entity_id == ^entity_id,
+     │                ^
+     │
+     └─ /tmp/eval_108284_2631/lib/state_machine.ex:131:16: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 130 │       from(t in EntityTransition,
+     │            ^
+     │
+     └─ /tmp/eval_108284_2631/lib/state_machine.ex:130:12: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 102 │         order_by: [asc: t.inserted_at]
+     │                         ^
+     │
+     └─ /tmp/eval_108284_2631/lib/state_machine.ex:102:25: StateMachine.handle_call/3
+
+     error: misplaced operator ^entity_id
+
+     The pin operator ^ is supported only inside matches or inside custom macros. Make sure you are inside a match or all necessary macros have been required
+     │
+ 101 │         where: t.entity_id == ^entity_id,
+     │                               ^
+     │
+     └─ /tmp/eval_108284_2631/lib/state_machine.ex:101:31: StateMachine.handle_call/3
+
+     error: undefined variable "t"
+     │
+ 101 │         where: t.entity_id == ^entity_id,
+     │                ^
+     │
+     └─ /tmp/eval_108284_2631/lib/state_machine.ex:101:16: StateMachine.handle_call/3
+
+     error: undefined variable "t"
+     │
+ 100 │       from(t in EntityTransition,
+     │            ^
+     │
+     └─ /tmp/eval_108284_2631/lib/state_machine.ex:100:12: StateMachine.handle_call/3
+
+
+== Compilation error in file /tmp/eval_108284_2631/lib/state_machine.ex ==
+** (CompileError) /tmp/eval_108284_2631/lib/state_machine.ex: cannot compile module StateMachine (errors have been logged)
+
+.    warning: the following clause will never match:
+
+        {:error, current} ->
+
+    because it attempts to match on the result of:
+
+        Map.fetch(state.entities, entity_id)
+
+    which has type:
+
+        dynamic(:error or {:ok, term()})
+
+    type warning found at:
+    │
+ 76 │         {:error, current} -> {:ok, current}
+    │         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_112282_2636/lib/state_machine.ex:76: StateMachine.handle_call/3
+
+........     warning: the following clause will never match:
+
+         {:error, state} ->
+
+     because it attempts to match on the result of:
+
+         Map.fetch(entities, entity_id)
+
+     which has type:
+
+         dynamic(:error or {:ok, term()})
+
+     type warning found at:
+     │
+ 145 │       {:error, state} -> {:found, state}
+     │       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ /tmp/eval_126358_398/lib/state_machine.ex:145: StateMachine.entity_lookup/2
+
+     warning: the following clause will never match:
+
+         {:error, next} ->
+
+     because it attempts to match on the result of:
+
+         Map.fetch(
+           %{
+             {:confirmed, :cancel} => :cancelled,
+             {:confirmed, :ship} => :shipped,
+             {:pending, :cancel} => :cancelled,
+             {:pending, :confirm} => :confirmed,
+             {:shipped, :deliver} => :delivered
+           },
+           {current_state, event}
+         )
+
+     which has type:
+
+         dynamic(:error or {:ok, :cancelled or :confirmed or :delivered or :shipped})
+
+     type warning found at:
+     │
+ 153 │       {:error, next} -> {:valid, next}
+     │       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ /tmp/eval_127534_2648/lib/state_machine.ex:153: StateMachine.resolve_transition/2
+
+.     warning: this clause cannot match because a previous clause at line 172 matches the same pattern as this clause
+     │
+ 173 │         {:error, changeset} -> {:db_error, changeset}
+     │                             ~
+     │
+     └─ /tmp/eval_128654_2637/lib/state_machine.ex:173:29
+
+     warning: the following clause is redundant:
+
+         {:error, changeset} ->
+
+     previous clauses have already matched on the following types:
+
+         {:error, term()}
+
+     where "changeset" was given the type:
+
+         # type: dynamic()
+         # from: /tmp/eval_128654_2637/lib/state_machine.ex
+         {:error, changeset}
+
+     type warning found at:
+     │
+ 173 │         {:error, changeset} -> {:db_error, changeset}
+     │                             ~
+     │
+     └─ /tmp/eval_128654_2637/lib/state_machine.ex:173:29: StateMachine.persist/5
+
+.     warning: this clause cannot match because a previous clause at line 172 matches the same pattern as this clause
+     │
+ 173 │         {:ok, changeset} -> {:db_error, changeset}
+     │                          ~
+     │
+     └─ /tmp/eval_130480_2644/lib/state_machine.ex:173:26
+
+     warning: the following clause is redundant:
+
+         {:ok, changeset} ->
+
+     previous clauses have already matched on the following types:
+
+         {:ok, term()}
+
+     where "changeset" was given the type:
+
+         # type: dynamic()
+         # from: /tmp/eval_130480_2644/lib/state_machine.ex
+         {:ok, changeset}
+
+     type warning found at:
+     │
+ 173 │         {:ok, changeset} -> {:db_error, changeset}
+     │                          ~
+     │
+     └─ /tmp/eval_130480_2644/lib/state_machine.ex:173:26: StateMachine.persist/5
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_248258.ex:113: WorkStealQueue.partition/2
+  /tmp/smut_248258.ex:10: WorkStealQueue.run/3
+  tasks/064_001_work_stealing_task_queue_01/test_harness.exs:109: WorkStealQueueTest."test single worker processes all items without stealing"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_249026.ex:113: WorkStealQueue.partition/2
+  /tmp/smut_249026.ex:10: WorkStealQueue.run/3
+  tasks/064_001_work_stealing_task_queue_01/test_harness.exs:109: WorkStealQueueTest."test single worker processes all items without stealing"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_252994.ex:126: WorkStealQueue.partition/2
+  /tmp/smut_252994.ex:11: WorkStealQueue.run/3
+  tasks/064_002_fault_tolerant_result_tagged_work_stealing_queue_01/test_harness.exs:86: WorkStealQueueTest."test a worker keeps processing its queue after a failing item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_253698.ex:126: WorkStealQueue.partition/2
+  /tmp/smut_253698.ex:11: WorkStealQueue.run/3
+  tasks/064_002_fault_tolerant_result_tagged_work_stealing_queue_01/test_harness.exs:86: WorkStealQueueTest."test a worker keeps processing its queue after a failing item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_253890.ex:134: WorkStealQueue.partition/2
+  /tmp/smut_253890.ex:11: WorkStealQueue.run/3
+  tasks/064_003_priority_aware_work_stealing_queue_01/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_254722.ex:134: WorkStealQueue.partition/2
+  /tmp/smut_254722.ex:11: WorkStealQueue.run/3
+  tasks/064_003_priority_aware_work_stealing_queue_01/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+............................................................................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_335426.ex:55: WorkerPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_337730.ex:60: CancellablePool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_337794.ex:63: PriorityWorkerPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_340738.ex:61: RetryPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+...........    warning: function serialize_item/1 is unused
+    │
+ 19 │   defp serialize_item(item) do
+    │        ~
+    │
+    └─ /tmp/eval_331375_2629/lib/paginated_list_web/controllers/item_controller.ex:19:8: PaginatedListWeb.ItemController (module)
+
+    error: undefined function serialize_item/2 (expected PaginatedListWeb.ItemController to define such a function or for it to be imported, but none are available)
+    │
+  9 │       data: Enum.map(items, &serialize_item/2),
+    │                              ^^^^^^^^^^^^^^
+    │
+    └─ /tmp/eval_331375_2629/lib/paginated_list_web/controllers/item_controller.ex:9:30: PaginatedListWeb.ItemController.index/2
+
+
+== Compilation error in file /tmp/eval_331375_2629/lib/paginated_list_web/controllers/item_controller.ex ==
+** (CompileError) /tmp/eval_331375_2629/lib/paginated_list_web/controllers/item_controller.ex: cannot compile module PaginatedListWeb.ItemController (errors have been logged)
+
+    warning: function serialize_item/1 is unused
+    │
+ 19 │   defp serialize_item(item) do
+    │        ~
+    │
+    └─ /tmp/eval_331731_2633/lib/paginated_list_web/controllers/item_controller.ex:19:8: PaginatedListWeb.ItemController (module)
+
+    error: undefined function serialize_item/0 (expected PaginatedListWeb.ItemController to define such a function or for it to be imported, but none are available)
+    │
+  9 │       data: Enum.map(items, &serialize_item/0),
+    │                              ^^^^^^^^^^^^^^
+    │
+    └─ /tmp/eval_331731_2633/lib/paginated_list_web/controllers/item_controller.ex:9:30: PaginatedListWeb.ItemController.index/2
+
+
+== Compilation error in file /tmp/eval_331731_2633/lib/paginated_list_web/controllers/item_controller.ex ==
+** (CompileError) /tmp/eval_331731_2633/lib/paginated_list_web/controllers/item_controller.ex: cannot compile module PaginatedListWeb.ItemController (errors have been logged)
+
+..warning: using map.field notation (without parentheses) to invoke function :invalid_filter.min_age() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_362434.ex:105: QueryPaginator.apply_filters/2
+  /tmp/smut_362434.ex:15: QueryPaginator.paginate/2
+  tasks/wt_016_003_validated_sortable_filterable_list_pagination/test_harness.exs:75: QueryPaginatorTest."test rejects a non-integer age filter"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+......    warning: the following pattern will never match:
+
+        {:ok, %SoftCrud.Documents.Document{} = document} <- SoftCrud.Documents.get_document(id, opts)
+
+    because the right-hand side has type:
+
+        dynamic({:error, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_349654_2631/lib/soft_crud_web/controllers/document_controller.ex:21:32
+        %{"id" => id} = params
+
+    where "opts" was given the type:
+
+        # type: dynamic(list({:include_deleted, true}))
+        # from: /tmp/eval_349654_2631/lib/soft_crud_web/controllers/document_controller.ex:22:10
+        opts = parse_include_deleted(params)
+
+    type warning found at:
+    │
+ 24 │     with {:ok, %Document{} = document} <- Documents.get_document(id, opts) do
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_349654_2631/lib/soft_crud_web/controllers/document_controller.ex:24: SoftCrudWeb.DocumentController.show/2
+
+    warning: the following pattern will never match:
+
+        {:ok, %SoftCrud.Documents.Document{} = document} <- SoftCrud.Documents.get_document(id)
+
+    because the right-hand side has type:
+
+        dynamic({:error, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_349654_2631/lib/soft_crud_web/controllers/document_controller.ex:29:20
+        %{"id" => id, "document" => document_params}
+
+    type warning found at:
+    │
+ 30 │     with {:ok, %Document{} = document} <- Documents.get_document(id),
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_349654_2631/lib/soft_crud_web/controllers/document_controller.ex:30: SoftCrudWeb.DocumentController.update/2
+
+    warning: the following pattern will never match:
+
+        {:ok, %SoftCrud.Documents.Document{} = document} <- SoftCrud.Documents.get_document(id)
+
+    because the right-hand side has type:
+
+        dynamic({:error, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_349654_2631/lib/soft_crud_web/controllers/document_controller.ex:36:20
+        %{"id" => id}
+
+    type warning found at:
+    │
+ 37 │     with {:ok, %Document{} = document} <- Documents.get_document(id),
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_349654_2631/lib/soft_crud_web/controllers/document_controller.ex:37: SoftCrudWeb.DocumentController.delete/2
+
+    warning: the following pattern will never match:
+
+        {:ok, %SoftCrud.Documents.Document{} = document} <-
+          SoftCrud.Documents.get_document(id, include_deleted: true)
+
+    because the right-hand side has type:
+
+        dynamic({:error, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_349654_2631/lib/soft_crud_web/controllers/document_controller.ex:43:21
+        %{"id" => id}
+
+    type warning found at:
+    │
+ 44 │     with {:ok, %Document{} = document} <- Documents.get_document(id, include_deleted: true) do
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_349654_2631/lib/soft_crud_web/controllers/document_controller.ex:44: SoftCrudWeb.DocumentController.restore/2
+
+    warning: this clause cannot match because a previous clause at line 48 matches the same pattern as this clause
+    │
+ 52 │   defp maybe_exclude_deleted(query, false) do
+    │        ~
+    │
+    └─ /tmp/eval_352304_2627/lib/soft_crud/documents.ex:52:8
+
+    warning: the following clause is redundant:
+
+        defp maybe_exclude_deleted(query, false)
+
+    it has type:
+
+        dynamic(), false
+
+    previous clauses have already matched on the following types:
+
+        term(), false
+
+    │
+ 52 │   defp maybe_exclude_deleted(query, false) do
+    │        ~
+    │
+    └─ /tmp/eval_352304_2627/lib/soft_crud/documents.ex:52:8: SoftCrud.Documents.maybe_exclude_deleted/2
+
+.    warning: this clause cannot match because a previous clause at line 48 matches the same pattern as this clause
+    │
+ 52 │   defp maybe_exclude_deleted(query, true) do
+    │        ~
+    │
+    └─ /tmp/eval_353186_2627/lib/soft_crud/documents.ex:52:8
+
+    warning: the following clause is redundant:
+
+        defp maybe_exclude_deleted(query, true)
+
+    it has type:
+
+        dynamic(), true
+
+    previous clauses have already matched on the following types:
+
+        term(), true
+
+    │
+ 52 │   defp maybe_exclude_deleted(query, true) do
+    │        ~
+    │
+    └─ /tmp/eval_353186_2627/lib/soft_crud/documents.ex:52:8: SoftCrud.Documents.maybe_exclude_deleted/2
+
+..    warning: the following pattern will never match:
+
+        {:error, %SoftCrud.Documents.Document{} = document} <- SoftCrud.Documents.get_document(id, opts)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_found} or {:ok, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_356239_393/lib/soft_crud_web/controllers/document_controller.ex:19:32
+        %{"id" => id} = params
+
+    where "opts" was given the type:
+
+        # type: dynamic(list({:include_deleted, true}))
+        # from: /tmp/eval_356239_393/lib/soft_crud_web/controllers/document_controller.ex:20:10
+        opts = parse_include_deleted(params)
+
+    type warning found at:
+    │
+ 22 │     with {:error, %Document{} = document} <- Documents.get_document(id, opts) do
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_356239_393/lib/soft_crud_web/controllers/document_controller.ex:22: SoftCrudWeb.DocumentController.show/2
+
+.    warning: the following pattern will never match:
+
+        {:error, %SoftCrud.Documents.Document{} = document} <- SoftCrud.Documents.get_document(id)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_found} or {:ok, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_357261_2628/lib/soft_crud_web/controllers/document_controller.ex:27:20
+        %{"id" => id, "document" => document_params}
+
+    type warning found at:
+    │
+ 28 │     with {:error, %Document{} = document} <- Documents.get_document(id),
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_357261_2628/lib/soft_crud_web/controllers/document_controller.ex:28: SoftCrudWeb.DocumentController.update/2
+
+.    warning: the following pattern will never match:
+
+        {:error, %SoftCrud.Documents.Document{} = document} <- SoftCrud.Documents.get_document(id)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_found} or {:ok, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_359262_2627/lib/soft_crud_web/controllers/document_controller.ex:34:20
+        %{"id" => id}
+
+    type warning found at:
+    │
+ 35 │     with {:error, %Document{} = document} <- Documents.get_document(id),
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_359262_2627/lib/soft_crud_web/controllers/document_controller.ex:35: SoftCrudWeb.DocumentController.delete/2
+
+    warning: this clause cannot match because a previous clause at line 35 matches the same pattern as this clause
+    │
+ 36 │               {:error, changeset} -> Repo.rollback(changeset)
+    │                                   ~
+    │
+    └─ /tmp/eval_359369_2629/lib/my_app/catalog.ex:36:35
+
+    warning: the following clause is redundant:
+
+        {:error, changeset} ->
+
+    previous clauses have already matched on the following types:
+
+        {:error, term()}
+
+    where "changeset" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_359369_2629/lib/my_app/catalog.ex
+        {:error, changeset}
+
+    type warning found at:
+    │
+ 36 │               {:error, changeset} -> Repo.rollback(changeset)
+    │                                   ~
+    │
+    └─ /tmp/eval_359369_2629/lib/my_app/catalog.ex:36:35: MyApp.Catalog.partial_create/1
+
+    warning: this clause cannot match because a previous clause at line 35 matches the same pattern as this clause
+    │
+ 36 │               {:ok, changeset} -> Repo.rollback(changeset)
+    │                                ~
+    │
+    └─ /tmp/eval_360599_2629/lib/my_app/catalog.ex:36:32
+
+    warning: the following clause is redundant:
+
+        {:ok, changeset} ->
+
+    previous clauses have already matched on the following types:
+
+        {:ok, term()}
+
+    where "changeset" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_360599_2629/lib/my_app/catalog.ex
+        {:ok, changeset}
+
+    type warning found at:
+    │
+ 36 │               {:ok, changeset} -> Repo.rollback(changeset)
+    │                                ~
+    │
+    └─ /tmp/eval_360599_2629/lib/my_app/catalog.ex:36:32: MyApp.Catalog.partial_create/1
+
+    warning: this clause cannot match because a previous clause at line 41 matches the same pattern as this clause
+    │
+ 42 │           {:error, changeset} -> {index, :error, changeset}
+    │                               ~
+    │
+    └─ /tmp/eval_361192_2635/lib/my_app/catalog.ex:42:31
+
+    warning: the following clause is redundant:
+
+        {:error, changeset} ->
+
+    previous clauses have already matched on the following types:
+
+        {:error, term()}
+
+    where "changeset" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_361192_2635/lib/my_app/catalog.ex
+        {:error, changeset}
+
+    type warning found at:
+    │
+ 42 │           {:error, changeset} -> {index, :error, changeset}
+    │                               ~
+    │
+    └─ /tmp/eval_361192_2635/lib/my_app/catalog.ex:42:31: MyApp.Catalog.partial_create/1
+
+    warning: the following pattern will never match:
+
+        {:error, %SoftCrud.Documents.Document{} = document} <-
+          SoftCrud.Documents.get_document(id, include_deleted: true)
+
+    because the right-hand side has type:
+
+        dynamic({:error, :not_found} or {:ok, not nil})
+
+    where "id" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_361273_2628/lib/soft_crud_web/controllers/document_controller.ex:41:21
+        %{"id" => id}
+
+    type warning found at:
+    │
+ 42 │     with {:error, %Document{} = document} <- Documents.get_document(id, include_deleted: true) do
+    │     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_361273_2628/lib/soft_crud_web/controllers/document_controller.ex:42: SoftCrudWeb.DocumentController.restore/2
+
+    warning: this clause cannot match because a previous clause at line 41 matches the same pattern as this clause
+    │
+ 42 │           {:ok, changeset} -> {index, :error, changeset}
+    │                            ~
+    │
+    └─ /tmp/eval_362081_2626/lib/my_app/catalog.ex:42:28
+
+    warning: the following clause is redundant:
+
+        {:ok, changeset} ->
+
+    previous clauses have already matched on the following types:
+
+        {:ok, term()}
+
+    where "changeset" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_362081_2626/lib/my_app/catalog.ex
+        {:ok, changeset}
+
+    type warning found at:
+    │
+ 42 │           {:ok, changeset} -> {index, :error, changeset}
+    │                            ~
+    │
+    └─ /tmp/eval_362081_2626/lib/my_app/catalog.ex:42:28: MyApp.Catalog.partial_create/1
+
+    warning: this clause cannot match because a previous clause at line 54 matches the same pattern as this clause
+    │
+ 55 │         {:error, changeset} -> {index, :error, changeset}
+    │                             ~
+    │
+    └─ /tmp/eval_363808_2634/lib/my_app/catalog.ex:55:29
+
+    warning: the following clause is redundant:
+
+        {:error, changeset} ->
+
+    previous clauses have already matched on the following types:
+
+        {:error, term()}
+
+    where "changeset" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_363808_2634/lib/my_app/catalog.ex
+        {:error, changeset}
+
+    type warning found at:
+    │
+ 55 │         {:error, changeset} -> {index, :error, changeset}
+    │                             ~
+    │
+    └─ /tmp/eval_363808_2634/lib/my_app/catalog.ex:55:29: MyApp.Catalog.insert_each/1
+
+.    warning: this clause cannot match because a previous clause at line 54 matches the same pattern as this clause
+    │
+ 55 │         {:ok, changeset} -> {index, :error, changeset}
+    │                          ~
+    │
+    └─ /tmp/eval_364673_2634/lib/my_app/catalog.ex:55:26
+
+    warning: the following clause is redundant:
+
+        {:ok, changeset} ->
+
+    previous clauses have already matched on the following types:
+
+        {:ok, term()}
+
+    where "changeset" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_364673_2634/lib/my_app/catalog.ex
+        {:ok, changeset}
+
+    type warning found at:
+    │
+ 55 │         {:ok, changeset} -> {index, :error, changeset}
+    │                          ~
+    │
+    └─ /tmp/eval_364673_2634/lib/my_app/catalog.ex:55:26: MyApp.Catalog.insert_each/1
+
+    warning: this clause cannot match because a previous clause at line 21 matches the same pattern as this clause
+    │
+ 26 │       {:error, results} ->
+    │                         ~
+    │
+    └─ /tmp/eval_367567_2649/lib/my_app_web/controllers/bulk_item_controller.ex:26:25
+
+    warning: the following clause is redundant:
+
+        {:error, results} ->
+
+    previous clauses have already matched on the following types:
+
+        {:error, term()}
+
+    where "results" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_367567_2649/lib/my_app_web/controllers/bulk_item_controller.ex
+        {:error, results}
+
+    type warning found at:
+    │
+ 26 │       {:error, results} ->
+    │                         ~
+    │
+    └─ /tmp/eval_367567_2649/lib/my_app_web/controllers/bulk_item_controller.ex:26:25: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+.    error: undefined function item_json/2 (expected MyAppWeb.BulkItemController to define such a function or for it to be imported, but none are available)
+    │
+ 24 │         |> json(%{"status" => "all_created", "items" => Enum.map(results, &item_json/2)})
+    │                                                                            ^^^^^^^^^
+    │
+    └─ /tmp/eval_369967_2626/lib/my_app_web/controllers/bulk_item_controller.ex:24:76: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+
+== Compilation error in file /tmp/eval_369967_2626/lib/my_app_web/controllers/bulk_item_controller.ex ==
+** (CompileError) /tmp/eval_369967_2626/lib/my_app_web/controllers/bulk_item_controller.ex: cannot compile module MyAppWeb.BulkItemController (errors have been logged)
+
+    error: undefined function item_json/0 (expected MyAppWeb.BulkItemController to define such a function or for it to be imported, but none are available)
+    │
+ 24 │         |> json(%{"status" => "all_created", "items" => Enum.map(results, &item_json/0)})
+    │                                                                            ^^^^^^^^^
+    │
+    └─ /tmp/eval_370519_2626/lib/my_app_web/controllers/bulk_item_controller.ex:24:76: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+
+== Compilation error in file /tmp/eval_370519_2626/lib/my_app_web/controllers/bulk_item_controller.ex ==
+** (CompileError) /tmp/eval_370519_2626/lib/my_app_web/controllers/bulk_item_controller.ex: cannot compile module MyAppWeb.BulkItemController (errors have been logged)
+
+    warning: this clause cannot match because a previous clause at line 21 matches the same pattern as this clause
+    │
+ 26 │       {:ok, results} ->
+    │                      ~
+    │
+    └─ /tmp/eval_371257_2626/lib/my_app_web/controllers/bulk_item_controller.ex:26:22
+
+    warning: the following clause is redundant:
+
+        {:ok, results} ->
+
+    previous clauses have already matched on the following types:
+
+        {:ok, term()}
+
+    where "results" was given the type:
+
+        # type: dynamic()
+        # from: /tmp/eval_371257_2626/lib/my_app_web/controllers/bulk_item_controller.ex
+        {:ok, results}
+
+    type warning found at:
+    │
+ 26 │       {:ok, results} ->
+    │                      ~
+    │
+    └─ /tmp/eval_371257_2626/lib/my_app_web/controllers/bulk_item_controller.ex:26:22: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+warning: using map.field notation (without parentheses) to invoke function :quota_exceeded.id() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_388162.ex:225: FileUpload.Router.reserve_and_persist/7
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_388162.ex:149: FileUpload.Router.plug_builder_call/2
+  tasks/wt_020_003_per_tenant_quota_enforced_upload/test_harness.exs:62: FileUploadTest.upload_conn/5
+  tasks/wt_020_003_per_tenant_quota_enforced_upload/test_harness.exs:101: FileUploadTest."test quota is enforced per-account and independent"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :not_found.record() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_388738.ex:184: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_388738.ex:149: FileUpload.Router.plug_builder_call/2
+  tasks/wt_020_003_per_tenant_quota_enforced_upload/test_harness.exs:176: FileUploadTest."test delete of unknown id returns 404"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :forbidden.record() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_389058.ex:184: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_389058.ex:149: FileUpload.Router.plug_builder_call/2
+  tasks/wt_020_003_per_tenant_quota_enforced_upload/test_harness.exs:168: FileUploadTest."test delete by wrong account is forbidden"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..    warning: function result_json/1 is unused
+    │
+ 51 │   defp result_json({index, :ok, _item}) do
+    │        ~
+    │
+    └─ /tmp/eval_373510_2649/lib/my_app_web/controllers/bulk_item_controller.ex:51:8: MyAppWeb.BulkItemController (module)
+
+    error: undefined function result_json/2 (expected MyAppWeb.BulkItemController to define such a function or for it to be imported, but none are available)
+    │
+ 29 │         |> json(%{"status" => "all_failed", "errors" => Enum.map(results, &result_json/2)})
+    │                                                                            ^^^^^^^^^^^
+    │
+    └─ /tmp/eval_373510_2649/lib/my_app_web/controllers/bulk_item_controller.ex:29:76: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+
+== Compilation error in file /tmp/eval_373510_2649/lib/my_app_web/controllers/bulk_item_controller.ex ==
+** (CompileError) /tmp/eval_373510_2649/lib/my_app_web/controllers/bulk_item_controller.ex: cannot compile module MyAppWeb.BulkItemController (errors have been logged)
+
+    warning: function result_json/1 is unused
+    │
+ 51 │   defp result_json({index, :ok, _item}) do
+    │        ~
+    │
+    └─ /tmp/eval_374138_2629/lib/my_app_web/controllers/bulk_item_controller.ex:51:8: MyAppWeb.BulkItemController (module)
+
+    error: undefined function result_json/0 (expected MyAppWeb.BulkItemController to define such a function or for it to be imported, but none are available)
+    │
+ 29 │         |> json(%{"status" => "all_failed", "errors" => Enum.map(results, &result_json/0)})
+    │                                                                            ^^^^^^^^^^^
+    │
+    └─ /tmp/eval_374138_2629/lib/my_app_web/controllers/bulk_item_controller.ex:29:76: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+
+== Compilation error in file /tmp/eval_374138_2629/lib/my_app_web/controllers/bulk_item_controller.ex ==
+** (CompileError) /tmp/eval_374138_2629/lib/my_app_web/controllers/bulk_item_controller.ex: cannot compile module MyAppWeb.BulkItemController (errors have been logged)
+
+.warning: using map.field notation (without parentheses) to invoke function :not_found.id() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_392194.ex:212: FileUpload.Router.status_body/1
+  /tmp/smut_392194.ex:144: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_392194.ex:122: FileUpload.Router.plug_builder_call/2
+  tasks/wt_020_004_asynchronous_validation_pipeline_upload/test_harness.exs:172: FileUploadTest."test GET on unknown id returns 404"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...warning: using map.field notation (without parentheses) to invoke function :forbidden.record() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_398914.ex:184: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_398914.ex:149: FileUpload.Router.plug_builder_call/2
+  tasks/wt_020_003_per_tenant_quota_enforced_upload/test_harness.exs:168: FileUploadTest."test delete by wrong account is forbidden"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.....warning: using map.field notation (without parentheses) to invoke function :not_found.id() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_403330.ex:212: FileUpload.Router.status_body/1
+  /tmp/smut_403330.ex:144: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_403330.ex:122: FileUpload.Router.plug_builder_call/2
+  tasks/wt_020_004_asynchronous_validation_pipeline_upload/test_harness.exs:172: FileUploadTest."test GET on unknown id returns 404"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: using map.field notation (without parentheses) to invoke function :valid.parent_id() is deprecated, you must add parentheses instead: remote.function()
+  tasks/wt_019_002_dependency_ordered_bulk_create_with_cascade_skip/test_harness.exs:75: CatalogTest."test resolves an in-batch parent even when the child appears before the parent"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :valid.parent_id() is deprecated, you must add parentheses instead: remote.function()
+  tasks/wt_019_002_dependency_ordered_bulk_create_with_cascade_skip/test_harness.exs:92: CatalogTest."test resolves a multi-level dependency chain"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :valid.parent_id() is deprecated, you must add parentheses instead: remote.function()
+  tasks/wt_019_002_dependency_ordered_bulk_create_with_cascade_skip/test_harness.exs:160: CatalogTest."test partial mode still creates a valid dependent with the correct parent_id"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..........................................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_461890.ex:81: OrderedRecordDiff.lcs/2
+  /tmp/smut_461890.ex:24: OrderedRecordDiff.diff/3
+  tasks/wt_039_003_ordered_record_diff_with_move_detection/test_harness.exs:12: OrderedRecordDiffTest."test two empty lists produce an empty diff"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_41796.ex:81: anonymous fn/3 in OrderedRecordDiff.lcs/2
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  /tmp/smut_41796.ex:81: OrderedRecordDiff.lcs/2
+  /tmp/smut_41796.ex:24: OrderedRecordDiff.diff/3
+  tasks/wt_039_003_ordered_record_diff_with_move_detection/test_harness.exs:12: OrderedRecordDiffTest."test two empty lists produce an empty diff"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+............warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_137667.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_138307.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+....................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_470850.ex:74: ParallelMap.pmap/3
+  tasks/wt_061_001_parallel_map_with_concurrency_limit/test_harness.exs:20: ParallelMapTest."test maps over an empty collection"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_474754.ex:94: WeightedMap.pmap/4
+  tasks/wt_061_004_weight_budget_parallel_map/test_harness.exs:14: WeightedMapTest."test empty collection returns []"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_478466.ex:97: RetryMap.pmap/3
+  tasks/wt_061_003_timeout_and_retry_parallel_map/test_harness.exs:9: RetryMapTest."test empty collection returns []"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_479170.ex:97: RetryMap.pmap/3
+  tasks/wt_061_003_timeout_and_retry_parallel_map/test_harness.exs:56: RetryMapTest."test an element that always times out returns {:error, :timeout} after exhausting attempts"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_481794.ex:24: WorkStealQueue.run/4
+  tasks/wt_064_004_instrumented_work_stealing_queue_with_steal_metrics/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_482562.ex:24: WorkStealQueue.run/4
+  tasks/wt_064_004_instrumented_work_stealing_queue_with_steal_metrics/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...........warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_53380.ex:134: WorkStealQueue.build_metrics/2
+  /tmp/smut_53380.ex:34: WorkStealQueue.run/4
+  tasks/wt_064_004_instrumented_work_stealing_queue_with_steal_metrics/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_53892.ex:134: WorkStealQueue.build_metrics/2
+  /tmp/smut_53892.ex:34: WorkStealQueue.run/4
+  tasks/wt_064_004_instrumented_work_stealing_queue_with_steal_metrics/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_159043.ex:156: WorkStealQueue.partition/2
+  /tmp/smut_159043.ex:16: WorkStealQueue.run/4
+  tasks/wt_064_004_instrumented_work_stealing_queue_with_steal_metrics/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_159683.ex:156: WorkStealQueue.partition/2
+  /tmp/smut_159683.ex:16: WorkStealQueue.run/4
+  tasks/wt_064_004_instrumented_work_stealing_queue_with_steal_metrics/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_480194.ex:19: WorkStealQueue.run/3
+  tasks/wt_064_003_priority_aware_work_stealing_queue/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.......warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_169539.ex:46: RingBuffer.to_list/1
+  tasks/wt_078_001_ring_buffer/test_harness.exs:25: RingBufferTest."test new buffer returns empty list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_513858.ex:46: RingBuffer.to_list/1
+  tasks/wt_078_001_ring_buffer/test_harness.exs:175: RingBufferTest."test capacity-1 buffer always holds exactly one item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_513730.ex:70: CommandGenerators.account_command/1
+  /tmp/smut_513730.ex:61: CommandGenerators.account_build/3
+  (stream_data 1.3.0) lib/stream_data.ex:434: anonymous fn/2 in StreamData.bind/2
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:67: StreamData.LazyTree.filter_map/2
+  (stream_data 1.3.0) lib/stream_data.ex:384: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: StreamData.check_all/7
+  tasks/075_003_stateful_command_sequence_generators_01/test_harness.exs:93: CommandGeneratorsTest."property CommandGenerators.account_program always produces a valid account program (balance never negative)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_514370.ex:46: RingBuffer.to_list/1
+  tasks/wt_078_001_ring_buffer/test_harness.exs:175: RingBufferTest."test capacity-1 buffer always holds exactly one item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_515202.ex:70: CommandGenerators.account_command/1
+  /tmp/smut_515202.ex:61: CommandGenerators.account_build/3
+  (stream_data 1.3.0) lib/stream_data.ex:434: anonymous fn/2 in StreamData.bind/2
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:67: StreamData.LazyTree.filter_map/2
+  (stream_data 1.3.0) lib/stream_data.ex:384: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+
+....warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_517570.ex:54: RejectingRingBuffer.to_list/1
+  tasks/wt_078_002_reject_when_full_bounded_fifo_queue/test_harness.exs:76: RejectingRingBufferTest."test pop removes items oldest-first"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_518722.ex:54: RejectingRingBuffer.to_list/1
+  tasks/wt_078_002_reject_when_full_bounded_fifo_queue/test_harness.exs:19: RejectingRingBufferTest."test new buffer returns :error for peeks and :empty for pop"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_519362.ex:54: RejectingRingBuffer.to_list/1
+  tasks/wt_078_002_reject_when_full_bounded_fifo_queue/test_harness.exs:76: RejectingRingBufferTest."test pop removes items oldest-first"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_519938.ex:54: RejectingRingBuffer.to_list/1
+  tasks/wt_078_002_reject_when_full_bounded_fifo_queue/test_harness.exs:76: RejectingRingBufferTest."test pop removes items oldest-first"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_520706.ex:98: ConcurrentRingBuffer.do_to_list/1
+  /tmp/smut_520706.ex:58: ConcurrentRingBuffer.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_521282.ex:98: ConcurrentRingBuffer.do_to_list/1
+  /tmp/smut_521282.ex:58: ConcurrentRingBuffer.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_521922.ex:98: ConcurrentRingBuffer.do_to_list/1
+  /tmp/smut_521922.ex:58: ConcurrentRingBuffer.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_527234.ex:74: RingDeque.to_list/1
+  tasks/wt_078_003_double_ended_ring_buffer_deque/test_harness.exs:11: RingDequeTest."test new deque is empty"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_527746.ex:74: RingDeque.to_list/1
+  tasks/wt_078_003_double_ended_ring_buffer_deque/test_harness.exs:151: RingDequeTest."test capacity-1 deque holds exactly one item from either end"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...............warning: using map.field notation (without parentheses) to invoke function :invalid_tiers.code() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_545346.ex:37: TieredPromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+...warning: using map.field notation (without parentheses) to invoke function :invalid_type.code() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_547650.ex:39: PromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.....warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_556354.ex:52: Money.split/2
+  tasks/wt_095_001_multi_currency_money_module/test_harness.exs:134: MoneyTest."test split/2 by 1 returns the original amount in a single-element list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_556930.ex:52: Money.split/2
+  tasks/wt_095_001_multi_currency_money_module/test_harness.exs:134: MoneyTest."test split/2 by 1 returns the original amount in a single-element list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :expired.type() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_557250.ex:106: anonymous fn/1 in StackablePromoCodes.process/5
+  (elixir 1.20.2) lib/enum.ex:4542: Enum.filter_list/2
+  /tmp/smut_557250.ex:106: StackablePromoCodes.process/5
+  /tmp/smut_557250.ex:47: StackablePromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+..warning: using map.field notation (without parentheses) to invoke function :max_uses_exceeded.type() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_561346.ex:106: anonymous fn/1 in StackablePromoCodes.process/5
+  (elixir 1.20.2) lib/enum.ex:4542: Enum.filter_list/2
+  /tmp/smut_561346.ex:106: StackablePromoCodes.process/5
+  /tmp/smut_561346.ex:47: StackablePromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.warning: using map.field notation (without parentheses) to invoke function :max_uses_per_user_exceeded.type() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_563522.ex:106: anonymous fn/1 in StackablePromoCodes.process/5
+  (elixir 1.20.2) lib/enum.ex:4542: Enum.filter_list/2
+  /tmp/smut_563522.ex:106: StackablePromoCodes.process/5
+  /tmp/smut_563522.ex:47: StackablePromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_529346.ex:19: WorkStealQueue.run/3
+  tasks/wt_064_003_priority_aware_work_stealing_queue/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.........warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_573058.ex:74: Money.split/2
+  tasks/wt_095_003_currency_precision_money_module/test_harness.exs:108: anonymous fn/3 in MoneyTest."test split/2 always sums back to the original amount"/1
+  (elixir 1.20.2) lib/enum.ex:4659: Enum.reduce/3
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  tasks/wt_095_003_currency_precision_money_module/test_harness.exs:107: MoneyTest."test split/2 always sums back to the original amount"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_574082.ex:74: Money.split/2
+  tasks/wt_095_003_currency_precision_money_module/test_harness.exs:108: anonymous fn/3 in MoneyTest."test split/2 always sums back to the original amount"/1
+  (elixir 1.20.2) lib/enum.ex:4659: Enum.reduce/3
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  tasks/wt_095_003_currency_precision_money_module/test_harness.exs:107: MoneyTest."test split/2 always sums back to the original amount"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..    warning: cannot import Ecto.Query.from/3 because it is undefined or private
+    │
+  4 │   import Ecto.Query, only: [from: 3]
+    │   ~
+    │
+    └─ /tmp/eval_721445_2632/lib/state_machine.ex:4:3: StateMachine (module)
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 98 │   def handle_call({:history, entity_id}, _from, state) do
+    │                              ~~~~~~~~~
+    │
+    └─ /tmp/eval_721445_2632/lib/state_machine.ex:98:30: StateMachine.handle_call/3
+
+     warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 128 │   defp load_latest_state(repo, entity_id) do
+     │                                ~~~~~~~~~
+     │
+     └─ /tmp/eval_721445_2632/lib/state_machine.ex:128:32: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 132 │         order_by: [desc: t.inserted_at],
+     │                          ^
+     │
+     └─ /tmp/eval_721445_2632/lib/state_machine.ex:132:26: StateMachine.load_latest_state/2
+
+     error: misplaced operator ^entity_id
+
+     The pin operator ^ is supported only inside matches or inside custom macros. Make sure you are inside a match or all necessary macros have been required
+     │
+ 131 │         where: t.entity_id == ^entity_id,
+     │                               ^
+     │
+     └─ /tmp/eval_721445_2632/lib/state_machine.ex:131:31: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 131 │         where: t.entity_id == ^entity_id,
+     │                ^
+     │
+     └─ /tmp/eval_721445_2632/lib/state_machine.ex:131:16: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 130 │       from(t in EntityTransition,
+     │            ^
+     │
+     └─ /tmp/eval_721445_2632/lib/state_machine.ex:130:12: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 102 │         order_by: [asc: t.inserted_at]
+     │                         ^
+     │
+     └─ /tmp/eval_721445_2632/lib/state_machine.ex:102:25: StateMachine.handle_call/3
+
+     error: misplaced operator ^entity_id
+
+     The pin operator ^ is supported only inside matches or inside custom macros. Make sure you are inside a match or all necessary macros have been required
+     │
+ 101 │         where: t.entity_id == ^entity_id,
+     │                               ^
+     │
+     └─ /tmp/eval_721445_2632/lib/state_machine.ex:101:31: StateMachine.handle_call/3
+
+     error: undefined variable "t"
+     │
+ 101 │         where: t.entity_id == ^entity_id,
+     │                ^
+     │
+     └─ /tmp/eval_721445_2632/lib/state_machine.ex:101:16: StateMachine.handle_call/3
+
+     error: undefined variable "t"
+     │
+ 100 │       from(t in EntityTransition,
+     │            ^
+     │
+     └─ /tmp/eval_721445_2632/lib/state_machine.ex:100:12: StateMachine.handle_call/3
+
+
+== Compilation error in file /tmp/eval_721445_2632/lib/state_machine.ex ==
+** (CompileError) /tmp/eval_721445_2632/lib/state_machine.ex: cannot compile module StateMachine (errors have been logged)
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 98 │   def handle_call({:history, entity_id}, _from, state) do
+    │                              ~~~~~~~~~
+    │
+    └─ /tmp/eval_722375_2627/lib/state_machine.ex:98:30: StateMachine.handle_call/3
+
+     warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+     │
+ 128 │   defp load_latest_state(repo, entity_id) do
+     │                                ~~~~~~~~~
+     │
+     └─ /tmp/eval_722375_2627/lib/state_machine.ex:128:32: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 132 │         order_by: [desc: t.inserted_at],
+     │                          ^
+     │
+     └─ /tmp/eval_722375_2627/lib/state_machine.ex:132:26: StateMachine.load_latest_state/2
+
+     error: misplaced operator ^entity_id
+
+     The pin operator ^ is supported only inside matches or inside custom macros. Make sure you are inside a match or all necessary macros have been required
+     │
+ 131 │         where: t.entity_id == ^entity_id,
+     │                               ^
+     │
+     └─ /tmp/eval_722375_2627/lib/state_machine.ex:131:31: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 131 │         where: t.entity_id == ^entity_id,
+     │                ^
+     │
+     └─ /tmp/eval_722375_2627/lib/state_machine.ex:131:16: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 130 │       from(t in EntityTransition,
+     │            ^
+     │
+     └─ /tmp/eval_722375_2627/lib/state_machine.ex:130:12: StateMachine.load_latest_state/2
+
+     error: undefined variable "t"
+     │
+ 102 │         order_by: [asc: t.inserted_at]
+     │                         ^
+     │
+     └─ /tmp/eval_722375_2627/lib/state_machine.ex:102:25: StateMachine.handle_call/3
+
+     error: misplaced operator ^entity_id
+
+     The pin operator ^ is supported only inside matches or inside custom macros. Make sure you are inside a match or all necessary macros have been required
+     │
+ 101 │         where: t.entity_id == ^entity_id,
+     │                               ^
+     │
+     └─ /tmp/eval_722375_2627/lib/state_machine.ex:101:31: StateMachine.handle_call/3
+
+     error: undefined variable "t"
+     │
+ 101 │         where: t.entity_id == ^entity_id,
+     │                ^
+     │
+     └─ /tmp/eval_722375_2627/lib/state_machine.ex:101:16: StateMachine.handle_call/3
+
+     error: undefined variable "t"
+     │
+ 100 │       from(t in EntityTransition,
+     │            ^
+     │
+     └─ /tmp/eval_722375_2627/lib/state_machine.ex:100:12: StateMachine.handle_call/3
+
+
+== Compilation error in file /tmp/eval_722375_2627/lib/state_machine.ex ==
+** (CompileError) /tmp/eval_722375_2627/lib/state_machine.ex: cannot compile module StateMachine (errors have been logged)
+
+.    warning: the following clause will never match:
+
+        {:error, current} ->
+
+    because it attempts to match on the result of:
+
+        Map.fetch(state.entities, entity_id)
+
+    which has type:
+
+        dynamic(:error or {:ok, term()})
+
+    type warning found at:
+    │
+ 76 │         {:error, current} -> {:ok, current}
+    │         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_725909_2632/lib/state_machine.ex:76: StateMachine.handle_call/3
+
+........     warning: the following clause will never match:
+
+         {:error, state} ->
+
+     because it attempts to match on the result of:
+
+         Map.fetch(entities, entity_id)
+
+     which has type:
+
+         dynamic(:error or {:ok, term()})
+
+     type warning found at:
+     │
+ 145 │       {:error, state} -> {:found, state}
+     │       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ /tmp/eval_740366_2626/lib/state_machine.ex:145: StateMachine.entity_lookup/2
+
+     warning: the following clause will never match:
+
+         {:error, next} ->
+
+     because it attempts to match on the result of:
+
+         Map.fetch(
+           %{
+             {:confirmed, :cancel} => :cancelled,
+             {:confirmed, :ship} => :shipped,
+             {:pending, :cancel} => :cancelled,
+             {:pending, :confirm} => :confirmed,
+             {:shipped, :deliver} => :delivered
+           },
+           {current_state, event}
+         )
+
+     which has type:
+
+         dynamic(:error or {:ok, :cancelled or :confirmed or :delivered or :shipped})
+
+     type warning found at:
+     │
+ 153 │       {:error, next} -> {:valid, next}
+     │       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     │
+     └─ /tmp/eval_741662_2627/lib/state_machine.ex:153: StateMachine.resolve_transition/2
+
+.     warning: this clause cannot match because a previous clause at line 172 matches the same pattern as this clause
+     │
+ 173 │         {:error, changeset} -> {:db_error, changeset}
+     │                             ~
+     │
+     └─ /tmp/eval_742760_395/lib/state_machine.ex:173:29
+
+     warning: the following clause is redundant:
+
+         {:error, changeset} ->
+
+     previous clauses have already matched on the following types:
+
+         {:error, term()}
+
+     where "changeset" was given the type:
+
+         # type: dynamic()
+         # from: /tmp/eval_742760_395/lib/state_machine.ex
+         {:error, changeset}
+
+     type warning found at:
+     │
+ 173 │         {:error, changeset} -> {:db_error, changeset}
+     │                             ~
+     │
+     └─ /tmp/eval_742760_395/lib/state_machine.ex:173:29: StateMachine.persist/5
+
+..     warning: this clause cannot match because a previous clause at line 172 matches the same pattern as this clause
+     │
+ 173 │         {:ok, changeset} -> {:db_error, changeset}
+     │                          ~
+     │
+     └─ /tmp/eval_744477_2639/lib/state_machine.ex:173:26
+
+     warning: the following clause is redundant:
+
+         {:ok, changeset} ->
+
+     previous clauses have already matched on the following types:
+
+         {:ok, term()}
+
+     where "changeset" was given the type:
+
+         # type: dynamic()
+         # from: /tmp/eval_744477_2639/lib/state_machine.ex
+         {:ok, changeset}
+
+     type warning found at:
+     │
+ 173 │         {:ok, changeset} -> {:db_error, changeset}
+     │                          ~
+     │
+     └─ /tmp/eval_744477_2639/lib/state_machine.ex:173:26: StateMachine.persist/5
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_606594.ex:113: WorkStealQueue.partition/2
+  /tmp/smut_606594.ex:10: WorkStealQueue.run/3
+  tasks/wt_064_001_work_stealing_task_queue/test_harness.exs:109: WorkStealQueueTest."test single worker processes all items without stealing"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_607170.ex:113: WorkStealQueue.partition/2
+  /tmp/smut_607170.ex:10: WorkStealQueue.run/3
+  tasks/wt_064_001_work_stealing_task_queue/test_harness.exs:109: WorkStealQueueTest."test single worker processes all items without stealing"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_610882.ex:134: WorkStealQueue.partition/2
+  /tmp/smut_610882.ex:11: WorkStealQueue.run/3
+  tasks/wt_064_003_priority_aware_work_stealing_queue/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_611330.ex:134: WorkStealQueue.partition/2
+  /tmp/smut_611330.ex:11: WorkStealQueue.run/3
+  tasks/wt_064_003_priority_aware_work_stealing_queue/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_612866.ex:126: WorkStealQueue.partition/2
+  /tmp/smut_612866.ex:11: WorkStealQueue.run/3
+  tasks/wt_064_002_fault_tolerant_result_tagged_work_stealing_queue/test_harness.exs:86: WorkStealQueueTest."test a worker keeps processing its queue after a failing item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_613442.ex:126: WorkStealQueue.partition/2
+  /tmp/smut_613442.ex:11: WorkStealQueue.run/3
+  tasks/wt_064_002_fault_tolerant_result_tagged_work_stealing_queue/test_harness.exs:86: WorkStealQueueTest."test a worker keeps processing its queue after a failing item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..........................................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_665858.ex:70: CommandGenerators.account_command/1
+  /tmp/smut_665858.ex:61: CommandGenerators.account_build/3
+  (stream_data 1.3.0) lib/stream_data.ex:434: anonymous fn/2 in StreamData.bind/2
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:67: StreamData.LazyTree.filter_map/2
+  (stream_data 1.3.0) lib/stream_data.ex:384: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: StreamData.check_all/7
+  tasks/wt_075_003_stateful_command_sequence_generators/test_harness.exs:93: CommandGeneratorsTest."property CommandGenerators.account_program always produces a valid account program (balance never negative)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_665986.ex:70: CommandGenerators.account_command/1
+  /tmp/smut_665986.ex:61: CommandGenerators.account_build/3
+  (stream_data 1.3.0) lib/stream_data.ex:434: anonymous fn/2 in StreamData.bind/2
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:67: StreamData.LazyTree.filter_map/2
+  (stream_data 1.3.0) lib/stream_data.ex:384: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+
+.
+
+=== SEMANTIC-MUTANT REPORT (kill-rate = behavior changes noticed) ===
+  tasks: 597   mutants: 12960   killed: 9258 (71.4%)   mean per-task rate: 0.731   non-compiling dropped: 1224
+
+  kill-rate histogram:
+    0.0–0.1: ██ 2
+    0.1–0.2: ██ 2
+    0.2–0.3: ████████████ 12
+    0.3–0.4: ██████ 6
+    0.4–0.5: █████████████████████████████████████ 37
+    0.5–0.6: ███████████████████████████████████████████████████████████████████████████████████████████████ 95
+    0.6–0.7: █████████████████████████████████████████████████████████████████████████████████████████████ 93
+    0.7–0.8: ███████████████████████████████████████████████████████████████████████████████████████████████ 95
+    0.8–0.9: ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████ 114
+    0.9–1.0: █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████ 141
+
+  20 weakest tasks (most unnoticed behavior changes):
+    - 075_004_schema_driven_generator_interpreter_01: 0/7 (survivors: L53 s79: <= -> <; L58 s107: >= -> >; s109: 0 -> 1; L58 s110: <= -> <; …)
+    - wt_075_004_schema_driven_generator_interpreter: 0/7 (survivors: L53 s79: <= -> <; L58 s107: >= -> >; s109: 0 -> 1; L58 s110: <= -> <; …)
+    - 073_001_database_cleaner_for_integration_tests_01: 2/12 (survivors: s74: {:ok, _} -> {:error, _}; s83: {:error, _} -> {:ok, _}; s126: {:ok, _} -> {:error, _}; s136: {:error, _} -> {:ok, _}; …)
+    - wt_073_001_database_cleaner_for_integration_tests: 2/12 (survivors: s74: {:ok, _} -> {:error, _}; s83: {:error, _} -> {:ok, _}; s126: {:ok, _} -> {:error, _}; s136: {:error, _} -> {:ok, _}; …)
+    - 074_003_concurrency_and_message_assertion_helpers_01: 3/15 (survivors: s63: 1000 -> 1001; s63: 1000 -> 999; s95: 1000 -> 1001; s95: 1000 -> 999; …)
+    - wt_074_003_concurrency_and_message_assertion_helpers: 3/15 (survivors: s63: 1000 -> 1001; s63: 1000 -> 999; s95: 1000 -> 1001; s95: 1000 -> 999; …)
+    - 107_003_weighted_event_aggregator_with_byte_budget_01: 2/9 (survivors: s18: 1000 -> 1001; s18: 1000 -> 999; s34: 1 -> 2; s34: 1 -> 0; …)
+    - wt_107_003_weighted_event_aggregator_with_byte_budget: 2/9 (survivors: s18: 1000 -> 1001; s18: 1000 -> 999; s34: 1 -> 2; s34: 1 -> 0; …)
+    - 623_001_mini_elasticsearch_like_inverted_index_01: 9/32 (survivors: s252: 10 -> 11; s252: 10 -> 9; s364: false -> true; s681: 0 -> 1; …)
+    - wt_623_001_mini_elasticsearch_like_inverted_index: 9/32 (survivors: s252: 10 -> 11; s252: 10 -> 9; s364: false -> true; s681: 0 -> 1; …)
+    - 075_002_recursive_json_value_generators_with_bounded_depth_01: 6/21 (survivors: s67: 8 -> 7; L54 s102: >= -> >; s104: 0 -> 1; L67 s159: >= -> >; …)
+    - wt_075_002_recursive_json_value_generators_with_bounded_depth: 6/21 (survivors: s67: 8 -> 7; L54 s102: >= -> >; s104: 0 -> 1; L67 s159: >= -> >; …)
+    - 105_003_max_wait_debouncer_with_flush_and_cancel_01: 2/7 (survivors: L29 s82: >= -> >; s84: 0 -> 1; L30 s87: >= -> >; s225: 0 -> 1; …)
+    - wt_105_003_max_wait_debouncer_with_flush_and_cancel: 2/7 (survivors: L29 s82: >= -> >; s84: 0 -> 1; L30 s87: >= -> >; s225: 0 -> 1; …)
+    - 077_001_interval_tree_for_overlapping_range_queries_01: 7/24 (survivors: s162: 0 -> 1; s197: 1 -> 2; s197: 1 -> 0; s330: 0 -> 1; …)
+    - wt_077_001_interval_tree_for_overlapping_range_queries: 7/24 (survivors: s162: 0 -> 1; s197: 1 -> 2; s197: 1 -> 0; s330: 0 -> 1; …)
+    - 075_003_stateful_command_sequence_generators_01: 10/31 (survivors: s38: 20 -> 21; s38: 20 -> 19; L40 s42: >= -> >; s44: 0 -> 1; …)
+    - wt_075_003_stateful_command_sequence_generators: 10/31 (survivors: s38: 20 -> 21; s38: 20 -> 19; L40 s42: >= -> >; s44: 0 -> 1; …)
+    - 005_003_replayeventbus_01: 5/15 (survivors: s329: 100 -> 101; s329: 100 -> 99; s1040: return :ok -> :error; L242 s1080: > -> >=; …)
+    - wt_005_003_replayeventbus: 5/15 (survivors: s329: 100 -> 101; s329: 100 -> 99; s1040: return :ok -> :error; L242 s1080: > -> >=; …)
+
+SEMANTIC-MUTANT REPORT COMPLETE (report-only — no gate)

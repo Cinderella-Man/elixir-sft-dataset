@@ -1,0 +1,1225 @@
+02:14:22.799 [info] VARIATION 022_004_capacity_bounded_concurrent_team_join_endpoint_01: Capacity-Bounded Concurrent Team Join Endpoint
+02:14:22.800 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01 solution.ex
+02:14:23.622 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":false,"line_count":249,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.63,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.92,"reasons":["analysis: @doc on public functions → 0/1 pts","analysis: @spec annotations present → 0/2 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:14:23.597076Z"}
+02:14:23.623 [info] cycle 022_004_capacity_bounded_concurrent_team_join_endpoint_01: repairing — The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+02:14:23.623 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:14:23.623 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement a nested team-membership endpoint with **capacity-bounded self-service enrollment** under concurrent access, using only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Each team has a fixed **capacity**. Users enroll themselves ("join") and withdraw ("leave") through the API; because many join requests can arrive simultaneously, capacity must be enforced atomically so a team can never exceed its limit. Serialize all mutations through the GenServer so the check-and-insert is a single atomic step.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer holding users, teams (with capacity), and memberships. Public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option.
+- `TeamStore.create_user(server, id, token)` — stores a user with a bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id, capacity)` — creates a team with a maximum size. Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — seeds a membership directly (no capacity check). Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true`/`false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true`/`false`.
+- `TeamStore.capacity(server, team_id)` — returns `{:ok, capacity}` or `:error`.
+- `TeamStore.size(server, team_id)` — returns `{:ok, count}` or `:error`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, members}` or `{:error, :not_found}`.
+- `TeamStore.join_safe(server, team_id, user_id)` — atomically enrolls a user: `{:error, :not_found}` if the team is missing, `{:error, :already_member}` if already enrolled, `{:error, :full}` if the team is at capacity, otherwise `{:ok, user_id, new_size}`.
+- `TeamStore.leave_safe(server, team_id, user_id)` — `{:error, :not_found}` if the team is missing, `{:error, :not_member}` if not enrolled, otherwise `{:ok, user_id, new_size}`.
+
+**`AuthPlug`** — reads `authorization: Bearer <token>`, resolves the user via `TeamStore.get_user_by_token/2`, assigns `:current_user`, and halts with 401 JSON `{"error":"unauthorized"}` otherwise. Accepts a `:store` option.
+
+**`TeamRouter`** — a `Plug.Router` accepting a `:store` option and plugging `AuthPlug` before matching. Endpoints:
+
+- `GET /api/teams/:team_id/members` — 404 `{"error":"not_found"}` if missing; 403 `{"error":"forbidden"}` if the caller isn't a member; otherwise 200 `{"members": [...], "size": n, "capacity": c}`.
+
+- `POST /api/teams/:team_id/join` — the authenticated caller enrolls **themselves** (no prior membership required). 404 if the team is missing. 409 `{"error":"already_member"}` if already enrolled. 409 `{"error":"team_full"}` if at capacity. On success 201 `{"joined": user_id, "size": n}`.
+
+- `DELETE /api/teams/:team_id/join` — the authenticated caller withdraws themselves. 404 if the team is missing. 409 `{"error":"not_member"}` if not enrolled. On success 200 `{"left": user_id, "size": n}`.
+
+Capacity must hold even when many joins race concurrently. All responses must be `application/json`. Give me all modules in a single file, using only `plug`, `jason`, and the OTP standard library.
+
+----- solution.ex -----
+defmodule TeamStore do
+  @moduledoc """
+  In-memory `GenServer` holding users, capacity-bounded teams and memberships.
+  All mutations are serialized through the process so capacity checks are atomic.
+  """
+
+  use GenServer
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
+
+  def create_team(server, team_id, capacity),
+    do: GenServer.call(server, {:create_team, team_id, capacity})
+
+  def add_member(server, team_id, user_id),
+    do: GenServer.call(server, {:add_member, team_id, user_id})
+
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})
+
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})
+
+  def is_member?(server, team_id, user_id),
+    do: GenServer.call(server, {:is_member?, team_id, user_id})
+
+  def capacity(server, team_id), do: GenServer.call(server, {:capacity, team_id})
+
+  def size(server, team_id), do: GenServer.call(server, {:size, team_id})
+
+  def list_members(server, team_id), do: GenServer.call(server, {:list_members, team_id})
+
+  def join_safe(server, team_id, user_id),
+    do: GenServer.call(server, {:join_safe, team_id, user_id})
+
+  def leave_safe(server, team_id, user_id),
+    do: GenServer.call(server, {:leave_safe, team_id, user_id})
+
+  @impl true
+  def init(_opts), do: {:ok, %{tokens: %{}, teams: %{}}}
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    {:reply, :ok, put_in(state.tokens[token], id)}
+  end
+
+  def handle_call({:create_team, team_id, capacity}, _from, state) do
+    teams = Map.put_new(state.teams, team_id, %{members: [], capacity: capacity})
+    {:reply, :ok, %{state | teams: teams}}
+  end
+
+  def handle_call({:add_member, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{members: members} = team} ->
+        members = if user_id in members, do: members, else: members ++ [user_id]
+        teams = Map.put(state.teams, team_id, %{team | members: members})
+        {:reply, :ok, %{state | teams: teams}}
+
+      :error ->
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:get_user_by_token, token}, _from, state) do
+    case Map.fetch(state.tokens, token) do
+      {:ok, user_id} -> {:reply, {:ok, user_id}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:team_exists?, team_id}, _from, state) do
+    {:reply, Map.has_key?(state.teams, team_id), state}
+  end
+
+  def handle_call({:is_member?, team_id, user_id}, _from, state) do
+    members =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, %{members: m}} -> m
+        :error -> []
+      end
+
+    {:reply, user_id in members, state}
+  end
+
+  def handle_call({:capacity, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{capacity: c}} -> {:reply, {:ok, c}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:size, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{members: m}} -> {:reply, {:ok, length(m)}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:list_members, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{members: m}} -> {:reply, {:ok, m}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:join_safe, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, %{members: members, capacity: cap} = team} ->
+        cond do
+          user_ (truncated)
+02:15:50.700 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TeamStore do
+  @moduledoc """
+  In-memory `GenServer` holding users, capacity-bounded teams and memberships.
+
+  All mutations are serialized through the process so that the capacity
+  check-and-insert for `join_safe/3` is a single atomic step, even when many
+  join requests race concurrently.
+  """
+
+  use GenServer
+
+  @typedoc "A running server reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option that, when present, registers the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc "Stores a user identified by `id` with the given bearer `token`."
+  @spec create_user(server(), term(), String.t()) :: :ok
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
+
+  @doc "Creates a team `team_id` with a maximum size of `capacity`."
+  @spec create_team(server(), term(), non_neg_integer()) :: :ok
+  def create_team(server, team_id, capacity),
+    do: GenServer.call(server, {:create_team, team_id, capacity})
+
+  @doc "Seeds a membership directly, without any capacity check."
+  @spec add_member(server(), term(), term()) :: :ok
+  def add_member(server, team_id, user_id),
+    do: GenServer.call(server, {:add_member, team_id, user_id})
+
+  @doc "Resolves a bearer `token` to `{:ok, user_id}` or `:error`."
+  @spec get_user_by_token(server(), String.t()) :: {:ok, term()} | :error
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})
+
+  @doc "Returns whether the team `team_id` exists."
+  @spec team_exists?(server(), term()) :: boolean()
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})
+
+  @doc "Returns whether `user_id` is enrolled in team `team_id`."
+  @spec is_member?(server(), term(), term()) :: boolean()
+  def is_member?(server, team_id, user_id),
+    do: GenServer.call(server, {:is_member?, team_id, user_id})
+
+  @doc "Returns `{:ok, capacity}` for the team, or `:error` if it is missing."
+  @spec capacity(server(), term()) :: {:ok, non_neg_integer()} | :error
+  def capacity(server, team_id), do: GenServer.call(server, {:capacity, team_id})
+
+  @doc "Returns `{:ok, count}` of current members, or `:error` if missing."
+  @spec size(server(), term()) :: {:ok, non_neg_integer()} | :error
+  def size(server, team_id), do: GenServer.call(server, {:size, team_id})
+
+  @doc "Returns `{:ok, members}` or `{:error, :not_found}` for the team."
+  @spec list_members(server(), term()) :: {:ok, [term()]} | {:error, :not_found}
+  def list_members(server, team_id), do: GenServer.call(server, {:list_members, team_id})
+
+  @doc """
+  Atomically enrolls `user_id` into `team_id`.
+
+  Returns `{:error, :not_found}` when the team is missing,
+  `{:error, :already_member}` when already enrolled, `{:error, :full}` when at
+  capacity, and otherwise `{:ok, user_id, new_size}`.
+  """
+  @spec join_safe(server(), term(), term()) ::
+          {:ok, term(), non_neg_integer()}
+          | {:error, :not_found | :already_member | :full}
+  def join_safe(server, team_id, user_id),
+    do: GenServer.call(server, {:join_safe, team_id, user_id})
+
+  @doc """
+  Withdraws `user_id` from `team_id`.
+
+  Returns `{:error, :not_found}` when the team is missing,
+  `{:error, :not_member}` when not enrolled, and otherwise
+  `{:ok, user_id, new_size}`.
+  """
+  @spec leave_safe(server(), term(), term()) ::
+          {:ok, term(), non_neg_integer()}
+          | {:error, :not_found | :not_member}
+  def leave_safe(server, team_id, user_id),
+    do: GenServer.call(server, {:leave_safe, team_id, user_id})
+
+  @impl true
+  @doc false
+  @spec init(keyword()) :: {:ok, map()}
+  def init(_opts), do: {:ok, %{tokens: %{}, teams: %{}}}
+
+  @impl true
+  @doc false
+  @spec handle_call(term(), GenServer.from(), map()) :: {:reply, term(), map()}
+  def handle_call({:create_user, id, token}, _from, state) do
+    {:reply, :ok, put_in(state.tokens[token], id)}
+  end
+
+  def handle_call({:create_team, team_id, capacity}, _from, state) do
+    teams = Map.put_new(state.teams, team_id, %{members: [], capacity: capacity})
+    {:reply, :ok, %{state | teams: teams}}
+  end
+
+  def handle_call({:add_member, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{members: members} = team} ->
+        members = if user_id in members, do: members, else: members ++ [user_id]
+        teams = Map.put(state.teams, team_id, %{team | members: members})
+        {:reply, :ok, %{state | teams: teams}}
+
+      :error ->
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:get_user_by_token, token}, _from, state) do
+    case Map.fetch(state.tokens, token) do
+      {:ok, user_id} -> {:reply, {:ok, user_id}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:team_exists?, team_id}, _from, state) do
+    {:reply, Map.has_key?(state.teams, team_id), state}
+  end
+
+  def handle_call({:is_member?, team_id, user_id}, _from, state) do
+    members =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, %{members: m}} -> m
+        :error -> []
+      end
+
+    {:reply, user_id in members, state}
+  end
+
+  def handle_call({:capacity, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{capacity: c}} -> {:reply, {:ok, c}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:size, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{members: m}} -> {:reply, {:ok, length(m)}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:list_members, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, %{members: m}} -> {:reply, {:ok, m}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:join_safe, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, %{members: members, capacity: cap} = team} ->
+        cond do
+          user_id in members ->
+            {:reply, {:error, :already_member}, state}
+
+          length(members) >= cap ->
+            {:reply, {:error, :full}, state}
+
+          true ->
+            members = members ++ [user_id]
+            teams = Map.put(state.teams, team_id, %{team | members: members})
+            {:reply, {:ok, user_id, length(members)}, %{state | teams: teams}}
+        end
+    end
+  end
+
+  def handle_call({:leave_safe, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, %{members: members} = team} ->
+        if user_id in members do
+          members = List.delete(members, user_id)
+          teams = Map.put(state.teams, team_id, %{team | members: members})
+          {:reply, {:ok, user_id, length(members)}, %{state | teams: teams}}
+        else
+          {:reply, {:error, :not_member}, state}
+        end
+    end
+  end
+end
+
+defmodule AuthPlug do
+  @moduledoc """
+  A `Plug` that authenticates a bearer token via `TeamStore`.
+
+  On success it assigns `:current_user`; otherwise it halts the connection with
+  a 401 JSON response. Accepts a `:store` option identifying the `TeamStore`.
+  """
+
+  import Plug.Conn
+
+  @doc "Returns the plug options unchanged."
+  @spec init(Plug.opts()) :: Plug.opts()
+  def init(opts), do: opts
+
+  @doc """
+  Reads the `authorization: Bearer <token>` header, resolves the user and
+  assigns `:current_user`, or halts with 401 `{"error":"unauthorized"}`.
+  """
+  @spec call(Plug.Conn.t(), Plug.opts()) :: Plug.Conn.t()
+  def call(conn, opts) do
+    store = resolve_store(conn, opts)
+
+    case get_req_header(conn, "authorization") do
+      ["Bearer " <> token] ->
+        case TeamStore.get_user_by_token(store, token) do
+          {:ok, user_id} -> assign(conn, :curre (truncated)
+02:15:50.700 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8235, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8235, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8235, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8235, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 7649, "type" => "message"}], "output_tokens" => 7649, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:15:50.719 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01 solution.ex
+02:15:51.542 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":315,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:15:51.517508Z"}
+02:15:51.553 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:15:52.366 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 21/21 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"failed to start child with the spec {TeamStore, [name: :store_5826]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5890]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5954]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test GET returns 401 without auth"},{"message":"failed to start child with the spec {TeamStore, [name: :store_6018]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_6082]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"failed to start child with the spec {TeamStore, [name: :store_6146]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"failed to start child with the spec {TeamStore, [name: :store_6210]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"failed to start child with the spec {TeamStore, [name: :store_6274]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_6338]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_star (truncated)
+02:15:52.376 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:15:53.181 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 21/21 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports already_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave_safe reports not_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":21,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:15:53.158607Z"}
+02:15:53.189 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:15:53.985 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 21/21 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports already_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave_safe reports not_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":21,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:15:53.961653Z"}
+02:15:53.995 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:15:54.786 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 21/21 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports already_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave_safe reports not_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":21,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:15:54.763211Z"}
+02:15:54.794 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:15:55.627 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.43,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 15/21 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.29},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 401 with an invalid token"},{"message":"{:EXIT, #PID<0.240.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :get_user_by_token, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 33, error_info: %{module: Exception}]}, {AuthPlug, :call, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 213]}, {TeamRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 236]}, {TeamRouterCapacityTest, :\"-test capacity is enforced atomically under concurrent joins/1-fun-0-\", 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/test_harness.exs\", line: 128]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":15,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:15:55.604605Z"}
+02:15:55.637 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:15:56.445 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.78,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 5/21 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.76},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:15:56.423661Z"}
+02:15:56.454 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:15:57.277 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.74,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 6/21 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.71},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:15:57.256607Z"}
+02:15:57.285 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:15:58.107 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.81,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 4/21 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.81},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:15:58.084990Z"}
+02:15:58.114 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:15:58.915 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.85,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 3/21 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.86},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:15:58.892991Z"}
+02:15:58.922 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:15:59.710 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.84,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 3/21 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.86},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:15:59.689877Z"}
+02:15:59.720 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:16:00.556 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.3,"mode":"full","overall":0.57,"reasons":["compilation: 7 warning(s) → -0.7 pts","tests: 10/21 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.52},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"{:EXIT, #PID<0.240.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{current_user: \"u5\", router_opts: [store: #PID<0.242.0>]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"POST\", owner: nil, params: %{\"team_id\" => \"team-conc\"}, path_info: [\"api\", \"teams\", \"team-conc\", \"join\"], path_params: %{\"team_id\" => \"team-conc\"}, port: 80, private: %{team_store: #PID<0.242.0>, plug_route: {\"/api/teams/:team_id/join\", #Function<1.98404090/2 in TeamRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_headers: [{\"authorization\", \"Bearer token-u5\"}], request_path: \"/api/teams/team-conc/join\", resp_body: nil, resp_cookies: %{}, resp_headers: [{\"cache-control\", \"max-age=0, private, must-revalidate\"}], scheme: :http, script_name: [], secret_key_base: nil, state: :unset, status: nil}, kind: :error, reason: %RuntimeError{message: \"MUTATION\"}, stack: [{TeamStore, :join_safe, 3, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 70, error_info: %{module: Exception}]}, {TeamRouter, :\"-do_match/4-fun-3-\", 3, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 265]}, {TeamRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {TeamRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {TeamRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 236]}, {TeamRouterCapacityTest, :\"-test capacity is enforced atomically under concurrent joins/1-fun-0-\", 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/test_harness.exs\", line: 128]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}, [{TeamStore, :join_safe, 3, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 70, error_info: %{module: Exception}]}, {TeamRouter, :\"-do_match/4-fun-3-\", 3, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 265]}, {TeamRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {TeamRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {TeamRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 236]}, {TeamRouterCapacityTest, :\"-test capacity is enforced atomically under concurrent joins/1-fun-0-\", 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/test_harness.exs\", line: 128]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports already_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:16:00.532122Z"}
+02:16:00.566 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:16:01.380 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.75,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 5/21 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.76},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave_safe reports not_member"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T00:16:01.356834Z"}
+02:16:01.388 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:16:01.909 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"MUTATION","type":"RuntimeError"}],"compile_warnings":1,"compiled":false,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: failed to compile (0.0)","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-04T00:16:01.886338Z"}
+02:16:01.909 [debug] base mutation gate (per-fn): init/1 inconclusive
+02:16:01.910 [info] cycle 022_004_capacity_bounded_concurrent_team_join_endpoint_01: repairing — Mutation gate failed: the raise-mutant of `init/1` graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+02:16:01.910 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:16:01.910 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Mutation gate failed: the raise-mutant of `init/1` graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement a nested team-membership endpoint with **capacity-bounded self-service enrollment** under concurrent access, using only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Each team has a fixed **capacity**. Users enroll themselves ("join") and withdraw ("leave") through the API; because many join requests can arrive simultaneously, capacity must be enforced atomically so a team can never exceed its limit. Serialize all mutations through the GenServer so the check-and-insert is a single atomic step.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer holding users, teams (with capacity), and memberships. Public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option.
+- `TeamStore.create_user(server, id, token)` — stores a user with a bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id, capacity)` — creates a team with a maximum size. Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — seeds a membership directly (no capacity check). Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true`/`false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true`/`false`.
+- `TeamStore.capacity(server, team_id)` — returns `{:ok, capacity}` or `:error`.
+- `TeamStore.size(server, team_id)` — returns `{:ok, count}` or `:error`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, members}` or `{:error, :not_found}`.
+- `TeamStore.join_safe(server, team_id, user_id)` — atomically enrolls a user: `{:error, :not_found}` if the team is missing, `{:error, :already_member}` if already enrolled, `{:error, :full}` if the team is at capacity, otherwise `{:ok, user_id, new_size}`.
+- `TeamStore.leave_safe(server, team_id, user_id)` — `{:error, :not_found}` if the team is missing, `{:error, :not_member}` if not enrolled, otherwise `{:ok, user_id, new_size}`.
+
+**`AuthPlug`** — reads `authorization: Bearer <token>`, resolves the user via `TeamStore.get_user_by_token/2`, assigns `:current_user`, and halts with 401 JSON `{"error":"unauthorized"}` otherwise. Accepts a `:store` option.
+
+**`TeamRouter`** — a `Plug.Router` accepting a `:store` option and plugging `AuthPlug` before matching. Endpoints:
+
+- `GET /api/teams/:team_id/members` — 404 `{"error":"not_found"}` if missing; 403 `{"error":"forbidden"}` if the caller isn't a member; otherwise 200 `{"members": [...], "size": n, "capacity": c}`.
+
+- `POST /api/teams/:team_id/join` — the authenticated caller enrolls **themselves** (no prior membership required). 404 if the team is missing. 409 `{"error":"already_member"}` if already enrolled. 409 `{"error":"team_full"}` if at capacity. On success 201 `{"joined": user_id, "size": n}`.
+
+- `DELETE /api/teams/:team_id/join` — the authenticated caller withdraws themselves. 404 if the team is missing. 409 `{"error":"not_member"}` if not enrolled. On success 200 `{"left": user_id, "size": n}`.
+
+Capacity must hold even when many joins race concurrently. All responses must be `application/json`. Give me all modules in a single file, using only `plug`, `jason`, and the OTP standard library.
+
+----- solution.ex -----
+defmodule TeamStore do
+  @moduledoc """
+  In-memory `GenServer` holding users, capacity-bounded teams and memberships.
+
+  All mutations are serialized through the process so that the capacity
+  check-and-insert for `join_safe/3` is a single atomic step, even when many
+  join requests race concurrently.
+  """
+
+  use GenServer
+
+  @typedoc "A running server reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option that, when present, registers the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc "Stores a user identified by `id` with the given bearer `token`."
+  @spec create_user(server(), term(), String.t()) :: :ok
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
+
+  @doc "Creates a team `team_id` with a maximum size of `capacity`."
+  @spec create_team(server(), term(), non_neg_integer()) :: :ok
+  def create_team(server, team_id, capacity),
+    do: GenServer.call(server, {:create_team, team_id, capacity})
+
+  @doc "Seeds a membership directly, without any capacity check."
+  @spec add_member(server(), term(), term()) :: :ok
+  def add_member(server, team_id, user_id),
+    do: GenServer.call(server, {:add_member, team_id, user_id})
+
+  @doc "Resolves a bearer `token` to `{:ok, user_id}` or `:error`."
+  @spec get_user_by_token(server(), String.t()) :: {:ok, term()} | :error
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})
+
+  @doc "Returns whether the team `team_id` exists."
+  @spec team_exists?(server(), term()) :: boolean()
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})
+
+  @doc "Returns whether `user_id` is enrolled in team `team_id`."
+  @spec is_member?(server(), term(), term()) :: boolean()
+  def is_member?(server, team_id, user_id),
+    do: GenServer.call(server, {:is_member?, team_id, user_id})
+
+  @doc "Returns `{:ok, capacity}` for the team, or `:error` if it is missing."
+  @spec capacity(server(), term()) :: {:ok, non_neg_integer()} | :error
+  def capacity(server, team_id), do: GenServer.call(server, {:capacity, team_id})
+
+  @doc "Returns `{:ok, count}` of current members, or `:error` if missing."
+  @spec size(server(), term()) :: {:ok, non_neg_integer()} | :error
+  def size(server, team_id), do: GenServer.call(server, {:size, team_id})
+
+  @doc "Returns `{:ok, members}` or `{:error, :not_found}` for the team."
+  @spec list_members(server(), term()) :: {:ok, [term()]} | {:error, :not_found}
+  def list_members(server, team_id), do: GenServer.call(server, {:list_members, team_id})
+
+  @doc """
+  Atomically enrolls `user_id` into `team_id`.
+
+  Returns `{:error, :not_found}` when the team is missing,
+  `{:error, :already_member}` when already enrolled, `{:error, :full}` when at
+  capacity, and otherwise `{:ok, user_id, new_size}`.
+  """
+  @spec join_safe(server(), term(), term()) ::
+          {:ok, term(), non_neg_integer()}
+          | {:error, :not_found | :already_member | :full}
+  def join_safe(server, team_id, user_id),
+    do: GenServer.call(server, {:join_safe, team_id, user_id})
+
+  @doc """
+  Withdraws `user_id` from `team_id`.
+
+  Returns `{:error, :not_found}` when the team is missing,
+  `{:error, :not_member}` when not enrolled, and otherwise
+  `{:ok, user_id, new_size}`.
+  """
+  @spec leave_safe(server(), term(), term()) ::
+          {:ok, term(), non_neg_integer()}
+          | {:error, :not_found | :not_member}
+  def leave_safe(server, team_id, user_id),
+    do: GenServer.call(server, {:leave_safe, team_id, user_id})
+
+   (truncated)
+02:19:16.630 [debug] claude -p RESULT (stop="end_turn"):
+The mutation gate can't verify coverage of `init/1` because every test shares a `setup` that starts the store — when `init/1` is gutted to `raise`, that `setup` blows up via `start_supervised!` (a supervisor start error / noise), so all tests error *identically*. The grader can't distinguish "mutant detected" from "harness broke," hence "inconclusive."
+
+The fix: add an **independent test module with no shared setup** that starts its own `TeamStore` directly via `start_link` and asserts on the initial state. A raising `init/1` makes `GenServer.start_link` return `{:error, ...}` (proc_lib exits the child `:normal`, so the caller is *not* killed), so `assert {:ok, pid} = ...` fails cleanly and fast — a genuine, unambiguous kill that also exercises the empty-state behavior init is supposed to produce.
+
+<file path="test_harness.exs">
+defmodule TeamRouterCapacityTest do
+  use ExUnit.Case, async: false
+
+  import Plug.Conn
+  import Plug.Test
+
+  setup do
+    store = start_supervised!({TeamStore, name: :"store_#{System.unique_integer([:positive])}"})
+
+    :ok = TeamStore.create_user(store, "alice", "token-alice")
+    :ok = TeamStore.create_user(store, "bob", "token-bob")
+    :ok = TeamStore.create_user(store, "carol", "token-carol")
+    :ok = TeamStore.create_user(store, "dave", "token-dave")
+
+    for i <- 0..9, do: :ok = TeamStore.create_user(store, "u#{i}", "token-u#{i}")
+
+    :ok = TeamStore.create_team(store, "team-1", 5)
+    :ok = TeamStore.create_team(store, "team-2", 5)
+    :ok = TeamStore.create_team(store, "team-small", 2)
+    :ok = TeamStore.create_team(store, "team-conc", 3)
+
+    :ok = TeamStore.add_member(store, "team-1", "alice")
+    :ok = TeamStore.add_member(store, "team-1", "bob")
+    :ok = TeamStore.add_member(store, "team-2", "carol")
+    :ok = TeamStore.add_member(store, "team-small", "alice")
+
+    %{store: store}
+  end
+
+  # ---------------- helpers ----------------
+
+  defp get_members(store, team_id, token) do
+    :get
+    |> conn("/api/teams/#{team_id}/members")
+    |> maybe_auth(token)
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp join(store, team_id, token) do
+    :post
+    |> conn("/api/teams/#{team_id}/join")
+    |> maybe_auth(token)
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp leave(store, team_id, token) do
+    :delete
+    |> conn("/api/teams/#{team_id}/join")
+    |> maybe_auth(token)
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp maybe_auth(conn, nil), do: conn
+  defp maybe_auth(conn, token), do: put_req_header(conn, "authorization", "Bearer #{token}")
+
+  defp json_body(conn), do: Jason.decode!(conn.resp_body)
+
+  # ---------------- GET ----------------
+
+  test "GET returns members, size, and capacity", %{store: store} do
+    conn = get_members(store, "team-1", "token-alice")
+    assert conn.status == 200
+    body = json_body(conn)
+    assert "alice" in body["members"]
+    assert body["size"] == 2
+    assert body["capacity"] == 5
+  end
+
+  test "GET returns 403 for a non-member", %{store: store} do
+    conn = get_members(store, "team-1", "token-carol")
+    assert conn.status == 403
+    assert json_body(conn)["error"] == "forbidden"
+  end
+
+  test "GET returns 401 without auth", %{store: store} do
+    conn = get_members(store, "team-1", nil)
+    assert conn.status == 401
+  end
+
+  test "GET returns 404 for a missing team", %{store: store} do
+    conn = get_members(store, "ghost", "token-alice")
+    assert conn.status == 404
+  end
+
+  # ---------------- join ----------------
+
+  test "join enrolls the caller and reports the new size", %{store: store} do
+    conn = join(store, "team-1", "token-dave")
+    assert conn.status == 201
+    body = json_body(conn)
+    assert body["joined"] == "dave"
+    assert body["size"] == 3
+    assert TeamStore.is_member?(store, "team-1", "dave")
+  end
+
+  test "join returns 409 already_member when already enrolled", %{store: store} do
+    conn = join(store, "team-1", "token-alice")
+    assert conn.status == 409
+    assert json_body(conn)["error"] == "already_member"
+  end
+
+  test "join returns 409 team_full at capacity", %{store: store} do
+    ok = join(store, "team-small", "token-bob")
+    assert ok.status == 201
+    assert json_body(ok)["size"] == 2
+
+    full = join(store, "team-small", "token-carol")
+    assert full.status == 409
+    assert json_body(full)["error"] == "team_full"
+  end
+
+  test "join returns 404 for a missing team", %{store: store} do
+    conn = join(store, "ghost", "token-alice")
+    assert conn.status == 404
+  end
+
+  test "join returns 401 with an invalid token", %{store: store} do
+    conn = join(store, "team-1", "token-nobody")
+    assert conn.status == 401
+  end
+
+  test "capacity is enforced atomically under concurrent joins", %{store: store} do
+    results =
+      0..9
+      |> Enum.map(fn i -> Task.async(fn -> join(store, "team-conc", "token-u#{i}").status end) end)
+      |> Enum.map(&Task.await/1)
+
+    assert Enum.count(results, &(&1 == 201)) == 3
+    assert Enum.count(results, &(&1 == 409)) == 7
+    assert {:ok, 3} = TeamStore.size(store, "team-conc")
+  end
+
+  # ---------------- leave ----------------
+
+  test "leave withdraws the caller and reports the new size", %{store: store} do
+    conn = leave(store, "team-1", "token-alice")
+    assert conn.status == 200
+    body = json_body(conn)
+    assert body["left"] == "alice"
+    assert body["size"] == 1
+    refute TeamStore.is_member?(store, "team-1", "alice")
+  end
+
+  test "leaving frees a slot for a new join", %{store: store} do
+    full = join(store, "team-small", "token-bob")
+    assert full.status == 201
+
+    blocked = join(store, "team-small", "token-carol")
+    assert blocked.status == 409
+
+    _ = leave(store, "team-small", "token-alice")
+
+    retry = join(store, "team-small", "token-carol")
+    assert retry.status == 201
+    assert {:ok, 2} = TeamStore.size(store, "team-small")
+  end
+
+  test "leave returns 409 not_member when not enrolled", %{store: store} do
+    conn = leave(store, "team-1", "token-carol")
+    assert conn.status == 409
+    assert json_body(conn)["error"] == "not_member"
+  end
+
+  test "leave returns 404 for a missing team", %{store: store} do
+    conn = leave(store, "ghost", "token-alice")
+    assert conn.status == 404
+  end
+
+  # ---------------- cross-cutting ----------------
+
+  test "response content-type is application/json", %{store: store} do
+    conn = get_members(store, "team-1", "token-alice")
+    ct = conn |> get_resp_header("content-type") |> List.first("")
+    assert ct =~ "application/json"
+  end
+
+  test "operations on team-1 do not affect team-2", %{store: store} do
+    _ = join(store, "team-1", "token-dave")
+    conn = get_members(store, "team-2", "token-carol")
+    assert json_body(conn)["members"] == ["carol"]
+    assert json_body(conn)["size"] == 1
+  end
+
+  # ---------------- direct store API ----------------
+
+  test "join_safe reports full at capacity", %{store: store} do
+    assert {:ok, "bob", 2} = TeamStore.join_safe(store, "team-small", "bob")
+    assert {:error, :full} = TeamStore.join_safe(store, "team-small", "carol")
+  end
+
+  test "join_safe reports already_member", %{store: store} do
+    assert {:error, :already_member} = TeamStore.join_safe(store, "team-1", "alice")
+  end
+
+  test "join_safe reports not_found for a missing team", %{store: store} do
+    assert {:error, :not_found} = TeamStore.join_safe(store, "nope", "alice")
+  end
+
+  test "leave_safe reports not_member", %{store: store} do
+    assert {:error, :not_member} = TeamStore.leave_safe(store, "team-1", "carol")
+  end
+
+  test "capacity and size expose team state", %{store: store} do
+    assert {:ok, 5} = TeamStore.capacity(store, "team-1")
+    assert {:ok, 2} = TeamStore.size(store, "team-1")
+  end
+end
+
+defmodule TeamStoreInitTest do
+  # Deliberately NO shared setup: this module starts its own store inside the
+  # test body so that a gutted `init/1` surfaces as a clean, fast assertion
+  # failure here r (truncated)
+02:19:16.630 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9533, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9533, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9533, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9533, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 15223, "type" => "message"}], "output_tokens" => 15223, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:19:16.649 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01 solution.ex
+02:19:17.503 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":315,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":22,"tests_ran":true,"tests_skipped":0,"tests_total":22,"timestamp":"2026-07-04T00:19:17.478879Z"}
+02:19:17.513 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:18.354 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 22/22 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"failed to start child with the spec {TeamStore, [name: :store_4994]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5058]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5122]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test GET returns 401 without auth"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5186]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5250]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5314]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5378]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5442]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5506]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_star (truncated)
+02:19:18.361 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:19.181 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 22/22 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports already_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave_safe reports not_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test init/1 starts a live process backed by a well-formed empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":22,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":22,"timestamp":"2026-07-04T00:19:19.158985Z"}
+02:19:19.189 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:20.029 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 22/22 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports already_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave_safe reports not_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test init/1 starts a live process backed by a well-formed empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":22,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":22,"timestamp":"2026-07-04T00:19:20.007482Z"}
+02:19:20.037 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:20.863 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.28,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 21/22 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.05},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports already_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave_safe reports not_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":21,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":22,"timestamp":"2026-07-04T00:19:20.841851Z"}
+02:19:20.871 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:21.733 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.43,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 16/22 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.27},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 401 with an invalid token"},{"message":"{:EXIT, #PID<0.243.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :get_user_by_token, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 33, error_info: %{module: Exception}]}, {AuthPlug, :call, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 213]}, {TeamRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 236]}, {TeamRouterCapacityTest, :\"-test capacity is enforced atomically under concurrent joins/1-fun-0-\", 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/test_harness.exs\", line: 128]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test init/1 starts a live process backed by a well-formed empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":16,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":22,"timestamp":"2026-07-04T00:19:21.709489Z"}
+02:19:21.741 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:22.602 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.75,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 6/22 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.73},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test init/1 starts a live process backed by a well-formed empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":22,"timestamp":"2026-07-04T00:19:22.579741Z"}
+02:19:22.610 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:23.467 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.74,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 6/22 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.73},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":22,"timestamp":"2026-07-04T00:19:23.445544Z"}
+02:19:23.475 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:24.312 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.79,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 5/22 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.77},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test init/1 starts a live process backed by a well-formed empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":22,"timestamp":"2026-07-04T00:19:24.291554Z"}
+02:19:24.321 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:25.181 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.83,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 4/22 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.82},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test init/1 starts a live process backed by a well-formed empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":22,"timestamp":"2026-07-04T00:19:25.157728Z"}
+02:19:25.189 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:26.059 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.82,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 4/22 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.82},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test init/1 starts a live process backed by a well-formed empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":22,"timestamp":"2026-07-04T00:19:26.037039Z"}
+02:19:26.068 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:26.935 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.3,"mode":"full","overall":0.56,"reasons":["compilation: 7 warning(s) → -0.7 pts","tests: 11/22 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.5},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"{:EXIT, #PID<0.243.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{current_user: \"u8\", router_opts: [store: #PID<0.245.0>]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"POST\", owner: nil, params: %{\"team_id\" => \"team-conc\"}, path_info: [\"api\", \"teams\", \"team-conc\", \"join\"], path_params: %{\"team_id\" => \"team-conc\"}, port: 80, private: %{team_store: #PID<0.245.0>, plug_route: {\"/api/teams/:team_id/join\", #Function<1.98404090/2 in TeamRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_headers: [{\"authorization\", \"Bearer token-u8\"}], request_path: \"/api/teams/team-conc/join\", resp_body: nil, resp_cookies: %{}, resp_headers: [{\"cache-control\", \"max-age=0, private, must-revalidate\"}], scheme: :http, script_name: [], secret_key_base: nil, state: :unset, status: nil}, kind: :error, reason: %RuntimeError{message: \"MUTATION\"}, stack: [{TeamStore, :join_safe, 3, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 70, error_info: %{module: Exception}]}, {TeamRouter, :\"-do_match/4-fun-3-\", 3, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 265]}, {TeamRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {TeamRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {TeamRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 236]}, {TeamRouterCapacityTest, :\"-test capacity is enforced atomically under concurrent joins/1-fun-0-\", 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/test_harness.exs\", line: 128]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}, [{TeamStore, :join_safe, 3, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 70, error_info: %{module: Exception}]}, {TeamRouter, :\"-do_match/4-fun-3-\", 3, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 265]}, {TeamRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {TeamRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {TeamRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 236]}, {TeamRouterCapacityTest, :\"-test capacity is enforced atomically under concurrent joins/1-fun-0-\", 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/test_harness.exs\", line: 128]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports already_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports not_found for a missing team"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test init/1 starts a live process backed by a well-formed empty store"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":22,"timestamp":"2026-07-04T00:19:26.912823Z"}
+02:19:26.943 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:27.789 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.76,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 5/22 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.77},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave_safe reports not_member"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":22,"timestamp":"2026-07-04T00:19:27.764935Z"}
+02:19:27.797 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:19:28.313 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"MUTATION","type":"RuntimeError"}],"compile_warnings":1,"compiled":false,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: failed to compile (0.0)","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-04T00:19:28.294611Z"}
+02:19:28.313 [debug] base mutation gate (per-fn): init/1 inconclusive
+02:19:28.314 [info] cycle 022_004_capacity_bounded_concurrent_team_join_endpoint_01: repairing — Mutation gate failed: the raise-mutant of `init/1` graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+02:19:28.314 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:19:28.314 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Mutation gate failed: the raise-mutant of `init/1` graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement a nested team-membership endpoint with **capacity-bounded self-service enrollment** under concurrent access, using only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Each team has a fixed **capacity**. Users enroll themselves ("join") and withdraw ("leave") through the API; because many join requests can arrive simultaneously, capacity must be enforced atomically so a team can never exceed its limit. Serialize all mutations through the GenServer so the check-and-insert is a single atomic step.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer holding users, teams (with capacity), and memberships. Public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option.
+- `TeamStore.create_user(server, id, token)` — stores a user with a bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id, capacity)` — creates a team with a maximum size. Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — seeds a membership directly (no capacity check). Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true`/`false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true`/`false`.
+- `TeamStore.capacity(server, team_id)` — returns `{:ok, capacity}` or `:error`.
+- `TeamStore.size(server, team_id)` — returns `{:ok, count}` or `:error`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, members}` or `{:error, :not_found}`.
+- `TeamStore.join_safe(server, team_id, user_id)` — atomically enrolls a user: `{:error, :not_found}` if the team is missing, `{:error, :already_member}` if already enrolled, `{:error, :full}` if the team is at capacity, otherwise `{:ok, user_id, new_size}`.
+- `TeamStore.leave_safe(server, team_id, user_id)` — `{:error, :not_found}` if the team is missing, `{:error, :not_member}` if not enrolled, otherwise `{:ok, user_id, new_size}`.
+
+**`AuthPlug`** — reads `authorization: Bearer <token>`, resolves the user via `TeamStore.get_user_by_token/2`, assigns `:current_user`, and halts with 401 JSON `{"error":"unauthorized"}` otherwise. Accepts a `:store` option.
+
+**`TeamRouter`** — a `Plug.Router` accepting a `:store` option and plugging `AuthPlug` before matching. Endpoints:
+
+- `GET /api/teams/:team_id/members` — 404 `{"error":"not_found"}` if missing; 403 `{"error":"forbidden"}` if the caller isn't a member; otherwise 200 `{"members": [...], "size": n, "capacity": c}`.
+
+- `POST /api/teams/:team_id/join` — the authenticated caller enrolls **themselves** (no prior membership required). 404 if the team is missing. 409 `{"error":"already_member"}` if already enrolled. 409 `{"error":"team_full"}` if at capacity. On success 201 `{"joined": user_id, "size": n}`.
+
+- `DELETE /api/teams/:team_id/join` — the authenticated caller withdraws themselves. 404 if the team is missing. 409 `{"error":"not_member"}` if not enrolled. On success 200 `{"left": user_id, "size": n}`.
+
+Capacity must hold even when many joins race concurrently. All responses must be `application/json`. Give me all modules in a single file, using only `plug`, `jason`, and the OTP standard library.
+
+----- solution.ex -----
+defmodule TeamStore do
+  @moduledoc """
+  In-memory `GenServer` holding users, capacity-bounded teams and memberships.
+
+  All mutations are serialized through the process so that the capacity
+  check-and-insert for `join_safe/3` is a single atomic step, even when many
+  join requests race concurrently.
+  """
+
+  use GenServer
+
+  @typedoc "A running server reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option that, when present, registers the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc "Stores a user identified by `id` with the given bearer `token`."
+  @spec create_user(server(), term(), String.t()) :: :ok
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
+
+  @doc "Creates a team `team_id` with a maximum size of `capacity`."
+  @spec create_team(server(), term(), non_neg_integer()) :: :ok
+  def create_team(server, team_id, capacity),
+    do: GenServer.call(server, {:create_team, team_id, capacity})
+
+  @doc "Seeds a membership directly, without any capacity check."
+  @spec add_member(server(), term(), term()) :: :ok
+  def add_member(server, team_id, user_id),
+    do: GenServer.call(server, {:add_member, team_id, user_id})
+
+  @doc "Resolves a bearer `token` to `{:ok, user_id}` or `:error`."
+  @spec get_user_by_token(server(), String.t()) :: {:ok, term()} | :error
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})
+
+  @doc "Returns whether the team `team_id` exists."
+  @spec team_exists?(server(), term()) :: boolean()
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})
+
+  @doc "Returns whether `user_id` is enrolled in team `team_id`."
+  @spec is_member?(server(), term(), term()) :: boolean()
+  def is_member?(server, team_id, user_id),
+    do: GenServer.call(server, {:is_member?, team_id, user_id})
+
+  @doc "Returns `{:ok, capacity}` for the team, or `:error` if it is missing."
+  @spec capacity(server(), term()) :: {:ok, non_neg_integer()} | :error
+  def capacity(server, team_id), do: GenServer.call(server, {:capacity, team_id})
+
+  @doc "Returns `{:ok, count}` of current members, or `:error` if missing."
+  @spec size(server(), term()) :: {:ok, non_neg_integer()} | :error
+  def size(server, team_id), do: GenServer.call(server, {:size, team_id})
+
+  @doc "Returns `{:ok, members}` or `{:error, :not_found}` for the team."
+  @spec list_members(server(), term()) :: {:ok, [term()]} | {:error, :not_found}
+  def list_members(server, team_id), do: GenServer.call(server, {:list_members, team_id})
+
+  @doc """
+  Atomically enrolls `user_id` into `team_id`.
+
+  Returns `{:error, :not_found}` when the team is missing,
+  `{:error, :already_member}` when already enrolled, `{:error, :full}` when at
+  capacity, and otherwise `{:ok, user_id, new_size}`.
+  """
+  @spec join_safe(server(), term(), term()) ::
+          {:ok, term(), non_neg_integer()}
+          | {:error, :not_found | :already_member | :full}
+  def join_safe(server, team_id, user_id),
+    do: GenServer.call(server, {:join_safe, team_id, user_id})
+
+  @doc """
+  Withdraws `user_id` from `team_id`.
+
+  Returns `{:error, :not_found}` when the team is missing,
+  `{:error, :not_member}` when not enrolled, and otherwise
+  `{:ok, user_id, new_size}`.
+  """
+  @spec leave_safe(server(), term(), term()) ::
+          {:ok, term(), non_neg_integer()}
+          | {:error, :not_found | :not_member}
+  def leave_safe(server, team_id, user_id),
+    do: GenServer.call(server, {:leave_safe, team_id, user_id})
+
+   (truncated)
+02:21:23.545 [debug] claude -p RESULT (stop="end_turn"):
+Looking at the failure: the raise-mutant of `init/1` graded inconclusively. The current `TeamStoreInitTest` relies on `TeamStore.start_link/1` returning `{:error, _}` when init raises — but because the store is started **linked** to the test process, a failing init can deliver an exit signal that kills the test process (a crash/timeout) instead of producing a clean assertion failure. That non-determinism is why coverage can't be verified.
+
+The most bulletproof fix is to also exercise `init/1` **directly** (an uncaught raise there is caught by ExUnit as a deterministic test failure), and to trap exits around the `start_link` path so a failing init surfaces as a clean returned error tuple rather than a process kill.
+
+<file path="test_harness.exs">
+defmodule TeamRouterCapacityTest do
+  use ExUnit.Case, async: false
+
+  import Plug.Conn
+  import Plug.Test
+
+  setup do
+    store = start_supervised!({TeamStore, name: :"store_#{System.unique_integer([:positive])}"})
+
+    :ok = TeamStore.create_user(store, "alice", "token-alice")
+    :ok = TeamStore.create_user(store, "bob", "token-bob")
+    :ok = TeamStore.create_user(store, "carol", "token-carol")
+    :ok = TeamStore.create_user(store, "dave", "token-dave")
+
+    for i <- 0..9, do: :ok = TeamStore.create_user(store, "u#{i}", "token-u#{i}")
+
+    :ok = TeamStore.create_team(store, "team-1", 5)
+    :ok = TeamStore.create_team(store, "team-2", 5)
+    :ok = TeamStore.create_team(store, "team-small", 2)
+    :ok = TeamStore.create_team(store, "team-conc", 3)
+
+    :ok = TeamStore.add_member(store, "team-1", "alice")
+    :ok = TeamStore.add_member(store, "team-1", "bob")
+    :ok = TeamStore.add_member(store, "team-2", "carol")
+    :ok = TeamStore.add_member(store, "team-small", "alice")
+
+    %{store: store}
+  end
+
+  # ---------------- helpers ----------------
+
+  defp get_members(store, team_id, token) do
+    :get
+    |> conn("/api/teams/#{team_id}/members")
+    |> maybe_auth(token)
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp join(store, team_id, token) do
+    :post
+    |> conn("/api/teams/#{team_id}/join")
+    |> maybe_auth(token)
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp leave(store, team_id, token) do
+    :delete
+    |> conn("/api/teams/#{team_id}/join")
+    |> maybe_auth(token)
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp maybe_auth(conn, nil), do: conn
+  defp maybe_auth(conn, token), do: put_req_header(conn, "authorization", "Bearer #{token}")
+
+  defp json_body(conn), do: Jason.decode!(conn.resp_body)
+
+  # ---------------- GET ----------------
+
+  test "GET returns members, size, and capacity", %{store: store} do
+    conn = get_members(store, "team-1", "token-alice")
+    assert conn.status == 200
+    body = json_body(conn)
+    assert "alice" in body["members"]
+    assert body["size"] == 2
+    assert body["capacity"] == 5
+  end
+
+  test "GET returns 403 for a non-member", %{store: store} do
+    conn = get_members(store, "team-1", "token-carol")
+    assert conn.status == 403
+    assert json_body(conn)["error"] == "forbidden"
+  end
+
+  test "GET returns 401 without auth", %{store: store} do
+    conn = get_members(store, "team-1", nil)
+    assert conn.status == 401
+  end
+
+  test "GET returns 404 for a missing team", %{store: store} do
+    conn = get_members(store, "ghost", "token-alice")
+    assert conn.status == 404
+  end
+
+  # ---------------- join ----------------
+
+  test "join enrolls the caller and reports the new size", %{store: store} do
+    conn = join(store, "team-1", "token-dave")
+    assert conn.status == 201
+    body = json_body(conn)
+    assert body["joined"] == "dave"
+    assert body["size"] == 3
+    assert TeamStore.is_member?(store, "team-1", "dave")
+  end
+
+  test "join returns 409 already_member when already enrolled", %{store: store} do
+    conn = join(store, "team-1", "token-alice")
+    assert conn.status == 409
+    assert json_body(conn)["error"] == "already_member"
+  end
+
+  test "join returns 409 team_full at capacity", %{store: store} do
+    ok = join(store, "team-small", "token-bob")
+    assert ok.status == 201
+    assert json_body(ok)["size"] == 2
+
+    full = join(store, "team-small", "token-carol")
+    assert full.status == 409
+    assert json_body(full)["error"] == "team_full"
+  end
+
+  test "join returns 404 for a missing team", %{store: store} do
+    conn = join(store, "ghost", "token-alice")
+    assert conn.status == 404
+  end
+
+  test "join returns 401 with an invalid token", %{store: store} do
+    conn = join(store, "team-1", "token-nobody")
+    assert conn.status == 401
+  end
+
+  test "capacity is enforced atomically under concurrent joins", %{store: store} do
+    results =
+      0..9
+      |> Enum.map(fn i -> Task.async(fn -> join(store, "team-conc", "token-u#{i}").status end) end)
+      |> Enum.map(&Task.await/1)
+
+    assert Enum.count(results, &(&1 == 201)) == 3
+    assert Enum.count(results, &(&1 == 409)) == 7
+    assert {:ok, 3} = TeamStore.size(store, "team-conc")
+  end
+
+  # ---------------- leave ----------------
+
+  test "leave withdraws the caller and reports the new size", %{store: store} do
+    conn = leave(store, "team-1", "token-alice")
+    assert conn.status == 200
+    body = json_body(conn)
+    assert body["left"] == "alice"
+    assert body["size"] == 1
+    refute TeamStore.is_member?(store, "team-1", "alice")
+  end
+
+  test "leaving frees a slot for a new join", %{store: store} do
+    full = join(store, "team-small", "token-bob")
+    assert full.status == 201
+
+    blocked = join(store, "team-small", "token-carol")
+    assert blocked.status == 409
+
+    _ = leave(store, "team-small", "token-alice")
+
+    retry = join(store, "team-small", "token-carol")
+    assert retry.status == 201
+    assert {:ok, 2} = TeamStore.size(store, "team-small")
+  end
+
+  test "leave returns 409 not_member when not enrolled", %{store: store} do
+    conn = leave(store, "team-1", "token-carol")
+    assert conn.status == 409
+    assert json_body(conn)["error"] == "not_member"
+  end
+
+  test "leave returns 404 for a missing team", %{store: store} do
+    conn = leave(store, "ghost", "token-alice")
+    assert conn.status == 404
+  end
+
+  # ---------------- cross-cutting ----------------
+
+  test "response content-type is application/json", %{store: store} do
+    conn = get_members(store, "team-1", "token-alice")
+    ct = conn |> get_resp_header("content-type") |> List.first("")
+    assert ct =~ "application/json"
+  end
+
+  test "operations on team-1 do not affect team-2", %{store: store} do
+    _ = join(store, "team-1", "token-dave")
+    conn = get_members(store, "team-2", "token-carol")
+    assert json_body(conn)["members"] == ["carol"]
+    assert json_body(conn)["size"] == 1
+  end
+
+  # ---------------- direct store API ----------------
+
+  test "join_safe reports full at capacity", %{store: store} do
+    assert {:ok, "bob", 2} = TeamStore.join_safe(store, "team-small", "bob")
+    assert {:error, :full} = TeamStore.join_safe(store, "team-small", "carol")
+  end
+
+  test "join_safe reports already_member", %{store: store} do
+    assert {:error, :already_member} = TeamStore.join_safe(store, "team-1", "alice")
+  end
+
+  test "join_safe reports not_found for a missing team", %{store: store} do
+    assert {:error, :not_found} = TeamStore.join_safe(store, "nope", "alice")
+  end
+
+  test "leave_safe reports not_member", %{store: store} do
+    assert {:error, :not_member} = TeamStore.leave_safe(store, "team-1", "carol")
+  end
+
+  test "capacity and size expose team state", %{store: store} do
+    assert {:ok, 5} = TeamStore.capacity(store, "team-1")
+    assert {:ok, 2} = TeamStore.size(store, "team-1")
+  end
+end
+
+defmodule TeamStoreInitTest do
+  # Deliberately NO shared setup. These tests pin the exact behavior of the
+  # `init/1` callback so that a raise-gutted `init/1` is killed *deterministically*
+  # — as a clean, fast assertion failure — with no dependence on process-link
+  # timing or an  (truncated)
+02:21:23.545 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10396, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10396, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10396, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10396, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 9500, "type" => "message"}], "output_tokens" => 9500, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:21:23.564 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01 solution.ex
+02:21:24.430 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":315,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:21:24.405349Z"}
+02:21:24.441 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:25.303 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.32,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 22/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.08},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"failed to start child with the spec {TeamStore, [name: :store_5826]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5890]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_5954]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test GET returns 401 without auth"},{"message":"failed to start child with the spec {TeamStore, [name: :store_6018]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_6082]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"failed to start child with the spec {TeamStore, [name: :store_6146]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"failed to start child with the spec {TeamStore, [name: :store_6210]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"failed to start child with the spec {TeamStore, [name: :store_6274]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_6338]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex:9: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_sta (truncated)
+02:21:25.310 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:26.146 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.3,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 22/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.08},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports already_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave_safe reports not_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process whose state came from init/1"}],"tests_errors":0,"tests_excluded":0,"tests_failed":22,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:21:26.123024Z"}
+02:21:26.155 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:27.019 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.3,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 22/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.08},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports already_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave_safe reports not_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process whose state came from init/1"}],"tests_errors":0,"tests_excluded":0,"tests_failed":22,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:21:26.996298Z"}
+02:21:27.028 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:27.880 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.33,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 21/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.13},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 401 without auth"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports already_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave_safe reports not_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":21,"tests_passed":3,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:21:27.856514Z"}
+02:21:27.888 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:28.757 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.47,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 16/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.33},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 401 with an invalid token"},{"message":"{:EXIT, #PID<0.243.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :get_user_by_token, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 33, error_info: %{module: Exception}]}, {AuthPlug, :call, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 213]}, {TeamRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 236]}, {TeamRouterCapacityTest, :\"-test capacity is enforced atomically under concurrent joins/1-fun-0-\", 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/test_harness.exs\", line: 128]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process whose state came from init/1"}],"tests_errors":0,"tests_excluded":0,"tests_failed":16,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:21:28.733632Z"}
+02:21:28.766 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:29.629 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.77,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 6/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.75},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 404 for a missing team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process whose state came from init/1"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:21:29.605313Z"}
+02:21:29.638 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:30.495 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.76,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 6/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.75},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:21:30.471830Z"}
+02:21:30.503 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:31.388 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.8,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 5/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.79},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process whose state came from init/1"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:21:31.365756Z"}
+02:21:31.396 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:32.261 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.84,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 4/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.83},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test capacity and size expose team state"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process whose state came from init/1"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:21:32.238049Z"}
+02:21:32.269 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:33.112 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.83,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 4/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.83},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test GET returns members, size, and capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process whose state came from init/1"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:21:33.091249Z"}
+02:21:33.121 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:34.006 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.3,"mode":"full","overall":0.58,"reasons":["compilation: 7 warning(s) → -0.7 pts","tests: 11/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.54},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test join enrolls the caller and reports the new size"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 already_member when already enrolled"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 409 team_full at capacity"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test join returns 404 for a missing team"},{"message":"{:EXIT, #PID<0.243.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{current_user: \"u9\", router_opts: [store: #PID<0.245.0>]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"POST\", owner: nil, params: %{\"team_id\" => \"team-conc\"}, path_info: [\"api\", \"teams\", \"team-conc\", \"join\"], path_params: %{\"team_id\" => \"team-conc\"}, port: 80, private: %{team_store: #PID<0.245.0>, plug_route: {\"/api/teams/:team_id/join\", #Function<1.98404090/2 in TeamRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_headers: [{\"authorization\", \"Bearer token-u9\"}], request_path: \"/api/teams/team-conc/join\", resp_body: nil, resp_cookies: %{}, resp_headers: [{\"cache-control\", \"max-age=0, private, must-revalidate\"}], scheme: :http, script_name: [], secret_key_base: nil, state: :unset, status: nil}, kind: :error, reason: %RuntimeError{message: \"MUTATION\"}, stack: [{TeamStore, :join_safe, 3, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 70, error_info: %{module: Exception}]}, {TeamRouter, :\"-do_match/4-fun-3-\", 3, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 265]}, {TeamRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {TeamRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {TeamRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 236]}, {TeamRouterCapacityTest, :\"-test capacity is enforced atomically under concurrent joins/1-fun-0-\", 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/test_harness.exs\", line: 128]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}, [{TeamStore, :join_safe, 3, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 70, error_info: %{module: Exception}]}, {TeamRouter, :\"-do_match/4-fun-3-\", 3, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 265]}, {TeamRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {TeamRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {TeamRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex\", line: 236]}, {TeamRouterCapacityTest, :\"-test capacity is enforced atomically under concurrent joins/1-fun-0-\", 2, [file: ~c\".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/test_harness.exs\", line: 128]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"TeamRouterCapacityTest","test":"test capacity is enforced atomically under concurrent joins"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports full at capacity"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports already_member"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test join_safe reports not_found for a missing team"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process whose state came from init/1"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:21:33.983113Z"}
+02:21:34.014 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:34.874 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.77,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 5/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.79},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leave withdraws the caller and reports the new size"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leaving frees a slot for a new join"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 409 not_member when not enrolled"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterCapacityTest","test":"test leave returns 404 for a missing team"},{"message":"MUTATION","module":"TeamRouterCapacityTest","test":"test leave_safe reports not_member"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-04T00:21:34.849602Z"}
+02:21:34.883 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut solution.ex
+02:21:35.390 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":295,"lines_over_98":7,"max_line_length":279,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"MUTATION","type":"RuntimeError"}],"compile_warnings":1,"compiled":false,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: failed to compile (0.0)","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut/solution.ex","task":"022_004_capacity_bounded_concurrent_team_join_endpoint_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-04T00:21:35.368424Z"}
+02:21:35.390 [debug] base mutation gate (per-fn): init/1 inconclusive
+02:21:35.391 [info] cycle 022_004_capacity_bounded_concurrent_team_join_endpoint_01: REJECTED after 4 attempt(s)

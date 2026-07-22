@@ -1,0 +1,328 @@
+18:00:41.605 [info] VARIATIONS gen for 100_001_totp_time_based_one_time_password_implementation_01 (1 slot(s))
+18:00:41.606 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+18:00:41.606 [debug] claude -p USER prompt:
+I have this SFT task (idea #100 — "TOTP (Time-Based One-Time Password) Implementation"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 1 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings;
+process-unique temp paths via `System.pid()` + `System.unique_integer/1`; every
+assertion justified by an explicit statement in that variation's prompt.md — a
+solver reading ONLY the prompt must be able to pass every test, so never assert
+internal state or undocumented option values).
+
+This task ALREADY has these variations — your new ones must be distinct from them too:
+  - counter based hotp with resynchronization window
+  - stateful totp vault genserver with replay protection
+
+HARD CONSTRAINT — public API distinctness (an automatic gate rejects violations before grading): each variation's module must expose a public function set (name/arity) DIFFERENT from every set below. A genuinely different design has a different surface — different function names, arities, or decomposition, not the same API with a changed body:
+  - {generate_code/2, generate_secret/0, provisioning_uri/3, valid?/3}
+  - {generate_code/2, generate_secret/0, provisioning_uri/4, valid?/4}
+  - {consume/4, current_code/3, handle_call/3, init/1, register/2, secret/2, start_link/1}
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 100 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `TOTP` that implements RFC 6238 Time-Based One-Time Passwords (TOTP) using only the OTP standard library — no external dependencies.
+
+I need these functions in the public API:
+
+- `TOTP.generate_secret()` returns a cryptographically random, base32-encoded secret string (160 bits / 20 bytes of entropy, no padding characters).
+- `TOTP.generate_code(secret, time \\ :os.system_time(:second))` returns a 6-digit zero-padded string for the given UNIX timestamp. It should derive the time step as `div(time, 30)`, HMAC-SHA1 the step (as a big-endian 8-byte integer) with the base32-decoded secret, apply the RFC 4226 dynamic truncation, and take the result modulo 1_000_000.
+- `TOTP.valid?(secret, code, opts \\ [])` validates a code string or integer against the current time. It must accept a `:time` option (UNIX seconds, defaults to now) and a `:window` option (integer number of steps to check in each direction, defaults to 1) so that clock drift of up to ±30 seconds is tolerated. Return `true` if the code matches any step in the window, `false` otherwise.
+- `TOTP.provisioning_uri(secret, issuer, account_name)` returns an `otpauth://totp/` URI with the label `issuer:account_name` and query parameters `secret`, `issuer`, `algorithm=SHA1`, `digits=6`, and `period=30` — all properly URI-encoded.
+
+Requirements and constraints:
+- Base32 encoding/decoding must follow RFC 4648 (uppercase alphabet A–Z, 2–7). Implement it yourself rather than relying on a library.
+- HMAC-SHA1 must be done via Erlang's `:crypto.mac/4`.
+- Dynamic truncation: take the last byte of the HMAC, mask with `0x0F` to get the offset, then read 4 bytes from that offset, mask the top bit with `0x7F`, and take the result modulo 1_000_000.
+- The generated code must always be exactly 6 characters, left-padded with zeros if necessary.
+- `generate_secret/0` must use `:crypto.strong_rand_bytes/1`.
+
+Give me the complete module in a single file.
+
+=== BASE solution.ex ===
+defmodule TOTP do
+  @moduledoc """
+  RFC 6238 Time-Based One-Time Password (TOTP) implementation.
+
+  Produces 6-digit HMAC-SHA1 codes with a 30-second period, compatible with
+  Google Authenticator, Authy, 1Password, and other RFC 6238 authenticators.
+
+  Uses only Erlang/OTP and Elixir standard libraries — no external dependencies.
+  """
+
+  import Bitwise
+
+  @period 30
+  @digits 6
+  @secret_bytes 20
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Generates a cryptographically random, base32-encoded 160-bit secret
+  (20 bytes → 32 characters, no padding).
+  """
+  @spec generate_secret() :: String.t()
+  def generate_secret do
+    @secret_bytes
+    |> :crypto.strong_rand_bytes()
+    |> base32_encode()
+  end
+
+  @doc """
+  Returns the 6-digit TOTP code for `secret` at the given UNIX timestamp.
+  """
+  @spec generate_code(String.t(), integer()) :: String.t()
+  def generate_code(secret, time \\ :os.system_time(:second)) do
+    key = base32_decode!(secret)
+    step = div(time, @period)
+    counter = <<step::big-unsigned-integer-size(64)>>
+
+    :hmac
+    |> :crypto.mac(:sha, key, counter)
+    |> dynamic_truncate()
+    |> rem(1_000_000)
+    |> Integer.to_string()
+    |> String.pad_leading(@digits, "0")
+  end
+
+  @doc """
+  Validates `code` against `secret`, tolerating clock drift.
+
+  ## Options
+
+    * `:time`   — UNIX seconds to validate against (default: current time)
+    * `:window` — number of 30-second steps accepted in each direction (default: 1)
+  """
+  @spec valid?(String.t(), String.t() | integer(), keyword()) :: boolean()
+  def valid?(secret, code, opts \\ []) do
+    time = Keyword.get(opts, :time, :os.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+    expected = normalize_code(code)
+
+    Enum.any?(-window..window, fn offset ->
+      t = time + offset * @period
+      secure_equal?(generate_code(secret, t), expected)
+    end)
+  end
+
+  @doc """
+  Builds an `otpauth://totp/` provisioning URI for authenticator apps.
+
+  The label is `issuer:account_name` (both URI-encoded); query parameters
+  include `secret`, `issuer`, `algorithm=SHA1`, `digits=6`, `period=30`.
+  """
+  @spec provisioning_uri(String.t(), String.t(), String.t()) :: String.t()
+  def provisioning_uri(secret, issuer, account_name) do
+    label =
+      URI.encode(issuer, &URI.char_unreserved?/1) <>
+        ":" <> URI.encode(account_name, &URI.char_unreserved?/1)
+
+    query =
+      URI.encode_query([
+        {"secret", secret},
+        {"issuer", issuer},
+        {"algorithm", "SHA1"},
+        {"digits", Integer.to_string(@digits)},
+        {"period", Integer.to_string(@period)}
+      ])
+
+    "otpauth://totp/" <> label <> "?" <> query
+  end
+
+  # ---------------------------------------------------------------------------
+  # Dynamic truncation (RFC 4226 §5.3)
+  # ---------------------------------------------------------------------------
+
+  defp dynamic_truncate(<<_::binary-size(19), last::8>> = hmac) do
+    offset = last &&& 0x0F
+    <<_::binary-size(^offset), b0, b1, b2, b3, _::binary>> = hmac
+
+    (b0 &&& 0x7F) <<< 24 ||| b1 <<< 16 ||| b2 <<< 8 ||| b3
+  end
+
+  # ---------------------------------------------------------------------------
+  # Base32 (RFC 4648, uppercase A–Z + 2–7, unpadded)
+  # ---------------------------------------------------------------------------
+
+  # --- encode ---
+
+  defp base32_encode(data) when is_binary(data), do: encode_groups(data, <<>>)
+
+  # Consume 5 bytes (40 bits) at a time, emit 8 characters.
+  defp encode_groups(
+         <<a::5, b::5, c::5, d::5, e::5, f::5, g::5, h::5, rest::binary>>,
+         acc
+       ) do
+    chunk = <<enc(a), enc(b), enc(c), enc(d), enc(e), enc(f), enc(g), enc(h)>>
+    encode_groups(rest, <<acc::binary, chunk::binary>>)
+  end
+
+  defp encode_groups(<<>>, acc), do: acc
+
+  # 1–4 byte remainder: right-pad with zero bits to a 5-bit boundary, then emit.
+  defp encode_groups(rest, acc) when is_bi (truncated)
+18:04:17.678 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `AuthenticatorURI` that goes the *other* direction from a normal TOTP generator: instead of building an `otpauth://` provisioning URI, it **parses** one into a validated configuration and then generates/verifies codes from that configuration. Use only the OTP standard library — no external dependencies.
+
+The point of the module is that authenticator apps must accept whatever the server put in the QR code: SHA1/SHA256/SHA512, 6/7/8 digits, and periods other than 30 seconds. So all OTP parameters come from the URI, not from hard-coded constants.
+
+## Public API
+
+### `AuthenticatorURI.parse(uri)`
+
+Takes an `otpauth://totp/...` URI string and returns `{:ok, config}` or `{:error, reason}` where `reason` is an atom.
+
+`config` is a map with exactly these keys:
+
+- `:issuer` — `String.t()` or `nil`
+- `:account` — `String.t()`
+- `:secret` — `String.t()` (normalized base32, see below)
+- `:algorithm` — `:sha1`, `:sha256`, or `:sha512`
+- `:digits` — integer, one of `6`, `7`, `8`
+- `:period` — positive integer (seconds)
+
+Parsing rules:
+
+- **Scheme.** The scheme must be `otpauth` (compare case-insensitively). Anything else — and any non-binary argument — returns `{:error, :invalid_scheme}`.
+- **Type.** The URI host is the OTP type. It must be `totp` (case-insensitive). `hotp` or anything else returns `{:error, :unsupported_type}`.
+- **Label.** The path (with its leading `/` removed) is the percent-encoded label. Decode it with `URI.decode/1`. It is either `Issuer:Account` or just `Account`. A single optional space immediately after the colon is allowed and must be stripped from the account. An empty label, an empty issuer part, or an empty account part returns `{:error, :missing_label}`.
+- **Query parameters.** Decode with `URI.decode_query/1` (so `+` means space).
+  - `secret` (required). Strip all whitespace and `=` padding characters, then upcase. After that it must be a non-empty string of RFC 4648 base32 characters (`A`–`Z`, `2`–`7`); the normalized string is what goes into `config.secret`. A missing `secret` returns `{:error, :missing_secret}`; a secret with any other character (or one that normalizes to the empty string) returns `{:error, :invalid_secret}`.
+  - `issuer` (optional). If the label carries an issuer and the `issuer` parameter is also present, they must be equal — otherwise return `{:error, :issuer_mismatch}`. If only one of them is present, that one is the issuer. If neither is present, `config.issuer` is `nil`.
+  - `algorithm` (optional, default `SHA1`). Case-insensitive; `SHA1` → `:sha1`, `SHA256` → `:sha256`, `SHA512` → `:sha512`. Anything else returns `{:error, :unsupported_algorithm}`.
+  - `digits` (optional, default `6`). Must be the exact decimal string of `6`, `7`, or `8`; anything else (including non-numeric text or trailing garbage) returns `{:error, :invalid_digits}`.
+  - `period` (optional, default `30`). Must be the exact decimal string of a positive integer; zero, negative, or non-numeric values return `{:error, :invalid_period}`.
+
+### `AuthenticatorURI.code_at(config, unix_time)`
+
+Returns the OTP code for a parsed `config` at the given UNIX timestamp (seconds), as a zero-padded string of exactly `config.digits` characters.
+
+Algorithm (RFC 6238 / RFC 4226):
+
+1. `step = div(unix_time, config.period)`, encoded as a big-endian unsigned 64-bit integer.
+2. HMAC that counter with the base32-decoded secret using `:crypto.mac(:hmac, hash, key, counter)`, where `hash` is `:sha`, `:sha256`, or `:sha512` according to `config.algorithm`.
+3. Dynamic truncation: take the low 4 bits of the **last** byte of the HMAC as an offset, read the 4 bytes at that offset, mask the top bit of the first of them with `0x7F`, and interpret them big-endian.
+4. Take the result modulo `10 ^ config.digits` and zero-pad on the left to `config.digits` characters.
+
+You must implement RFC 4648 base32 **decoding** yourself (uppercase alphabet `A`–`Z` plus `2`–`7`, no padding; leftover bits that do not complete a byte are discarded). Do not use an external library.
+
+### `AuthenticatorURI.seconds_remaining(config, unix_time)`
+
+Returns `config.period - rem(unix_time, config.period)` — i.e. the number of seconds the current code stays valid. On an exact period boundary this returns the full period.
+
+### `AuthenticatorURI.verify(config, code, unix_time)`
+
+Returns `true` if `code` matches the code for the *exact* current step, `false` otherwise. There is **no** drift window: a code from the previous or next step must be rejected. `code` may be a string or an integer; normalize it by converting to a string and zero-padding on the left to `config.digits` characters, then compare against `code_at/2` using a constant-time (non-short-circuiting) byte comparison.
+
+Give me the complete module in a single file.
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule AuthenticatorURITest do
+  use ExUnit.Case, async: false
+
+  # RFC 6238 test seeds, base32-encoded (RFC 4648, unpadded).
+  #   SHA1:   "12345678901234567890"                                             (20 bytes)
+  #   SHA256: "12345678901234567890123456789012"                                 (32 bytes)
+  #   SHA512: "1234567890123456789012345678901234567890123456789012345678901234" (64 bytes)
+  @sha1_secret "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+  @sha256_secret "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZA"
+  @sha512_secret "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQGEZDGNA"
+
+  defp uri(params) do
+    query = URI.encode_query(params)
+    "otpauth://totp/Acme:alice@example.com?" <> query
+  end
+
+  defp config!(params) do
+    {:ok, config} = AuthenticatorURI.parse(uri(params))
+    config
+  end
+
+  # ------------------------------------------------------------------
+  # parse/1 — happy path and defaults
+  # ------------------------------------------------------------------
+
+  test "parse returns a full config map" do
+    assert {:ok, config} =
+             AuthenticatorURI.parse(
+               "otpauth://totp/Acme:alice@example.com?secret=#{@sha1_secret}&algorithm=SHA256&digits=8&period=60"
+             )
+
+    assert config == %{
+             issuer: "Acme",
+             account: "alice@example.com",
+             secret: @sha1_secret,
+             algorithm: :sha256,
+             digits: 8,
+             period: 60
+           }
+  end
+
+  test "parse applies defaults for algorithm, digits and period" do
+    config = config!(secret: @sha1_secret)
+    assert config.algorithm == :sha1
+    assert config.digits == 6
+    assert config.period == 30
+  end
+
+  test "parse accepts a label with no issuer and no issuer param" do
+    assert {:ok, config} =
+             AuthenticatorURI.parse("otpauth://totp/alice@example.com?secret=#{@sha1_secret}")
+
+    assert config.issuer == nil
+    assert config.account == "alice@example.com"
+  end
+
+  test "parse takes the issuer from the query param when the label has none" do
+    assert {:ok, config} =
+             AuthenticatorURI.parse(
+               "otpauth://totp/alice@example.com?secret=#{@sha1_secret}&issuer=Acme"
+             )
+
+    assert config.issuer == "Acme"
+    assert config.account == "alice@example.com"
+  end
+
+  test "parse percent-decodes the label" do
+    assert {:ok, config} =
+             AuthenticatorURI.parse(
+               "otpauth://totp/Acme%20Co:alice%40example.com?secret=#{@sha1_secret}"
+             )
+
+    assert config.issuer == "Acme Co"
+    assert config.account == "alice@example.com"
+  end
+
+  test "parse strips a single space after the label colon" do
+    assert {:ok, config} =
+             AuthenticatorURI.parse("otpauth://totp/Acme:%20alice?secret=#{@sha1_secret}")
+
+    assert config.issuer == "Acme"
+    assert config.account == "alice"
+  end
+
+  test "parse accepts a matching issuer in both label and query param" do
+    assert {:ok, config} =
+             AuthenticatorURI.parse(
+               "otpauth://totp/Acme%20Co:alice?secret=#{@sha1_secret}&issuer=Acme+Co"
+             (truncated)
+18:04:17.678 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 31706, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 31706, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 31706, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 31706, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 20454, "type" => "message"}], "output_tokens" => 20454, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

@@ -1,0 +1,468 @@
+10:01:01.145 [info] FIM 041_003_sharded_lru_cache_with_consistent_key_routing_fim03 → 041_003_sharded_lru_cache_with_consistent_key_routing_04: target init/1
+10:01:01.146 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+10:01:01.146 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `init/1`.
+
+Generate a prompt describing how to implement `init/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `init/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `init/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `init/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `LRUCacheSharded` that implements a **sharded** LRU cache backed by ETS, designed to reduce write contention by spreading keys across several independent shard processes instead of funnelling every mutation through a single GenServer.
+
+The public façade is `LRUCacheSharded`, and internally it owns N shard GenServers, each of which is a self-contained LRU cache (with its own pair of ETS tables and its own monotonic recency counter). A key is always routed to the same shard via `:erlang.phash2(key, num_shards)`, and each shard enforces LRU eviction independently against a **per-shard** capacity.
+
+I need this public API:
+- `LRUCacheSharded.start_link(opts)` — accepts `:name` (required, registers the owner process and derives all table/shard names), `:num_shards` (required, a positive integer — how many shard processes to spawn), and `:max_size` (required, a positive integer — the per-shard capacity).
+- `LRUCacheSharded.get(name, key)` — returns `{:ok, value}` or `:miss`. A hit refreshes recency within that key's shard. Routing must not go through the owner process (read the routing info from ETS directly and call the correct shard), so different keys on different shards never serialise against each other.
+- `LRUCacheSharded.put(name, key, value)` — inserts/updates within the key's shard; on a full shard it evicts that shard's least-recently-used entry. Always returns `:ok`.
+- `LRUCacheSharded.num_shards(name)` — returns the configured shard count.
+- `LRUCacheSharded.shard_index(name, key)` — returns the integer shard index a key routes to (so callers/tests can reason about co-location).
+- `LRUCacheSharded.size(name)` — returns the total number of entries across all shards.
+
+Implementation requirements:
+- The owner process, in `init/1`, must create a public named routing ETS table recording the shard count, then start one linked shard GenServer per shard. Each shard owns a `:set` data table (`key → {value, timestamp}`) and an `:ordered_set` order table (`timestamp → key`), using a monotonically increasing integer counter in its state as the timestamp — deterministic and testable without clock mocking.
+- `get`/`put`/`shard_index`/`num_shards`/`size` must compute routing by reading the routing ETS table (never a call into the owner), so the owner is not a hot path.
+- Each shard serialises its own writes (put, eviction, touch-on-get) through its own GenServer; reads may hit that shard's ETS table directly.
+- Eviction is strictly per-shard: filling one shard beyond capacity must never evict entries that live in another shard.
+
+Give me the complete module (owner plus the internal shard module) in a single file. Use only the OTP standard library — no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule LRUCacheSharded do
+  @moduledoc """
+  A sharded LRU cache backed by ETS.
+
+  Instead of serialising every write through one GenServer, keys are spread
+  across `num_shards` independent shard processes. A key is routed to a shard
+  by `:erlang.phash2(key, num_shards)`, so writes to keys on different shards
+  never contend on the same process.
+
+  ## Topology
+
+  * An **owner** process (registered under `:name`) creates a public,
+    named routing ETS table and starts one linked shard GenServer per shard.
+  * Each **shard** (`LRUCacheSharded.Shard`) is a self-contained LRU cache with
+    its own `:set` data table, `:ordered_set` order table, and monotonic
+    recency counter, enforcing LRU eviction against a per-shard `max_size`.
+
+  Routing (`get`, `put`, `size`, `shard_index`, `num_shards`) reads the routing
+  ETS table directly — the owner is never on the hot path.
+
+  Eviction is strictly per-shard: overflowing one shard never touches another.
+  """
+
+  use GenServer
+
+  @doc false
+  def child_spec(opts) do
+    name = Keyword.fetch!(opts, :name)
+
+    %{
+      id: name,
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker,
+      restart: :permanent,
+      shutdown: 5_000
+    }
+  end
+
+  @type name :: atom()
+  @type key :: term()
+  @type value :: term()
+
+  @doc """
+  Start and link the owner process.
+
+  ## Options
+
+  * `:name` (required) – atom used to register the owner and derive shard names.
+  * `:num_shards` (required) – positive integer number of shard processes.
+  * `:max_size` (required) – positive integer per-shard capacity.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    name = Keyword.fetch!(opts, :name)
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  @doc "Look up `key`, refreshing recency in its shard. `{:ok, value}` or `:miss`."
+  @spec get(name(), key()) :: {:ok, value()} | :miss
+  def get(name, key) do
+    key
+    |> shard_name(name)
+    |> LRUCacheSharded.Shard.get(key)
+  end
+
+  @doc "Insert/update `key` in its shard. Always returns `:ok`."
+  @spec put(name(), key(), value()) :: :ok
+  def put(name, key, value) do
+    key
+    |> shard_name(name)
+    |> LRUCacheSharded.Shard.put(key, value)
+  end
+
+  @doc "The configured number of shards."
+  @spec num_shards(name()) :: pos_integer()
+  def num_shards(name) do
+    [{:__num_shards__, n}] = :ets.lookup(routing_table_name(name), :__num_shards__)
+    n
+  end
+
+  @doc "The shard index a key routes to."
+  @spec shard_index(name(), key()) :: non_neg_integer()
+  def shard_index(name, key), do: :erlang.phash2(key, num_shards(name))
+
+  @doc "Total number of entries across all shards."
+  @spec size(name()) :: non_neg_integer()
+  def size(name) do
+    n = num_shards(name)
+
+    Enum.reduce(0..(n - 1), 0, fn i, acc ->
+      acc + LRUCacheSharded.Shard.size(shard_name_for_index(name, i))
+    end)
+  end
+
+  # ---- routing helpers ----
+
+  defp shard_name(key, name) do
+    n = num_shards(name)
+    shard_name_for_index(name, :erlang.phash2(key, n))
+  end
+
+  defp shard_name_for_index(name, idx), do: :"#{name}_shard_#{idx}"
+  defp routing_table_name(name), do: :"#{name}_routing"
+
+  # ---- owner callbacks ----
+
+  @impl true
+  def init(opts) do
+    name = Keyword.fetch!(opts, :name)
+    num_shards = Keyword.fetch!(opts, :num_shards)
+    max_size = Keyword.fetch!(opts, :max_size)
+
+    unless is_integer(num_shards) and num_shards > 0 do
+      raise ArgumentError, ":num_shards must be a positive integer, got: #{inspect(num_shards)}"
+    end
+
+    unless is_integer(max_size) and max_size > 0 do
+      raise ArgumentError, ":max_size must be a positive integer, got: #{inspect(max_size)}"
+    end
+
+    routing =
+      :ets.new(routing_table_name(name), [
+        :set,
+        :public,
+        :named_table,
+        read_concurrency: true
+      ])
+
+    :ets.insert(routing, {:__num_shards__, num_shards})
+
+    shards =
+      for i <- 0..(num_shards - 1) do
+        shard = shard_name_for_index(name, i)
+        {:ok, pid} = LRUCacheSharded.Shard.start_link(name: shard, max_size: max_size)
+        {shard, pid}
+      end
+
+    {:ok, %{name: name, routing: routing, shards: shards}}
+  end
+end
+
+defmodule LRUCacheSharded.Shard do
+  @moduledoc """
+  (truncated)
+10:01:40.563 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the owner's `@impl true def init/1` callback for `LRUCacheSharded`.
+
+It receives the keyword `opts` passed to `start_link/1`. It must:
+
+1. Read `:name`, `:num_shards`, and `:max_size` from `opts` using `Keyword.fetch!/2`.
+2. Validate that `num_shards` is a positive integer, raising `ArgumentError`
+   (message `":num_shards must be a positive integer, got: ..."`, with the offending
+   value inspected) if it is not.
+3. Validate that `max_size` is a positive integer, raising `ArgumentError`
+   (message `":max_size must be a positive integer, got: ..."`) if it is not.
+4. Create a public, named routing ETS table (name derived via
+   `routing_table_name(name)`) as a `:set` with `read_concurrency: true`, and
+   insert `{:__num_shards__, num_shards}` into it so routing helpers can read the
+   shard count directly from ETS.
+5. Start one linked `LRUCacheSharded.Shard` GenServer per shard (indices `0` to
+   `num_shards - 1`), each registered under `shard_name_for_index(name, i)` and
+   given the per-shard `:max_size`. Collect the started shards as `{shard, pid}`
+   tuples.
+6. Return `{:ok, state}` where `state` is a map holding `name`, the `routing`
+   table, and the list of `shards`.
+
+The owner must never be on the hot path: it only sets up routing state and
+supervises the shard processes.
+
+```elixir
+defmodule LRUCacheSharded do
+  @moduledoc """
+  A sharded LRU cache backed by ETS.
+
+  Instead of serialising every write through one GenServer, keys are spread
+  across `num_shards` independent shard processes. A key is routed to a shard
+  by `:erlang.phash2(key, num_shards)`, so writes to keys on different shards
+  never contend on the same process.
+
+  ## Topology
+
+  * An **owner** process (registered under `:name`) creates a public,
+    named routing ETS table and starts one linked shard GenServer per shard.
+  * Each **shard** (`LRUCacheSharded.Shard`) is a self-contained LRU cache with
+    its own `:set` data table, `:ordered_set` order table, and monotonic
+    recency counter, enforcing LRU eviction against a per-shard `max_size`.
+
+  Routing (`get`, `put`, `size`, `shard_index`, `num_shards`) reads the routing
+  ETS table directly — the owner is never on the hot path.
+
+  Eviction is strictly per-shard: overflowing one shard never touches another.
+  """
+
+  use GenServer
+
+  @doc false
+  def child_spec(opts) do
+    name = Keyword.fetch!(opts, :name)
+
+    %{
+      id: name,
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker,
+      restart: :permanent,
+      shutdown: 5_000
+    }
+  end
+
+  @type name :: atom()
+  @type key :: term()
+  @type value :: term()
+
+  @doc """
+  Start and link the owner process.
+
+  ## Options
+
+  * `:name` (required) – atom used to register the owner and derive shard names.
+  * `:num_shards` (required) – positive integer number of shard processes.
+  * `:max_size` (required) – positive integer per-shard capacity.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    name = Keyword.fetch!(opts, :name)
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  @doc "Look up `key`, refreshing recency in its shard. `{:ok, value}` or `:miss`."
+  @spec get(name(), key()) :: {:ok, value()} | :miss
+  def get(name, key) do
+    key
+    |> shard_name(name)
+    |> LRUCacheSharded.Shard.get(key)
+  end
+
+  @doc "Insert/update `key` in its shard. Always returns `:ok`."
+  @spec put(name(), key(), value()) :: :ok
+  def put(name, key, value) do
+    key
+    |> shard_name(name)
+    |> LRUCacheSharded.Shard.put(key, value)
+  end
+
+  @doc "The configured number of shards."
+  @spec num_shards(name()) :: pos_integer()
+  def num_shards(name) do
+    [{:__num_shards__, n}] = :ets.lookup(routing_table_name(name), :__num_shards__)
+    n
+  end
+
+  @doc "The shard index a key routes to."
+  @spec shard_index(name(), key()) :: non_neg_integer()
+  def shard_index(name, key), do: :erlang.phash2(key, num_shards(name))
+
+  @doc "Total number of entries across all shards."
+  @spec size(name()) :: non_neg_integer()
+  def size(name) do
+    n = num_shards(name)
+
+    Enum.reduce(0..(n - 1), 0, fn i, acc ->
+      acc + LRUCacheSharded.Shard.size(shard_name_for_index(name, i))
+    end)
+  end
+
+  # ---- routing helpers ----
+
+  defp shard_name(key, name) do
+    n = num_shards(name)
+    shard_name_for_index(name, :erlang.phash2(key, n))
+  end
+
+  defp shard_name_for_index(name, idx), do: :"#{name}_shard_#{idx}"
+  defp routing_table_name(name), do: :"#{name}_routing"
+
+  # ---- owner callbacks ----
+
+  @impl true
+  def init(opts) do
+    # TODO
+  end
+end
+
+defmodule LRUCacheSharded.Shard do
+  @moduledoc """
+  A single LRU shard: one `:set` data table (`key → {value, timestamp}`) and one
+  `:ordered_set` order table (`timestamp → key`), with a monotonic integer
+  counter as the deterministic timestamp. Writes are serialised through this
+  GenServer; reads hit the data table directly.
+  """
+
+  use GenServer
+
+  @doc false
+  def start_link(opts) do
+    name = Keyword.fetch!(opts, :name)
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  @doc false
+  def get(name, key) do
+    case :ets.lookup(data_table_name(name), key) do
+      [{^key, {value, _ts}}] ->
+        GenServer.call(name, {:touch, key})
+        {:ok, value}
+
+      [] ->
+        :miss
+    end
+  end
+
+  @doc false
+  def put(name, key, value), do: GenServer.call(name, {:put, key, value})
+
+  @doc false
+  def size(name), do: :ets.info(data_table_name(name), :size)
+
+  @impl true
+  def init(opts) do
+    name = Keyword.fetch!(opts, :name)
+    max_size = Keyword.fetch!(opts, :max_size)
+
+    data_table =
+      :ets.new(data_table_name(name), [
+        :set,
+        :public,
+        :named_table,
+        read_concurrency: true
+      ])
+
+    order_table =
+      :ets.new(order_table_name(name), [
+        :ordered_set,
+        :protected,
+        :named_table
+      ])
+
+    {:ok,
+     %{data_table: data_table, order_table: order_table, max_size: max_size, counter: 0}}
+  end
+
+  @impl true
+  def handle_call({:touch, key}, _from, state) do
+    case :ets.lookup(state.data_table, key) do
+      [{^key, {value, old_ts}}] ->
+        {new_ts, state} = next_counter(state)
+        :ets.delete(state.order_table, old_ts)
+        :ets.insert(state.order_table, {new_ts, key})
+        :ets.insert(state.data_table, {key, {value, new_ts}})
+        {:reply, :ok, state}
+
+      [] ->
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:put, key, value}, _from, state) do
+    state =
+      case :ets.lookup(state.data_table, key) do
+        [{^key, {_old, old_ts}}] ->
+          {new_ts, state} = next_counter(state)
+          :ets.delete(state.order_table, old_ts)
+          :ets.insert(state.order_table, {new_ts, key})
+          :ets.insert(state.data_table, {key, {value, new_ts}})
+          state
+
+        [] ->
+          state = maybe_evict(state)
+          {new_ts, state} = next_counter(state)
+          :ets.insert(state.order_table, {new_ts, key})
+          :ets.insert(state.data_table, {key, {value, new_ts}})
+          state
+      end
+
+    {:reply, :ok, state}
+  end
+
+  defp next_counter(%{counter: c} = state), do: {c + 1, %{state | counter: c + 1}}
+
+  defp maybe_evict(state) do
+    if :ets.info(state.data_table, :size) >= state.max_size do
+      lru_ts = :ets.first(state.order_table)
+      [{^lru_ts, lru_key}] = :ets.lookup(state.order_table, lru_ts)
+      :ets.delete(state.order_table, lru_ts)
+      :ets.delete(state.data_table, lru_key)
+    end
+
+    state
+  end
+
+  defp data_table_name(name), do: :"#{name}_data"
+  defp order_table_name(name), do: :"#{name}_order"
+end
+```
+</file>
+
+<file path="solution.ex">
+  @impl true
+  def init(opts) do
+    name = Keyword.fetch!(opts, :name)
+    num_shards = Keyword.fetch!(opts, :num_shards)
+    max_size = Keyword.fetch!(opts, :max_size)
+
+    unless is_integer(num_shards) and num_shards > 0 do
+      raise ArgumentError, ":num_shards must be a positive integer, got: #{inspect(num_shards)}"
+    end
+
+    unless is_integer(max_size) and max_size > 0 do
+      raise ArgumentError, ": (truncated)
+10:01:40.564 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4763, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4763, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4763, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4763, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3764, "type" => "message"}], "output_tokens" => 3764, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+10:01:40.583 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_041_003_sharded_lru_cache_with_consistent_key_routing_04/041_003_sharded_lru_cache_with_consistent_key_routing_04 solution.ex
+10:01:41.318 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":33,"lines_over_98":0,"max_line_length":96,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"parent":"041_003_sharded_lru_cache_with_consistent_key_routing_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.9,"mode":"fim","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_041_003_sharded_lru_cache_with_consistent_key_routing_04/041_003_sharded_lru_cache_with_consistent_key_routing_04/solution.ex","task":"041_003_sharded_lru_cache_with_consistent_key_routing_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-04T08:01:41.292473Z"}
+10:01:41.319 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_041_003_sharded_lru_cache_with_consistent_key_routing_04/041_003_sharded_lru_cache_with_consistent_key_routing_04 .gen_staging/fim_041_003_sharded_lru_cache_with_consistent_key_routing_04/mutant.ex
+10:01:41.994 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":4,"lines_over_98":0,"max_line_length":18,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"041_003_sharded_lru_cache_with_consistent_key_routing_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.28,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 10/10 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_041_003_sharded_lru_cache_with_consistent_key_routing_04/mutant.ex","task":"041_003_sharded_lru_cache_with_consistent_key_routing_04","test_failures":[{"message":"failed to start child with the spec {LRUCacheSharded, [name: :shard_4870, num_shards: 1, max_size: 3]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_540373_2630.ex:110: LRUCacheSharded.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"LRUCacheShardedTest","test":"test num_shards: 1 behaves like a plain LRU cache"},{"message":"failed to start child with the spec {LRUCacheSharded, [name: :shard_4934, num_shards: 1, max_size: 3]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_540373_2630.ex:110: LRUCacheSharded.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"LRUCacheShardedTest","test":"test get refreshes recency within a single shard"},{"message":"failed to start child with the spec {LRUCacheSharded, [name: :shard_4998, num_shards: 4, max_size: 10]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_540373_2630.ex:110: LRUCacheSharded.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"LRUCacheShardedTest","test":"test get returns :miss for unknown key"},{"message":"failed to start child with the spec {LRUCacheSharded, [name: :shard_5062, num_shards: 4, max_size: 10]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_540373_2630.ex:110: LRUCacheSharded.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"LRUCacheShardedTest","test":"test put and get round-trip across shards"},{"message":"failed to start child with the spec {LRUCacheSharded, [name: :shard_5126, num_shards: 8, max_size: 5]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_540373_2630.ex:110: LRUCacheSharded.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"LRUCacheShardedTest","test":"test num_shards reports the configured shard count"},{"message":"failed to start child with the spec {LRUCacheSharded, [name: :shard_5190, num_shards: 4, max_size: 5]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_540373_2630.ex:110: LRUCacheSharded.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"LRUCacheShardedTest","test":"test shard_index is deterministic and in range"},{"message":"failed to start child with the spec {LRUCacheSharded, [name: :shard_5254, num_shards: 4, max_size: 2]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_540373_2630.ex:110: LRUCacheSharded.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"LRUCacheShardedTest","test":"test eviction is confined to the key's own shard"},{"message":"failed to start child with the spec {LRUCacheSharded, [name: :shard_5318, num_shards: 4, max_size: 2]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_540373_2630.ex:110: LRUCacheSharded.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"LRUCacheShardedTest","test":"test filling one shard does not evict entries in another shard"},{"message":"failed to start child with the spec {LRUCacheSharded, [name: :shard_5382, num_shards: 4, max_size: 2]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_540373_2630.ex:110: LRUCacheSharded.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"LRUCacheShardedTest","test":"test size reports total entries across shards and respects per-shard caps"},{"message":"failed to start child with the spec {LRUCacheSharded, [name: :shard_5446, num_shards: 2, max_size: 4]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        /tmp/evalfim_540373_2630.ex:110: LRUCacheSharded.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"LRUCacheShardedTest","test":"test two sharded caches are fully independent"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-04T08:01:41.971562Z"}
+10:01:41.994 [debug] fim mutation gate: killed
+10:01:41.996 [info] promoted 041_003_sharded_lru_cache_with_consistent_key_routing_04 -> tasks/041_003_sharded_lru_cache_with_consistent_key_routing_04

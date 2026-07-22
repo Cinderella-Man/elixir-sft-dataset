@@ -1,0 +1,400 @@
+03:22:29.570 [info] FIM 032_001_json_to_ecto_bulk_ingestion_pipeline_fim02 → 032_001_json_to_ecto_bulk_ingestion_pipeline_03: target prepare_rows/2
+03:22:29.570 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+03:22:29.570 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `prepare_rows/2`.
+
+Generate a prompt describing how to implement `prepare_rows/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `prepare_rows/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `prepare_rows/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `prepare_rows/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `DataIngestion` that reads a large JSON array
+file, processes it in batches, and upserts each batch into a database table via
+Ecto.
+
+I need these functions in the public API:
+
+- `DataIngestion.ingest(repo, schema, file_path, opts \\ [])` — the main entry
+  point. It reads the JSON file at `file_path`, splits the decoded list into
+  batches, and calls `repo.insert_all/3` for each batch. It must return
+  `{:ok, stats}` on success or `{:error, reason}` on failure.
+  `stats` is a map with these integer keys:
+    - `:total`     — total records read from the file
+    - `:inserted`  — records that did not previously exist and were inserted
+    - `:updated`   — records that already existed and were replaced
+    - `:failed`    — records that could not be processed (e.g. a bad batch)
+
+- Accepted `opts`:
+    - `:batch_size` (integer, default 500) — how many records per
+      `insert_all` call
+    - `:on_conflict` (atom or keyword, default `:replace_all`) — passed
+      directly to `Repo.insert_all` as the `on_conflict:` option
+    - `:conflict_target` (atom or list, default `:nothing`) — passed as
+      `conflict_target:` so callers can specify which columns identify a
+      duplicate (e.g. `[:external_id]`)
+    - `:returning` (boolean, default `true`) — when `true`, use
+      `returning: true` in `insert_all` so you can distinguish inserts from
+      updates by inspecting the returned rows
+
+To tell inserts from updates: when `returning: true`, compare the row's
+`inserted_at` and `updated_at` timestamps. If they are equal (within 1 second),
+count the row as inserted; otherwise count it as updated. If `returning` is
+false, add all successfully processed rows to `:inserted` and leave `:updated`
+as 0.
+
+The module must handle these error conditions gracefully — never raise:
+- File not found → `{:error, :file_not_found}`
+- File is not valid JSON → `{:error, :invalid_json}`
+- File contains valid JSON but not a top-level array →
+  `{:error, :not_a_list}`
+- A batch `insert_all` call fails → log the error, add the batch size to
+  `:failed`, and continue with the remaining batches (partial success is
+  still `{:ok, stats}`)
+
+Use `File.read/1` + `Jason.decode/1` for I/O and parsing. Stream or chunk
+the decoded list with `Enum.chunk_every/2` — do not load multiple copies of
+the list into memory simultaneously. Use `require Logger` and emit a
+`Logger.info/1` line after every batch with the running totals.
+
+Give me the complete module in a single file. Assume Jason and Ecto are
+available as dependencies; do not add anything else.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule DataIngestion do
+  @moduledoc """
+  Reads a large JSON array file and upserts its records into a database table
+  via Ecto in configurable batches.
+
+  `Jason.decode/1` always returns string-keyed maps.  This module converts
+  those keys to atoms (using only fields declared on the schema) and injects
+  `inserted_at` / `updated_at` timestamps before calling `insert_all`, because
+  `insert_all` bypasses Ecto callbacks and will not set timestamps on its own.
+
+  ## Example
+
+      DataIngestion.ingest(MyApp.Repo, MyApp.Product, "/tmp/products.json",
+        batch_size:       1_000,
+        on_conflict:      :replace_all,
+        conflict_target:  [:external_id],
+        returning:        true
+      )
+      #=> {:ok, %{total: 42_000, inserted: 40_100, updated: 1_900, failed: 0}}
+  """
+
+  require Logger
+
+  # ---------------------------------------------------------------------------
+  # Types
+  # ---------------------------------------------------------------------------
+
+  @type repo        :: module()
+  @type schema      :: module()
+  @type file_path   :: String.t()
+  @type stats       :: %{total: integer(), inserted: integer(),
+                         updated: integer(), failed: integer()}
+  @type ingest_opts :: [
+    batch_size:      pos_integer(),
+    on_conflict:     atom() | keyword(),
+    conflict_target: atom() | [atom()],
+    returning:       boolean()
+  ]
+
+  # ---------------------------------------------------------------------------
+  # Defaults
+  # ---------------------------------------------------------------------------
+
+  @default_batch_size      500
+  @default_on_conflict     :replace_all
+  @default_conflict_target :nothing
+  @default_returning       true
+
+  # Tolerance window (seconds) used to tell a fresh INSERT from an UPDATE when
+  # comparing the returned inserted_at / updated_at timestamps.
+  @insert_window_seconds 1
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Ingests records from a JSON array file into the database.
+
+  ## Parameters
+
+    - `repo`      – An Ecto repository module (e.g. `MyApp.Repo`).
+    - `schema`    – An Ecto schema module whose table will receive the rows.
+    - `file_path` – Absolute or relative path to a UTF-8 JSON file whose
+                    top-level value is an array of objects.
+    - `opts`      – Keyword list; see module doc for accepted keys.
+
+  ## Return values
+
+    - `{:ok, stats}` – Always returned when the file was read and parsed
+                       successfully, even if individual batches failed.
+    - `{:error, :file_not_found}` – The file does not exist or is unreadable.
+    - `{:error, :invalid_json}`   – The file contents are not valid JSON.
+    - `{:error, :not_a_list}`     – The JSON root value is not an array.
+  """
+  @spec ingest(repo(), schema(), file_path(), ingest_opts()) ::
+          {:ok, stats()} | {:error, :file_not_found | :invalid_json | :not_a_list}
+  def ingest(repo, schema, file_path, opts \\ []) do
+    batch_size      = Keyword.get(opts, :batch_size,       @default_batch_size)
+    on_conflict     = Keyword.get(opts, :on_conflict,      @default_on_conflict)
+    conflict_target = Keyword.get(opts, :conflict_target,  @default_conflict_target)
+    returning       = Keyword.get(opts, :returning,        @default_returning)
+
+    with {:ok, raw}     <- read_file(file_path),
+         {:ok, parsed}  <- parse_json(raw),
+         {:ok, records} <- validate_list(parsed) do
+
+      cfg = %{
+        batch_size:      batch_size,
+        on_conflict:     on_conflict,
+        conflict_target: conflict_target,
+        returning:       returning
+      }
+
+      {:ok, process_batches(repo, schema, records, cfg)}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # File I/O and validation
+  # ---------------------------------------------------------------------------
+
+  @spec read_file(file_path()) :: {:ok, binary()} | {:error, :file_not_found}
+  defp read_file(path) do
+    case File.read(path) do
+      {:ok, contents}  -> {:ok, contents}
+      {:error, reason} ->
+        Logger.error("[DataIngestion] Could not read file #{inspect(path)}: #{inspect(reason)}")
+        {:error, :file_not_foun (truncated)
+03:23:24.150 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `DataIngestion.prepare_rows/2`
+
+Implement the private `prepare_rows/2` function.
+
+`Jason.decode/1` always returns **string-keyed** maps, but `insert_all` expects
+**atom-keyed** maps whose keys correspond to columns declared on the schema.
+`prepare_rows/2` bridges that gap for a single batch.
+
+It receives `raw_rows` (a list of string-keyed maps decoded from JSON) and
+`schema_keys` (a `MapSet` of the schema's field names as **strings**, produced
+by `schema_field_set/1`). It must return a list of atom-keyed maps ready to be
+passed to `insert_all`.
+
+For each row it must:
+
+1. Compute a single shared timestamp `now` as
+   `NaiveDateTime.utc_now()` truncated to the second (compute it once for the
+   whole batch, not once per row).
+2. Keep only the key/value pairs whose (string) key is a member of
+   `schema_keys`, dropping any unknown fields that are not columns on the
+   schema.
+3. Convert each surviving string key to its atom form using
+   `String.to_existing_atom/1` — this is safe because the atom was already
+   interned when the schema module was compiled — and build the result as a
+   map.
+4. Inject `inserted_at` and `updated_at` timestamps set to `now`, but **only
+   when the schema actually declares those columns** and only when the row does
+   not already carry them. Delegate this to the existing `maybe_put_new/4`
+   helper (which checks membership in `schema_keys` and uses `Map.put_new/3`),
+   calling it once for `:inserted_at` and once for `:updated_at`.
+
+`insert_all` bypasses Ecto callbacks and will not set timestamps on its own,
+which is why this function injects them explicitly.
+
+```elixir
+defmodule DataIngestion do
+  @moduledoc """
+  Reads a large JSON array file and upserts its records into a database table
+  via Ecto in configurable batches.
+
+  `Jason.decode/1` always returns string-keyed maps.  This module converts
+  those keys to atoms (using only fields declared on the schema) and injects
+  `inserted_at` / `updated_at` timestamps before calling `insert_all`, because
+  `insert_all` bypasses Ecto callbacks and will not set timestamps on its own.
+
+  ## Example
+
+      DataIngestion.ingest(MyApp.Repo, MyApp.Product, "/tmp/products.json",
+        batch_size:       1_000,
+        on_conflict:      :replace_all,
+        conflict_target:  [:external_id],
+        returning:        true
+      )
+      #=> {:ok, %{total: 42_000, inserted: 40_100, updated: 1_900, failed: 0}}
+  """
+
+  require Logger
+
+  # ---------------------------------------------------------------------------
+  # Types
+  # ---------------------------------------------------------------------------
+
+  @type repo        :: module()
+  @type schema      :: module()
+  @type file_path   :: String.t()
+  @type stats       :: %{total: integer(), inserted: integer(),
+                         updated: integer(), failed: integer()}
+  @type ingest_opts :: [
+    batch_size:      pos_integer(),
+    on_conflict:     atom() | keyword(),
+    conflict_target: atom() | [atom()],
+    returning:       boolean()
+  ]
+
+  # ---------------------------------------------------------------------------
+  # Defaults
+  # ---------------------------------------------------------------------------
+
+  @default_batch_size      500
+  @default_on_conflict     :replace_all
+  @default_conflict_target :nothing
+  @default_returning       true
+
+  # Tolerance window (seconds) used to tell a fresh INSERT from an UPDATE when
+  # comparing the returned inserted_at / updated_at timestamps.
+  @insert_window_seconds 1
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Ingests records from a JSON array file into the database.
+
+  ## Parameters
+
+    - `repo`      – An Ecto repository module (e.g. `MyApp.Repo`).
+    - `schema`    – An Ecto schema module whose table will receive the rows.
+    - `file_path` – Absolute or relative path to a UTF-8 JSON file whose
+                    top-level value is an array of objects.
+    - `opts`      – Keyword list; see module doc for accepted keys.
+
+  ## Return values
+
+    - `{:ok, stats}` – Always returned when the file was read and parsed
+                       successfully, even if individual batches failed.
+    - `{:error, :file_not_found}` – The file does not exist or is unreadable.
+    - `{:error, :invalid_json}`   – The file contents are not valid JSON.
+    - `{:error, :not_a_list}`     – The JSON root value is not an array.
+  """
+  @spec ingest(repo(), schema(), file_path(), ingest_opts()) ::
+          {:ok, stats()} | {:error, :file_not_found | :invalid_json | :not_a_list}
+  def ingest(repo, schema, file_path, opts \\ []) do
+    batch_size      = Keyword.get(opts, :batch_size,       @default_batch_size)
+    on_conflict     = Keyword.get(opts, :on_conflict,      @default_on_conflict)
+    conflict_target = Keyword.get(opts, :conflict_target,  @default_conflict_target)
+    returning       = Keyword.get(opts, :returning,        @default_returning)
+
+    with {:ok, raw}     <- read_file(file_path),
+         {:ok, parsed}  <- parse_json(raw),
+         {:ok, records} <- validate_list(parsed) do
+
+      cfg = %{
+        batch_size:      batch_size,
+        on_conflict:     on_conflict,
+        conflict_target: conflict_target,
+        returning:       returning
+      }
+
+      {:ok, process_batches(repo, schema, records, cfg)}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # File I/O and validation
+  # ---------------------------------------------------------------------------
+
+  @spec read_file(file_path()) :: {:ok, binary()} | {:error, :file_not_found}
+  defp read_file(path) do
+    case File.read(path) do
+      {:ok, contents}  -> {:ok, contents}
+      {:error, reason} ->
+        Logger.error("[DataIngestion] Could not read file #{inspect(path)}: #{inspect(reason)}")
+        {:error, :file_not_found}
+    end
+  end
+
+  @spec parse_json(binary()) :: {:ok, term()} | {:error, :invalid_json}
+  defp parse_json(raw) do
+    case Jason.decode(raw) do
+      {:ok, value}     -> {:ok, value}
+      {:error, reason} ->
+        Logger.error("[DataIngestion] JSON parse error: #{inspect(reason)}")
+        {:error, :invalid_json}
+    end
+  end
+
+  @spec validate_list(term()) :: {:ok, list()} | {:error, :not_a_list}
+  defp validate_list(value) when is_list(value), do: {:ok, value}
+  defp validate_list(value) do
+    Logger.error("[DataIngestion] Expected a JSON array, got: #{inspect(value, limit: 5)}")
+    {:error, :not_a_list}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Batch processing
+  # ---------------------------------------------------------------------------
+
+  @spec process_batches(repo(), schema(), list(), map()) :: stats()
+  defp process_batches(repo, schema, records, cfg) do
+    total       = length(records)
+    schema_keys = schema_field_set(schema)
+    initial_acc = %{total: total, inserted: 0, updated: 0, failed: 0}
+
+    stats =
+      records
+      |> Enum.chunk_every(cfg.batch_size)
+      |> Enum.reduce(initial_acc, fn raw_batch, acc ->
+        # Prepare rows: atomise keys, drop unknown fields, inject timestamps.
+        prepared = prepare_rows(raw_batch, schema_keys)
+        process_batch(repo, schema, prepared, length(raw_batch), cfg, acc)
+      end)
+
+    Logger.info("[DataIngestion] Finished. Final stats: #{format_stats(stats)}")
+    stats
+  end
+
+  @spec process_batch(repo(), schema(), list(), non_neg_integer(), map(), stats()) :: stats()
+  defp process_batch(repo, schema, prepared_batch, raw_count, cfg, acc) do
+    insert_opts = build_insert_opts(cfg)
+
+    try do
+      {_count, returned_rows} = repo.insert_all(schema, prepared_batch, insert_opts)
+      {ins, upd} = classify_rows(returned_rows, raw_count, cfg.returning)
+
+      new_acc = %{acc | inserted: acc.inserted + ins, updated: acc.updated + upd}
+
+      Logger.info("[DataIngestion] Batch done — " <>
+        (truncated)
+03:23:24.150 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6328, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6328, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6328, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6328, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 5467, "type" => "message"}], "output_tokens" => 5467, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+03:23:24.171 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_032_001_json_to_ecto_bulk_ingestion_pipeline_03/032_001_json_to_ecto_bulk_ingestion_pipeline_03 solution.ex
+03:23:27.054 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":25,"lines_over_98":0,"max_line_length":78,"mode":"fim","pipe_chain_count":6,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"032_001_json_to_ecto_bulk_ingestion_pipeline_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_032_001_json_to_ecto_bulk_ingestion_pipeline_03/032_001_json_to_ecto_bulk_ingestion_pipeline_03/solution.ex","task":"032_001_json_to_ecto_bulk_ingestion_pipeline_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T01:23:27.032109Z"}
+03:23:27.055 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_032_001_json_to_ecto_bulk_ingestion_pipeline_03/032_001_json_to_ecto_bulk_ingestion_pipeline_03 .gen_staging/fim_032_001_json_to_ecto_bulk_ingestion_pipeline_03/mutant.ex
+03:23:27.904 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":68,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"parent":"032_001_json_to_ecto_bulk_ingestion_pipeline_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.6,"mode":"fim","overall":0.61,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 4/8 failed"],"tests":0.5},"shape":"fim","solution_file":".gen_staging/fim_032_001_json_to_ecto_bulk_ingestion_pipeline_03/mutant.ex","task":"032_001_json_to_ecto_bulk_ingestion_pipeline_03","test_failures":[{"message":"MUTATION","module":"DataIngestionTest","test":"test inserts all records from a simple JSON file"},{"message":"MUTATION","module":"DataIngestionTest","test":"test updates existing records on conflict"},{"message":"MUTATION","module":"DataIngestionTest","test":"test respects batch_size: processes all records across multiple batches"},{"message":"MUTATION","module":"DataIngestionTest","test":"test continues processing after a failed batch and reports failures"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":4,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T01:23:27.879233Z"}
+03:23:27.904 [debug] fim mutation gate: killed
+03:23:27.906 [info] promoted 032_001_json_to_ecto_bulk_ingestion_pipeline_03 -> tasks/032_001_json_to_ecto_bulk_ingestion_pipeline_03

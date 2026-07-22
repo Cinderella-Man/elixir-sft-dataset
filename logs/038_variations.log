@@ -1,0 +1,463 @@
+08:57:22.064 [info] VARIATIONS gen for 038_001_tree_structure_builder_from_flat_list_01 (3 slot(s))
+08:57:22.065 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+08:57:22.065 [debug] claude -p USER prompt:
+I have this SFT task (idea #38 — "Tree Structure Builder from Flat List"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 38 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `TreeBuilder` that converts a flat list of maps into a
+nested tree structure.
+
+Each input item is a map with at least these two fields:
+- `:id` — a unique identifier (any term: integer, string, atom)
+- `:parent_id` — the id of the parent node, or `nil` if this node is a root
+
+I need these functions in the public API:
+
+- `TreeBuilder.build(items, opts \\ [])` — takes the flat list and returns
+  `{:ok, forest}` where `forest` is a list of root-level nodes, each being the
+  original map with a `:children` key added (a list of child nodes, recursively
+  structured the same way). Leaf nodes have `children: []`. If the input is
+  empty, return `{:ok, []}`.
+  Returns `{:error, {:cycle_detected, ids}}` if a cycle is found, where `ids` is
+  the list of node ids involved in the cycle.
+
+The function must support these options:
+- `:orphan_strategy` — what to do when a node's `parent_id` points to an id that
+  doesn't exist in the list. Accepted values:
+  - `:discard` (default) — silently drop orphan nodes from the output
+  - `:raise_to_root` — treat orphans as root nodes
+
+Nodes in the output should preserve all original fields from the input map and
+simply gain the extra `:children` key. The order of children under each parent
+should follow the original order those items appeared in the input list. Root
+nodes should also appear in their original input order.
+
+Cycle detection must work for direct cycles (A → B → A) as well as indirect
+ones (A → B → C → A). It must not false-positive on valid deep trees or on
+diamond shapes that aren't true cycles.
+
+Do not use any external dependencies — only the Elixir / Erlang standard library.
+Give me the complete module in a single file.
+
+=== BASE solution.ex ===
+defmodule TreeBuilder do
+  @moduledoc """
+  Converts a flat list of maps into a nested tree (forest) structure.
+
+  Each input map must have at least:
+    - `:id`        — a unique identifier (any term)
+    - `:parent_id` — the id of the parent node, or `nil` for root nodes
+
+  ## Example
+
+      iex> items = [
+      ...>   %{id: 1, parent_id: nil,  name: "root"},
+      ...>   %{id: 2, parent_id: 1,    name: "child"},
+      ...>   %{id: 3, parent_id: 2,    name: "grandchild"},
+      ...> ]
+      iex> {:ok, [root]} = TreeBuilder.build(items)
+      iex> root.name
+      "root"
+      iex> [child] = root.children
+      iex> child.name
+      "child"
+      iex> [grandchild] = child.children
+      iex> grandchild.name
+      "grandchild"
+  """
+
+  @type id :: term()
+  @type node_map :: %{required(:id) => id(), required(:parent_id) => id() | nil, optional(atom()) => term()}
+  @type tree_node :: %{required(:id) => id(), required(:parent_id) => id() | nil, required(:children) => [tree_node()], optional(atom()) => term()}
+  @type forest :: [tree_node()]
+  @type orphan_strategy :: :discard | :raise_to_root
+  @type build_opt :: {:orphan_strategy, orphan_strategy()}
+  @type build_result :: {:ok, forest()} | {:error, {:cycle_detected, [id()]}}
+
+  @doc """
+  Builds a forest (list of root trees) from a flat list of node maps.
+
+  ## Options
+
+    - `:orphan_strategy` — behaviour for nodes whose `parent_id` references a
+      non-existent id.
+      - `:discard` (default) — orphan nodes are silently dropped.
+      - `:raise_to_root` — orphan nodes are treated as additional root nodes.
+
+  ## Return values
+
+    - `{:ok, forest}` on success (empty list when `items` is empty).
+    - `{:error, {:cycle_detected, ids}}` when a cycle is detected; `ids` is the
+      list of node ids that form the cycle.
+  """
+  @spec build([node_map()], [build_opt()]) :: build_result()
+  def build(items, opts \\ [])
+
+  def build([], _opts), do: {:ok, []}
+
+  def build(items, opts) when is_list(items) do
+    orphan_strategy = Keyword.get(opts, :orphan_strategy, :discard)
+
+    # Index nodes by id, preserving insertion order via a list of ids.
+    {id_to_node, ordered_ids} = index_items(items)
+
+    # Validate: duplicate ids are detected early.
+    case detect_duplicate_ids(items) do
+      {:error, _} = err -> err
+      :ok ->
+        # Build a parent_id → [child_id] map (children in original order).
+        children_map = build_children_map(items)
+
+        # Determine which nodes are "known" ids.
+        known_ids = MapSet.new(ordered_ids)
+
+        # Detect cycles using DFS on the children graph before we build anything.
+        case detect_cycle(ordered_ids, children_map) do
+          {:error, _} = err ->
+            err
+
+          :ok ->
+            # Identify root nodes: parent_id is nil, OR parent_id is unknown
+            # (orphan handling) — depending on strategy.
+            root_ids =
+              ordered_ids
+              |> Enum.filter(fn id ->
+                node = Map.fetch!(id_to_node, id)
+                pid = node.parent_id
+
+                cond do
+                  is_nil(pid) -> true
+                  not MapSet.member?(known_ids, pid) ->
+                    orphan_strategy == :raise_to_root
+                  true -> false
+                end
+              end)
+
+            forest =
+              Enum.map(root_ids, fn id ->
+                build_subtree(id, id_to_node, children_map)
+              end)
+
+            {:ok, forest}
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Index items into a map of id → node and a list of ids in original order.
+  @spec index_items([node_map()]) :: {%{id() => node_map()}, [id()]}
+  defp index_items(items) do
+    Enum.reduce(items, {%{}, []}, fn item, {map, ids} ->
+      id = Map.fetch!(item, :id)
+      {Map.put(map, id, item), [id | ids]}
+    end)
+    |> then(fn {map, ids} -> {map, Enum.reverse(ids)} end)
+  end
+
+  @spec detect_duplicate_ids([node_map()]) :: :ok | {:error, {:duplicate_ids, [id()]}}
+  defp detect_duplicate_ids(items) do
+    ids = Enum.map(items, & &1.id)
+    unique = Enum.uniq(ids)
+
+    if length(ids) == length(unique) do
+      :ok
+    else
+      dupes =
+        ids
+        |> Enum.frequencies()
+        |> Enum.filter(fn {_id, count} -> count > 1 end)
+        |> Enum.map(fn {id, _} -> id end)
+
+      {:error, {:duplicate_ids, dupes}}
+    end
+  end
+
+  # Build a map of parent_id → [child_id, ...] in original order.
+  @spec build_children_map([node_map()]) :: %{id() => [id()]}
+  defp build_children_map(items) do
+    # We want children in the same order as the original list, so we walk
+    # forward and append (via reversal at the end).
+    items
+    |> Enum.reduce(%{}, fn item, acc ->
+      pid = item.parent_id
+
+      if is_nil(pid) do
+        acc
+      else
+        Map.update(acc, pid, [item.id], fn existing -> existing ++ [item.id] end)
+      end
+    end)
+  end
+
+  # Recursively build a tree node, attaching children.
+  @spec build_subtree(id(), %{id() => node_map()}, %{id() => [id()]}) :: tree_node()
+  defp build_subtree(id, id_to_node, children_map) do
+    node = Map.fetch!(id_to_node, id)
+    child_ids = Map.get(children_map, id, [])
+
+    children =
+      Enu (truncated)
+09:03:16.281 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `TreePaths` that converts a flat list of maps into a
+**flat, pre-order annotated list** — a "materialized path" representation instead of a
+nested tree. This is the same domain as a tree builder, but the output shape is different:
+rather than nesting children inside parents, every node is annotated with its position in
+the hierarchy.
+
+Each input item is a map with at least these two fields:
+- `:id` — a unique identifier (any term: integer, string, atom)
+- `:parent_id` — the id of the parent node, or `nil` if this node is a root
+
+I need these functions in the public API:
+
+- `TreePaths.build(items, opts \\ [])` — takes the flat list and returns
+  `{:ok, nodes}` where `nodes` is a **flat list in pre-order DFS traversal order**
+  (each root, then all of that root's descendants depth-first, before moving to the
+  next root). Each element is the original map with two extra keys added:
+  - `:depth` — an integer; root nodes have depth `0`, their children `1`, and so on.
+  - `:path` — a list of ids from the root down to and including this node
+    (so a root's path is `[its_id]`, and a grandchild's is `[root_id, parent_id, id]`).
+
+  If the input is empty, return `{:ok, []}`. Returns
+  `{:error, {:cycle_detected, ids}}` if a cycle is found, where `ids` is the list of
+  node ids involved in the cycle.
+
+- `TreePaths.subtree(nodes, id)` — given the annotated list returned by `build/1` and an
+  id, return `{:ok, slice}` where `slice` is the node with that id followed by all of its
+  descendants, in pre-order (i.e. every node whose `:path` contains `id`). Returns
+  `{:error, :not_found}` if no node with that id is present in `nodes`.
+
+The `build/1` function must support this option:
+- `:orphan_strategy` — what to do when a node's `parent_id` points to an id that doesn't
+  exist in the list. Accepted values:
+  - `:discard` (default) — silently drop orphan nodes (and their descendants) from output
+  - `:raise_to_root` — treat orphans as root nodes (depth `0`, path `[id]`)
+
+Order rules: root nodes appear in their original input order; the children of any parent
+appear in the original input order those items appeared in the list. All original fields
+must be preserved on each node in addition to the new `:depth` and `:path` keys.
+
+Cycle detection must work for direct cycles (A → B → A) as well as indirect ones
+(A → B → C → A), and must not false-positive on valid deep trees.
+
+Do not use any external dependencies — only the Elixir / Erlang standard library.
+Give me the complete module in a single file.
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule TreePathsTest do
+  use ExUnit.Case, async: false
+
+  defp ids(nodes), do: Enum.map(nodes, & &1.id)
+
+  test "returns empty list for empty input" do
+    assert {:ok, []} = TreePaths.build([])
+  end
+
+  test "single root has depth 0 and single-element path" do
+    assert {:ok, [node]} = TreePaths.build([%{id: 1, parent_id: nil, name: "root"}])
+    assert node.id == 1
+    assert node.name == "root"
+    assert node.depth == 0
+    assert node.path == [1]
+  end
+
+  test "parent-child emitted in pre-order with accumulating path" do
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 1}
+    ]
+
+    assert {:ok, nodes} = TreePaths.build(items)
+    assert ids(nodes) == [1, 2]
+
+    [root, child] = nodes
+    assert root.depth == 0 and root.path == [1]
+    assert child.depth == 1 and child.path == [1, 2]
+  end
+
+  test "deep tree accumulates full ancestor path and increasing depth" do
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 1},
+      %{id: 3, parent_id: 2}
+    ]
+
+    assert {:ok, nodes} = TreePaths.build(items)
+    assert ids(nodes) == [1, 2, 3]
+    assert Enum.map(nodes, & &1.depth) == [0, 1, 2]
+    assert Enum.map(nodes, & &1.path) == [[1], [1, 2], [1, 2, 3]]
+  end
+
+  test "pre-order visits a whole subtree before the next sibling" do
+    # 1 -> 2 -> 4
+    #      2 -> 5
+    # 1 -> 3
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 1},
+      %{id: 3, parent_id: 1},
+      %{id: 4, parent_id: 2},
+      %{id: 5, parent_id: 2}
+    ]
+
+    assert {:ok, nodes} = TreePaths.build(items)
+    assert ids(nodes) == [1, 2, 4, 5, 3]
+  end
+
+  test "children preserve original input order" do
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 4, parent_id: 1},
+      %{id: 2, parent_id: 1},
+      %{id: 3, parent_id: 1}
+    ]
+
+    assert {:ok, nodes} = TreePaths.build(items)
+    assert ids(nodes) == [1, 4, 2, 3]
+  end
+
+  test "multiple roots preserve input order" do
+    items = [
+      %{id: :c, parent_id: nil},
+      %{id: :a, parent_id: nil},
+      %{id: :b, parent_id: nil}
+    ]
+
+    assert {:ok, nodes} = TreePaths.build(items)
+    assert ids(nodes) == [:c, :a, :b]
+    assert Enum.all?(nodes, &(&1.depth == 0))
+  end
+
+  test "all original fields are preserved alongside annotations" do
+    items = [
+      %{id: "a", parent_id: nil, label: "Alpha", score: 42},
+      %{id: "b", parent_id: "a", label: "Beta", score: 7}
+    ]
+
+    assert {:ok, [root, child]} = TreePaths.build(items)
+    assert root.label == "Alpha" and root.score == 42
+    assert child.label == "Beta" and child.score == 7
+    assert child.path == ["a", "b"]
+  end
+
+  test "orphans are discarded by default" do
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 99}
+    ]
+
+    assert {:ok, nodes} = TreePaths.build(items)
+    assert ids(nodes) == [1]
+  end
+
+  test ":raise_to_root turns an orphan into a root with its own subtree" do
+    items = [
+      %{id: 2, parent_id: 99},
+      %{id: 3, parent_id: 2}
+    ]
+
+    assert {:ok, nodes} = TreePaths.build(items, orphan_strategy: :raise_to_root)
+    assert ids(nodes) == [2, 3]
+
+    [orphan, child] = nodes
+    assert orphan.depth == 0 and orphan.path == [2]
+    assert child.depth == 1 and child.path == [2, 3]
+  end
+
+  test "direct cycle returns error" do
+    items = [
+      %{id: 1, parent_id: 2},
+      %{id: 2, parent_id: 1}
+    ]
+
+    assert {:error, {:cycle_detected, ids}} = TreePaths.build(items)
+    assert Enum.sort(ids) == [1, 2]
+  end
+
+  test "indirect cycle returns error" do
+    items = [
+      %{id: 1, parent_id: 3},
+      %{id: 2, parent_id: 1},
+      %{id: 3, parent_id: 2}
+    ]
+
+    assert {:error, {:cycle_detected, ids}} = TreePaths.build(items)
+    assert Enum.sort(ids) == [1, 2, 3]
+  end
+
+  test "no false positive on a valid deep tree" do
+    items = for i <- 1..20, do: %{id: i, parent_id: if(i == 1, do: nil, else: i - 1)}
+    assert {:ok, nodes} = TreePaths.build(items)
+    assert ids(nodes) == Enum.to_list(1..20)
+    assert List.last(nodes).depth == 19
+  end
+
+  test "subtree returns node plus all descendants in pre-order" do
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 1},
+      %{id: 3, parent_id: 1},
+      %{id: 4, parent_id: 2},
+      %{id: 5, parent_id: 2}
+    ]
+
+    assert {:ok, nodes} = TreePaths.build(items)
+    assert {:ok, slice} = TreePaths.subtree(nodes, 2)
+    assert ids(slice) == [2, 4, 5]
+  end
+
+  test "subtree of a leaf is just the leaf" do
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 1}
+    ]
+
+    assert {:ok, nodes} = TreePaths.build(items)
+    assert {:ok, [only]} = TreePaths.subtree(nodes, 2)
+    assert only.id == 2
+  end
+
+  test "subtree returns error for an unknown id" do
+    assert {:ok, nodes} = TreePaths.build([%{id: 1, parent_id: nil}])
+    assert {:error, :not_found} = TreePaths.subtree(nodes, 999)
+  end
+end
+</file>
+
+<file path="v1/solution.ex">
+defmodule TreePaths do
+  @moduledoc """
+  Converts a flat list of node maps into a flat, pre-order annotated list
+  (a "materialized path" representation).
+
+  Each input map must have at least:
+    - `:id`        — a unique identifier (any term)
+    - `:parent_id` — the id of the parent node, or `nil` for root nodes
+
+  `build/2` returns nodes in pre-order DFS order, each annotated with `:depth`
+  and `:path` (root-to-node id list). `subtree/2` extracts a node and all of
+  its desc (truncated)
+09:03:16.281 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 26391, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 26391, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 26391, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 26391, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 31861, "type" => "message"}], "output_tokens" => 31861, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

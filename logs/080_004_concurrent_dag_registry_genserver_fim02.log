@@ -1,0 +1,445 @@
+[22m03:30:15.529 [info] FIM 080_004_concurrent_dag_registry_genserver_fim02 → 080_004_concurrent_dag_registry_genserver_03: target kahn/4[0m
+[36m03:30:15.529 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m03:30:15.529 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `kahn/4`.
+
+Generate a prompt describing how to implement `kahn/4` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `kahn/4` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `kahn/4` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `kahn/4` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `DAGServer` that implements a Directed Acyclic Graph as a **GenServer** — a concurrent, process-based registry that holds the graph in its state and serializes all mutations so many client processes can safely add vertices and edges at once.
+
+I need this client-facing API (all functions take the server pid or name as the first argument):
+- `DAGServer.start_link(opts \\ [])` — starts the server (empty graph). `opts` are passed through to `GenServer.start_link/3` (e.g. `:name`). Returns `{:ok, pid}`.
+- `DAGServer.add_vertex(server, vertex)` — adds a vertex; if it already exists, no change. Returns `:ok`. Vertices can be any term.
+- `DAGServer.add_edge(server, from, to)` — adds a directed edge. Returns `:ok` on success, `{:error, :cycle}` if the edge would create a cycle (detected eagerly via DFS, before committing), or `{:error, :vertex_not_found}` if either endpoint is missing.
+- `DAGServer.topological_sort(server)` — returns `{:ok, ordering}`, all vertices in a valid topological order (Kahn's algorithm). `{:ok, []}` when empty.
+- `DAGServer.predecessors(server, vertex)` — direct incoming neighbours (list).
+- `DAGServer.successors(server, vertex)` — direct outgoing neighbours (list).
+- `DAGServer.vertices(server)` — the list of all vertices currently in the graph.
+
+Because writes go through the single GenServer process, concurrent `add_vertex`/`add_edge` calls from many processes must be applied consistently and the graph must remain acyclic at all times. Use Kahn's algorithm for the sort and DFS-based cycle detection for edges.
+
+Give me the complete module in a single file. Use only the Elixir/Erlang standard library, no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule DAGServer do
+  @moduledoc """
+  A Directed Acyclic Graph implemented as a GenServer.
+
+  The graph lives in the process state; all mutations are serialized through
+  the single server process, so any number of client processes may add
+  vertices and edges concurrently while the graph remains consistent and
+  acyclic at all times.
+
+  State fields:
+    * `vertices`  – a `MapSet` of all vertices (any term).
+    * `out_edges` – `%{vertex => MapSet of successors}` (forward adjacency).
+    * `in_edges`  – `%{vertex => MapSet of predecessors}` (reverse adjacency).
+  """
+
+  use GenServer
+
+  defstruct vertices: MapSet.new(), out_edges: %{}, in_edges: %{}
+
+  @typedoc "The internal graph state held by the server process."
+  @type t :: %__MODULE__{
+          vertices: MapSet.t(),
+          out_edges: %{optional(term()) => MapSet.t()},
+          in_edges: %{optional(term()) => MapSet.t()}
+        }
+
+  # ---------------------------------------------------------------------------
+  # Client API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the server with an empty graph.
+
+  `opts` are forwarded to `GenServer.start_link/3` (e.g. `:name`).
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc """
+  Adds `vertex` to the graph. If it already exists, the graph is unchanged.
+
+  Vertices may be any term. Returns `:ok`.
+  """
+  @spec add_vertex(GenServer.server(), term()) :: :ok
+  def add_vertex(server, vertex), do: GenServer.call(server, {:add_vertex, vertex})
+
+  @doc """
+  Adds a directed edge from `from` to `to`.
+
+  Returns `:ok` on success, `{:error, :cycle}` if the edge would create a
+  cycle (detected eagerly via DFS before committing), or
+  `{:error, :vertex_not_found}` if either endpoint is missing.
+  """
+  @spec add_edge(GenServer.server(), term(), term()) ::
+          :ok | {:error, :cycle | :vertex_not_found}
+  def add_edge(server, from, to), do: GenServer.call(server, {:add_edge, from, to})
+
+  @doc """
+  Returns `{:ok, ordering}` with all vertices in a valid topological order
+  (Kahn's algorithm). Returns `{:ok, []}` when the graph is empty.
+  """
+  @spec topological_sort(GenServer.server()) :: {:ok, [term()]}
+  def topological_sort(server), do: GenServer.call(server, :topological_sort)
+
+  @doc """
+  Returns the list of direct incoming neighbours (predecessors) of `vertex`.
+  """
+  @spec predecessors(GenServer.server(), term()) :: [term()]
+  def predecessors(server, vertex), do: GenServer.call(server, {:predecessors, vertex})
+
+  @doc """
+  Returns the list of direct outgoing neighbours (successors) of `vertex`.
+  """
+  @spec successors(GenServer.server(), term()) :: [term()]
+  def successors(server, vertex), do: GenServer.call(server, {:successors, vertex})
+
+  @doc """
+  Returns the list of all vertices currently in the graph.
+  """
+  @spec vertices(GenServer.server()) :: [term()]
+  def vertices(server), do: GenServer.call(server, :vertices)
+
+  # ---------------------------------------------------------------------------
+  # Server callbacks
+  # ---------------------------------------------------------------------------
+
+  @doc false
+  @impl true
+  @spec init(:ok) :: {:ok, t()}
+  def init(:ok), do: {:ok, %__MODULE__{}}
+
+  @doc false
+  @impl true
+  @spec handle_call(term(), GenServer.from(), t()) :: {:reply, term(), t()}
+  def handle_call({:add_vertex, vertex}, _from, state) do
+    {:reply, :ok, do_add_vertex(state, vertex)}
+  end
+
+  def handle_call({:add_edge, from, to}, _from, state) do
+    case do_add_edge(state, from, to) do
+      {:ok, new_state} -> {:reply, :ok, new_state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:topological_sort, _from, state) do
+    {:reply, {:ok, topo_order(state)}, state}
+  end
+
+  def handle_call({:predecessors, vertex}, _from, state) do
+    {:reply, state.in_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list(), state}
+  end
+
+  def handle_call({:successors, vertex}, _from, state) do
+    {:reply, state.out_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list(), state}
+  end
+
+  def handle_call(:vertices, _from, state) do
+    {:reply, MapSet.to_list(state.vertices), state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Pure graph logic
+  # ---------------------------------------------------------------------------
+
+  defp do_add_vertex(state, vertex) do
+    if MapSet.member?(state.vertices, vertex) do
+      state
+    else
+      %{
+        state
+        | vertices: MapSet.put(state.vertices, vertex),
+          out_edges: Map.put_new(state.out_edges, vertex, MapSet.new()),
+          in_edges: Map.put_new(state.in_edges, vertex, MapSet.new())
+      }
+    end
+  end
+
+  defp do_add_edge(state, from, to) do
+    with :ok <- require_vertex(state, from),
+         :ok <- require_vertex(state, to),
+         :ok <- check_no_cycle(state, from, to) do
+      new_state = %{
+        state
+        | out_edges: Map.update!(state.out_edges, from, &MapSet.put(&1, to)),
+          in_edges: Map.update!(state.in_edges, to, &MapSet.put(&1, from))
+      }
+
+      {:ok, new_state}
+    end
+  end
+
+  defp require_vertex( (truncated)[0m
+[36m03:31:01.608 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `kahn/4`
+
+The `DAGServer` module below is complete **except** for the private helper
+`kahn/4`, which drives Kahn's algorithm for `topological_sort/1`.
+
+Implement the private `kahn/4` function. It is the recursive worker of Kahn's
+algorithm and has two clauses.
+
+`kahn/4` takes four arguments:
+  1. a list of vertices whose in-degree is currently `0` (the "ready" queue,
+     kept sorted for deterministic output),
+  2. `in_degree` — a map of `%{vertex => remaining in-degree}`,
+  3. `out_edges` — the forward adjacency map `%{vertex => MapSet of successors}`,
+  4. `acc` — the ordering accumulated so far, in **reverse** order.
+
+Behaviour:
+  * **Base clause** — when the ready queue is empty, the sort is done: return
+    `acc` reversed (i.e. `Enum.reverse(acc)`) to yield the vertices in
+    topological order.
+  * **Recursive clause** — take the head `v` off the ready queue. For each of
+    `v`'s successors (look them up in `out_edges` with `Map.fetch!/2`),
+    decrement that successor's count in `in_degree` by 1; any successor whose
+    new count reaches `0` becomes newly ready. Then recurse with:
+      - the rest of the queue followed by the newly-zero vertices **sorted**
+        (`rest ++ Enum.sort(newly_zero)`) so output is deterministic,
+      - the updated `in_degree` map,
+      - the unchanged `out_edges`,
+      - `v` prepended onto `acc`.
+
+```elixir
+defmodule DAGServer do
+  @moduledoc """
+  A Directed Acyclic Graph implemented as a GenServer.
+
+  The graph lives in the process state; all mutations are serialized through
+  the single server process, so any number of client processes may add
+  vertices and edges concurrently while the graph remains consistent and
+  acyclic at all times.
+
+  State fields:
+    * `vertices`  – a `MapSet` of all vertices (any term).
+    * `out_edges` – `%{vertex => MapSet of successors}` (forward adjacency).
+    * `in_edges`  – `%{vertex => MapSet of predecessors}` (reverse adjacency).
+  """
+
+  use GenServer
+
+  defstruct vertices: MapSet.new(), out_edges: %{}, in_edges: %{}
+
+  @typedoc "The internal graph state held by the server process."
+  @type t :: %__MODULE__{
+          vertices: MapSet.t(),
+          out_edges: %{optional(term()) => MapSet.t()},
+          in_edges: %{optional(term()) => MapSet.t()}
+        }
+
+  # ---------------------------------------------------------------------------
+  # Client API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the server with an empty graph.
+
+  `opts` are forwarded to `GenServer.start_link/3` (e.g. `:name`).
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc """
+  Adds `vertex` to the graph. If it already exists, the graph is unchanged.
+
+  Vertices may be any term. Returns `:ok`.
+  """
+  @spec add_vertex(GenServer.server(), term()) :: :ok
+  def add_vertex(server, vertex), do: GenServer.call(server, {:add_vertex, vertex})
+
+  @doc """
+  Adds a directed edge from `from` to `to`.
+
+  Returns `:ok` on success, `{:error, :cycle}` if the edge would create a
+  cycle (detected eagerly via DFS before committing), or
+  `{:error, :vertex_not_found}` if either endpoint is missing.
+  """
+  @spec add_edge(GenServer.server(), term(), term()) ::
+          :ok | {:error, :cycle | :vertex_not_found}
+  def add_edge(server, from, to), do: GenServer.call(server, {:add_edge, from, to})
+
+  @doc """
+  Returns `{:ok, ordering}` with all vertices in a valid topological order
+  (Kahn's algorithm). Returns `{:ok, []}` when the graph is empty.
+  """
+  @spec topological_sort(GenServer.server()) :: {:ok, [term()]}
+  def topological_sort(server), do: GenServer.call(server, :topological_sort)
+
+  @doc """
+  Returns the list of direct incoming neighbours (predecessors) of `vertex`.
+  """
+  @spec predecessors(GenServer.server(), term()) :: [term()]
+  def predecessors(server, vertex), do: GenServer.call(server, {:predecessors, vertex})
+
+  @doc """
+  Returns the list of direct outgoing neighbours (successors) of `vertex`.
+  """
+  @spec successors(GenServer.server(), term()) :: [term()]
+  def successors(server, vertex), do: GenServer.call(server, {:successors, vertex})
+
+  @doc """
+  Returns the list of all vertices currently in the graph.
+  """
+  @spec vertices(GenServer.server()) :: [term()]
+  def vertices(server), do: GenServer.call(server, :vertices)
+
+  # ---------------------------------------------------------------------------
+  # Server callbacks
+  # ---------------------------------------------------------------------------
+
+  @doc false
+  @impl true
+  @spec init(:ok) :: {:ok, t()}
+  def init(:ok), do: {:ok, %__MODULE__{}}
+
+  @doc false
+  @impl true
+  @spec handle_call(term(), GenServer.from(), t()) :: {:reply, term(), t()}
+  def handle_call({:add_vertex, vertex}, _from, state) do
+    {:reply, :ok, do_add_vertex(state, vertex)}
+  end
+
+  def handle_call({:add_edge, from, to}, _from, state) do
+    case do_add_edge(state, from, to) do
+      {:ok, new_state} -> {:reply, :ok, new_state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:topological_sort, _from, state) do
+    {:reply, {:ok, topo_order(state)}, state}
+  end
+
+  def handle_call({:predecessors, vertex}, _from, state) do
+    {:reply, state.in_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list(), state}
+  end
+
+  def handle_call({:successors, vertex}, _from, state) do
+    {:reply, state.out_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list(), state}
+  end
+
+  def handle_call(:vertices, _from, state) do
+    {:reply, MapSet.to_list(state.vertices), state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Pure graph logic
+  # ---------------------------------------------------------------------------
+
+  defp do_add_vertex(state, vertex) do
+    if MapSet.member?(state.vertices, vertex) do
+      state
+    else
+      %{
+        state
+        | vertices: MapSet.put(state.vertices, vertex),
+          out_edges: Map.put_new(state.out_edges, vertex, MapSet.new()),
+          in_edges: Map.put_new(state.in_edges, vertex, MapSet.new())
+      }
+    end
+  end
+
+  defp do_add_edge(state, from, to) do
+    with :ok <- require_vertex(state, from),
+         :ok <- require_vertex(state, to),
+         :ok <- check_no_cycle(state, from, to) do
+      new_state = %{
+        state
+        | out_edges: Map.update!(state.out_edges, from, &MapSet.put(&1, to)),
+          in_edges: Map.update!(state.in_edges, to, &MapSet.put(&1, from))
+      }
+
+      {:ok, new_state}
+    end
+  end
+
+  defp require_vertex(state, vertex) do
+    if MapSet.member?(state.vertices, vertex), do: :ok, else: {:error, :vertex_not_found}
+  end
+
+  defp check_no_cycle(_state, from, from), do: {:error, :cycle}
+
+  defp check_no_cycle(state, from, to) do
+    if dfs_reaches?(state.out_edges, to, from), do: {:error, :cycle}, else: :ok
+  end
+
+  defp dfs_reaches?(out_edges, start, target) do
+    do_dfs([start], MapSet.new(), out_edges, target)
+  end
+
+  defp do_dfs([], _visited, _out_edges, _target), do: false
+
+  defp do_dfs([node | stack], visited, out_edges, target) do
+    cond do
+      node == target ->
+        true
+
+      MapSet.member?(visited, node) ->
+        do_dfs(stack, visited, out_edges, target)
+
+      true ->
+        neighbors = out_edges |> Map.get(node, MapSet.new()) |> MapSet.to_list()
+        do_dfs(neighbors ++ stack, MapSet.put(visited, node), out_edges, target)
+    end
+  end
+
+  # Kahn's algorithm, sorted for determinism.
+  defp topo_order(state) do
+    in_degree =
+      Map.new(state.vertices, fn v -> {v, MapSet.size(Map.fetch!(state.in_edges, v))} end)
+
+    initial =
+      in_degree
+      |> Enum.filter(fn {_v, d} -> d == 0 end)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.sort()
+
+    kahn(initial, in_degree, state.out_edges, [])
+  end
+
+  defp kahn([], _in_degree, _out_edges, acc) do
+    # TODO
+  end
+
+  defp kahn([v | rest], in_degree, out_edges, acc) do
+   (truncated)[0m
+[36m03:31:01.608 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4459, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4459, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4459, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4459, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 4359, "type" => "message"}], "output_tokens" => 4359, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m03:31:01.627 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_080_004_concurrent_dag_registry_genserver_03/080_004_concurrent_dag_registry_genserver_03 solution.ex[0m
+[36m03:31:02.307 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":15,"lines_over_98":0,"max_line_length":76,"mode":"fim","pipe_chain_count":2,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"parent":"080_004_concurrent_dag_registry_genserver_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.3,"mode":"fim","overall":0.93,"reasons":["compilation: 7 warning(s) → -0.7 pts"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_080_004_concurrent_dag_registry_genserver_03/080_004_concurrent_dag_registry_genserver_03/solution.ex","task":"080_004_concurrent_dag_registry_genserver_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:31:02.284911Z"}[0m
+[36m03:31:02.308 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_080_004_concurrent_dag_registry_genserver_03/080_004_concurrent_dag_registry_genserver_03 .gen_staging/fim_080_004_concurrent_dag_registry_genserver_03/mutant.ex[0m
+[36m03:31:02.977 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":7,"lines_over_98":0,"max_line_length":51,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":13,"compiled":true,"parent":"080_004_concurrent_dag_registry_genserver_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.62,"reasons":["compilation: 13 warning(s) → -1.3 pts","tests: 4/10 failed"],"tests":0.6},"shape":"fim","solution_file":".gen_staging/fim_080_004_concurrent_dag_registry_genserver_03/mutant.ex","task":"080_004_concurrent_dag_registry_genserver_03","test_failures":[{"message":"{:EXIT, #PID<0.208.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :kahn, 4, [file: ~c\"/tmp/evalfim_449187_2626.ex\", line: 200, error_info: %{module: Exception}]}, {DAGServer, :handle_call, 3, [file: ~c\"/tmp/evalfim_449187_2626.ex\", line: 109]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test empty graph sorts to []"},{"message":"{:EXIT, #PID<0.212.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :kahn, 4, [file: ~c\"/tmp/evalfim_449187_2626.ex\", line: 204, error_info: %{module: Exception}]}, {DAGServer, :handle_call, 3, [file: ~c\"/tmp/evalfim_449187_2626.ex\", line: 109]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test add_edge success and linear sort"},{"message":"{:EXIT, #PID<0.324.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :kahn, 4, [file: ~c\"/tmp/evalfim_449187_2626.ex\", line: 204, error_info: %{module: Exception}]}, {DAGServer, :handle_call, 3, [file: ~c\"/tmp/evalfim_449187_2626.ex\", line: 109]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test concurrent chain edges stay acyclic and consistent"},{"message":"{:EXIT, #PID<0.375.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :kahn, 4, [file: ~c\"/tmp/evalfim_449187_2626.ex\", line: 204, error_info: %{module: Exception}]}, {DAGServer, :handle_call, 3, [file: ~c\"/tmp/evalfim_449187_2626.ex\", line: 109]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test concurrent conflicting edges never form a cycle"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:31:02.957776Z"}[0m
+[36m03:31:02.977 [debug] fim mutation gate: killed[0m
+[22m03:31:02.978 [info] promoted 080_004_concurrent_dag_registry_genserver_03 -> tasks/080_004_concurrent_dag_registry_genserver_03[0m

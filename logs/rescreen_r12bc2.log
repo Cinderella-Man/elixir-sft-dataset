@@ -1,0 +1,48 @@
+Blind-solve screen: 6 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/6] 016_001_paginated_list_endpoint_01 ... warning: use PaginatedListWeb.ItemController must receive the :formats option with the formats you intend to render. To keep compatibility within your app, you can list it as:
+
+    formats: [html: "View", json: "View", ...]
+
+Listing all formats your application renders.
+
+
+GREEN
+[2/6] 017_001_search_endpoint_with_filtering_and_sorting_01 ... warning: use MyAppWeb.ProductController must receive the :formats option with the formats you intend to render. To keep compatibility within your app, you can list it as:
+
+    formats: [html: "View", json: "View", ...]
+
+Listing all formats your application renders.
+
+
+RED (test returns all products when no filters are given: ** (ArgumentError) no "index" json template defined for MyAppWeb.ProductView  (the module does not exist))
+[3/6] 018_001_crud_with_soft_delete_01 ... warning: use SoftCrudWeb.FallbackController must receive the :formats option with the formats you intend to render. To keep compatibility within your app, you can list it as:
+
+    formats: [html: "View", json: "View", ...]
+
+Listing all formats your application renders.
+
+
+RED (test POST /api/documents creates a document with valid attrs: 
+
+Assertion with == failed
+code:  assert conn.status == status
+left:  201
+right: 200
+)
+[4/6] 019_001_bulk_create_endpoint_with_partial_failure_reporting_01 ... GREEN
+[5/6] 045_001_ets_based_feature_flag_store_01 ... RED (test enable sets the flag on for everyone: :exit: {:noproc, {GenServer, :call, [FeatureFlags, {:put, :my_feature, :on}, 5000]}})
+[6/6] 045_002_multivariate_a_b_c_feature_flag_store_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 6   green: 3   RED: 3   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 017_001_search_endpoint_with_filtering_and_sorting_01: test returns all products when no filters are given: ** (ArgumentError) no "index" json template defined for MyAppWeb.ProductView  (the module does not exist)
+    - 018_001_crud_with_soft_delete_01: test POST /api/documents creates a document with valid attrs: 
+
+Assertion with == failed
+code:  assert conn.status == status
+left:  201
+right: 200
+
+    - 045_001_ets_based_feature_flag_store_01: test enable sets the flag on for everyone: :exit: {:noproc, {GenServer, :call, [FeatureFlags, {:put, :my_feature, :on}, 5000]}}

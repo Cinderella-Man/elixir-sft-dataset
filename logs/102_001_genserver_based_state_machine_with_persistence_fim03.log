@@ -1,0 +1,446 @@
+18:13:47.391 [info] FIM 102_001_genserver_based_state_machine_with_persistence_fim03 → 102_001_genserver_based_state_machine_with_persistence_04: target load_latest_state/2
+18:13:47.392 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+18:13:47.392 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `load_latest_state/2`.
+
+Generate a prompt describing how to implement `load_latest_state/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `load_latest_state/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `load_latest_state/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `load_latest_state/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer module called `StateMachine` that manages the lifecycle of
+stateful entities, persists every state transition to a database, and recovers state on restart.
+
+## State Machine Definition
+
+Use the following order-processing lifecycle:
+
+States: `:pending`, `:confirmed`, `:shipped`, `:delivered`, `:cancelled`
+
+Valid transitions (current_state + event → next_state):
+  - :pending    + :confirm  → :confirmed
+  - :confirmed  + :ship     → :shipped
+  - :shipped    + :deliver  → :delivered
+  - :pending    + :cancel   → :cancelled
+  - :confirmed  + :cancel   → :cancelled
+
+Any other (state, event) combination is invalid.
+
+## Public API
+
+- `StateMachine.start_link(opts)` — starts the GenServer. Accepts a `:repo` option (an Ecto
+  repo module) and a `:name` option for process registration.
+
+- `StateMachine.start(server, entity_id)` — loads the latest persisted state for the given
+  entity from the database. If no record exists, the entity starts in the `:pending` state.
+  Returns `{:ok, current_state}`.
+
+- `StateMachine.get_state(server, entity_id)` — returns `{:ok, current_state}` for a
+  previously started entity, or `{:error, :not_found}` if the entity has never been started
+  in this server session.
+
+- `StateMachine.transition(server, entity_id, event)` — attempts to transition the entity.
+  - If valid: persists the new state + the event to the DB, updates in-memory state,
+    returns `{:ok, new_state}`.
+  - If the (state, event) pair is not a valid transition: returns
+    `{:error, :invalid_transition}` and writes nothing to the DB.
+  - If the entity has not been started yet: returns `{:error, :not_found}`.
+
+- `StateMachine.history(server, entity_id)` — returns `{:ok, list}` where list is every
+  recorded transition for that entity in chronological order. Each entry is a map with keys
+  `:event`, `:from_state`, `:to_state`, and `:inserted_at`.
+
+## Persistence
+
+Use Ecto. Assume the caller supplies a configured Ecto repo. The relevant table is
+`entity_transitions` with these columns:
+
+  - `id` — bigint primary key (auto-increment)
+  - `entity_id` — string, non-null, indexed
+  - `event` — string (the atom serialised as a string), non-null
+  - `from_state` — string, non-null
+  - `to_state` — string, non-null
+  - `inserted_at` — utc_datetime_usec, non-null
+
+Provide:
+  1. The `EntityTransition` Ecto schema module.
+  2. An Ecto migration file that creates the table.
+  3. The `StateMachine` GenServer module.
+
+The GenServer must keep an in-memory map of `%{entity_id => current_state}` as its state.
+On `start/2`, it queries the DB for the most recent `to_state` for that entity. On restart,
+the in-memory map is empty, so the next `start/2` call re-hydrates from the DB.
+
+## Concurrency
+
+`transition/3` must be implemented as a `call` (not a cast) so that concurrent callers
+serialize through the GenServer and there are no race conditions. The in-memory update and
+the DB write must both happen inside the `handle_call` callback before the reply is sent.
+
+## Error Handling
+
+- DB write failures in `transition/3` should return `{:error, {:db_error, reason}}` and
+  must NOT update the in-memory state.
+- Use `Ecto.Multi` or a plain `Repo.insert` wrapped in a try/rescue; your choice.
+
+## Deliverables
+
+Give me all three modules/files in a single code block or clearly separated blocks. Use only
+Ecto (plus its adapters) as the external dependency — no additional libraries.
+## Additional interface contract
+
+- The test environment provides a real, already-configured SQLite Ecto repo and injects it into your GenServer via the `repo:` option — do NOT define a repo module or any repo configuration. Your migration file must be at a `priv/repo/migrations/<name>.exs` path: it is executed against that repo before the tests run, so the schema/migration must be valid for SQLite (plain `Ecto.Migration`, no database-specific SQL).
+
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Repo.Migrations.CreateEntityTransitions do
+  use Ecto.Migration
+
+  def change do
+    create table(:entity_transitions) do
+      add(:entity_id, :string, null: false)
+      add(:event, :string, null: false)
+      add(:from_state, :string, null: false)
+      add(:to_state, :string, null: false)
+      add(:inserted_at, :utc_datetime_usec, null: false)
+    end
+
+    create(index(:entity_transitions, [:entity_id]))
+    create(index(:entity_transitions, [:entity_id, :inserted_at]))
+  end
+end
+
+defmodule EntityTransition do
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  @moduledoc """
+  Persisted record of a single state-machine transition for one entity.
+
+  Fields
+  ------
+  entity_id   – domain ID of the tracked entity
+  event       – the triggering event atom serialised as a string ("confirm", …)
+  from_state  – state before the transition ("pending", …)
+  to_state    – state after the transition ("confirmed", …)
+  inserted_at – microsecond-precision UTC timestamp, set by the repo on insert
+  """
+
+  # Suppress updated_at; we only need a single insertion timestamp.
+  @timestamps_opts [type: :utc_datetime_usec, updated_at: false]
+
+  schema "entity_transitions" do
+    field(:entity_id, :string)
+    field(:event, :string)
+    field(:from_state, :string)
+    field(:to_state, :string)
+
+    timestamps()
+  end
+
+  @required [:entity_id, :event, :from_state, :to_state]
+
+  @doc "Validates and wraps insertion attrs in a changeset."
+  def changeset(transition \\ %__MODULE__{}, attrs) do
+    transition
+    |> cast(attrs, @required)
+    |> validate_required(@required)
+    |> validate_length(:entity_id, min: 1)
+  end
+end
+
+defmodule StateMachine do
+  use GenServer
+  require Logger
+
+  import Ecto.Query, only: [from: 2]
+
+  @moduledoc """
+  GenServer that manages the in-memory lifecycle state of entities and
+  durably persists every valid transition to an Ecto-backed database.
+
+  ## State machine
+
+      :pending    + :confirm  → :confirmed
+      :confirmed  + :ship     → :shipped
+      :shipped    + :deliver  → :delivered
+      :pending    + :cancel   → :cancelled
+      :confirmed  + :cancel   → :cancelled
+
+  Any other (state, event) pair is rejected as `:invalid_transition`.
+
+  ## Example
+
+      {:ok, pid} = StateMachine.start_link(repo: MyRepo, name: :orders)
+
+      {:ok, :pending}   = StateMachine.start(pid, "order-1")
+      {:ok, :confirmed} = StateMachine.transition(pid, "order-1", :confirm)
+      {:ok, :shipped}   = StateMachine.transition(pid, "order-1", :ship)
+      {:ok, history}    = StateMachine.history(pid, "order-1")
+  """
+
+  # ---------------------------------------------------------------------------
+  # Transition table — pure data, lookup is O(1) map fetch
+  # ---------------------------------------------------------------------------
+
+  @transitions %{
+    {:pending, :confirm} => :confirmed,
+    {:confirmed, :ship} => :shipped,
+    {:shipped, :deliver} => :delivered,
+    {:pending, :cancel} => :cancelled,
+    {:confirmed,  (truncated)
+18:14:28.884 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `load_latest_state/2` function.
+
+It takes an Ecto repo module and an `entity_id` string, and returns the entity's
+most recently persisted state as an atom. Build an `Ecto.Query` over the
+`EntityTransition` schema that filters on the given `entity_id`, orders by
+`inserted_at` descending, and limits the result to a single row. Run it with
+`repo.one/1`. When no row exists (`nil`), return the initial state
+(`@initial_state`, i.e. `:pending`). Otherwise, take the row's `to_state`
+string column and convert it back to an atom with `String.to_existing_atom/1`,
+returning that atom. Do not use a `select:` clause — load full
+`%EntityTransition{}` structs so the query stays portable across any injected
+repo implementation.
+
+```elixir
+defmodule Repo.Migrations.CreateEntityTransitions do
+  use Ecto.Migration
+
+  def change do
+    create table(:entity_transitions) do
+      add(:entity_id, :string, null: false)
+      add(:event, :string, null: false)
+      add(:from_state, :string, null: false)
+      add(:to_state, :string, null: false)
+      add(:inserted_at, :utc_datetime_usec, null: false)
+    end
+
+    create(index(:entity_transitions, [:entity_id]))
+    create(index(:entity_transitions, [:entity_id, :inserted_at]))
+  end
+end
+
+defmodule EntityTransition do
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  @moduledoc """
+  Persisted record of a single state-machine transition for one entity.
+
+  Fields
+  ------
+  entity_id   – domain ID of the tracked entity
+  event       – the triggering event atom serialised as a string ("confirm", …)
+  from_state  – state before the transition ("pending", …)
+  to_state    – state after the transition ("confirmed", …)
+  inserted_at – microsecond-precision UTC timestamp, set by the repo on insert
+  """
+
+  # Suppress updated_at; we only need a single insertion timestamp.
+  @timestamps_opts [type: :utc_datetime_usec, updated_at: false]
+
+  schema "entity_transitions" do
+    field(:entity_id, :string)
+    field(:event, :string)
+    field(:from_state, :string)
+    field(:to_state, :string)
+
+    timestamps()
+  end
+
+  @required [:entity_id, :event, :from_state, :to_state]
+
+  @doc "Validates and wraps insertion attrs in a changeset."
+  def changeset(transition \\ %__MODULE__{}, attrs) do
+    transition
+    |> cast(attrs, @required)
+    |> validate_required(@required)
+    |> validate_length(:entity_id, min: 1)
+  end
+end
+
+defmodule StateMachine do
+  use GenServer
+  require Logger
+
+  import Ecto.Query, only: [from: 2]
+
+  @moduledoc """
+  GenServer that manages the in-memory lifecycle state of entities and
+  durably persists every valid transition to an Ecto-backed database.
+
+  ## State machine
+
+      :pending    + :confirm  → :confirmed
+      :confirmed  + :ship     → :shipped
+      :shipped    + :deliver  → :delivered
+      :pending    + :cancel   → :cancelled
+      :confirmed  + :cancel   → :cancelled
+
+  Any other (state, event) pair is rejected as `:invalid_transition`.
+
+  ## Example
+
+      {:ok, pid} = StateMachine.start_link(repo: MyRepo, name: :orders)
+
+      {:ok, :pending}   = StateMachine.start(pid, "order-1")
+      {:ok, :confirmed} = StateMachine.transition(pid, "order-1", :confirm)
+      {:ok, :shipped}   = StateMachine.transition(pid, "order-1", :ship)
+      {:ok, history}    = StateMachine.history(pid, "order-1")
+  """
+
+  # ---------------------------------------------------------------------------
+  # Transition table — pure data, lookup is O(1) map fetch
+  # ---------------------------------------------------------------------------
+
+  @transitions %{
+    {:pending, :confirm} => :confirmed,
+    {:confirmed, :ship} => :shipped,
+    {:shipped, :deliver} => :delivered,
+    {:pending, :cancel} => :cancelled,
+    {:confirmed, :cancel} => :cancelled
+  }
+
+  # All valid state atoms must exist at compile time for String.to_existing_atom/1
+  # to be safe when deserialising DB rows.
+  @states [:pending, :confirmed, :shipped, :delivered, :cancelled]
+  @initial_state :pending
+
+  # Ensure the compiler keeps the atoms alive.
+  def __states__, do: @states
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the GenServer.
+
+  Options
+  - `:repo`  (required) – Ecto repo module, e.g. `MyApp.Repo`
+  - `:name`  (optional) – forwarded to `GenServer.start_link/3`
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name_opts, server_opts} =
+      case Keyword.pop(opts, :name) do
+        {nil, rest} -> {[], rest}
+        {name, rest} -> {[name: name], rest}
+      end
+
+    GenServer.start_link(__MODULE__, server_opts, name_opts)
+  end
+
+  @doc """
+  Loads the latest persisted state for `entity_id` from the DB and caches it.
+  Falls back to `:pending` when no record exists yet.
+  Returns `{:ok, current_state}`.
+  """
+  @spec start(GenServer.server(), String.t()) :: {:ok, atom()}
+  def start(server, entity_id),
+    do: GenServer.call(server, {:start, entity_id})
+
+  @doc """
+  Returns `{:ok, current_state}` for a previously started entity, or
+  `{:error, :not_found}` if the entity was never started in this session.
+  """
+  @spec get_state(GenServer.server(), String.t()) ::
+          {:ok, atom()} | {:error, :not_found}
+  def get_state(server, entity_id),
+    do: GenServer.call(server, {:get_state, entity_id})
+
+  @doc """
+  Attempts to apply `event` to `entity_id`.
+
+  - `{:ok, new_state}`              – transition valid; DB write succeeded.
+  - `{:error, :invalid_transition}` – no matching (state, event) in the table; DB unchanged.
+  - `{:error, :not_found}`          – entity not started in this session.
+  - `{:error, {:db_error, reason}}` – Ecto write failed; in-memory state unchanged.
+  """
+  @spec transition(GenServer.server(), String.t(), atom()) ::
+          {:ok, atom()}
+          | {:error, :invalid_transition}
+          | {:error, :not_found}
+          | {:error, {:db_error, any()}}
+  def transition(server, entity_id, event),
+    do: GenServer.call(server, {:transition, entity_id, event})
+
+  @doc """
+  Returns `{:ok, list}` of every recorded transition for `entity_id` in
+  chronological order. Each entry is:
+
+      %{event: :confirm, from_state: :pending, to_state: :confirmed, inserted_at: ~U[…]}
+  """
+  @spec history(GenServer.server(), String.t()) :: {:ok, [map()]} | {:error, any()}
+  def history(server, entity_id),
+    do: GenServer.call(server, {:history, entity_id})
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    repo = Keyword.fetch!(opts, :repo)
+    # in-memory map: %{ entity_id => current_state_atom }
+    {:ok, %{repo: repo, entities: %{}}}
+  end
+
+  # :start — hydrate from DB (or seed with :pending), cache in map
+  @impl true
+  def handle_call({:start, entity_id}, _from, state) do
+    current = load_latest_state(state.repo, entity_id)
+    new_entities = Map.put(state.entities, entity_id, current)
+    {:reply, {:ok, current}, %{state | entities: new_entities}}
+  end
+
+  # :get_state — pure in-memory lookup
+  @impl true
+  def handle_call({:get_state, entity_id}, _from, state) do
+    reply =
+      case Map.fetch(state.entities, entity_id) do
+        {:ok, current} -> {:ok, current}
+        :error -> {:error, :not_found}
+      end
+
+    {:reply, reply, state}
+  end
+
+  # :transition — serialised call; in-memory update only after DB write succeeds
+  @impl true
+  def handle_call({:transition, entity_id, event}, _from, state) do
+    with {:found, current} <- entity_lookup(state.entities, entity_id),
+         {:valid, next_state} <- resolve_transition(current, event),
+         {:persisted, _record} <- persist(state.repo, entity_id, event, current, next_state) do
+      new_entities = Map.put(state.entities, entity_id, next_state)
+      {:reply, {:ok, next_state}, %{stat (truncated)
+18:14:28.885 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9680, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9680, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9680, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9680, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 4586, "type" => "message"}], "output_tokens" => 4586, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+18:14:28.907 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_102_001_genserver_based_state_machine_with_persistence_04/102_001_genserver_based_state_machine_with_persistence_04 solution.ex
+18:14:29.948 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":14,"lines_over_98":0,"max_line_length":57,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"archetype":"ecto_repo","bundle_files":3,"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"102_001_genserver_based_state_machine_with_persistence_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_102_001_genserver_based_state_machine_with_persistence_04/102_001_genserver_based_state_machine_with_persistence_04/solution.ex","task":"102_001_genserver_based_state_machine_with_persistence_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":18,"tier":"B","timestamp":"2026-07-12T16:14:29.922527Z","warning_details":[]}
+18:14:29.949 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_102_001_genserver_based_state_machine_with_persistence_04/102_001_genserver_based_state_machine_with_persistence_04 .gen_staging/fim_102_001_genserver_based_state_machine_with_persistence_04/mutant.ex
+18:14:31.014 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":55,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"archetype":"ecto_repo","bundle_files":3,"compile_errors":[],"compile_warnings":3,"compiled":true,"parent":"102_001_genserver_based_state_machine_with_persistence_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.7,"mode":"fim","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 15/18 failed"],"tests":0.17},"shape":"fim","solution_file":".gen_staging/fim_102_001_genserver_based_state_machine_with_persistence_04/mutant.ex","task":"102_001_genserver_based_state_machine_with_persistence_04","test_failures":[{"message":"{:EXIT, #PID<0.269.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest_state, 2, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 206, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 131]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test start/2 returns :pending for a brand-new entity"},{"message":"{:EXIT, #PID<0.274.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest_state, 2, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 206, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 131]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test start/2 for the same entity twice returns the same state"},{"message":"{:EXIT, #PID<0.279.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest_state, 2, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 206, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 131]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test start/2 re-hydrates state from DB after the in-memory map is cleared"},{"message":"{:EXIT, #PID<0.289.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest_state, 2, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 206, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 131]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test get_state/2 reflects the current in-memory state"},{"message":"{:EXIT, #PID<0.294.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest_state, 2, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 206, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 131]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test full happy path: pending → confirmed → shipped → delivered"},{"message":"{:EXIT, #PID<0.299.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest_state, 2, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 206, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 131]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test cancellation from :pending"},{"message":"{:EXIT, #PID<0.304.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest_state, 2, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 206, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 131]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test cancellation from :confirmed"},{"message":"{:EXIT, #PID<0.309.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest_state, 2, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 206, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 131]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test invalid event returns :invalid_transition and does not change state"},{"message":"{:EXIT, #PID<0.314.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest_state, 2, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 206, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 131]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test transitioning a terminal state is invalid"},{"message":"{:EXIT, #PID<0.324.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest_state, 2, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 206, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 131]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test invalid transition does not write to DB"},{"message":"{:EXIT, #PID<0.329.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest_state, 2, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 206, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 131]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test history/2 records every transition in order"},{"message":"{:EXIT, #PID<0.339.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest_state, 2, [file: ~c\"/tmp/eval_712401_2628/lib/state_machine.ex\", line: 206, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3,  (truncated)
+18:14:31.014 [debug] fim mutation gate: killed
+18:14:31.015 [info] promoted 102_001_genserver_based_state_machine_with_persistence_04 -> tasks/102_001_genserver_based_state_machine_with_persistence_04

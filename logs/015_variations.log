@@ -1,0 +1,353 @@
+15:31:07.447 [info] VARIATIONS gen for 015_001_heartbeat_monitor_01 (3 slot(s))
+15:31:07.448 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+15:31:07.448 [debug] claude -p USER prompt:
+I have this SFT task (idea #15 — "Heartbeat Monitor"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings;
+process-unique temp paths via `System.pid()` + `System.unique_integer/1`; every
+assertion justified by an explicit statement in that variation's prompt.md — a
+solver reading ONLY the prompt must be able to pass every test, so never assert
+internal state via `:sys.get_state`/`:sys.replace_state`, never
+`assert inspect(...)`, never send undocumented internal messages, never pass
+undocumented `:infinity` sentinels — observe behavior only through the public
+API and documented injected hooks. LIFECYCLE RULE: if a variation schedules
+repeating or delayed work, its prompt.md MUST state explicitly what happens to
+already-scheduled work on replace/re-register/deregister/cancel — e.g. "the
+previous registration's scheduled checks never run again" — and its harness MUST
+include a test proving the old schedule is dead; solvers reliably forget to
+cancel old timer chains unless the prompt spells this out. The BASE harness
+below may itself violate these rules (grandfathered debt): do NOT imitate it —
+your harnesses are held to the rules above).
+
+HARD CONSTRAINT — public API distinctness (an automatic gate rejects violations before grading): each variation's module must expose a public function set (name/arity) DIFFERENT from every set below. A genuinely different design has a different surface — different function names, arities, or decomposition, not the same API with a changed body:
+  - {check_now/1, handle_call/3, handle_info/2, init/1, register/4, start_link/1, status/1, statuses/0}
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 15 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+# Heartbeat Monitor
+
+Write me an Elixir module called `Monitor` — a `GenServer` that supervises a set of
+registered services by calling a check function for each one on a periodic
+interval, tracking each service's status, and firing a notification when a service
+goes down. Use only the OTP standard library, no external dependencies, and give me
+the complete module in a single file.
+
+## The singleton and its lifecycle
+
+`Monitor` is a singleton process. The convenience functions below
+(`register`, `status`, `statuses`, `check_now`) take **no server argument** — they
+operate on the process registered under the module name `Monitor`.
+
+- `Monitor.start_link(opts \\ [])` starts and links the process and returns the
+  usual `GenServer.on_start()` result. `opts` is a keyword list defaulting to `[]`.
+  The process must be registered under the name `Monitor` (i.e. `__MODULE__`) so the
+  no-argument convenience API can find it. A `:name` option may override the
+  registered name, but the convenience functions always target `Monitor`.
+- Starting the server does no monitoring work; a freshly started server tracks zero
+  services, and `Monitor.statuses()` returns `%{}`.
+
+## Registering services
+
+`Monitor.register(service_name, check_func, interval_ms, opts \\ [])`
+
+- `service_name` is any term used as the key (strings, atoms, tuples all work and
+  are compared by value).
+- `check_func` is a **zero-arity** function returning either `:ok` (healthy) or
+  `{:error, reason}` (unhealthy), where `reason` is any term.
+- `interval_ms` is a **positive integer**: how often, in milliseconds, the monitor
+  calls `check_func` after registration.
+- `opts` is a keyword list:
+  - `:threshold` — a **positive integer** `N`. The service is marked `:down` after
+    `N` **consecutive** failed checks. Defaults to `3`.
+  - `:notify` — a **two-arity** function `notify.(service_name, reason)` invoked
+    when the service transitions from `:up` to `:down` (see below). Defaults to a
+    no-op.
+
+`register/4` returns `:ok`.
+
+Guards: `check_func` must be a zero-arity function and `interval_ms` must be a
+positive integer. Calling `register` with a non-positive or non-integer
+`interval_ms` is outside the contract and may raise `FunctionClauseError` — guard
+the public function accordingly.
+
+On registration:
+
+- The service's status starts as `:up` with a consecutive-failure count of `0`.
+- Registration itself does **not** run the check function. The first check happens
+  one `interval_ms` later, then repeats every `interval_ms` thereafter (implemented
+  with `Process.send_after/3`, re-scheduling itself after each check).
+
+Re-registering an already-registered `service_name` **replaces** its configuration
+(check function, interval, threshold, notify) and **resets** its status to `:up`
+with a failure count of `0`.
+
+### Lifecycle rule for re-registration (important)
+
+When a service is re-registered, the **previous registration's scheduled checks
+must never run again**. After a re-registration:
+
+- The old check function is never called again by any leftover/previously-scheduled
+  timer.
+- Checks for that service happen only at the **new** interval, calling the **new**
+  check function.
+
+In other words, superseded timer chains are dead. (A robust way to achieve this is
+to tag each registration with a generation token and ignore scheduled check
+messages whose token no longer matches the current registration.)
+
+## Performing a check
+
+Each check — whether triggered by the periodic timer or by `check_now/1` below —
+does exactly the following, calling `check_func.()` once:
+
+- If the result is `:ok`: the consecutive-failure count is reset to `0`. If the
+  service was `:down`, it recovers to `:up`. (Recovery does **not** call the notify
+  function — only down transitions do.)
+- If the result is `{:error, reason}`: the consecutive-failure count is incremented
+  by one.
+  - If, as a result, the count **reaches the threshold `N`** and the service's
+    current status is `:up`, the service transitions to `:down` and the notify
+    function is called **exactly once** as `notify.(service_name, reason)`, where
+    `reason` is the reason from this failing check (the `N`-th consecutive
+    failure).
+  - If the service is **already `:down`**, further failed checks keep it `:down`
+    and do **not** call the notify function again.
+  - If the count is still below `N`, the status stays `:up`.
+
+"Consecutive" means any `:ok` result resets the counter to zero. A service that
+recovers to `:up` and then fails `N` more times in a row transitions to `:down`
+again and fires the notify function **again** (once per distinct down transition).
+
+## Deterministic single check
+
+`Monitor.check_now(service_name)` synchronously performs **one** check for the
+named service immediately — identical work to a scheduled interval tick (calling
+the check function, updating the failure count and status, and firing the notify
+function on an `:up` → `:down` transition). It returns `{:ok, status}` where
+`status` is the resulting status (`:up` or `:down`), or `{:error, :not_found}` if
+no such service is registered. `check_now/1` does not alter or reschedule the
+periodic timer.
+
+## Querying status
+
+- `Monitor.status(service_name)` returns `:up` or `:down` for a registered service,
+  or `{:error, :not_found}` if the service is unknown.
+- `Monitor.statuses()` returns a map `%{service_name => status}` containing every
+  currently registered service and its `:up`/`:down` status. With no services
+  registered it returns `%{}`.
+
+## Robustness
+
+Any unexpected message sent to the server (anything other than the message (truncated)
+15:41:13.596 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+# Escalating Severity-Level Health Monitor
+
+Write me an Elixir module called `HealthMonitor` — a `GenServer` that supervises a
+set of registered *probes* by calling a check function for each one on a periodic
+interval, tracking each probe's **severity level**, and firing a callback whenever a
+probe's level changes. Use only the OTP standard library, no external dependencies,
+and give me the complete module in a single file.
+
+Unlike a plain up/down monitor, each probe has **three** severity levels —
+`:ok`, `:warning`, and `:critical` — driven by how many checks have failed in a row.
+
+## The singleton and its lifecycle
+
+`HealthMonitor` is a singleton process. The convenience functions below
+(`add_probe`, `level`, `report`, `probe_now`, `remove_probe`) take **no server
+argument** — they operate on the process registered under the module name
+`HealthMonitor`.
+
+- `HealthMonitor.start_link(opts \\ [])` starts and links the process and returns
+  the usual `GenServer.on_start()` result. `opts` is a keyword list defaulting to
+  `[]`. The process must be registered under the name `HealthMonitor` (i.e.
+  `__MODULE__`) so the no-argument convenience API can find it. A `:name` option may
+  override the registered name, but the convenience functions always target
+  `HealthMonitor`.
+- Starting the server does no monitoring work; a freshly started server tracks zero
+  probes, and `HealthMonitor.report()` returns `%{}`.
+
+## Registering probes
+
+`HealthMonitor.add_probe(name, check_func, interval_ms, opts \\ [])`
+
+- `name` is any term used as the key (strings, atoms, tuples all work and are
+  compared by value).
+- `check_func` is a **zero-arity** function returning either `:ok` (healthy) or
+  `{:error, reason}` (unhealthy), where `reason` is any term.
+- `interval_ms` is a **positive integer**: how often, in milliseconds, the monitor
+  calls `check_func` after registration.
+- `opts` is a keyword list:
+  - `:warn_after` — a **positive integer** `W`; defaults to `2`.
+  - `:crit_after` — a **positive integer** `C`; defaults to `4`.
+  - `:on_change` — a **four-arity** function
+    `on_change.(name, old_level, new_level, reason)` invoked whenever the probe's
+    level changes (see below). Defaults to a no-op.
+
+`add_probe/4` returns `:ok`.
+
+Guards: `check_func` must be a zero-arity function and `interval_ms` must be a
+positive integer. Calling `add_probe` with a non-positive or non-integer
+`interval_ms`, or a check function of the wrong arity, is outside the contract and
+raises `FunctionClauseError`; guard the public function accordingly.
+
+On registration:
+
+- The probe's level starts as `:ok` with a consecutive-failure count of `0`.
+- Registration itself does **not** run the check function. The first check happens
+  one `interval_ms` later, then repeats every `interval_ms` thereafter (implemented
+  with `Process.send_after/3`, re-scheduling itself after each check).
+
+Re-adding an already-registered `name` **replaces** its configuration (check
+function, interval, thresholds, on_change) and **resets** its level to `:ok` with a
+failure count of `0`.
+
+### Lifecycle rule for re-adding (important)
+
+When a probe is re-added, the **previous registration's scheduled checks must never
+run again**. After a re-add:
+
+- The old check function is never called again by any leftover/previously-scheduled
+  timer.
+- Checks for that probe happen only at the **new** interval, calling the **new**
+  check function.
+
+Superseded timer chains are dead. (A robust way to achieve this is to tag each
+registration with a generation token and ignore scheduled check messages whose token
+no longer matches the current registration.)
+
+## Performing a check
+
+Each check — whether triggered by the periodic timer or by `probe_now/1` below —
+calls `check_func.()` exactly once and then updates the probe:
+
+- If the result is `:ok`: the consecutive-failure count is reset to `0` and the new
+  level is `:ok`.
+- If the result is `{:error, reason}`: the consecutive-failure count is incremented
+  by one. The new level is then determined **solely** by the resulting count:
+  - `:critical` if the count is greater than or equal to `crit_after`;
+  - otherwise `:warning` if the count is greater than or equal to `warn_after`;
+  - otherwise `:ok`.
+
+After computing the new level, if (and only if) it **differs** from the probe's
+previous level, the `on_change` callback is invoked **exactly once** as
+`on_change.(name, old_level, new_level, reason)`, where:
+
+- on an escalation caused by a failing check, `reason` is the reason returned by
+  **that** failing check;
+- on a recovery to `:ok` caused by a successful check, `reason` is `nil`.
+
+If the new level equals the previous level, `on_change` is **not** called.
+
+"Consecutive" means any `:ok` result resets the counter to zero, so a probe that
+recovers and later fails again escalates again from scratch.
+
+## Deterministic single check
+
+`HealthMonitor.probe_now(name)` synchronously performs **one** check for the named
+probe immediately — identical work to a scheduled interval tick (calling the check
+function, updating the failure count and level, and firing `on_change` on a level
+change). It returns `{:ok, level}` where `level` is the resulting level (`:ok`,
+`:warning`, or `:critical`), or `{:error, :not_found}` if no such probe is
+registered. `probe_now/1` does not alter or reschedule the periodic timer.
+
+## Querying and removing
+
+- `HealthMonitor.level(name)` returns `:ok`, `:warning`, or `:critical` for a
+  registered probe, or `{:error, :not_found}` if the probe is unknown.
+- `HealthMonitor.report()` returns a map `%{name => level}` containing every
+  currently registered probe and its level. With no probes registered it returns
+  `%{}`.
+- `HealthMonitor.remove_probe(name)` removes a probe. It returns `:ok` if the probe
+  existed (after removal it no longer appears in `report/0` and `level/1` returns
+  `{:error, :not_found}`), or `{:error, :not_found}` if no such probe was registered.
+  After removal the probe's scheduled checks must never run again — its timer chain
+  is dead.
+
+## Robustness
+
+Any unexpected message sent to the server (anything other than the messages it uses
+for its own scheduling) must be ignored: it must not crash the process or alter
+state.
+
+Probes are fully independent: escalating one probe never affects another probe's
+level or failure count.
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule HealthMonitorTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    start_supervised!({HealthMonitor, []})
+    :ok
+  end
+
+  defp flush_probes do
+    receive do
+      {:probe, _} -> flush_probes()
+    after
+      0 -> :ok
+    end
+  end
+
+  defp collect_probes(acc) do
+    receive do
+      {:probe, x} -> collect_probes([x | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  test "a freshly started monitor reports nothing" do
+    assert HealthMonitor.report() == %{}
+  end
+
+  test "add_probe returns :ok and the probe starts at :ok" do
+    assert :ok = HealthMonitor.add_probe("svc", fn -> :ok end, 10_000)
+    assert HealthMonitor.level("svc") == :ok
+    assert HealthMonitor.report() == %{"svc" => :ok}
+  end
+
+  test "add_probe guards a non-positive interval" do
+    assert_raise FunctionClauseError, fn ->
+      HealthMonitor.add_probe("bad", fn -> :ok end, 0)
+    end
+
+    assert :ok = HealthMonitor.add_probe("ok", fn -> :ok end, 10_000)
+    assert HealthMonitor.level("ok") == :ok
+  end
+
+  test "add_probe guards a non-zero-arity check function" do
+    assert_raise FunctionClauseError, fn ->
+      HealthMonitor.add_probe("bad", fn _x -> :ok end, 10_000)
+    end
+
+    assert :ok = HealthMonitor.add_probe("ok", fn -> :ok end, 10_000)
+    assert HealthMonitor.level("ok") == :ok
+  end
+
+  test "level and probe_now report unknown probes" do
+    assert HealthMonitor.level("nope") == {:error, :not_found}
+    assert HealthMonitor.probe_now("nope") == {:error, :not_found}
+  end
+
+  test "consecutive failures escalate :ok -> :warning -> :critical, firing on_change per step" do
+    test = self() (truncated)
+15:41:13.596 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 34690, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 34690, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 34690, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 34690, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 59060, "type" => "message"}], "output_tokens" => 59060, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

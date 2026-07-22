@@ -1,0 +1,6 @@
+test maintenance auto-expires and restores health status: 
+
+match (=) failed
+code:  assert {:ok, %{status: :up}} = ManagedMonitor.status(mon, "db")
+left:  {:ok, %{status: :up}}
+right: {:ok, %{status: :maintenance, health: :up, last_check_at: 1000, consecutiv

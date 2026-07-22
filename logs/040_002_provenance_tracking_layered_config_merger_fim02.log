@@ -1,0 +1,404 @@
+09:41:31.549 [info] FIM 040_002_provenance_tracking_layered_config_merger_fim02 → 040_002_provenance_tracking_layered_config_merger_03: target merge_map/6
+09:41:31.549 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+09:41:31.549 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `merge_map/6`.
+
+Generate a prompt describing how to implement `merge_map/6` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `merge_map/6` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `merge_map/6` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `merge_map/6` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `LayeredConfig` that merges an ordered stack of
+named configuration layers into a single effective configuration **and reports the
+provenance** of every effective value (which layer it came from).
+
+I need one primary public function:
+- `LayeredConfig.merge(layers, opts \\ [])` where `layers` is a non-empty list of
+  `{layer_name, config_map}` tuples given in **increasing precedence order** (the
+  first tuple is the base, each later layer overrides the ones before it).
+
+It must return a map with exactly two keys:
+- `:config` — the deep-merged effective configuration map.
+- `:provenance` — a map from **key-path** (a list of atoms from root to a leaf,
+  e.g. `[:db, :port]`) to the name of the layer that supplied the winning value.
+
+The merging rules:
+- **Deep merging**: if two layers both hold a map at the same key, recurse into it
+  rather than replacing the whole map.
+- **Later layers win** for scalars (strings, integers, atoms, booleans): the value
+  from the highest-precedence layer that set the leaf wins, and provenance records
+  that layer's name.
+- **List strategy**: controlled by the `:list_strategy` option, either `:replace`
+  (default, higher layer's list wins) or `:append` (higher layer's list is
+  concatenated onto the accumulated list). For an appended leaf, its provenance is
+  the **list of layer names** (in precedence order) that contributed elements.
+- **Per-key list strategy**: the `:list_strategies` option accepts a map of
+  `key_path => :replace | :append` (key paths as lists or tuples of atoms) that
+  overrides the global `:list_strategy` for those specific paths.
+- **Locked keys**: the `:locked` option accepts a list of key-path tuples/lists.
+  When a locked path already exists in a lower-precedence layer, higher layers must
+  not change it — the earlier value and its provenance are preserved. Locking only
+  applies where the key already exists in an earlier layer.
+
+Key paths for `:list_strategies` and `:locked` are lists (or tuples) of atoms from
+root to the target key.
+
+A single-layer stack must return that layer's config unchanged with every leaf's
+provenance pointing at that one layer. Raise `ArgumentError` on an empty layer list.
+
+Give me the complete module in a single file. Use only the Elixir standard library.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule LayeredConfig do
+  @moduledoc """
+  Merges an ordered stack of named configuration layers into a single effective
+  configuration and reports the provenance of every effective value.
+
+  `merge/2` takes a non-empty list of `{layer_name, config_map}` tuples in
+  increasing precedence order and returns `%{config: map, provenance: map}` where
+  `provenance` maps each leaf key-path (a list of atoms) to the layer that supplied
+  the winning value (or, for appended lists, the ordered list of contributing
+  layers).
+  """
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Merges `layers` (a non-empty list of `{name, config_map}` tuples in increasing
+  precedence order) into a single effective configuration.
+
+  Returns a map with two keys: `:config`, the deep-merged configuration, and
+  `:provenance`, a map from each leaf key-path (a list of atoms) to the layer name
+  that supplied the winning value. For appended lists the provenance is the ordered
+  list of contributing layer names.
+
+  Supported `opts`:
+
+    * `:list_strategy` — `:replace` (default) or `:append` for list leaves.
+    * `:list_strategies` — a map of `key_path => :replace | :append` overriding the
+      global strategy for specific paths.
+    * `:locked` — a list of key-paths that, once set by a lower layer, cannot be
+      changed by higher layers.
+
+  Key paths for `:list_strategies` and `:locked` are lists or tuples of atoms.
+  Raises `ArgumentError` when `layers` is empty.
+  """
+  @spec merge([{term(), map()}], keyword()) :: %{config: map(), provenance: map()}
+  def merge(layers, opts \\ []) when is_list(layers) do
+    if layers == [] do
+      raise ArgumentError, "`layers` must be a non-empty list of {name, map} tuples"
+    end
+
+    resolved = resolve_opts(opts)
+
+    [{first_name, first_map} | rest] = Enum.map(layers, &normalise_layer/1)
+    init_prov = leaf_provenance(first_map, first_name, [], %{})
+
+    {config, provenance} =
+      Enum.reduce(rest, {first_map, init_prov}, fn {name, map}, {acc_map, acc_prov} ->
+        merge_map(acc_map, map, name, [], acc_prov, resolved)
+      end)
+
+    %{config: config, provenance: provenance}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Layer / option normalisation
+  # ---------------------------------------------------------------------------
+
+  defp normalise_layer({name, map}) when is_map(map), do: {name, map}
+
+  defp normalise_layer(other) do
+    raise ArgumentError, "each layer must be a {name, map} tuple, got: #{inspect(other)}"
+  end
+
+  defp resolve_opts(opts) do
+    global = Keyword.get(opts, :list_strategy, :replace)
+
+    per_key =
+      opts
+      |> Keyword.get(:list_strategies, %{})
+      |> Map.new(fn {path, strat} -> {normalise_path(path), strat} end)
+
+    locked = Enum.map(Keyword.get(opts, :locked, []), &normalise_path/1)
+
+    %{global_list_strategy: global, per_key_strategies: per_key, locked_paths: locked}
+  end
+
+  defp normalise_path(path) when is_list(path), do: path
+  defp normalise_path(path) when is_tuple(path), do: Tuple.to_list(path)
+
+  defp normalise_path(path) do
+    raise ArgumentError, "key paths must be lists or tuples of atoms, got: #{inspect(path)}"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Recursive merge (threads the provenance map through)
+  # ---------------------------------------------------------------------------
+
+  defp merge_map(base_map, over_map, name, path, prov, opts) do
+    Enum.reduce(over_map, {base_map, prov}, fn {k, ov}, {acc, pr} ->
+      kpath = path ++ [k]
+
+      cond do
+        locked?(kpath, opts) and Map.has_key?(base_map, k) ->
+          {acc, pr}
+
+        Map.has_key?(base_map, k) ->
+          {mv, pr2} = merge_value(Map.fetch!(base_map, k), ov, name, kpath, pr, opts)
+          {Map.put(acc, k, mv), pr2}
+
+        true ->
+          {Map.put(acc, k, ov), leaf_provenance(ov, name, kpath, pr)}
+      end
+    end)
+  end
+
+  defp merge_value(bv, ov, name, kpath, pr, opts) do
+    cond do
+      is_map(bv) and is_map(ov) ->
+        merge_map(bv, ov, name, kpath, pr, opts)
+
+      is_list(bv) and is_list(ov) ->
+        case list_strategy_for(kpath, opts) do
+          :replace ->
+            {ov, Map.put(pr, kpath, name)}
+
+          :append ->
+            names = List.wrap(Map.get(pr, kpath)) ++ [name]
+            {bv ++ ov, Map.put(pr, kpath, names)}
+        end
+
+      is_map(ov) ->
+        # Override replaces a scalar/list with a whole subtree.
+        {ov, leaf_provenance(ov, (truncated)
+09:42:08.310 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `LayeredConfig.merge_map/6`
+
+`LayeredConfig` merges an ordered stack of named configuration layers (given in
+increasing precedence order) into a single effective configuration and reports the
+provenance of every effective value. The whole module is provided below with the
+body of the private `merge_map/6` function removed. Your job is to implement only
+that function.
+
+## What `merge_map/6` must do
+
+Implement the private `merge_map(base_map, over_map, name, path, prov, opts)`
+function. It deep-merges the higher-precedence layer `over_map` (whose layer name is
+`name`) onto the already-accumulated `base_map`, while threading the provenance map
+`prov` through the whole traversal. `path` is the key-path (a list of atoms from the
+root) at which `base_map`/`over_map` currently sit, and `opts` is the resolved
+options map (`%{global_list_strategy:, per_key_strategies:, locked_paths:}`).
+
+It must return a `{merged_map, updated_provenance}` tuple, produced by reducing over
+the key/value pairs of `over_map` starting from the accumulator `{base_map, prov}`.
+For each `{k, ov}` pair in `over_map`, compute the current key-path
+`kpath = path ++ [k]` and handle three cases:
+
+  * **Locked and already present** — if `kpath` is locked (use `locked?/2`) *and*
+    `base_map` already has key `k`, the earlier layer wins: leave both the
+    accumulated map and provenance unchanged.
+
+  * **Key already present (not locked)** — merge the existing base value with the
+    override value by delegating to `merge_value/6` (passing the base value fetched
+    from `base_map`, `ov`, `name`, `kpath`, the current provenance, and `opts`).
+    Put the merged value under `k` in the accumulator and carry forward the
+    provenance `merge_value/6` returns.
+
+  * **New key** — the key does not exist in `base_map`: insert `ov` under `k` in the
+    accumulator, and record provenance for it (and, if `ov` is a map, for all of its
+    nested leaves) via `leaf_provenance/4` with `name`, `kpath`, and the current
+    provenance.
+
+The result of the reduction — the `{map, provenance}` accumulator — is the function's
+return value.
+
+## Module
+
+```elixir
+defmodule LayeredConfig do
+  @moduledoc """
+  Merges an ordered stack of named configuration layers into a single effective
+  configuration and reports the provenance of every effective value.
+
+  `merge/2` takes a non-empty list of `{layer_name, config_map}` tuples in
+  increasing precedence order and returns `%{config: map, provenance: map}` where
+  `provenance` maps each leaf key-path (a list of atoms) to the layer that supplied
+  the winning value (or, for appended lists, the ordered list of contributing
+  layers).
+  """
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Merges `layers` (a non-empty list of `{name, config_map}` tuples in increasing
+  precedence order) into a single effective configuration.
+
+  Returns a map with two keys: `:config`, the deep-merged configuration, and
+  `:provenance`, a map from each leaf key-path (a list of atoms) to the layer name
+  that supplied the winning value. For appended lists the provenance is the ordered
+  list of contributing layer names.
+
+  Supported `opts`:
+
+    * `:list_strategy` — `:replace` (default) or `:append` for list leaves.
+    * `:list_strategies` — a map of `key_path => :replace | :append` overriding the
+      global strategy for specific paths.
+    * `:locked` — a list of key-paths that, once set by a lower layer, cannot be
+      changed by higher layers.
+
+  Key paths for `:list_strategies` and `:locked` are lists or tuples of atoms.
+  Raises `ArgumentError` when `layers` is empty.
+  """
+  @spec merge([{term(), map()}], keyword()) :: %{config: map(), provenance: map()}
+  def merge(layers, opts \\ []) when is_list(layers) do
+    if layers == [] do
+      raise ArgumentError, "`layers` must be a non-empty list of {name, map} tuples"
+    end
+
+    resolved = resolve_opts(opts)
+
+    [{first_name, first_map} | rest] = Enum.map(layers, &normalise_layer/1)
+    init_prov = leaf_provenance(first_map, first_name, [], %{})
+
+    {config, provenance} =
+      Enum.reduce(rest, {first_map, init_prov}, fn {name, map}, {acc_map, acc_prov} ->
+        merge_map(acc_map, map, name, [], acc_prov, resolved)
+      end)
+
+    %{config: config, provenance: provenance}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Layer / option normalisation
+  # ---------------------------------------------------------------------------
+
+  defp normalise_layer({name, map}) when is_map(map), do: {name, map}
+
+  defp normalise_layer(other) do
+    raise ArgumentError, "each layer must be a {name, map} tuple, got: #{inspect(other)}"
+  end
+
+  defp resolve_opts(opts) do
+    global = Keyword.get(opts, :list_strategy, :replace)
+
+    per_key =
+      opts
+      |> Keyword.get(:list_strategies, %{})
+      |> Map.new(fn {path, strat} -> {normalise_path(path), strat} end)
+
+    locked = Enum.map(Keyword.get(opts, :locked, []), &normalise_path/1)
+
+    %{global_list_strategy: global, per_key_strategies: per_key, locked_paths: locked}
+  end
+
+  defp normalise_path(path) when is_list(path), do: path
+  defp normalise_path(path) when is_tuple(path), do: Tuple.to_list(path)
+
+  defp normalise_path(path) do
+    raise ArgumentError, "key paths must be lists or tuples of atoms, got: #{inspect(path)}"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Recursive merge (threads the provenance map through)
+  # ---------------------------------------------------------------------------
+
+  defp merge_map(base_map, over_map, name, path, prov, opts) do
+    # TODO
+  end
+
+  defp merge_value(bv, ov, name, kpath, pr, opts) do
+    cond do
+      is_map(bv) and is_map(ov) ->
+        merge_map(bv, ov, name, kpath, pr, opts)
+
+      is_list(bv) and is_list(ov) ->
+        case list_strategy_for(kpath, opts) do
+          :replace ->
+            {ov, Map.put(pr, kpath, name)}
+
+          :append ->
+            names = List.wrap(Map.get(pr, kpath)) ++ [name]
+            {bv ++ ov, Map.put(pr, kpath, names)}
+        end
+
+      is_map(ov) ->
+        # Override replaces a scalar/list with a whole subtree.
+        {ov, leaf_provenance(ov, name, kpath, Map.delete(pr, kpath))}
+
+      true ->
+        {ov, Map.put(pr, kpath, name)}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Helpers
+  # ---------------------------------------------------------------------------
+
+  defp leaf_provenance(value, name, path, pr) when is_map(value) do
+    Enum.reduce(value, pr, fn {k, v}, acc -> leaf_provenance(v, name, path ++ [k], acc) end)
+  end
+
+  defp leaf_provenance(_value, name, path, pr), do: Map.put(pr, path, name)
+
+  defp locked?(kpath, %{locked_paths: locked}), do: kpath in locked
+
+  defp list_strategy_for(kpath, %{per_key_strategies: per_key, global_list_strategy: global}) do
+    Map.get(per_key, kpath, global)
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp merge_map(base_map, over_map, name, path, prov, opts) do
+    Enum.reduce(over_map, {base_map, prov}, fn {k, ov}, {acc, pr} ->
+      kpath = path ++ [k]
+
+      cond do
+        locked?(kpath, opts) and Map.has_key?(base_map, k) ->
+          {acc, pr}
+
+        Map.has_key?(base_map, k) ->
+          {mv, pr2} = merge_value(Map.fetch!(base_map, k), ov, name, kpath, pr, opts)
+          {Map.put(acc, k, mv), pr2}
+
+        true ->
+          {Map.put(acc, k, ov), leaf_provenance(ov, name, kpath, pr)}
+      end
+    end)
+  end
+</file>
+09:42:08.310 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3749, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3749, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3749, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3749, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3254, "type" => "message"}], "output_tokens" => 3254, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+09:42:08.329 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_040_002_provenance_tracking_layered_config_merger_03/040_002_provenance_tracking_layered_config_merger_03 solution.ex
+09:42:08.988 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":17,"lines_over_98":0,"max_line_length":85,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"040_002_provenance_tracking_layered_config_merger_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_040_002_provenance_tracking_layered_config_merger_03/040_002_provenance_tracking_layered_config_merger_03/solution.ex","task":"040_002_provenance_tracking_layered_config_merger_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T07:42:08.958295Z"}
+09:42:08.989 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_040_002_provenance_tracking_layered_config_merger_03/040_002_provenance_tracking_layered_config_merger_03 .gen_staging/fim_040_002_provenance_tracking_layered_config_merger_03/mutant.ex
+09:42:09.644 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":61,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":9,"compiled":true,"parent":"040_002_provenance_tracking_layered_config_merger_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.1,"mode":"fim","overall":0.32,"reasons":["compilation: 9 warning(s) → -0.9 pts","tests: 11/13 failed"],"tests":0.15},"shape":"fim","solution_file":".gen_staging/fim_040_002_provenance_tracking_layered_config_merger_03/mutant.ex","task":"040_002_provenance_tracking_layered_config_merger_03","test_failures":[{"message":"MUTATION","module":"LayeredConfigTest","test":"test later layer overrides scalar and records provenance"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test three layers apply in increasing precedence"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test nested map is deep-merged across layers with per-leaf provenance"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test keys introduced by a higher layer get that layer's provenance"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test lists are replaced by default"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test append strategy concatenates and provenance is a list of layer names"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test append across three layers accumulates provenance in order"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test per-key list strategy overrides the global strategy"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test locked key preserves the earlier value and provenance"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test locked nested key is preserved while siblings merge"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test locking one path does not protect the same key elsewhere"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T07:42:09.620541Z"}
+09:42:09.645 [debug] fim mutation gate: killed
+09:42:09.646 [info] promoted 040_002_provenance_tracking_layered_config_merger_03 -> tasks/040_002_provenance_tracking_layered_config_merger_03

@@ -1,0 +1,588 @@
+[22m03:08:55.085 [info] FIM 079_004_concurrent_bloom_filter_fim02 → 079_004_concurrent_bloom_filter_03: target merge/2[0m
+[36m03:08:55.085 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m03:08:55.085 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `merge/2`.
+
+Generate a prompt describing how to implement `merge/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `merge/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `merge/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `merge/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `ConcurrentBloomFilter` that implements a **lock-free, concurrently-writable** Bloom filter backed by Erlang's `:atomics` module, so that many processes can add items in parallel without any GenServer, locks, or message passing.
+
+Unlike a purely functional Bloom filter, this one holds a single shared, mutable `:atomics` array (one 1-bit slot per position). Because a slot is only ever *set* to `1` (never cleared) and `:atomics.put/3` is atomic, concurrent writers cannot corrupt each other or lose updates — no compare-and-swap loop is needed.
+
+I need these functions in the public API:
+
+- `ConcurrentBloomFilter.new(expected_size, false_positive_rate)` — creates a new filter. It must compute the optimal array size (`m = -ceil(n * ln p / (ln 2)^2)`) and hash count (`k = round(m/n * ln 2)`), allocate a `:atomics` array of `m` unsigned slots, and return a struct holding `m`, `k`, and the atomics reference. `expected_size` is a positive integer; `false_positive_rate` is a float strictly between 0.0 and 1.0.
+- `ConcurrentBloomFilter.add(filter, item)` — hashes the item with `k` derived hash functions and atomically sets each corresponding slot to `1`. Because the backing store is shared and mutable, this update is visible to every process holding the same filter handle. Return the (unchanged) filter handle. Items may be any Elixir term. This must be safe to call concurrently from many processes.
+- `ConcurrentBloomFilter.member?(filter, item)` — returns `true` if all `k` slots for the item read as `1`, `false` if any is `0`. No false negatives for items that were added.
+- `ConcurrentBloomFilter.merge(into, from)` — ORs `from`'s array into `into`'s array in place (setting any slot in `into` whose corresponding slot in `from` is `1`), and returns `into`. Both filters must have identical `m` and `k` — raise `ArgumentError` otherwise.
+
+Derive `k` independent hashes from `:erlang.phash2/2` on a `{index, item}` tuple. Note that `:atomics` indices are 1-based. Stdlib/OTP only — no external dependencies. Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule ConcurrentBloomFilter do
+  @moduledoc """
+  A lock-free, concurrently-writable Bloom filter backed by `:atomics`.
+
+  The bit array lives in a single shared `:atomics` array (one unsigned slot per
+  position). Adding an item only ever *sets* slots to `1`, and `:atomics.put/3`
+  is an atomic operation, so any number of processes may call `add/2` in
+  parallel with no locks, no GenServer, and no message passing — concurrent
+  writers cannot corrupt one another or lose updates.
+
+  Because the backing store is mutable and shared, the filter handle is a
+  reference to that shared state: an `add/2` performed in one process is
+  immediately visible to every other process holding the same handle.
+
+  ## Example
+
+      iex> f = ConcurrentBloomFilter.new(1_000, 0.01)
+      iex> ConcurrentBloomFilter.add(f, "hello")
+      iex> ConcurrentBloomFilter.member?(f, "hello")
+      true
+  """
+
+  @ln2 :math.log(2)
+
+  @enforce_keys [:m, :k, :ref]
+  defstruct [:m, :k, :ref]
+
+  @type t :: %__MODULE__{
+          m: pos_integer(),
+          k: pos_integer(),
+          ref: term()
+        }
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc "Creates a new atomics-backed filter sized for the given parameters."
+  @spec new(pos_integer(), float()) :: t()
+  def new(expected_size, false_positive_rate)
+      when is_integer(expected_size) and expected_size > 0 and
+             is_float(false_positive_rate) and false_positive_rate > 0.0 and
+             false_positive_rate < 1.0 do
+    m = max(1, ceil(-expected_size * :math.log(false_positive_rate) / (@ln2 * @ln2)))
+    k = max(1, round(m / expected_size * @ln2))
+    ref = :atomics.new(m, signed: false)
+    %__MODULE__{m: m, k: k, ref: ref}
+  end
+
+  @doc """
+  Atomically sets the `k` slots for `item`. Safe to call concurrently from many
+  processes. Returns the (unchanged) filter handle.
+  """
+  @spec add(t(), term()) :: t()
+  def add(%__MODULE__{m: m, k: k, ref: ref} = filter, item) do
+    Enum.each(0..(k - 1), fn seed ->
+      :atomics.put(ref, hash(item, seed, m) + 1, 1)
+    end)
+
+    filter
+  end
+
+  @doc "Returns `true` if all `k` slots for `item` read as `1`."
+  @spec member?(t(), term()) :: boolean()
+  def member?(%__MODULE__{m: m, k: k, ref: ref}, item) do
+    Enum.all?(0..(k - 1), fn seed ->
+      :atomics.get(ref, hash(item, seed, m) + 1) == 1
+    end)
+  end
+
+  @doc """
+  ORs `from`'s array into `into`'s array in place and returns `into`. Both
+  filters must have identical `m` and `k`.
+  """
+  @spec merge(t(), t()) :: t()
+  def merge(%__MODULE__{m: m, k: k, ref: into} = target, %__MODULE__{m: m, k: k, ref: from}) do
+    Enum.each(1..m, fn idx ->
+      if :atomics.get(from, idx) == 1 do
+        :atomics.put(into, idx, 1)
+      end
+    end)
+
+    target
+  end
+
+  def merge(%__MODULE__{} = f1, %__MODULE__{} = f2) do
+    raise ArgumentError,
+          "cannot merge filters with different parameters: " <>
+            "filter1 has m=#{f1.m}, k=#{f1.k}; filter2 has m=#{f2.m}, k=#{f2.k}"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp hash(item, seed, m), do: :erlang.phash2({seed, item}, m)
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description + skeleton module with a `# TODO` for merge/2
+  - solution.ex — just the merge/2 function
+
+[0m
+[36m03:09:23.948 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `ConcurrentBloomFilter.merge/2`
+
+The module below implements a lock-free, concurrently-writable Bloom filter
+backed by Erlang's `:atomics` module. Every function is complete **except**
+`merge/2`, whose body has been replaced with `# TODO`.
+
+## What `merge/2` must do
+
+Implement the public `merge(into, from)` function. It ORs the `from` filter's
+bit array into the `into` filter's array **in place** and returns `into`.
+
+- Both filters must have identical `m` (array size) and `k` (hash count). Match
+  on the two structs so that the first clause only applies when both `m` values
+  are equal and both `k` values are equal.
+- For that matching clause, iterate over every 1-based atomics index from `1`
+  to `m`. Whenever the corresponding slot in `from`'s array reads as `1`, set the
+  same slot in `into`'s array to `1` (slots are only ever set, never cleared).
+  Return the `into` filter handle (the target struct) unchanged as a value.
+- Provide a second clause that matches any other pair of `%ConcurrentBloomFilter{}`
+  structs (i.e. differing parameters) and raises an `ArgumentError` whose message
+  reports both filters' `m` and `k` values.
+
+Remember `:atomics` indices are 1-based, and use `:atomics.get/2` and
+`:atomics.put/3` to read and write slots.
+
+```elixir
+defmodule ConcurrentBloomFilter do
+  @moduledoc """
+  A lock-free, concurrently-writable Bloom filter backed by `:atomics`.
+
+  The bit array lives in a single shared `:atomics` array (one unsigned slot per
+  position). Adding an item only ever *sets* slots to `1`, and `:atomics.put/3`
+  is an atomic operation, so any number of processes may call `add/2` in
+  parallel with no locks, no GenServer, and no message passing — concurrent
+  writers cannot corrupt one another or lose updates.
+
+  Because the backing store is mutable and shared, the filter handle is a
+  reference to that shared state: an `add/2` performed in one process is
+  immediately visible to every other process holding the same handle.
+
+  ## Example
+
+      iex> f = ConcurrentBloomFilter.new(1_000, 0.01)
+      iex> ConcurrentBloomFilter.add(f, "hello")
+      iex> ConcurrentBloomFilter.member?(f, "hello")
+      true
+  """
+
+  @ln2 :math.log(2)
+
+  @enforce_keys [:m, :k, :ref]
+  defstruct [:m, :k, :ref]
+
+  @type t :: %__MODULE__{
+          m: pos_integer(),
+          k: pos_integer(),
+          ref: term()
+        }
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc "Creates a new atomics-backed filter sized for the given parameters."
+  @spec new(pos_integer(), float()) :: t()
+  def new(expected_size, false_positive_rate)
+      when is_integer(expected_size) and expected_size > 0 and
+             is_float(false_positive_rate) and false_positive_rate > 0.0 and
+             false_positive_rate < 1.0 do
+    m = max(1, ceil(-expected_size * :math.log(false_positive_rate) / (@ln2 * @ln2)))
+    k = max(1, round(m / expected_size * @ln2))
+    ref = :atomics.new(m, signed: false)
+    %__MODULE__{m: m, k: k, ref: ref}
+  end
+
+  @doc """
+  Atomically sets the `k` slots for `item`. Safe to call concurrently from many
+  processes. Returns the (unchanged) filter handle.
+  """
+  @spec add(t(), term()) :: t()
+  def add(%__MODULE__{m: m, k: k, ref: ref} = filter, item) do
+    Enum.each(0..(k - 1), fn seed ->
+      :atomics.put(ref, hash(item, seed, m) + 1, 1)
+    end)
+
+    filter
+  end
+
+  @doc "Returns `true` if all `k` slots for `item` read as `1`."
+  @spec member?(t(), term()) :: boolean()
+  def member?(%__MODULE__{m: m, k: k, ref: ref}, item) do
+    Enum.all?(0..(k - 1), fn seed ->
+      :atomics.get(ref, hash(item, seed, m) + 1) == 1
+    end)
+  end
+
+  @doc """
+  ORs `from`'s array into `into`'s array in place and returns `into`. Both
+  filters must have identical `m` and `k`.
+  """
+  @spec merge(t(), t()) :: t()
+  # TODO
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp hash(item, seed, m), do: :erlang.phash2({seed, item}, m)
+end
+```
+</file>
+
+<file path="solution.ex">
+  def merge(%__MODULE__{m: m, k: k, ref: into} = target, %__MODULE__{m: m, k: k, ref: from}) do
+    Enum.each(1..m, fn idx ->
+      if :atomics.get(from, idx) == 1 do
+        :atomics.put(into, idx, 1)
+      end
+    end)
+
+    target
+  end
+
+  def merge(%__MODULE__{} = f1, %__MODULE__{} = f2) do
+    raise ArgumentError,
+          "cannot merge filters with different parameters: " <>
+            "filter1 has m=#{f1.m}, k=#{f1.k}; filter2 has m=#{f2.m}, k=#{f2.k}"
+  end
+</file>[0m
+[36m03:09:23.948 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3016, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3016, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3016, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3016, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 2421, "type" => "message"}], "output_tokens" => 2421, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m03:09:23.967 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_079_004_concurrent_bloom_filter_03/079_004_concurrent_bloom_filter_03 solution.ex[0m
+[36m03:09:24.325 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":15,"lines_over_98":0,"max_line_length":95,"mode":"fim","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"no matching end for the stubbed def","type":"FimReconstruct"}],"compile_warnings":0,"compiled":false,"parent":"079_004_concurrent_bloom_filter_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.0,"reasons":["compilation: failed to compile (0.0)"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_079_004_concurrent_bloom_filter_03/079_004_concurrent_bloom_filter_03/solution.ex","task":"079_004_concurrent_bloom_filter_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-07T01:09:24.308094Z"}[0m
+[36m03:09:24.326 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m03:09:24.326 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit prompt.md and/or solution.ex.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Compilation failed:
+  - FimReconstruct: no matching end for the stubbed def
+
+=== CURRENT FILES ===
+----- prompt.md -----
+# Fill in the middle: `ConcurrentBloomFilter.merge/2`
+
+The module below implements a lock-free, concurrently-writable Bloom filter
+backed by Erlang's `:atomics` module. Every function is complete **except**
+`merge/2`, whose body has been replaced with `# TODO`.
+
+## What `merge/2` must do
+
+Implement the public `merge(into, from)` function. It ORs the `from` filter's
+bit array into the `into` filter's array **in place** and returns `into`.
+
+- Both filters must have identical `m` (array size) and `k` (hash count). Match
+  on the two structs so that the first clause only applies when both `m` values
+  are equal and both `k` values are equal.
+- For that matching clause, iterate over every 1-based atomics index from `1`
+  to `m`. Whenever the corresponding slot in `from`'s array reads as `1`, set the
+  same slot in `into`'s array to `1` (slots are only ever set, never cleared).
+  Return the `into` filter handle (the target struct) unchanged as a value.
+- Provide a second clause that matches any other pair of `%ConcurrentBloomFilter{}`
+  structs (i.e. differing parameters) and raises an `ArgumentError` whose message
+  reports both filters' `m` and `k` values.
+
+Remember `:atomics` indices are 1-based, and use `:atomics.get/2` and
+`:atomics.put/3` to read and write slots.
+
+```elixir
+defmodule ConcurrentBloomFilter do
+  @moduledoc """
+  A lock-free, concurrently-writable Bloom filter backed by `:atomics`.
+
+  The bit array lives in a single shared `:atomics` array (one unsigned slot per
+  position). Adding an item only ever *sets* slots to `1`, and `:atomics.put/3`
+  is an atomic operation, so any number of processes may call `add/2` in
+  parallel with no locks, no GenServer, and no message passing — concurrent
+  writers cannot corrupt one another or lose updates.
+
+  Because the backing store is mutable and shared, the filter handle is a
+  reference to that shared state: an `add/2` performed in one process is
+  immediately visible to every other process holding the same handle.
+
+  ## Example
+
+      iex> f = ConcurrentBloomFilter.new(1_000, 0.01)
+      iex> ConcurrentBloomFilter.add(f, "hello")
+      iex> ConcurrentBloomFilter.member?(f, "hello")
+      true
+  """
+
+  @ln2 :math.log(2)
+
+  @enforce_keys [:m, :k, :ref]
+  defstruct [:m, :k, :ref]
+
+  @type t :: %__MODULE__{
+          m: pos_integer(),
+          k: pos_integer(),
+          ref: term()
+        }
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc "Creates a new atomics-backed filter sized for the given parameters."
+  @spec new(pos_integer(), float()) :: t()
+  def new(expected_size, false_positive_rate)
+      when is_integer(expected_size) and expected_size > 0 and
+             is_float(false_positive_rate) and false_positive_rate > 0.0 and
+             false_positive_rate < 1.0 do
+    m = max(1, ceil(-expected_size * :math.log(false_positive_rate) / (@ln2 * @ln2)))
+    k = max(1, round(m / expected_size * @ln2))
+    ref = :atomics.new(m, signed: false)
+    %__MODULE__{m: m, k: k, ref: ref}
+  end
+
+  @doc """
+  Atomically sets the `k` slots for `item`. Safe to call concurrently from many
+  processes. Returns the (unchanged) filter handle.
+  """
+  @spec add(t(), term()) :: t()
+  def add(%__MODULE__{m: m, k: k, ref: ref} = filter, item) do
+    Enum.each(0..(k - 1), fn seed ->
+      :atomics.put(ref, hash(item, seed, m) + 1, 1)
+    end)
+
+    filter
+  end
+
+  @doc "Returns `true` if all `k` slots for `item` read as `1`."
+  @spec member?(t(), term()) :: boolean()
+  def member?(%__MODULE__{m: m, k: k, ref: ref}, item) do
+    Enum.all?(0..(k - 1), fn seed ->
+      :atomics.get(ref, hash(item, seed, m) + 1) == 1
+    end)
+  end
+
+  @doc """
+  ORs `from`'s array into `into`'s array in place and returns `into`. Both
+  filters must have identical `m` and `k`.
+  """
+  @spec merge(t(), t()) :: t()
+  # TODO
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp hash(item, seed, m), do: :erlang.phash2({seed, item}, m)
+end
+```
+
+----- solution.ex -----
+  def merge(%__MODULE__{m: m, k: k, ref: into} = target, %__MODULE__{m: m, k: k, ref: from}) do
+    Enum.each(1..m, fn idx ->
+      if :atomics.get(from, idx) == 1 do
+        :atomics.put(into, idx, 1)
+      end
+    end)
+
+    target
+  end
+
+  def merge(%__MODULE__{} = f1, %__MODULE__{} = f2) do
+    raise ArgumentError,
+          "cannot merge filters with different parameters: " <>
+            "filter1 has m=#{f1.m}, k=#{f1.k}; filter2 has m=#{f2.m}, k=#{f2.k}"
+  end
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — only if the skeleton was wrong
+  - solution.ex — the corrected function
+
+[0m
+[36m03:11:43.704 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `ConcurrentBloomFilter.merge/2`
+
+The module below implements a lock-free, concurrently-writable Bloom filter
+backed by Erlang's `:atomics` module. Every function is complete **except**
+`merge/2`, whose body has been replaced with `# TODO`.
+
+## What `merge/2` must do
+
+Implement the public `merge(into, from)` function. It ORs the `from` filter's
+bit array into the `into` filter's array **in place** and returns `into`.
+
+- Both filters must have identical `m` (array size) and `k` (hash count). Match
+  on the two structs so that the first clause only applies when both `m` values
+  are equal and both `k` values are equal.
+- For that matching clause, iterate over every 1-based atomics index from `1`
+  to `m`. Whenever the corresponding slot in `from`'s array reads as `1`, set the
+  same slot in `into`'s array to `1` (slots are only ever set, never cleared).
+  Return the `into` filter handle (the target struct) unchanged as a value.
+- Provide a second clause that matches any other pair of `%ConcurrentBloomFilter{}`
+  structs (i.e. differing parameters) and raises an `ArgumentError` whose message
+  reports both filters' `m` and `k` values.
+
+Remember `:atomics` indices are 1-based, and use `:atomics.get/2` and
+`:atomics.put/3` to read and write slots.
+
+```elixir
+defmodule ConcurrentBloomFilter do
+  @moduledoc """
+  A lock-free, concurrently-writable Bloom filter backed by `:atomics`.
+
+  The bit array lives in a single shared `:atomics` array (one unsigned slot per
+  position). Adding an item only ever *sets* slots to `1`, and `:atomics.put/3`
+  is an atomic operation, so any number of processes may call `add/2` in
+  parallel with no locks, no GenServer, and no message passing — concurrent
+  writers cannot corrupt one another or lose updates.
+
+  Because the backing store is mutable and shared, the filter handle is a
+  reference to that shared state: an `add/2` performed in one process is
+  immediately visible to every other process holding the same handle.
+
+  ## Example
+
+      iex> f = ConcurrentBloomFilter.new(1_000, 0.01)
+      iex> ConcurrentBloomFilter.add(f, "hello")
+      iex> ConcurrentBloomFilter.member?(f, "hello")
+      true
+  """
+
+  @ln2 :math.log(2)
+
+  @enforce_keys [:m, :k, :ref]
+  defstruct [:m, :k, :ref]
+
+  @type t :: %__MODULE__{
+          m: pos_integer(),
+          k: pos_integer(),
+          ref: term()
+        }
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc "Creates a new atomics-backed filter sized for the given parameters."
+  @spec new(pos_integer(), float()) :: t()
+  def new(expected_size, false_positive_rate)
+      when is_integer(expected_size) and expected_size > 0 and
+             is_float(false_positive_rate) and false_positive_rate > 0.0 and
+             false_positive_rate < 1.0 do
+    m = max(1, ceil(-expected_size * :math.log(false_positive_rate) / (@ln2 * @ln2)))
+    k = max(1, round(m / expected_size * @ln2))
+    ref = :atomics.new(m, signed: false)
+    %__MODULE__{m: m, k: k, ref: ref}
+  end
+
+  @doc """
+  Atomically sets the `k` slots for `item`. Safe to call concurrently from many
+  processes. Returns the (unchanged) filter handle.
+  """
+  @spec add(t(), term()) :: t()
+  def add(%__MODULE__{m: m, k: k, ref: ref} = filter, item) do
+    Enum.each(0..(k - 1), fn seed ->
+      :atomics.put(ref, hash(item, seed, m) + 1, 1)
+    end)
+
+    filter
+  end
+
+  @doc "Returns `true` if all `k` slots for `item` read as `1`."
+  @spec member?(t(), term()) :: boolean()
+  def member?(%__MODULE__{m: m, k: k, ref: ref}, item) do
+    Enum.all?(0..(k - 1), fn seed ->
+      :atomics.get(ref, hash(item, seed, m) + 1) == 1
+    end)
+  end
+
+  @doc """
+  ORs `from`'s array into `into`'s array in place and returns `into`. Both
+  filters must have identical `m` and `k`.
+  """
+  @spec merge(t(), t()) :: t()
+  def merge(into, from) do
+    # TODO
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp hash(item, seed, m), do: :erlang.phash2({seed, item}, m)
+end
+```
+</file>
+<file path="solution.ex">
+  def merge(%__MODULE__{m: m, k: k, ref: into} = target, %__MODULE__{m: m, k: k, ref: from}) do
+    Enum.each(1..m, fn idx ->
+      if :atomics.get(from, idx) == 1 do
+        :atomics.put(into, idx, 1)
+      end
+    end)
+
+    target
+  end
+
+  def merge(%__MODULE__{} = f1, %__MODULE__{} = f2) do
+    raise ArgumentError,
+          "cannot merge filters with different parameters: " <>
+            "filter1 has m=#{f1.m}, k=#{f1.k}; filter2 has m=#{f2.m}, k=#{f2.k}"
+  end
+</file>[0m
+[36m03:11:43.705 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2438, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2438, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2438, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2438, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 11143, "type" => "message"}], "output_tokens" => 11143, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m03:11:43.715 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_079_004_concurrent_bloom_filter_03/079_004_concurrent_bloom_filter_03 solution.ex[0m
+[36m03:11:44.418 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":15,"lines_over_98":0,"max_line_length":95,"mode":"fim","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"079_004_concurrent_bloom_filter_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_079_004_concurrent_bloom_filter_03/079_004_concurrent_bloom_filter_03/solution.ex","task":"079_004_concurrent_bloom_filter_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:11:44.398036Z"}[0m
+[36m03:11:44.419 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_079_004_concurrent_bloom_filter_03/079_004_concurrent_bloom_filter_03 .gen_staging/fim_079_004_concurrent_bloom_filter_03/mutant.ex[0m
+[36m03:11:45.102 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":7,"lines_over_98":0,"max_line_length":93,"mode":"fim","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"parent":"079_004_concurrent_bloom_filter_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.5,"mode":"fim","overall":0.79,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 2/9 failed"],"tests":0.78},"shape":"fim","solution_file":".gen_staging/fim_079_004_concurrent_bloom_filter_03/mutant.ex","task":"079_004_concurrent_bloom_filter_03","test_failures":[{"message":"MUTATION","module":"ConcurrentBloomFilterTest","test":"test merge/2 ORs the source into the target in place"},{"message":"\n\nExpected exception ArgumentError but got RuntimeError (MUTATION)\n","module":"ConcurrentBloomFilterTest","test":"test merge/2 raises when parameters differ"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:11:45.081964Z"}[0m
+[36m03:11:45.102 [debug] fim mutation gate: killed[0m
+[22m03:11:45.104 [info] promoted 079_004_concurrent_bloom_filter_03 -> tasks/079_004_concurrent_bloom_filter_03[0m

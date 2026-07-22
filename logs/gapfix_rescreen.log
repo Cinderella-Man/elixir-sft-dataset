@@ -1,0 +1,165 @@
+ 16 logs/gapfix_unscreened.txt
+  0 logs/gapfix_stale.txt
+ 16 total
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 003_003_lease_based_bucket_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 005_004_filteredeventbus_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 019_003_bulk_upsert_with_conflict_resolution_policies_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01 ... RED (test reports validation errors per index and still creates the rest: 
+
+Expected truthy, got false
+code: assert Map.has_key?(e0, "name")
+arguments:
+
+         # 1
+         %{name: ["can't be blank"]}
+
+         # 2
+         "name"
+
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01: test reports validation errors per index and still creates the rest: 
+
+Expected truthy, got false
+code: assert Map.has_key?(e0, "name")
+arguments:
+
+         # 1
+         %{name: ["can't be blank"]}
+
+         # 2
+         "name"
+
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 025_001_long_polling_endpoint_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 025_004_multi_channel_fan_in_long_poll_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 031_001_csv_importer_with_validation_and_error_report_01 ... RED (test all-optional schema with empty values produces no errors: 
+
+match (=) failed
+code:  assert {:ok, [_row], []} = CsvImporter.import_string(csv, schema)
+left:  {:ok, [_row], []}
+right: {:ok, [], []}
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 031_001_csv_importer_with_validation_and_error_report_01: test all-optional schema with empty values produces no errors: 
+
+match (=) failed
+code:  assert {:ok, [_row], []} = CsvImporter.import_string(csv, schema)
+left:  {:ok, [_row], []}
+right: {:ok, [], []}
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 041_002_lfu_cache_backed_by_ets_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 042_002_failure_aware_write_through_cache_with_negative_caching_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 073_004_fk_dependency_ordered_deletion_cleaner_01 ... RED (test clean/0 deletes children before the parents they reference: 
+
+Assertion with == failed
+code:  assert deleted_tables() == ["comments", "posts", "users"]
+left:  ["users", "posts", "comments"]
+right: ["comments", "posts", "users"]
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 073_004_fk_dependency_ordered_deletion_cleaner_01: test clean/0 deletes children before the parents they reference: 
+
+Assertion with == failed
+code:  assert deleted_tables() == ["comments", "posts", "users"]
+left:  ["users", "posts", "comments"]
+right: ["comments", "posts", "users"]
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 074_001_custom_exunit_assertion_helpers_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 074_004_numeric_tolerance_and_exception_assertion_helpers_01 ... RED (test assert_raises_message/3 fails when the message does not contain the expected text: 
+
+Assertion with =~ failed
+code:  assert result =~ "did not contain"
+left:  "Expected ArgumentError message to contain \"expected text\"\n\nexpression: fn -> raise ArgumentError, \"something else\" en)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 074_004_numeric_tolerance_and_exception_assertion_helpers_01: test assert_raises_message/3 fails when the message does not contain the expected text: 
+
+Assertion with =~ failed
+code:  assert result =~ "did not contain"
+left:  "Expected ArgumentError message to contain \"expected text\"\n\nexpression: fn -> raise ArgumentError, \"something else\" en
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 079_002_counting_bloom_filter_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 080_002_weighted_critical_path_dag_scheduler_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 110_004_time_decay_weighted_rolling_percentile_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 623_001_mini_elasticsearch_like_inverted_index_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+screen freshness over 332 root(s): fresh=317, fresh_legacy=6, fresh_via_strengthen=9
+screen freshness: OK ✓ (every root has fresh blind evidence)

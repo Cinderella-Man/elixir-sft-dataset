@@ -1,0 +1,199 @@
+14:56:09.493 [info] FIM candidate-select for 064_001_work_stealing_task_queue_01 (up to 3)
+14:56:09.493 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:56:09.493 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `WorkStealQueue` that distributes work across N worker processes using a work-stealing algorithm.
+
+I need one primary public function:
+
+- `WorkStealQueue.run(items, worker_count, process_fn)` — takes a list of items, a number of worker processes to spawn, and a one-arity function to apply to each item. Returns a list of `%{item: item, result: term, worker_id: non_neg_integer}` maps — one per input item, in any order.
+
+**How it should work internally:**
+
+1. Partition the input list as evenly as possible across `worker_count` workers. Each worker gets a local queue (a list it owns).
+2. Spawn all workers as `Task`s or plain processes. Each worker processes its local queue sequentially using `process_fn`.
+3. When a worker empties its local queue, it should *steal* work from the busiest worker (the one with the most items remaining). Stealing takes items from the back half of the victim's queue. If no other worker has any remaining work, the stealing worker simply exits.
+4. Each worker must tag every result with its own `worker_id` (an integer from `0` to `worker_count - 1`) so callers can verify which worker processed which item.
+
+**Coordination requirements:**
+
+- Workers need a shared coordination mechanism (e.g. an `Agent` or `GenServer`) that tracks each worker's remaining queue so that steal attempts can find the busiest worker atomically enough to avoid races. You may accept occasional failed steals (the victim emptied before the steal completed) — just handle that case gracefully by retrying or moving on.
+- The function must be synchronous: `run/3` should block until every item has been processed and then return the complete result list.
+
+**Constraints:**
+- Use only OTP/stdlib — no external dependencies.
+- The solution should work correctly when `worker_count` is greater than `length(items)` (some workers get empty queues from the start).
+- `process_fn` may be slow or fast — the algorithm should naturally cause faster workers to pick up slack from slower ones.
+
+Give me the complete implementation in a single file.
+
+=== MODULE ===
+```elixir
+defmodule WorkStealQueue do
+  @moduledoc """
+  Distributes work across N worker processes using a work-stealing algorithm.
+
+  Each worker owns a local queue. When a worker exhausts its queue it inspects
+  the shared coordinator to find the busiest peer and steals the back-half of
+  that peer's remaining work.  The coordinator is an `Agent` whose state is a
+  plain map `%{worker_id => [remaining_items]}`, giving each steal attempt an
+  atomic snapshot of all queues.
+
+  ## Example
+
+      results =
+        WorkStealQueue.run(1..20 |> Enum.to_list(), 4, fn n ->
+          Process.sleep(:rand.uniform(50))
+          n * n
+        end)
+
+      # => [%{item: 3, result: 9, worker_id: 2}, ...]  (order varies)
+  """
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Process every item in `items` by applying `process_fn` across `worker_count`
+  parallel workers, then return a list of result maps (one per item, any order).
+
+  Each map has the shape:
+      %{item: original_item, result: process_fn_return_value, worker_id: 0..worker_count-1}
+
+  `run/3` blocks until every item has been processed.
+  """
+  @spec run(list(), pos_integer(), (any() -> any())) :: [
+          %{item: any(), result: any(), worker_id: non_neg_integer()}
+        ]
+  def run(items, worker_count, process_fn)
+      when is_list(items) and is_integer(worker_count) and worker_count > 0 and
+             is_function(process_fn, 1) do
+    # Divide the input list into `worker_count` chunks as evenly as possible.
+    partitions = partition(items, worker_count)
+
+    # The coordinator Agent holds a map of %{id => remaining_queue}.
+    # All queue mutations (pop, steal) go through this Agent so they are
+    # serialised and workers see a consistent picture of who has work left.
+    {:ok, coordinator} =
+      Agent.start_link(fn ->
+        partitions
+        |> Enum.with_index()
+        |> Map.new(fn {queue, id} -> {id, queue} end)
+      end)
+
+    # Spawn one Task per worker and await all of them.
+    results =
+      0..(worker_count - 1)
+      |> Enum.map(fn id ->
+        Task.async(fn -> run_worker(id, coordinator, process_fn) end)
+      end)
+      |> Task.await_many(:infinity)
+      |> List.flatten()
+
+    Agent.stop(coordinator)
+    results
+  end
+
+  # ---------------------------------------------------------------------------
+  # Worker logic
+  # ---------------------------------------------------------------------------
+
+  # Entry-point for each worker Task.  Results accumulate tail-recursively.
+  defp run_worker(id, coordinator, process_fn) do
+    process_local_queue(id, coordinator, process_fn, _acc = [])
+  end
+
+  # Process items from this worker's own queue until it is empty, then try to
+  # steal.  Using an accumulator keeps the recursion stack-friendly.
+  defp process_local_queue(id, coordinator, process_fn, acc) do
+    case pop_item(id, coordinator) do
+      {:ok, item} ->
+        result = process_fn.(item)
+        entry = %{item: item, result: result, worker_id: id}
+        process_local_queue(id, coordinator, process_fn, [entry | acc])
+
+      :empty ->
+        try_steal(id, coordinator, process_fn, acc)
+    end
+  end
+
+  # When the local queue is empty, look for the busiest other worker and steal
+  # half its remaining items.  If no work exists anywhere, we are done.
+  defp try_steal(id, coordinator, process_fn, acc) do
+    case find_victim(id, coordinator) do
+      nil ->
+        # No other worker has any remaining work — we are finished.
+        acc
+
+      victim_id ->
+        case steal_half(victim_id, coordinator) do
+          [] ->
+            # The victim emptied its queue between the time we identified it
+            # and the time we tried to steal.  Try again with a fresh scan.
+            try_steal(id, coordinator, process_fn, acc)
+
+          stolen ->
+            # Deposit the stolen items into our own queue and resume normal
+            # processing.  Prepend so we work through them immediately.
+            Agent.update(coordinator, fn state ->
+              Map.update(state, id, stolen, fn existing -> stolen ++ existing end)
+            end)
+
+            process_local_queue(id, coordinator, process_fn, acc)
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Coordinator operations (all go through the Agent)
+  # ---------------------------------------------------------------------------
+
+  # Atomically pop the head item from worker `id`'s queue.
+  @spec pop_item(non_neg_integer(), pid()) :: {:ok, any()} | :empty
+  defp pop_item(id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      case Map.fetch!(state, id) do
+        [] ->
+          {:empty, state}
+
+        [head | tail] ->
+          {{:ok, head}, Map.put(state, id, tail)}
+      end
+    end)
+  end
+
+  # Return the id of the worker (other than `thief_id`) with the longest queue,
+  # or `nil` if every other worker's queue is empty.
+  @spec find_victim(non_neg_integer(), pid()) :: non_neg_integer() | nil
+  defp find_victim(thief_id, coordinator) do
+    Agent.get(coordinator, fn state ->
+      state
+      |> Enum.reject(fn {id, queue} -> id == thief_id or queue == [] end)
+      |> case do
+        [] ->
+          nil
+
+        candidates ->
+          {victim_id, _queue} = Enum.max_by(candidates, fn {_id, q} -> length(q) end)
+        (truncated)
+14:56:12.399 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+try_steal/4
+steal_half/2
+partition/2
+</file>
+14:56:12.399 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4006, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4006, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4006, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4006, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 35, "type" => "message"}], "output_tokens" => 35, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

@@ -1,0 +1,427 @@
+[22m02:31:20.619 [info] FIM 077_003_concurrent_interval_registry_fim02 → 077_003_concurrent_interval_registry_03: target t_rebalance/1[0m
+[36m02:31:20.619 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m02:31:20.619 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `t_rebalance/1`.
+
+Generate a prompt describing how to implement `t_rebalance/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `t_rebalance/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `t_rebalance/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `t_rebalance/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `IntervalRegistry` that provides a **concurrent, process-backed** interval store for overlapping range queries. Unlike a plain data structure, this is a stateful server that many client processes can share.
+
+Implement it as a `GenServer` with this public API:
+- `IntervalRegistry.start_link(opts \\ [])` which starts the server and returns `{:ok, pid}`. It must accept standard `GenServer` options (e.g. `:name`).
+- `IntervalRegistry.stop(server)` which stops the server.
+- `IntervalRegistry.insert(server, {start, finish})` which stores an interval and returns `{:ok, id}` where `id` is a unique integer handle for that stored interval. Both `start` and `finish` are integers with `start <= finish`. Inserting identical intervals is allowed and each gets its own id.
+- `IntervalRegistry.remove(server, id)` which removes the interval previously stored under `id`. It returns `:ok` if that id was present, or `{:error, :not_found}` if it was not (or was already removed).
+- `IntervalRegistry.overlapping(server, {start, finish})` which returns the sorted list of `{start, finish}` intervals currently stored that overlap the query range. Two intervals overlap if they share at least one point, so `{1, 3}` and `{3, 5}` overlap.
+- `IntervalRegistry.enclosing(server, point)` which returns the sorted list of stored `{start, finish}` intervals that contain the integer `point`.
+- `IntervalRegistry.stab_count(server, point)` which returns the integer number of stored intervals that contain `point`.
+- `IntervalRegistry.size(server)` which returns the number of intervals currently stored.
+
+Internally the server must keep an augmented balanced interval tree (a self-balancing BST where each node stores the maximum `finish` in its subtree) so `overlapping`, `enclosing`, and `stab_count` prune branches efficiently rather than scanning a flat list. Because ids are unique, the tree can be keyed to make `remove` an O(log n) balanced deletion. All mutations happen inside the server process, so concurrent inserts and removes from many client processes must remain consistent (the server serializes them).
+
+Support degenerate intervals where `start == finish`. Querying an empty registry returns `[]` (or `0` for `stab_count`/`size`).
+
+Give me the complete module in a single file. Use only the Elixir standard library, no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule IntervalRegistry do
+  @moduledoc """
+  A concurrent, process-backed interval store.
+
+  The server holds an augmented AVL interval tree keyed by `{start, finish, id}`
+  (ids are unique, so keys are unique and `remove/2` is an O(log n) balanced
+  deletion). Each node caches the maximum `finish` of its subtree so overlap,
+  enclosing, and stabbing-count queries prune branches instead of scanning.
+
+  All state lives inside the GenServer, so concurrent inserts and removes from
+  many client processes are serialized and stay consistent. Two intervals
+  overlap when they share at least one point (`{1, 3}` and `{3, 5}` overlap).
+  """
+
+  use GenServer
+
+  @type interval :: {integer(), integer()}
+
+  # -------------------------------------------------------------------------
+  # Client API
+  # -------------------------------------------------------------------------
+
+  @doc """
+  Starts the registry server.
+
+  Accepts standard `GenServer` options (e.g. `:name`) and returns
+  `{:ok, pid}` on success.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, :ok, opts)
+
+  @doc """
+  Stops the registry `server`.
+  """
+  @spec stop(GenServer.server()) :: :ok
+  def stop(server), do: GenServer.stop(server)
+
+  @doc """
+  Stores the interval `{start, finish}` and returns `{:ok, id}`.
+
+  `id` is a unique integer handle for the stored interval. Identical intervals
+  may be inserted repeatedly and each receives its own id.
+  """
+  @spec insert(GenServer.server(), interval()) :: {:ok, pos_integer()}
+  def insert(server, {s, f}) when is_integer(s) and is_integer(f) and s <= f do
+    GenServer.call(server, {:insert, s, f})
+  end
+
+  @doc """
+  Removes the interval previously stored under `id`.
+
+  Returns `:ok` when the id was present, or `{:error, :not_found}` when it was
+  not (or was already removed).
+  """
+  @spec remove(GenServer.server(), integer()) :: :ok | {:error, :not_found}
+  def remove(server, id) when is_integer(id), do: GenServer.call(server, {:remove, id})
+
+  @doc """
+  Returns the sorted list of stored intervals that overlap `{start, finish}`.
+
+  Two intervals overlap when they share at least one point.
+  """
+  @spec overlapping(GenServer.server(), interval()) :: [interval()]
+  def overlapping(server, {s, f}) when is_integer(s) and is_integer(f) and s <= f do
+    GenServer.call(server, {:overlapping, s, f})
+  end
+
+  @doc """
+  Returns the sorted list of stored intervals that contain `point`.
+  """
+  @spec enclosing(GenServer.server(), integer()) :: [interval()]
+  def enclosing(server, point) when is_integer(point) do
+    GenServer.call(server, {:enclosing, point})
+  end
+
+  @doc """
+  Returns the number of stored intervals that contain `point`.
+  """
+  @spec stab_count(GenServer.server(), integer()) :: non_neg_integer()
+  def stab_count(server, point) when is_integer(point) do
+    GenServer.call(server, {:stab_count, point})
+  end
+
+  @doc """
+  Returns the number of intervals currently stored.
+  """
+  @spec size(GenServer.server()) :: non_neg_integer()
+  def size(server), do: GenServer.call(server, :size)
+
+  # -------------------------------------------------------------------------
+  # Server callbacks
+  # -------------------------------------------------------------------------
+
+  @impl true
+  def init(:ok), do: {:ok, %{tree: nil, next_id: 1, entries: %{}}}
+
+  @impl true
+  def handle_call({:insert, s, f}, _from, state) do
+    id = state.next_id
+    tree = t_insert(state.tree, s, f, id)
+
+    new_state = %{
+      state
+      | tree: tree,
+        next_id: id + 1,
+        entries: Map.put(state.entries, id, {s, f})
+    }
+
+    {:reply, {:ok, id}, new_state}
+  end
+
+  def handle_call({:remove, id}, _from, state) do
+    case Map.fetch(state.entries, id) do
+      {:ok, {s, f}} ->
+        tree = t_delete(state.tree, s, f, id)
+        {:reply, :ok, %{state | tree: tree, entries: Map.delete(state.entries, id)}}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:overlapping, qs, qf}, _from, state) do
+    {:reply, Enum.sort(t_overlapping(state.tree, qs, qf, [])), state}
+  end
+
+  def handle_call({:enclosing, point}, _from, state) do
+    {:reply, Enum.sort(t_enclosing(state.tree, point, [])), state}
+  end
+
+  def handle_call({:stab_count, point}, _from, state) do
+    {:reply, t_stab_count(state.tree, point, 0), state}
+  end
+
+  def handle_call(:size, _from, state) do
+    {:reply, map_size(state.entries), state}
+  end
+
+  # -------------------------------------------------------------------------
+  # (truncated)[0m
+[36m02:32:09.790 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `IntervalRegistry.t_rebalance/1`
+
+`IntervalRegistry` is a concurrent, process-backed interval store built on an
+augmented **AVL interval tree**. Each node is a map of the shape
+`%{s:, f:, id:, max_finish:, height:, left:, right:}` and is always constructed
+through the helper `t_node/5`, which recomputes `height` and `max_finish` from
+its children. Node ordering is by the key `{s, f, id}` (see `t_key/1`).
+
+Your task is to implement the private helper `t_rebalance/1`, the single function
+`t_insert/4` and `t_delete/4` call after every structural change to restore the
+AVL balance invariant.
+
+`t_rebalance/1` takes one tree `node` and returns a balanced node:
+
+- Compute the node's balance factor with `t_bf/1` (which is
+  `height(left) - height(right)`).
+- If the balance factor is greater than `1`, the node is **left-heavy**:
+  - If its left child is right-heavy (`t_bf(node.left) < 0`), first perform a
+    left rotation on the left child (the Left-Right case): rebuild the node via
+    `t_node/5` with `t_rotate_left(node.left)` as the new left child, keeping the
+    same `s`, `f`, `id`, and right child.
+  - Then return `t_rotate_right/1` of the (possibly updated) node.
+- If the balance factor is less than `-1`, the node is **right-heavy** (mirror
+  case):
+  - If its right child is left-heavy (`t_bf(node.right) > 0`), first perform a
+    right rotation on the right child (the Right-Left case): rebuild the node via
+    `t_node/5` with `t_rotate_right(node.right)` as the new right child, keeping
+    the same `s`, `f`, `id`, and left child.
+  - Then return `t_rotate_left/1` of the (possibly updated) node.
+- Otherwise the node is already balanced — return it unchanged.
+
+Use only the existing helpers (`t_bf/1`, `t_node/5`, `t_rotate_left/1`,
+`t_rotate_right/1`); do not add new functions or change any other code.
+
+```elixir
+defmodule IntervalRegistry do
+  @moduledoc """
+  A concurrent, process-backed interval store.
+
+  The server holds an augmented AVL interval tree keyed by `{start, finish, id}`
+  (ids are unique, so keys are unique and `remove/2` is an O(log n) balanced
+  deletion). Each node caches the maximum `finish` of its subtree so overlap,
+  enclosing, and stabbing-count queries prune branches instead of scanning.
+
+  All state lives inside the GenServer, so concurrent inserts and removes from
+  many client processes are serialized and stay consistent. Two intervals
+  overlap when they share at least one point (`{1, 3}` and `{3, 5}` overlap).
+  """
+
+  use GenServer
+
+  @type interval :: {integer(), integer()}
+
+  # -------------------------------------------------------------------------
+  # Client API
+  # -------------------------------------------------------------------------
+
+  @doc """
+  Starts the registry server.
+
+  Accepts standard `GenServer` options (e.g. `:name`) and returns
+  `{:ok, pid}` on success.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, :ok, opts)
+
+  @doc """
+  Stops the registry `server`.
+  """
+  @spec stop(GenServer.server()) :: :ok
+  def stop(server), do: GenServer.stop(server)
+
+  @doc """
+  Stores the interval `{start, finish}` and returns `{:ok, id}`.
+
+  `id` is a unique integer handle for the stored interval. Identical intervals
+  may be inserted repeatedly and each receives its own id.
+  """
+  @spec insert(GenServer.server(), interval()) :: {:ok, pos_integer()}
+  def insert(server, {s, f}) when is_integer(s) and is_integer(f) and s <= f do
+    GenServer.call(server, {:insert, s, f})
+  end
+
+  @doc """
+  Removes the interval previously stored under `id`.
+
+  Returns `:ok` when the id was present, or `{:error, :not_found}` when it was
+  not (or was already removed).
+  """
+  @spec remove(GenServer.server(), integer()) :: :ok | {:error, :not_found}
+  def remove(server, id) when is_integer(id), do: GenServer.call(server, {:remove, id})
+
+  @doc """
+  Returns the sorted list of stored intervals that overlap `{start, finish}`.
+
+  Two intervals overlap when they share at least one point.
+  """
+  @spec overlapping(GenServer.server(), interval()) :: [interval()]
+  def overlapping(server, {s, f}) when is_integer(s) and is_integer(f) and s <= f do
+    GenServer.call(server, {:overlapping, s, f})
+  end
+
+  @doc """
+  Returns the sorted list of stored intervals that contain `point`.
+  """
+  @spec enclosing(GenServer.server(), integer()) :: [interval()]
+  def enclosing(server, point) when is_integer(point) do
+    GenServer.call(server, {:enclosing, point})
+  end
+
+  @doc """
+  Returns the number of stored intervals that contain `point`.
+  """
+  @spec stab_count(GenServer.server(), integer()) :: non_neg_integer()
+  def stab_count(server, point) when is_integer(point) do
+    GenServer.call(server, {:stab_count, point})
+  end
+
+  @doc """
+  Returns the number of intervals currently stored.
+  """
+  @spec size(GenServer.server()) :: non_neg_integer()
+  def size(server), do: GenServer.call(server, :size)
+
+  # -------------------------------------------------------------------------
+  # Server callbacks
+  # -------------------------------------------------------------------------
+
+  @impl true
+  def init(:ok), do: {:ok, %{tree: nil, next_id: 1, entries: %{}}}
+
+  @impl true
+  def handle_call({:insert, s, f}, _from, state) do
+    id = state.next_id
+    tree = t_insert(state.tree, s, f, id)
+
+    new_state = %{
+      state
+      | tree: tree,
+        next_id: id + 1,
+        entries: Map.put(state.entries, id, {s, f})
+    }
+
+    {:reply, {:ok, id}, new_state}
+  end
+
+  def handle_call({:remove, id}, _from, state) do
+    case Map.fetch(state.entries, id) do
+      {:ok, {s, f}} ->
+        tree = t_delete(state.tree, s, f, id)
+        {:reply, :ok, %{state | tree: tree, entries: Map.delete(state.entries, id)}}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:overlapping, qs, qf}, _from, state) do
+    {:reply, Enum.sort(t_overlapping(state.tree, qs, qf, [])), state}
+  end
+
+  def handle_call({:enclosing, point}, _from, state) do
+    {:reply, Enum.sort(t_enclosing(state.tree, point, [])), state}
+  end
+
+  def handle_call({:stab_count, point}, _from, state) do
+    {:reply, t_stab_count(state.tree, point, 0), state}
+  end
+
+  def handle_call(:size, _from, state) do
+    {:reply, map_size(state.entries), state}
+  end
+
+  # -------------------------------------------------------------------------
+  # Internal augmented AVL tree, keyed by {s, f, id}
+  # -------------------------------------------------------------------------
+
+  defp t_height(nil), do: 0
+  defp t_height(%{height: h}), do: h
+
+  defp t_node(s, f, id, left, right) do
+    h = 1 + max(t_height(left), t_height(right))
+    mf = f |> t_max_child(left) |> t_max_child(right)
+    %{s: s, f: f, id: id, max_finish: mf, height: h, left: left, right: right}
+  end
+
+  defp t_max_child(acc, nil), do: acc
+  defp t_max_child(acc, %{max_finish: mf}), do: max(acc, mf)
+
+  defp t_key(%{s: s, f: f, id: id}), do: {s, f, id}
+
+  defp t_bf(nil), do: 0
+  defp t_bf(%{left: l, right: r}), do: t_height(l) - t_height(r)
+
+  defp t_rotate_right(%{left: %{} = y} = x) do
+    t_node(y.s, y.f, y.id, y.left, t_node(x.s, x.f, x.id, y.right, x.right))
+  end
+
+  defp t_rotate_left(%{right: %{} = y} = x) do
+    t_node(y.s, y.f, y.id, t_node(x.s, x.f, x.id, x.left, y.left), y.right)
+  end
+
+  defp t_rebalance(node) do
+    # TODO
+  end
+
+  defp t_insert(nil, s, f, id), do: t_node(s, f, id, nil, nil)
+
+  defp t_insert(node, s, f, id) do
+    updated =
+      if {s, f, id} < t_key(node) do
+        t_node(node.s, node.f, node.id, t_insert(node.left, s, f, id), node.right)
+      else
+        t_node(node.s, node.f, node.id, node.left, t_insert(node.right, s, f, id))
+      end
+
+    t_rebalance(updated)
+  end
+
+  defp t_delete(nil, _s, _f, _id), do: nil
+
+  defp t_delete(node, s, f, id) do
+    key = {s, f, id}
+    nkey = t_key(node)
+
+    cond do
+      key < nkey ->
+        t_rebalance(t_node(node.s, node.f, node.id, t_delete(node.left, s, f, id), node.rig (truncated)[0m
+[36m02:32:09.790 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5287, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5287, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5287, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5287, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 4856, "type" => "message"}], "output_tokens" => 4856, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m02:32:09.809 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_077_003_concurrent_interval_registry_03/077_003_concurrent_interval_registry_03 solution.ex[0m
+[36m02:32:10.581 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":28,"lines_over_98":0,"max_line_length":82,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"077_003_concurrent_interval_registry_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_077_003_concurrent_interval_registry_03/077_003_concurrent_interval_registry_03/solution.ex","task":"077_003_concurrent_interval_registry_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-07T00:32:10.558549Z"}[0m
+[36m02:32:10.582 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_077_003_concurrent_interval_registry_03/077_003_concurrent_interval_registry_03 .gen_staging/fim_077_003_concurrent_interval_registry_03/mutant.ex[0m
+[36m02:32:11.330 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":25,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"parent":"077_003_concurrent_interval_registry_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.6,"mode":"fim","overall":0.53,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 8/13 failed"],"tests":0.38},"shape":"fim","solution_file":".gen_staging/fim_077_003_concurrent_interval_registry_03/mutant.ex","task":"077_003_concurrent_interval_registry_03","test_failures":[{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{IntervalRegistry, :t_rebalance, 1, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 169, error_info: %{module: Exception}]}, {IntervalRegistry, :handle_call, 3, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 100]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"IntervalRegistryTest","test":"test insert returns unique ids"},{"message":"{:EXIT, #PID<0.214.0>}: {%RuntimeError{message: \"MUTATION\"}, [{IntervalRegistry, :t_rebalance, 1, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 169, error_info: %{module: Exception}]}, {IntervalRegistry, :handle_call, 3, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 100]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"IntervalRegistryTest","test":"test overlapping returns sorted matches"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{IntervalRegistry, :t_rebalance, 1, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 169, error_info: %{module: Exception}]}, {IntervalRegistry, :handle_call, 3, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 100]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"IntervalRegistryTest","test":"test touching intervals overlap"},{"message":"{:EXIT, #PID<0.220.0>}: {%RuntimeError{message: \"MUTATION\"}, [{IntervalRegistry, :t_rebalance, 1, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 169, error_info: %{module: Exception}]}, {IntervalRegistry, :handle_call, 3, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 100]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"IntervalRegistryTest","test":"test enclosing and stab_count"},{"message":"{:EXIT, #PID<0.226.0>}: {%RuntimeError{message: \"MUTATION\"}, [{IntervalRegistry, :t_rebalance, 1, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 169, error_info: %{module: Exception}]}, {IntervalRegistry, :handle_call, 3, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 100]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"IntervalRegistryTest","test":"test remove deletes exactly the stored interval by id"},{"message":"{:EXIT, #PID<0.232.0>}: {%RuntimeError{message: \"MUTATION\"}, [{IntervalRegistry, :t_rebalance, 1, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 169, error_info: %{module: Exception}]}, {IntervalRegistry, :handle_call, 3, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 100]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"IntervalRegistryTest","test":"test remove updates overlap results"},{"message":"{:EXIT, #PID<0.242.0>}: {%RuntimeError{message: \"MUTATION\"}, [{IntervalRegistry, :t_rebalance, 1, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 169, error_info: %{module: Exception}]}, {IntervalRegistry, :handle_call, 3, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 100]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"IntervalRegistryTest","test":"test concurrent inserts are all recorded consistently"},{"message":"{:EXIT, #PID<0.267.0>}: {%RuntimeError{message: \"MUTATION\"}, [{IntervalRegistry, :t_rebalance, 1, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 169, error_info: %{module: Exception}]}, {IntervalRegistry, :handle_call, 3, [file: ~c\"/tmp/evalfim_399573_2627.ex\", line: 100]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"IntervalRegistryTest","test":"test concurrent inserts and removes leave a consistent count"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-07T00:32:11.307751Z"}[0m
+[36m02:32:11.330 [debug] fim mutation gate: killed[0m
+[22m02:32:11.331 [info] promoted 077_003_concurrent_interval_registry_03 -> tasks/077_003_concurrent_interval_registry_03[0m

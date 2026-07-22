@@ -1,0 +1,406 @@
+03:29:43.625 [info] FIM 032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_fim03 → 032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04: target stream_and_process/4
+03:29:43.625 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+03:29:43.625 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `stream_and_process/4`.
+
+Generate a prompt describing how to implement `stream_and_process/4` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `stream_and_process/4` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `stream_and_process/4` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `stream_and_process/4` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `JsonlIngestion` that streams a JSONL
+(JSON Lines) file line by line, processes records in batches, and upserts each
+batch into a database table via Ecto — optionally in parallel.
+
+I need these functions in the public API:
+
+- `JsonlIngestion.ingest(repo, schema, file_path, opts \\ [])` — the main
+  entry point. It streams the file at `file_path` one line at a time using
+  `File.stream!/1`, parses each line with `Jason.decode/1`, skips blank lines,
+  collects parsed records into batches, and inserts each batch via
+  `repo.insert_all/3`. It must return `{:ok, stats}` on success or
+  `{:error, reason}` on failure.
+  `stats` is a map with these integer keys:
+    - `:total`    — total non-blank lines encountered in the file
+    - `:inserted` — records successfully inserted / upserted
+    - `:skipped`  — individual lines that could not be parsed as valid JSON
+                    objects (malformed JSON or non-object JSON values like
+                    arrays, strings, numbers)
+    - `:failed`   — records in batches where `insert_all` raised an error
+
+- Accepted `opts`:
+    - `:batch_size` (integer, default 500) — how many successfully parsed
+      records to collect before calling `insert_all`
+    - `:on_conflict` (atom or keyword, default `:replace_all`) — passed
+      directly to `Repo.insert_all` as the `on_conflict:` option
+    - `:conflict_target` (atom or list, default `:nothing`) — passed as
+      `conflict_target:`
+    - `:max_concurrency` (integer, default 1) — when > 1, insert batches
+      in parallel using `Task.async_stream` with the given concurrency.
+      When 1, process batches sequentially with `Enum.reduce`.
+    - `:timeout` (integer, default 30_000) — per-batch timeout in
+      milliseconds, used as the `:timeout` option for `Task.async_stream`
+
+Because the file is streamed line-by-line with `File.stream!/1`, the module
+must never load the entire file into memory. Build a streaming pipeline:
+
+1. `File.stream!(path)` to get a lazy line stream
+2. `Stream.reject/2` to drop blank lines (after trimming)
+3. Parse each line with `Jason.decode/1`; lines that fail or decode to
+   non-map values are counted as `:skipped` (emit a Logger.warning)
+4. Collect successfully parsed maps
+5. Chunk into batches of `:batch_size`
+6. Insert each batch (sequentially or in parallel depending on
+   `:max_concurrency`)
+
+Before insertion, convert string-keyed JSON maps to atom-keyed maps using
+only fields declared on the schema (via `schema.__schema__(:fields)`), and
+inject `inserted_at` / `updated_at` timestamps if the schema declares them.
+
+The module must handle these error conditions gracefully — never raise:
+- File not found → `{:error, :file_not_found}`
+- File exists but is completely empty (0 non-blank lines) — this is valid,
+  return `{:ok, stats}` with all zeroes
+- An individual line fails JSON parsing → count as `:skipped`, continue
+- A batch `insert_all` call fails → log the error, add the batch size to
+  `:failed`, and continue with the remaining batches
+
+Use `File.exists?/1`, `File.stream!/1`, and `Jason.decode/1` for I/O and
+parsing. Use `require Logger` and emit a `Logger.info/1` line after every
+batch with the running totals.
+
+Give me the complete module in a single file. Assume Jason and Ecto are
+available as dependencies; do not add anything else.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule JsonlIngestion do
+  @moduledoc """
+  Streams a JSONL (JSON Lines) file line by line and upserts records into a
+  database table via Ecto in configurable batches, optionally in parallel.
+
+  Unlike a JSON-array ingestion approach, this module never loads the full file
+  into memory.  Each line is independently parsed, so a single malformed line
+  does not abort the import — it is simply counted as `:skipped`.
+
+  ## Example
+
+      JsonlIngestion.ingest(MyApp.Repo, MyApp.Event, "/data/events.jsonl",
+        batch_size:      2_000,
+        on_conflict:     :replace_all,
+        conflict_target: [:event_id],
+        max_concurrency: 4,
+        timeout:         60_000
+      )
+      #=> {:ok, %{total: 100_000, inserted: 99_950, skipped: 50, failed: 0}}
+  """
+
+  require Logger
+
+  # ---------------------------------------------------------------------------
+  # Types
+  # ---------------------------------------------------------------------------
+
+  @type repo   :: module()
+  @type schema :: module()
+  @type stats  :: %{
+    total:    integer(),
+    inserted: integer(),
+    skipped:  integer(),
+    failed:   integer()
+  }
+  @type ingest_opts :: [
+    batch_size:      pos_integer(),
+    on_conflict:     atom() | keyword(),
+    conflict_target: atom() | [atom()],
+    max_concurrency: pos_integer(),
+    timeout:         pos_integer()
+  ]
+
+  # ---------------------------------------------------------------------------
+  # Defaults
+  # ---------------------------------------------------------------------------
+
+  @default_batch_size      500
+  @default_on_conflict     :replace_all
+  @default_conflict_target :nothing
+  @default_max_concurrency 1
+  @default_timeout         30_000
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Ingests records from a JSONL file into the database.
+
+  ## Parameters
+
+    - `repo`      – An Ecto repository module.
+    - `schema`    – An Ecto schema module whose table receives the rows.
+    - `file_path` – Path to a UTF-8 JSONL file (one JSON object per line).
+    - `opts`      – Keyword list; see module doc for accepted keys.
+
+  ## Return values
+
+    - `{:ok, stats}` – Always returned when the file exists, even if every
+                       line was malformed or every batch failed.
+    - `{:error, :file_not_found}` – The file does not exist.
+  """
+  @spec ingest(repo(), schema(), String.t(), ingest_opts()) ::
+          {:ok, stats()} | {:error, :file_not_found}
+  def ingest(repo, schema, file_path, opts \\ []) do
+    if File.exists?(file_path) do
+      cfg = %{
+        batch_size:      Keyword.get(opts, :batch_size,      @default_batch_size),
+        on_conflict:     Keyword.get(opts, :on_conflict,     @default_on_conflict),
+        conflict_target: Keyword.get(opts, :conflict_target, @default_conflict_target),
+        max_concurrency: Keyword.get(opts, :max_concurrency, @default_max_concurrency),
+        timeout:         Keyword.get(opts, :timeout,         @default_timeout)
+      }
+
+      {:ok, stream_and_process(repo, schema, file_path, cfg)}
+    else
+      Logger.error("[JsonlIngestion] File not found: #{inspect(file_path)}")
+      {:error, :file_not_found}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Streaming pipeline
+  # ---------------------------------------------------------------------------
+
+  @spec stream_and_process(repo(), schema(), Stri (truncated)
+03:30:38.441 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `stream_and_process/4`
+
+Implement the private `stream_and_process/4` function. It is the streaming pipeline
+that backs the public `ingest/4` entry point, and it is called only after the file
+has been confirmed to exist. It receives the `repo` module, the `schema` module, the
+`file_path` string, and a `cfg` map holding the resolved options
+(`:batch_size`, `:on_conflict`, `:conflict_target`, `:max_concurrency`, `:timeout`).
+It must return a `stats` map with the integer keys `:total`, `:inserted`,
+`:skipped`, and `:failed`.
+
+The function must:
+
+1. Build the set of schema field names by calling `schema_field_set(schema)`, and
+   compute a `now` timestamp with `NaiveDateTime.utc_now/0` truncated to the second
+   for use as the `inserted_at` / `updated_at` value.
+2. **Phase 1 — stream, parse, classify.** Starting from `File.stream!(file_path)`,
+   trim each line with `String.trim/1`, reject blank lines (`== ""`), then
+   `Enum.reduce/3` over the remaining lines accumulating a `{records, skipped, total}`
+   tuple starting at `{[], 0, 0}`. For each line, call `parse_line/1`:
+     - on `{:ok, record}`, convert it with `prepare_row(record, schema_keys, now)`,
+       prepend the prepared row to `records`, and increment `total`;
+     - on `:skip`, leave `records` unchanged and increment both `skipped` and `total`.
+   The records are accumulated in reverse, so restore input order with
+   `Enum.reverse/1` afterwards.
+3. **Phase 2 — chunk and insert.** Split the parsed records into batches with
+   `Enum.chunk_every/2` using `cfg.batch_size`. Build the initial accumulator
+   `%{total: total_count, inserted: 0, skipped: skipped_count, failed: 0}`. If
+   `cfg.max_concurrency > 1`, insert the batches with
+   `insert_parallel(repo, schema, batches, cfg, initial_acc)`; otherwise use
+   `insert_sequential(repo, schema, batches, cfg, initial_acc)`.
+4. Emit a final `Logger.info/1` line reporting the finished stats via
+   `format_stats/1`, then return the `stats` map.
+
+Because the file is streamed line-by-line, the pipeline must never load the whole
+file into memory before reducing over it.
+
+```elixir
+defmodule JsonlIngestion do
+  @moduledoc """
+  Streams a JSONL (JSON Lines) file line by line and upserts records into a
+  database table via Ecto in configurable batches, optionally in parallel.
+
+  Unlike a JSON-array ingestion approach, this module never loads the full file
+  into memory.  Each line is independently parsed, so a single malformed line
+  does not abort the import — it is simply counted as `:skipped`.
+
+  ## Example
+
+      JsonlIngestion.ingest(MyApp.Repo, MyApp.Event, "/data/events.jsonl",
+        batch_size:      2_000,
+        on_conflict:     :replace_all,
+        conflict_target: [:event_id],
+        max_concurrency: 4,
+        timeout:         60_000
+      )
+      #=> {:ok, %{total: 100_000, inserted: 99_950, skipped: 50, failed: 0}}
+  """
+
+  require Logger
+
+  # ---------------------------------------------------------------------------
+  # Types
+  # ---------------------------------------------------------------------------
+
+  @type repo   :: module()
+  @type schema :: module()
+  @type stats  :: %{
+    total:    integer(),
+    inserted: integer(),
+    skipped:  integer(),
+    failed:   integer()
+  }
+  @type ingest_opts :: [
+    batch_size:      pos_integer(),
+    on_conflict:     atom() | keyword(),
+    conflict_target: atom() | [atom()],
+    max_concurrency: pos_integer(),
+    timeout:         pos_integer()
+  ]
+
+  # ---------------------------------------------------------------------------
+  # Defaults
+  # ---------------------------------------------------------------------------
+
+  @default_batch_size      500
+  @default_on_conflict     :replace_all
+  @default_conflict_target :nothing
+  @default_max_concurrency 1
+  @default_timeout         30_000
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Ingests records from a JSONL file into the database.
+
+  ## Parameters
+
+    - `repo`      – An Ecto repository module.
+    - `schema`    – An Ecto schema module whose table receives the rows.
+    - `file_path` – Path to a UTF-8 JSONL file (one JSON object per line).
+    - `opts`      – Keyword list; see module doc for accepted keys.
+
+  ## Return values
+
+    - `{:ok, stats}` – Always returned when the file exists, even if every
+                       line was malformed or every batch failed.
+    - `{:error, :file_not_found}` – The file does not exist.
+  """
+  @spec ingest(repo(), schema(), String.t(), ingest_opts()) ::
+          {:ok, stats()} | {:error, :file_not_found}
+  def ingest(repo, schema, file_path, opts \\ []) do
+    if File.exists?(file_path) do
+      cfg = %{
+        batch_size:      Keyword.get(opts, :batch_size,      @default_batch_size),
+        on_conflict:     Keyword.get(opts, :on_conflict,     @default_on_conflict),
+        conflict_target: Keyword.get(opts, :conflict_target, @default_conflict_target),
+        max_concurrency: Keyword.get(opts, :max_concurrency, @default_max_concurrency),
+        timeout:         Keyword.get(opts, :timeout,         @default_timeout)
+      }
+
+      {:ok, stream_and_process(repo, schema, file_path, cfg)}
+    else
+      Logger.error("[JsonlIngestion] File not found: #{inspect(file_path)}")
+      {:error, :file_not_found}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Streaming pipeline
+  # ---------------------------------------------------------------------------
+
+  @spec stream_and_process(repo(), schema(), String.t(), map()) :: stats()
+  defp stream_and_process(repo, schema, file_path, cfg) do
+    # TODO
+  end
+
+  # ---------------------------------------------------------------------------
+  # Line parsing
+  # ---------------------------------------------------------------------------
+
+  @spec parse_line(String.t()) :: {:ok, map()} | :skip
+  defp parse_line(line) do
+    case Jason.decode(line) do
+      {:ok, value} when is_map(value) ->
+        {:ok, value}
+
+      {:ok, _non_map} ->
+        Logger.warning("[JsonlIngestion] Line is valid JSON but not an object, skipping")
+        :skip
+
+      {:error, reason} ->
+        Logger.warning("[JsonlIngestion] Malformed JSON line, skipping: #{inspect(reason)}")
+        :skip
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Row preparation
+  # ---------------------------------------------------------------------------
+
+  @spec schema_field_set(schema()) :: MapSet.t(String.t())
+  defp schema_field_set(schema) do
+    schema.__schema__(:fields)
+    |> Enum.map(&Atom.to_string/1)
+    |> MapSet.new()
+  end
+
+  @spec prepare_row(map(), MapSet.t(String.t()), NaiveDateTime.t()) :: map()
+  defp prepare_row(row, schema_keys, now) do
+    base =
+      row
+      |> Enum.filter(fn {k, _v} -> MapSet.member?(schema_keys, k) end)
+      |> Enum.map(fn {k, v} -> {String.to_existing_atom(k), v} end)
+      |> Map.new()
+
+    base
+    |> maybe_put_new(:inserted_at, now, schema_keys)
+    |> maybe_put_new(:updated_at,  now, schema_keys)
+  end
+
+  @spec maybe_put_new(map(), atom(), term(), MapSet.t(String.t())) :: map()
+  defp maybe_put_new(row, field, value, schema_keys) do
+    if MapSet.member?(schema_keys, Atom.to_string(field)) do
+      Map.put_new(row, field, value)
+    else
+      row
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Sequential batch insertion
+  # ---------------------------------------------------------------------------
+
+  @spec insert_sequential(repo(), schema(), [[map()]], map(), stats()) :: stats()
+  defp insert_sequential(repo, schema, batches, cfg, initial_acc) do
+    Enum.reduce(batches, initial_acc, fn batch, acc ->
+      do_insert_batch(repo, schema, batch, cfg, acc)
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Parallel b (truncated)
+03:30:38.441 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6241, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6241, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6241, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6241, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 5571, "type" => "message"}], "output_tokens" => 5571, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+03:30:38.460 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04/032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04 solution.ex
+03:30:39.363 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":39,"lines_over_98":0,"max_line_length":87,"mode":"fim","pipe_chain_count":5,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04/032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04/solution.ex","task":"032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T01:30:39.342357Z"}
+03:30:39.364 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04/032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04 .gen_staging/fim_032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04/mutant.ex
+03:30:40.171 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":72,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":13,"compiled":true,"parent":"032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.29,"reasons":["compilation: 13 warning(s) → -1.3 pts","tests: 7/8 failed"],"tests":0.13},"shape":"fim","solution_file":".gen_staging/fim_032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04/mutant.ex","task":"032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04","test_failures":[{"message":"MUTATION","module":"JsonlIngestionTest","test":"test inserts all records from a JSONL file sequentially"},{"message":"MUTATION","module":"JsonlIngestionTest","test":"test inserts records in parallel when max_concurrency > 1"},{"message":"MUTATION","module":"JsonlIngestionTest","test":"test skips malformed JSON lines and non-object lines"},{"message":"MUTATION","module":"JsonlIngestionTest","test":"test blank lines are excluded from total count"},{"message":"MUTATION","module":"JsonlIngestionTest","test":"test handles an empty file gracefully"},{"message":"MUTATION","module":"JsonlIngestionTest","test":"test continues processing after a failed batch and reports failures"},{"message":"MUTATION","module":"JsonlIngestionTest","test":"test upserts records with on_conflict: :replace_all"}],"tests_errors":0,"tests_excluded":0,"tests_failed":7,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T01:30:40.145260Z"}
+03:30:40.171 [debug] fim mutation gate: killed
+03:30:40.172 [info] promoted 032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04 -> tasks/032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_04

@@ -157,6 +157,8 @@ end
 defmodule BoundedBiMapTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   setup context do
     name = :"bbm_#{System.unique_integer([:positive])}"
     capacity = Map.get(context, :capacity, 3)
@@ -360,6 +362,65 @@ defmodule BoundedBiMapTest do
     BoundedBiMap.get_by_key(bm, :a)
 
     assert [:b, :c, :a] == BoundedBiMap.keys_by_recency(bm)
+  end
+
+  # -------------------------------------------------------
+  # The capacity option is validated at start
+  # -------------------------------------------------------
+
+  test "start_link refuses a capacity that is not a positive integer" do
+    Process.flag(:trap_exit, true)
+
+    for bad <- [0, -1, 1.0, :two] do
+      name = :"bbm_bad_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+      capture_log(fn ->
+        assert {:error, _reason} = BoundedBiMap.start_link(name: name, capacity: bad)
+      end)
+    end
+  end
+
+  @tag capacity: 1
+  test "a capacity of one is accepted and holds exactly the newest pair", %{bm: bm} do
+    BoundedBiMap.put(bm, :a, 1)
+
+    assert BoundedBiMap.size(bm) == 1
+    assert {:ok, 1} = BoundedBiMap.get_by_key(bm, :a)
+    assert {:ok, :a} = BoundedBiMap.get_by_value(bm, 1)
+
+    # The only pair is also the LRU pair, so a brand-new key replaces it.
+    BoundedBiMap.put(bm, :b, 2)
+
+    assert :error = BoundedBiMap.get_by_key(bm, :a)
+    assert :error = BoundedBiMap.get_by_value(bm, 1)
+    assert {:ok, 2} = BoundedBiMap.get_by_key(bm, :b)
+    assert {:ok, :b} = BoundedBiMap.get_by_value(bm, 2)
+    assert BoundedBiMap.size(bm) == 1
+  end
+
+  # -------------------------------------------------------
+  # Back-to-back lookups order recency strictly by use
+  # -------------------------------------------------------
+
+  @tag capacity: 2
+  test "consecutive lookups leave the earlier-used pair as the LRU", %{bm: bm} do
+    BoundedBiMap.put(bm, :a, 1)
+    BoundedBiMap.put(bm, :b, 2)
+
+    # Use :b first, then :a; each successful lookup refreshes its own pair, so
+    # the last one used wins even though :b was written more recently.
+    assert {:ok, 2} = BoundedBiMap.get_by_key(bm, :b)
+    assert {:ok, :a} = BoundedBiMap.get_by_value(bm, 1)
+
+    assert [:b, :a] == BoundedBiMap.keys_by_recency(bm)
+
+    BoundedBiMap.put(bm, :c, 3)
+
+    assert :error = BoundedBiMap.get_by_key(bm, :b)
+    assert :error = BoundedBiMap.get_by_value(bm, 2)
+    assert {:ok, 1} = BoundedBiMap.get_by_key(bm, :a)
+    assert {:ok, 3} = BoundedBiMap.get_by_key(bm, :c)
+    assert BoundedBiMap.size(bm) == 2
   end
 end
 ```

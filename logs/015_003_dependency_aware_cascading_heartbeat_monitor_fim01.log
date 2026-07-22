@@ -1,0 +1,418 @@
+13:34:49.117 [info] FIM 015_003_dependency_aware_cascading_heartbeat_monitor_fim01 → 015_003_dependency_aware_cascading_heartbeat_monitor_02: target eff/3
+13:34:49.117 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:34:49.117 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `eff/3`.
+
+Generate a prompt describing how to implement `eff/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `eff/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `eff/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `eff/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Dependency-Aware Cascading Heartbeat Monitor
+
+Write me an Elixir `GenServer` module called `DepMonitor` that watches a set of
+services arranged in a **dependency graph**. Each service has its own health (based
+on a probe), but a service is also considered unhealthy whenever any service it
+depends on (directly or transitively) is unhealthy. This models cascading outages:
+when a database goes down, everything depending on it is effectively down too.
+
+Use only the OTP standard library — no external dependencies. Give me the complete
+module in a single file.
+
+## Two kinds of status
+
+- **Own status** (`direct_status/2`) — a node's health considering only its own
+  probe results, using a consecutive-failure threshold.
+- **Effective status** (`effective_status/2`) — a node is effectively `:down` when
+  its own status is `:down` **or** any node it depends on is effectively `:down`;
+  otherwise it is effectively `:up`. Dependencies are followed transitively. The
+  dependency graph must be acyclic; behavior on a cycle is undefined.
+
+## Public API
+
+- `DepMonitor.start_link(opts \\ [])` — starts the process, linked to the caller,
+  returning the usual `GenServer.on_start()` result. `opts` defaults to `[]`. A
+  `:name` option, when present, is used for process registration (functions accept
+  the pid or the registered name); otherwise the process is unregistered. A freshly
+  started server has no nodes.
+
+- `DepMonitor.add_node(server, name, probe, opts \\ [])` — adds a node and returns
+  `:ok`.
+  - `name` is any term identifying the node (compared by value).
+  - `probe` is a **zero-arity** function returning `:ok` or `{:error, reason}`.
+    Guard the public function with `is_function(probe, 0)`.
+  - `opts` may contain:
+    - `:depends_on` — a list of node names this node depends on. Defaults to `[]`.
+      Names that are not (yet) added are treated as effectively `:up`.
+    - `:threshold` — a positive integer, the number of **consecutive** own-probe
+      failures required before the node's own status becomes `:down`. Defaults to
+      `3`.
+    - `:on_change` — an arity-2 function called as
+      `on_change.(name, new_effective_status)` whenever this node's **effective**
+      status changes (see below). Defaults to a no-op.
+    - `:interval` — a positive integer number of milliseconds, or `:manual` (the
+      default). A positive integer schedules automatic probes of *this node* on that
+      interval via `Process.send_after/3`, the first firing one interval after the
+      node is added; `:manual` means the node is only probed via `check/2`.
+  - A newly added node starts with own status `:up` and `0` consecutive failures.
+    Adding a node never invokes any `on_change` callback. Adding a `name` that
+    already exists replaces its configuration and resets it to this initial state.
+
+- `DepMonitor.check(server, name)` — runs exactly one probe for **only the named
+  node** (the same work an automatic tick performs), updates that node's own status,
+  and returns `{:ok, effective}` where `effective` is the named node's effective
+  status afterward. Returns `{:error, :not_found}` if `name` was never added.
+
+- `DepMonitor.direct_status(server, name)` — returns `{:ok, :up}` / `{:ok, :down}`
+  for the node's **own** status, or `{:error, :not_found}`.
+
+- `DepMonitor.effective_status(server, name)` — returns `{:ok, :up}` /
+  `{:ok, :down}` for the node's **effective** status, or `{:error, :not_found}`.
+
+- `DepMonitor.snapshot(server)` — returns a map `%{name => effective_status}` for
+  every node. Empty map `%{}` when there are no nodes.
+
+## Updating own status on a probe
+
+A probe invokes the node's `probe` function (**synchronously inside the server
+process**). Let the node have own status `st`, consecutive-failure count `c`, and
+threshold `t`.
+
+- On `:ok`: the count resets to `0`; if `st` was `:down` it becomes `:up`,
+  otherwise it stays `:up`.
+- On `{:error, _reason}`: the count becomes `c + 1`; if the new count is `>= t`
+  **and** `st` was `:up`, own status becomes `:down`; otherwise own status is left
+  unchanged. Because failures must be consecutive, any `:ok` resets the count.
+
+## Effective-status transitions and notifications
+
+After any probe (via `check/2` or an automatic tick), the server recomputes the
+effective status of every node. For **each** node whose effective status changed as
+a result — and only those — its `:on_change` callback is invoked exactly once as
+`on_change.(name, new_effective_status)`.
+
+This means a probe on one node can notify several nodes: if a dependency's own probe
+takes it down, that dependency **and** every node depending on it (transitively)
+change effective status and each fires its own `on_change`. Likewise, when the
+dependency recovers, all of them fire again on the way back up.
+
+## Independence and robustness
+
+- Nodes not connected by a dependency edge never affect one another.
+- Any message the server does not understand must be ignored: it must neither crash
+  the process nor alter any node's state.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule DepMonitor do
+  @moduledoc """
+  A `GenServer` that monitors a set of services arranged in an acyclic
+  dependency graph, modeling cascading outages.
+
+  Each node has its own probe-based health (its *own* status), tracked with a
+  consecutive-failure threshold. A node's *effective* status is `:down` when its
+  own status is `:down` or when any node it depends on — directly or
+  transitively — is effectively `:down`. This captures the reality that when a
+  dependency (for example a database) goes down, everything relying on it is
+  effectively down too.
+
+  Nodes may be probed manually via `check/2` or automatically on a per-node
+  interval. Each node may register an `:on_change` callback that fires whenever
+  that node's effective status changes.
+
+  The dependency graph must be acyclic; behavior on a cycle is undefined.
+  """
+
+  use GenServer
+
+  @typedoc "A running server: a pid or a registered name."
+  @type server :: GenServer.server()
+
+  @typedoc "A node's health status."
+  @type status :: :up | :down
+
+  @typedoc "A zero-arity probe returning `:ok` or `{:error, reason}`."
+  @type probe :: (-> :ok | {:error, term()})
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the monitor, linked to the caller.
+
+  When `opts` contains a `:name`, it is used for process registration;
+  otherwise the process is unregistered. A freshly started server has no nodes.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, opts, name: name)
+      :error -> GenServer.start_link(__MODULE__, opts)
+    end
+  end
+
+  @doc """
+  Adds (or replaces) a node named `name` with the given zero-arity `probe`.
+
+  Supported `opts`:
+
+    * `:depends_on` — node names this node depen (truncated)
+13:35:38.444 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `eff/3`
+
+Implement the private `eff/3` function, the memoized core of effective-status
+computation. It has the signature `eff(name, nodes, memo)` where `nodes` is the
+`%{name => node}` map and `memo` is a `%{name => status}` cache of
+already-computed effective statuses. It returns a `{status, memo}` tuple carrying
+the node's effective status together with the (possibly extended) memo.
+
+It must behave as follows:
+
+- If `name` is already present in `memo`, return that cached status paired with
+  the unchanged `memo` (`{status, memo}`).
+- Otherwise look `name` up in `nodes`:
+  - If it is **not** in `nodes` (an unknown dependency), treat it as effectively
+    `:up`: return `{:up, memo}` **without** writing anything to `memo`.
+  - If it **is** in `nodes`:
+    - If the node's own status is `:down`, it is effectively `:down`: memoize that
+      (`Map.put(memo, name, :down)`) and return `{:down, memo}`.
+    - Otherwise its effective status is determined by its dependencies. Compute it
+      with `deps_status(node.depends_on, nodes, memo)` (which threads the memo and
+      short-circuits to `:down` as soon as any dependency is effectively `:down`),
+      then memoize the resulting status under `name` and return `{status, memo}`.
+
+Follow dependencies transitively via the recursion through `deps_status/3`, and be
+careful to thread the `memo` returned from each recursive call into the next so
+work is never repeated.
+
+```elixir
+defmodule DepMonitor do
+  @moduledoc """
+  A `GenServer` that monitors a set of services arranged in an acyclic
+  dependency graph, modeling cascading outages.
+
+  Each node has its own probe-based health (its *own* status), tracked with a
+  consecutive-failure threshold. A node's *effective* status is `:down` when its
+  own status is `:down` or when any node it depends on — directly or
+  transitively — is effectively `:down`. This captures the reality that when a
+  dependency (for example a database) goes down, everything relying on it is
+  effectively down too.
+
+  Nodes may be probed manually via `check/2` or automatically on a per-node
+  interval. Each node may register an `:on_change` callback that fires whenever
+  that node's effective status changes.
+
+  The dependency graph must be acyclic; behavior on a cycle is undefined.
+  """
+
+  use GenServer
+
+  @typedoc "A running server: a pid or a registered name."
+  @type server :: GenServer.server()
+
+  @typedoc "A node's health status."
+  @type status :: :up | :down
+
+  @typedoc "A zero-arity probe returning `:ok` or `{:error, reason}`."
+  @type probe :: (-> :ok | {:error, term()})
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the monitor, linked to the caller.
+
+  When `opts` contains a `:name`, it is used for process registration;
+  otherwise the process is unregistered. A freshly started server has no nodes.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, opts, name: name)
+      :error -> GenServer.start_link(__MODULE__, opts)
+    end
+  end
+
+  @doc """
+  Adds (or replaces) a node named `name` with the given zero-arity `probe`.
+
+  Supported `opts`:
+
+    * `:depends_on` — node names this node depends on (default `[]`). Names not
+      added are treated as effectively `:up`.
+    * `:threshold` — consecutive own-probe failures required before the node's
+      own status becomes `:down` (default `3`).
+    * `:on_change` — `on_change.(name, new_effective_status)`, called when this
+      node's effective status changes (default no-op).
+    * `:interval` — positive integer milliseconds to schedule automatic probes
+      of this node, or `:manual` (default) for probe-on-demand only.
+
+  A new node starts with own status `:up` and `0` consecutive failures. Adding a
+  node never invokes any `:on_change` callback. Re-adding an existing `name`
+  replaces its configuration and resets it to the initial state.
+  """
+  @spec add_node(server(), term(), probe(), keyword()) :: :ok
+  def add_node(server, name, probe, opts \\ []) when is_function(probe, 0) do
+    GenServer.call(server, {:add_node, name, probe, opts})
+  end
+
+  @doc """
+  Runs exactly one probe for only `name`, updates its own status, and returns
+  `{:ok, effective}` with that node's effective status afterward.
+
+  Returns `{:error, :not_found}` when `name` was never added.
+  """
+  @spec check(server(), term()) :: {:ok, status()} | {:error, :not_found}
+  def check(server, name) do
+    GenServer.call(server, {:check, name})
+  end
+
+  @doc """
+  Returns `{:ok, status}` for the node's own status, or `{:error, :not_found}`.
+  """
+  @spec direct_status(server(), term()) :: {:ok, status()} | {:error, :not_found}
+  def direct_status(server, name) do
+    GenServer.call(server, {:direct_status, name})
+  end
+
+  @doc """
+  Returns `{:ok, status}` for the node's effective status, or
+  `{:error, :not_found}`.
+  """
+  @spec effective_status(server(), term()) :: {:ok, status()} | {:error, :not_found}
+  def effective_status(server, name) do
+    GenServer.call(server, {:effective_status, name})
+  end
+
+  @doc """
+  Returns a map of `%{name => effective_status}` for every node, or `%{}` when
+  there are no nodes.
+  """
+  @spec snapshot(server()) :: %{optional(term()) => status()}
+  def snapshot(server) do
+    GenServer.call(server, :snapshot)
+  end
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  def init(_opts) do
+    {:ok, %{nodes: %{}}}
+  end
+
+  @impl true
+  def handle_call({:add_node, name, probe, opts}, _from, state) do
+    depends_on = Keyword.get(opts, :depends_on, [])
+    threshold = Keyword.get(opts, :threshold, 3)
+    on_change = Keyword.get(opts, :on_change, fn _name, _status -> :ok end)
+    interval = Keyword.get(opts, :interval, :manual)
+
+    epoch =
+      case Map.fetch(state.nodes, name) do
+        {:ok, old} -> old.epoch + 1
+        :error -> 0
+      end
+
+    node = %{
+      probe: probe,
+      depends_on: depends_on,
+      threshold: threshold,
+      on_change: on_change,
+      interval: interval,
+      own_status: :up,
+      fail_count: 0,
+      epoch: epoch
+    }
+
+    nodes = Map.put(state.nodes, name, node)
+    schedule_tick(name, interval, epoch)
+    {:reply, :ok, %{state | nodes: nodes}}
+  end
+
+  def handle_call({:check, name}, _from, state) do
+    case do_probe(state, name) do
+      {:not_found, state} -> {:reply, {:error, :not_found}, state}
+      {:ok, effective, state} -> {:reply, {:ok, effective}, state}
+    end
+  end
+
+  def handle_call({:direct_status, name}, _from, state) do
+    case Map.fetch(state.nodes, name) do
+      :error -> {:reply, {:error, :not_found}, state}
+      {:ok, node} -> {:reply, {:ok, node.own_status}, state}
+    end
+  end
+
+  def handle_call({:effective_status, name}, _from, state) do
+    case Map.fetch(state.nodes, name) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, _node} ->
+        effective = compute_effective(state.nodes)
+        {:reply, {:ok, Map.fetch!(effective, name)}, state}
+    end
+  end
+
+  def handle_call(:snapshot, _from, state) do
+    {:reply, compute_effective(state.nodes), state}
+  end
+
+  @impl true
+  def handle_info({:tick, name, epoch}, state) do
+    state =
+      case Map.fetch(state.nodes, name) do
+        {:ok, node} ->
+          if node.epoch == epoch and is_integer(node.interval) do
+            {:ok, _effective, state} = do_probe(state, name)
+            schedule_tick(name, node.interval, epoch)
+            state
+          else
+            state
+          end
+
+        :error ->
+          state
+      end
+
+    {:noreply, state}
+  end
+
+  def handle_info(_msg, state) do
+    {:noreply, state}
+  end
+
+  # ------------------------------------------------------------------
+  # Int (truncated)
+13:35:38.444 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9820, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9820, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9820, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9820, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 4725, "type" => "message"}], "output_tokens" => 4725, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:35:38.473 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_015_003_dependency_aware_cascading_heartbeat_monitor_02/015_003_dependency_aware_cascading_heartbeat_monitor_02 solution.ex
+13:35:39.506 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":21,"lines_over_98":0,"max_line_length":72,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"015_003_dependency_aware_cascading_heartbeat_monitor_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_015_003_dependency_aware_cascading_heartbeat_monitor_02/015_003_dependency_aware_cascading_heartbeat_monitor_02/solution.ex","task":"015_003_dependency_aware_cascading_heartbeat_monitor_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-15T11:35:39.477076Z","warning_details":[]}
+13:35:39.524 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_015_003_dependency_aware_cascading_heartbeat_monitor_02/015_003_dependency_aware_cascading_heartbeat_monitor_02 .gen_staging/fim_015_003_dependency_aware_cascading_heartbeat_monitor_02/mutant.ex
+13:35:40.575 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":52,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"parent":"015_003_dependency_aware_cascading_heartbeat_monitor_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.3,"mode":"fim","overall":0.0,"reasons":["compilation: 7 warning(s) → hard fail (overall 0.0)","tests: 14/16 failed"],"tests":0.13},"shape":"fim","solution_file":".gen_staging/fim_015_003_dependency_aware_cascading_heartbeat_monitor_02/mutant.ex","task":"015_003_dependency_aware_cascading_heartbeat_monitor_02","test_failures":[{"message":"{:EXIT, #PID<0.208.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DepMonitor, :eff, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 268, error_info: %{module: Exception}]}, {DepMonitor, :\"-compute_effective/1-fun-0-\", 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 261]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {DepMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 167]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DepMonitorTest","test":"test add_node returns :ok; a new node is up (own and effective); snapshot"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DepMonitor, :eff, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 268, error_info: %{module: Exception}]}, {DepMonitor, :\"-compute_effective/1-fun-0-\", 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 261]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {DepMonitor, :do_probe, 2, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 220]}, {DepMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 148]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DepMonitorTest","test":"test own status goes down after consecutive-failure threshold"},{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DepMonitor, :eff, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 268, error_info: %{module: Exception}]}, {DepMonitor, :\"-compute_effective/1-fun-0-\", 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 261]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {DepMonitor, :do_probe, 2, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 220]}, {DepMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 148]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DepMonitorTest","test":"test threshold defaults to 3"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DepMonitor, :eff, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 268, error_info: %{module: Exception}]}, {DepMonitor, :\"-compute_effective/1-fun-0-\", 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 261]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {DepMonitor, :do_probe, 2, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 220]}, {DepMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 148]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DepMonitorTest","test":"test a consecutive-failure run is broken by any success"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DepMonitor, :eff, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 268, error_info: %{module: Exception}]}, {DepMonitor, :\"-compute_effective/1-fun-0-\", 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 261]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {DepMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 167]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DepMonitorTest","test":"test a dependency going down cascades to dependents' effective status"},{"message":"{:EXIT, #PID<0.226.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DepMonitor, :eff, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 268, error_info: %{module: Exception}]}, {DepMonitor, :\"-compute_effective/1-fun-0-\", 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 261]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {DepMonitor, :do_probe, 2, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 220]}, {DepMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 148]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DepMonitorTest","test":"test recovery of a dependency cascades back up"},{"message":"{:EXIT, #PID<0.230.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DepMonitor, :eff, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 268, error_info: %{module: Exception}]}, {DepMonitor, :\"-compute_effective/1-fun-0-\", 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 261]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {DepMonitor, :do_probe, 2, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 220]}, {DepMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 148]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DepMonitorTest","test":"test cascades are transitive across a chain A -> B -> C"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DepMonitor, :eff, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 268, error_info: %{module: Exception}]}, {DepMonitor, :\"-compute_effective/1-fun-0-\", 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 261]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {DepMonitor, :do_probe, 2, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 220]}, {DepMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 148]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DepMonitorTest","test":"test unrelated nodes are independent"},{"message":"{:EXIT, #PID<0.240.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DepMonitor, :eff, 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 268, error_info: %{module: Exception}]}, {DepMonitor, :\"-compute_effective/1-fun-0-\", 3, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 261]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {DepMonitor, :do_probe, 2, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 220]}, {DepMonitor, :handle_info, 2, [file: ~c\"/tmp/evalfim_2811557_2626.ex\", line: 182]}, {:gen_server, :try_handle_info, 3, [fil (truncated)
+13:35:40.575 [debug] fim mutation gate: killed
+13:35:40.594 [info] promoted 015_003_dependency_aware_cascading_heartbeat_monitor_02 -> tasks/015_003_dependency_aware_cascading_heartbeat_monitor_02

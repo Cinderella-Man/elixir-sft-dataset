@@ -1,0 +1,473 @@
+[22m03:18:56.594 [info] VARIATION 080_002_weighted_critical_path_dag_scheduler_01: Weighted Critical-Path DAG Scheduler[0m
+[36m03:18:56.595 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_002_weighted_critical_path_dag_scheduler_01 solution.ex[0m
+[36m03:18:57.235 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":true,"line_count":238,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":21,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.97,"reasons":["analysis: @doc on public functions → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/080_002_weighted_critical_path_dag_scheduler_01/solution.ex","task":"080_002_weighted_critical_path_dag_scheduler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:18:57.215125Z"}[0m
+[22m03:18:57.236 [info] cycle 080_002_weighted_critical_path_dag_scheduler_01: repairing — The solution is green but does not meet the house style: no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m03:18:57.236 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m03:18:57.236 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `WeightedDAG` that implements a **weighted** Directed Acyclic Graph used for **project / task scheduling**. It should be a pure data structure (no GenServer), where each function takes and returns a `WeightedDAG` struct (or a result tuple).
+
+Unlike a plain topological sort, this graph attaches a **non-negative duration** to each task (vertex) and answers scheduling questions: earliest start times, the total project makespan, and the **critical path** (the longest-duration chain of dependent tasks).
+
+I need these functions in the public API:
+- `WeightedDAG.new()` — returns an empty graph.
+- `WeightedDAG.add_task(dag, id, duration)` — adds a task vertex `id` with a non-negative numeric `duration`. If the task already exists, return the dag unchanged (keep the original duration). Task ids can be any term.
+- `WeightedDAG.add_dependency(dag, from, to)` — adds a directed dependency edge meaning "`from` must finish before `to` starts". Both tasks must already exist. If the edge would create a cycle, return `{:error, :cycle}`. On success return `{:ok, new_dag}`. Cycle detection must be **eager** (DFS-based) in `add_dependency/3`.
+- `WeightedDAG.topological_sort(dag)` — returns `{:ok, ordering}` (Kahn's algorithm, BFS over in-degrees). `{:ok, []}` for an empty graph.
+- `WeightedDAG.earliest_start(dag)` — returns `{:ok, map}` where `map` is `%{id => earliest_start_time}`. A task's earliest start is the maximum over its direct predecessors of `(predecessor's earliest start + predecessor's duration)`, or `0` if it has no predecessors.
+- `WeightedDAG.earliest_finish(dag)` — returns `{:ok, map}` where each value is `earliest_start + duration`.
+- `WeightedDAG.makespan(dag)` — returns `{:ok, number}`, the total project duration = the maximum earliest-finish over all tasks (`{:ok, 0}` for an empty graph).
+- `WeightedDAG.critical_path(dag)` — returns `{:ok, path}` where `path` is a list of task ids forming a longest-duration path from a source task to a sink task (the chain that determines the makespan). `{:ok, []}` for an empty graph. Break ties deterministically (prefer the smallest task id by term ordering).
+- `WeightedDAG.predecessors(dag, id)` / `WeightedDAG.successors(dag, id)` — direct incoming / outgoing neighbours.
+
+Give me the complete module in a single file. Use only the Elixir/Erlang standard library, no external dependencies.
+
+----- solution.ex -----
+defmodule WeightedDAG do
+  @moduledoc """
+  A weighted Directed Acyclic Graph for task / project scheduling.
+
+  Each vertex is a task with a non-negative numeric duration.  Edges express
+  "must finish before" dependencies.  Beyond a plain topological sort, this
+  module answers scheduling questions: earliest start/finish times, the total
+  project makespan, and the critical path (the longest-duration dependent chain).
+
+  Internally the struct holds:
+    * `durations` – `%{id => duration}` (also serves as the vertex set).
+    * `out_edges` – `%{id => MapSet of successors}` (forward adjacency).
+    * `in_edges`  – `%{id => MapSet of predecessors}` (reverse adjacency).
+
+  The graph is kept acyclic at all times; `add_dependency/3` eagerly rejects
+  edges that would introduce a cycle (DFS-based detection).
+  """
+
+  @enforce_keys [:durations, :out_edges, :in_edges]
+  defstruct [:durations, :out_edges, :in_edges]
+
+  @type id :: term()
+  @type t :: %__MODULE__{
+          durations: %{id() => number()},
+          out_edges: %{id() => MapSet.t()},
+          in_edges: %{id() => MapSet.t()}
+        }
+
+  # ---------------------------------------------------------------------------
+  # Construction
+  # ---------------------------------------------------------------------------
+
+  @spec new() :: t()
+  def new do
+    %__MODULE__{durations: %{}, out_edges: %{}, in_edges: %{}}
+  end
+
+  @spec add_task(t(), id(), number()) :: t()
+  def add_task(%__MODULE__{} = dag, id, duration)
+      when is_number(duration) and duration >= 0 do
+    if Map.has_key?(dag.durations, id) do
+      dag
+    else
+      %{
+        dag
+        | durations: Map.put(dag.durations, id, duration),
+          out_edges: Map.put_new(dag.out_edges, id, MapSet.new()),
+          in_edges: Map.put_new(dag.in_edges, id, MapSet.new())
+      }
+    end
+  end
+
+  @spec add_dependency(t(), id(), id()) :: {:ok, t()} | {:error, :cycle | :task_not_found}
+  def add_dependency(%__MODULE__{} = dag, from, to) do
+    with :ok <- require_task(dag, from),
+         :ok <- require_task(dag, to),
+         :ok <- check_no_cycle(dag, from, to) do
+      new_dag = %{
+        dag
+        | out_edges: Map.update!(dag.out_edges, from, &MapSet.put(&1, to)),
+          in_edges: Map.update!(dag.in_edges, to, &MapSet.put(&1, from))
+      }
+
+      {:ok, new_dag}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Queries
+  # ---------------------------------------------------------------------------
+
+  @spec predecessors(t(), id()) :: [id()]
+  def predecessors(%__MODULE__{} = dag, id) do
+    dag.in_edges |> Map.get(id, MapSet.new()) |> MapSet.to_list()
+  end
+
+  @spec successors(t(), id()) :: [id()]
+  def successors(%__MODULE__{} = dag, id) do
+    dag.out_edges |> Map.get(id, MapSet.new()) |> MapSet.to_list()
+  end
+
+  @spec topological_sort(t()) :: {:ok, [id()]}
+  def topological_sort(%__MODULE__{} = dag) do
+    {:ok, topo_order(dag)}
+  end
+
+  @spec earliest_start(t()) :: {:ok, %{id() => number()}}
+  def earliest_start(%__MODULE__{} = dag) do
+    {:ok, compute_est(dag)}
+  end
+
+  @spec earliest_finish(t()) :: {:ok, %{id() => number()}}
+  def earliest_finish(%__MODULE__{} = dag) do
+    est = compute_est(dag)
+    eft = Map.new(est, fn {v, s} -> {v, s + Map.fetch!(dag.durations, v)} end)
+    {:ok, eft}
+  end
+
+  @spec makespan(t()) :: {:ok, number()}
+  def makespan(%__MODULE__{} = dag) do
+    span =
+      dag
+      |> compute_est()
+      |> Enum.map(fn {v, s} -> s + Map.fetch!(dag.durations, v) end)
+      |> case do
+        [] -> 0
+        finishes -> Enum.max(finishes)
+      end
+
+    {:ok, span}
+  end
+
+  @spec critical_path(t()) :: {:ok, [id()]}
+  def critical_path(%__MODULE__{} = dag) do
+    case topo_order(dag) do
+      [] ->
+        {:ok, []}
+
+      _order ->
+        est = compute_est(dag)
+        eft = Map.new(est, fn {v, s} -> {v, s + Map.fetch!(dag.durations, v)} end)
+
+        {end_v, _finish} =
+          eft
+          |> Enum.sort()
+          |> Enum.max_by(fn {_v, f} -> f end)
+
+        {:ok, backtrack(dag, est, end_v, [end_v])}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internals
+  # ---------------------------------------------------------------------------
+
+  # Earliest start time per task, computed over a topological order so that
+  # every predecessor is resolved before the task itself.
+  defp compute_est(dag) do
+    Enum.reduce(topo_order(dag), %{}, fn v, est ->
+      preds = Map.fetch!(dag.in_edges, v)
+
+      start =
+        if MapSet.size(preds) == 0 do
+          0
+        else
+          preds
+          |> Enum.map(fn p -> Map.fetch!(est, p) + Map.fetch!(dag.durations, p) e (truncated)[0m
+[36m03:19:39.365 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule WeightedDAG do
+  @moduledoc """
+  A weighted Directed Acyclic Graph for task / project scheduling.
+
+  Each vertex is a task with a non-negative numeric duration.  Edges express
+  "must finish before" dependencies.  Beyond a plain topological sort, this
+  module answers scheduling questions: earliest start/finish times, the total
+  project makespan, and the critical path (the longest-duration dependent chain).
+
+  Internally the struct holds:
+    * `durations` – `%{id => duration}` (also serves as the vertex set).
+    * `out_edges` – `%{id => MapSet of successors}` (forward adjacency).
+    * `in_edges`  – `%{id => MapSet of predecessors}` (reverse adjacency).
+
+  The graph is kept acyclic at all times; `add_dependency/3` eagerly rejects
+  edges that would introduce a cycle (DFS-based detection).
+  """
+
+  @enforce_keys [:durations, :out_edges, :in_edges]
+  defstruct [:durations, :out_edges, :in_edges]
+
+  @type id :: term()
+  @type t :: %__MODULE__{
+          durations: %{id() => number()},
+          out_edges: %{id() => MapSet.t()},
+          in_edges: %{id() => MapSet.t()}
+        }
+
+  # ---------------------------------------------------------------------------
+  # Construction
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns a new, empty weighted DAG with no tasks and no dependencies.
+  """
+  @spec new() :: t()
+  def new do
+    %__MODULE__{durations: %{}, out_edges: %{}, in_edges: %{}}
+  end
+
+  @doc """
+  Adds a task vertex `id` with a non-negative numeric `duration`.
+
+  If the task already exists the dag is returned unchanged, keeping the
+  original duration.
+  """
+  @spec add_task(t(), id(), number()) :: t()
+  def add_task(%__MODULE__{} = dag, id, duration)
+      when is_number(duration) and duration >= 0 do
+    if Map.has_key?(dag.durations, id) do
+      dag
+    else
+      %{
+        dag
+        | durations: Map.put(dag.durations, id, duration),
+          out_edges: Map.put_new(dag.out_edges, id, MapSet.new()),
+          in_edges: Map.put_new(dag.in_edges, id, MapSet.new())
+      }
+    end
+  end
+
+  @doc """
+  Adds a dependency edge meaning "`from` must finish before `to` starts".
+
+  Both tasks must already exist.  Returns `{:ok, new_dag}` on success,
+  `{:error, :task_not_found}` if either task is missing, or `{:error, :cycle}`
+  if the edge would introduce a cycle (detected eagerly via DFS).
+  """
+  @spec add_dependency(t(), id(), id()) :: {:ok, t()} | {:error, :cycle | :task_not_found}
+  def add_dependency(%__MODULE__{} = dag, from, to) do
+    with :ok <- require_task(dag, from),
+         :ok <- require_task(dag, to),
+         :ok <- check_no_cycle(dag, from, to) do
+      new_dag = %{
+        dag
+        | out_edges: Map.update!(dag.out_edges, from, &MapSet.put(&1, to)),
+          in_edges: Map.update!(dag.in_edges, to, &MapSet.put(&1, from))
+      }
+
+      {:ok, new_dag}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Queries
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns the direct predecessors (incoming neighbours) of task `id`.
+  """
+  @spec predecessors(t(), id()) :: [id()]
+  def predecessors(%__MODULE__{} = dag, id) do
+    dag.in_edges |> Map.get(id, MapSet.new()) |> MapSet.to_list()
+  end
+
+  @doc """
+  Returns the direct successors (outgoing neighbours) of task `id`.
+  """
+  @spec successors(t(), id()) :: [id()]
+  def successors(%__MODULE__{} = dag, id) do
+    dag.out_edges |> Map.get(id, MapSet.new()) |> MapSet.to_list()
+  end
+
+  @doc """
+  Returns `{:ok, ordering}`, a topological order of the tasks (Kahn's
+  algorithm).  Returns `{:ok, []}` for an empty graph.
+  """
+  @spec topological_sort(t()) :: {:ok, [id()]}
+  def topological_sort(%__MODULE__{} = dag) do
+    {:ok, topo_order(dag)}
+  end
+
+  @doc """
+  Returns `{:ok, map}` where `map` is `%{id => earliest_start_time}`.
+
+  A task's earliest start is the maximum over its direct predecessors of
+  `(predecessor's earliest start + predecessor's duration)`, or `0` when it
+  has no predecessors.
+  """
+  @spec earliest_start(t()) :: {:ok, %{id() => number()}}
+  def earliest_start(%__MODULE__{} = dag) do
+    {:ok, compute_est(dag)}
+  end
+
+  @doc """
+  Returns `{:ok, map}` where each value is `earliest_start + duration`.
+  """
+  @spec earliest_finish(t()) :: {:ok, %{id() => number()}}
+  def earliest_finish(%__MODULE__{} = dag) do
+    est = compute_est(dag)
+    eft = Map.new(est, fn {v, s} -> {v, s + Map.fetch!(dag.durations, v)} end)
+    {:ok, eft}
+  end
+
+  @doc """
+  Returns `{:ok, number}`, the total project duration: the maximum
+  earliest-finish over all tasks.  Returns `{:ok, 0}` for an empty graph.
+  """
+  @spec makespan(t()) :: {:ok, number()}
+  def makespan(%__MODULE__{} = dag) do
+    span =
+      dag
+      |> compute_est()
+      |> Enum.map(fn {v, s} -> s + Map.fetch!(dag.durations, v) end)
+      |> case do
+        [] -> 0
+        finishes -> Enum.max(finishes)
+      end
+
+    {:ok, span}
+  end
+
+  @doc """
+  Returns `{:ok, path}`, a list of task ids forming a longest-duration path
+  from a source task to a sink task (the chain that determines the makespan).
+
+  Ties are broken deterministically, preferring the smallest task id by term
+  ordering.  Returns `{:ok, []}` for an empty graph.
+  """
+  @spec critical_path(t()) :: {:ok, [id()]}
+  def critical_path(%__MODULE__{} = dag) do
+    case topo_order(dag) do
+      [] ->
+        {:ok, []}
+
+      _order ->
+        est = compute_est(dag)
+        eft = Map.new(est, fn {v, s} -> {v, s + Map.fetch!(dag.durations, v)} end)
+
+        {end_v, _finish} =
+          eft
+          |> Enum.sort()
+          |> Enum.max_by(fn {_v, f} -> f end)
+
+        {:ok, backtrack(dag, est, end_v, [end_v])}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internals
+  # ---------------------------------------------------------------------------
+
+  # Earliest start time per task, computed over a topological order so that
+  # every predecessor is resolved before the task itself.
+  defp compute_est(dag) do
+    Enum.reduce(topo_order(dag), %{}, fn v, est ->
+      preds = Map.fetch!(dag.in_edges, v)
+
+      start =
+        if MapSet.size(preds) == 0 do
+          0
+        else
+          preds
+          |> Enum.map(fn p -> Map.fetch!(est, p) + Map.fetch!(dag.durations, p) end)
+          |> Enum.max()
+        end
+
+      Map.put(est, v, start)
+    end)
+  end
+
+  # Walk backwards from the makespan-determining sink, always following a
+  # predecessor whose finish equals the current task's start (i.e. the tight
+  # dependency). Ties broken by smallest id for determinism.
+  defp backtrack(dag, est, current, acc) do
+    start = Map.fetch!(est, current)
+
+    candidates =
+      dag.in_edges
+      |> Map.fetch!(current)
+      |> Enum.filter(fn p -> Map.fetch!(est, p) + Map.fetch!(dag.durations, p) == start end)
+      |> Enum.sort()
+
+    case candidates do
+      [] -> acc
+      [p | _] -> backtrack(dag, est, p, [p | acc])
+    end
+  end
+
+  # Kahn's algorithm (BFS over in-degrees), sorted for determinism.
+  defp topo_order(dag) do
+    in_degree =
+      Map.new(Map.keys(dag.durations), fn v ->
+        {v, MapSet.size(Map.fetch!(dag.in_edges, v))}
+      end)
+
+    initial =
+      in_degree
+      |> Enum.filter(fn {_v, d} -> d == 0 end)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.sort()
+
+    kahn(initial, in_degree, dag.out_edges, [])
+  end
+
+  defp kahn([], _in_degree, _out_edges, acc), do: Enum.reverse(acc)
+
+  defp kahn([v | rest], in_degree, out_edges, acc) do
+    {new_in_degree, newly_zero} =
+      out_edges
+      |> Map.fetch!(v)
+      |> Enum.reduce({in_degree, []}, fn succ, {deg_map, zeros} ->
+        new_deg = Map.fetch!(deg_map, succ) - 1
+        updated = Map.put(deg_map, succ, new_deg)
+
+        if new_deg == 0 do
+          {updated, [succ | zeros]}
+        else
+          {updated, zeros}
+        end
+      end)
+
+    kahn(rest ++ Enum.sort(newly_zero), new_in_degree, out_edges, [v | acc])
+  end
+
+ (truncated)[0m
+[36m03:19:39.365 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6881, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6881, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6881, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6881, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 4109, "type" => "message"}], "output_tokens" => 4109, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m03:19:39.383 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_002_weighted_critical_path_dag_scheduler_01 solution.ex[0m
+[36m03:19:40.029 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":285,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":21,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/080_002_weighted_critical_path_dag_scheduler_01/solution.ex","task":"080_002_weighted_critical_path_dag_scheduler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:19:40.009288Z"}[0m
+[36m03:19:40.037 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut solution.ex[0m
+[36m03:19:40.694 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":215,"lines_over_98":7,"max_line_length":781,"mode":"full","pipe_chain_count":21,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 9/9 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut/solution.ex","task":"080_002_weighted_critical_path_dag_scheduler_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedDAGTest","test":"test empty graph: sort, makespan, critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test add_task/3 ignores duplicates and keeps original duration"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test direct cycle is rejected eagerly"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test indirect cycle is rejected"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test linear chain earliest start / finish / makespan / critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test diamond graph picks the heavier branch as critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test topological sort remains valid on the diamond"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test isolated task participates in makespan"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test predecessors and successors"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:19:40.673628Z"}[0m
+[36m03:19:40.699 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut solution.ex[0m
+[36m03:19:41.360 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":206,"lines_over_98":7,"max_line_length":781,"mode":"full","pipe_chain_count":21,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.33,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 8/9 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.11},"shape":"single","solution_file":".gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut/solution.ex","task":"080_002_weighted_critical_path_dag_scheduler_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedDAGTest","test":"test add_task/3 ignores duplicates and keeps original duration"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test direct cycle is rejected eagerly"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test indirect cycle is rejected"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test linear chain earliest start / finish / makespan / critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test diamond graph picks the heavier branch as critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test topological sort remains valid on the diamond"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test isolated task participates in makespan"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test predecessors and successors"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:19:41.338339Z"}[0m
+[36m03:19:41.364 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut solution.ex[0m
+[36m03:19:42.029 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":205,"lines_over_98":7,"max_line_length":781,"mode":"full","pipe_chain_count":21,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.3,"mode":"full","overall":0.36,"reasons":["compilation: 7 warning(s) → -0.7 pts","tests: 7/9 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.22},"shape":"single","solution_file":".gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut/solution.ex","task":"080_002_weighted_critical_path_dag_scheduler_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedDAGTest","test":"test direct cycle is rejected eagerly"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test indirect cycle is rejected"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test linear chain earliest start / finish / makespan / critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test diamond graph picks the heavier branch as critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test topological sort remains valid on the diamond"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test isolated task participates in makespan"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test predecessors and successors"}],"tests_errors":0,"tests_excluded":0,"tests_failed":7,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:19:42.010113Z"}[0m
+[36m03:19:42.035 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut solution.ex[0m
+[36m03:19:42.692 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":215,"lines_over_98":7,"max_line_length":781,"mode":"full","pipe_chain_count":19,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.88,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 1/9 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.89},"shape":"single","solution_file":".gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut/solution.ex","task":"080_002_weighted_critical_path_dag_scheduler_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedDAGTest","test":"test predecessors and successors"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:19:42.672377Z"}[0m
+[36m03:19:42.697 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut solution.ex[0m
+[36m03:19:43.344 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":215,"lines_over_98":7,"max_line_length":781,"mode":"full","pipe_chain_count":19,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.88,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 1/9 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.89},"shape":"single","solution_file":".gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut/solution.ex","task":"080_002_weighted_critical_path_dag_scheduler_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedDAGTest","test":"test predecessors and successors"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:19:43.323635Z"}[0m
+[36m03:19:43.348 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut solution.ex[0m
+[36m03:19:44.019 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":215,"lines_over_98":7,"max_line_length":781,"mode":"full","pipe_chain_count":21,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.73,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 3/9 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.67},"shape":"single","solution_file":".gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut/solution.ex","task":"080_002_weighted_critical_path_dag_scheduler_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedDAGTest","test":"test empty graph: sort, makespan, critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test topological sort remains valid on the diamond"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test isolated task participates in makespan"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:19:43.997097Z"}[0m
+[36m03:19:44.024 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut solution.ex[0m
+[36m03:19:44.701 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":215,"lines_over_98":7,"max_line_length":781,"mode":"full","pipe_chain_count":21,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.81,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 2/9 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.78},"shape":"single","solution_file":".gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut/solution.ex","task":"080_002_weighted_critical_path_dag_scheduler_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedDAGTest","test":"test linear chain earliest start / finish / makespan / critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test diamond graph picks the heavier branch as critical path"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:19:44.680727Z"}[0m
+[36m03:19:44.706 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut solution.ex[0m
+[36m03:19:45.376 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":213,"lines_over_98":7,"max_line_length":781,"mode":"full","pipe_chain_count":21,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.81,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 2/9 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.78},"shape":"single","solution_file":".gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut/solution.ex","task":"080_002_weighted_critical_path_dag_scheduler_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedDAGTest","test":"test add_task/3 ignores duplicates and keeps original duration"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test linear chain earliest start / finish / makespan / critical path"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:19:45.355006Z"}[0m
+[36m03:19:45.381 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut solution.ex[0m
+[36m03:19:46.042 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":206,"lines_over_98":7,"max_line_length":781,"mode":"full","pipe_chain_count":18,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.65,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 4/9 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.56},"shape":"single","solution_file":".gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut/solution.ex","task":"080_002_weighted_critical_path_dag_scheduler_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedDAGTest","test":"test empty graph: sort, makespan, critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test linear chain earliest start / finish / makespan / critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test diamond graph picks the heavier branch as critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test isolated task participates in makespan"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:19:46.020985Z"}[0m
+[36m03:19:46.046 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut solution.ex[0m
+[36m03:19:46.696 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":206,"lines_over_98":7,"max_line_length":781,"mode":"full","pipe_chain_count":19,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.64,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 4/9 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.56},"shape":"single","solution_file":".gen_staging/080_002_weighted_critical_path_dag_scheduler_01_mut/solution.ex","task":"080_002_weighted_critical_path_dag_scheduler_01_mut","test_failures":[{"message":"MUTATION","module":"WeightedDAGTest","test":"test empty graph: sort, makespan, critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test linear chain earliest start / finish / makespan / critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test diamond graph picks the heavier branch as critical path"},{"message":"MUTATION","module":"WeightedDAGTest","test":"test isolated task participates in makespan"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-07T01:19:46.675420Z"}[0m
+[22m03:19:46.698 [info] cycle 080_002_weighted_critical_path_dag_scheduler_01: ACCEPTED on attempt 1[0m
+[22m03:19:46.698 [info] promoted 080_002_weighted_critical_path_dag_scheduler_01 -> tasks/080_002_weighted_critical_path_dag_scheduler_01[0m

@@ -1,0 +1,410 @@
+18:10:07.032 [info] FIM 071_003_bulk_list_factory_with_concurrent_insertion_fim02 → 071_003_bulk_list_factory_with_concurrent_insertion_03: target sequence/2
+18:10:07.032 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+18:10:07.032 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `sequence/2`.
+
+Generate a prompt describing how to implement `sequence/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `sequence/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `sequence/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `sequence/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Factory` that generates test data similarly to
+ExMachina, but simpler and self-contained — with first-class support for
+**bulk (list) generation** and **params extraction**.
+
+I need these functions in the public API:
+
+- `Factory.build(factory_name)` / `build(factory_name, overrides)` — returns a
+  struct for the named factory (merging a keyword list of field overrides),
+  without touching the database.
+- `Factory.insert(factory_name)` / `insert(factory_name, overrides)` — builds the
+  struct and persists it via `MyApp.Repo.insert!`, returning the persisted struct.
+- `Factory.build_list(count, factory_name)` /
+  `build_list(count, factory_name, overrides)` — returns a list of `count` built
+  structs. Each element must be built independently, so sequence-driven fields
+  (like default emails) stay unique across the list. A `count` of `0` returns `[]`.
+- `Factory.insert_list(count, factory_name)` /
+  `insert_list(count, factory_name, overrides)` — persists `count` structs and
+  returns the list of persisted structs. Insertion must run **concurrently** (one
+  `Task` per record) while keeping every generated sequence value and every
+  assigned id unique. A `count` of `0` returns `[]`.
+- `Factory.params_for(factory_name)` /
+  `params_for(factory_name, overrides)` — returns a plain `map` of the factory's
+  fields (not a struct) with the `:id` key removed, suitable for feeding into a
+  request/changeset. Associations are still resolved to their persisted ids.
+- `Factory.sequence(name, formatter_fn)` — returns the next value for a named
+  sequence by calling `formatter_fn.(n)` where `n` is a monotonically increasing
+  integer starting at 1. Each `name` has its own independent counter, and
+  sequences must remain unique across the whole test run even under concurrent
+  (`async: true`) access, backed by a named `Agent`.
+
+At minimum define factories for `:user` (fields `name`, `email`) and `:post`
+(fields `title`, `body`, `user_id`). The `:post` factory must automatically call
+`Factory.insert(:user)` to populate `user_id`, unless `user_id` is supplied as an
+override.
+
+Use only the Elixir standard library and assume `Repo` is available as
+`MyApp.Repo`. Deliver everything in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Factory do
+  @moduledoc """
+  A lightweight, self-contained test-data factory with **bulk generation**.
+
+  Adds `build_list/2,3`, `insert_list/2,3` (concurrent), and `params_for/1,2`
+  on top of the usual `build`, `insert`, and `sequence` API.
+
+  ## Usage
+
+      Factory.build_list(3, :user)
+      Factory.insert_list(100, :user)          # concurrent inserts
+      Factory.params_for(:user, name: "Ada")   # plain map, no :id
+  """
+
+  @compile {:no_warn_undefined, MyApp.Repo}
+
+  @agent __MODULE__.SequenceAgent
+
+  @typedoc "The name identifying a factory definition."
+  @type factory_name :: atom()
+
+  @typedoc "A keyword list of field overrides applied to a built struct."
+  @type overrides :: keyword()
+
+  # -------------------------------------------------------------------------
+  # Agent lifecycle + sequences
+  # -------------------------------------------------------------------------
+
+  @doc "Starts the named Agent backing all sequence counters."
+  @spec start() :: Agent.on_start()
+  def start do
+    Agent.start_link(fn -> %{} end, name: @agent)
+  end
+
+  @doc "Returns the next value for the named sequence."
+  @spec sequence(term(), (pos_integer() -> value)) :: value when value: term()
+  def sequence(name, formatter_fn) when is_function(formatter_fn, 1) do
+    ensure_agent_started()
+
+    n =
+      Agent.get_and_update(@agent, fn counters ->
+        next = Map.get(counters, name, 0) + 1
+        {next, Map.put(counters, name, next)}
+      end)
+
+    formatter_fn.(n)
+  end
+
+  # -------------------------------------------------------------------------
+  # Singular build / insert
+  # -------------------------------------------------------------------------
+
+  @doc "Builds a struct for `name` without touching the database."
+  @spec build(factory_name()) :: struct()
+  def build(name), do: build(name, [])
+
+  @doc "Builds a struct for `name`, merging `overrides`."
+  @spec build(factory_name(), overrides()) :: struct()
+  def build(name, overrides) do
+    name
+    |> factory()
+    |> merge_overrides(overrides)
+    |> resolve_thunks()
+  end
+
+  @doc "Builds and persists a struct for `name`."
+  @spec insert(factory_name()) :: struct()
+  def insert(name), do: insert(name, [])
+
+  @doc "Builds with `overrides`, then persists via `MyApp.Repo`."
+  @spec insert(factory_name(), overrides()) :: struct()
+  def insert(name, overrides) do
+    name
+    |> build(overrides)
+    |> MyApp.Repo.insert!()
+  end
+
+  # -------------------------------------------------------------------------
+  # Bulk build / insert
+  # -------------------------------------------------------------------------
+
+  @doc "Builds a list of `count` structs for `name`."
+  @spec build_list(non_neg_integer(), factory_name()) :: [struct()]
+  def build_list(count, name), do: build_list(count, name, [])
+
+  @doc "Builds a list of `count` structs for `name`, each with `overrides`."
+  @spec build_list(non_neg_integer(), factory_name(), overrides()) :: [struct()]
+  def build_list(count, name, overrides) when is_integer(count) and count >= 0 do
+    Enum.map(1..count//1, fn _ -> build(name, overrides) end)
+  end
+
+  @doc "Persists `count` structs for `name` concurrently."
+  @spec insert_list(non_neg_integer(), factory_name()) :: [struct()]
+  def insert_list(count, name), do: insert_list(count, name, [])
+
+  @doc "Persists `count` structs for `name` concurrently, each with `overrides`."
+  @spec insert_list(non_neg_integer(), factory_name(), overrides()) :: [struct()]
+  def insert_list(count, name, overrides) when is_integer(count) and count >= 0 do
+    1..count//1
+    |> Enum.map(fn _ -> Task.async(fn -> insert(name, overrides) end) end)
+    |> Task.await_many()
+  end
+
+  # -------------------------------------------------------------------------
+  # params_for
+  # -------------------------------------------------------------------------
+
+  @doc "Returns a plain map of `name`'s fields (no struct, no `:id`)."
+  @spec params_for(factory_name()) :: map()
+  def params_for(name), do: params_for(name, [])
+
+  @doc "Returns a plain map of `name`'s fields with `overrides`, minus `:id`."
+  @spec params_for(factory_name(), overrides()) :: map()
+  def params_for(name, overrides) do
+    name
+    |> build(overrides)
+    |> Map.from_struct()
+    |> Map.delete(:id)
+  end
+
+  # -------------------------------------------------------------------------
+  # Internal helpers
+  # -------------------------------------------------------------------------
+
+  @spec merge_overrides(struct(), overrides()) :: struct()
+  defp merge_overrides(base, []), do: base
+  defp merge_overrides(base, overrides), do: struct(base, overrides)
+
+  @spec resolve_thunks(struct()) :: struct()
+  defp resolve_thunks(%mod{} = s) do
+    resol (truncated)
+18:10:37.123 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `sequence/2` function. It takes a sequence `name` (any term)
+and a one-arity `formatter_fn`, and returns the next value for that named sequence.
+
+It must first ensure the backing Agent is running by calling `ensure_agent_started/0`.
+Then it should atomically read-and-increment the counter for `name` inside the named
+`@agent` using `Agent.get_and_update/2`: look up the current count for `name`
+(defaulting to `0` when absent), add `1` to produce the next integer `n`, store the
+updated count back under `name`, and return `n` from the update. Each `name` keeps its
+own independent counter that starts at `1` on first use, and because the increment goes
+through the Agent it stays unique across the whole test run even under concurrent
+(`async: true`) access. Finally, call `formatter_fn.(n)` and return its result.
+
+The function head should be guarded with `when is_function(formatter_fn, 1)`.
+
+```elixir
+defmodule Factory do
+  @moduledoc """
+  A lightweight, self-contained test-data factory with **bulk generation**.
+
+  Adds `build_list/2,3`, `insert_list/2,3` (concurrent), and `params_for/1,2`
+  on top of the usual `build`, `insert`, and `sequence` API.
+
+  ## Usage
+
+      Factory.build_list(3, :user)
+      Factory.insert_list(100, :user)          # concurrent inserts
+      Factory.params_for(:user, name: "Ada")   # plain map, no :id
+  """
+
+  @compile {:no_warn_undefined, MyApp.Repo}
+
+  @agent __MODULE__.SequenceAgent
+
+  @typedoc "The name identifying a factory definition."
+  @type factory_name :: atom()
+
+  @typedoc "A keyword list of field overrides applied to a built struct."
+  @type overrides :: keyword()
+
+  # -------------------------------------------------------------------------
+  # Agent lifecycle + sequences
+  # -------------------------------------------------------------------------
+
+  @doc "Starts the named Agent backing all sequence counters."
+  @spec start() :: Agent.on_start()
+  def start do
+    Agent.start_link(fn -> %{} end, name: @agent)
+  end
+
+  @doc "Returns the next value for the named sequence."
+  @spec sequence(term(), (pos_integer() -> value)) :: value when value: term()
+  def sequence(name, formatter_fn) when is_function(formatter_fn, 1) do
+    # TODO
+  end
+
+  # -------------------------------------------------------------------------
+  # Singular build / insert
+  # -------------------------------------------------------------------------
+
+  @doc "Builds a struct for `name` without touching the database."
+  @spec build(factory_name()) :: struct()
+  def build(name), do: build(name, [])
+
+  @doc "Builds a struct for `name`, merging `overrides`."
+  @spec build(factory_name(), overrides()) :: struct()
+  def build(name, overrides) do
+    name
+    |> factory()
+    |> merge_overrides(overrides)
+    |> resolve_thunks()
+  end
+
+  @doc "Builds and persists a struct for `name`."
+  @spec insert(factory_name()) :: struct()
+  def insert(name), do: insert(name, [])
+
+  @doc "Builds with `overrides`, then persists via `MyApp.Repo`."
+  @spec insert(factory_name(), overrides()) :: struct()
+  def insert(name, overrides) do
+    name
+    |> build(overrides)
+    |> MyApp.Repo.insert!()
+  end
+
+  # -------------------------------------------------------------------------
+  # Bulk build / insert
+  # -------------------------------------------------------------------------
+
+  @doc "Builds a list of `count` structs for `name`."
+  @spec build_list(non_neg_integer(), factory_name()) :: [struct()]
+  def build_list(count, name), do: build_list(count, name, [])
+
+  @doc "Builds a list of `count` structs for `name`, each with `overrides`."
+  @spec build_list(non_neg_integer(), factory_name(), overrides()) :: [struct()]
+  def build_list(count, name, overrides) when is_integer(count) and count >= 0 do
+    Enum.map(1..count//1, fn _ -> build(name, overrides) end)
+  end
+
+  @doc "Persists `count` structs for `name` concurrently."
+  @spec insert_list(non_neg_integer(), factory_name()) :: [struct()]
+  def insert_list(count, name), do: insert_list(count, name, [])
+
+  @doc "Persists `count` structs for `name` concurrently, each with `overrides`."
+  @spec insert_list(non_neg_integer(), factory_name(), overrides()) :: [struct()]
+  def insert_list(count, name, overrides) when is_integer(count) and count >= 0 do
+    1..count//1
+    |> Enum.map(fn _ -> Task.async(fn -> insert(name, overrides) end) end)
+    |> Task.await_many()
+  end
+
+  # -------------------------------------------------------------------------
+  # params_for
+  # -------------------------------------------------------------------------
+
+  @doc "Returns a plain map of `name`'s fields (no struct, no `:id`)."
+  @spec params_for(factory_name()) :: map()
+  def params_for(name), do: params_for(name, [])
+
+  @doc "Returns a plain map of `name`'s fields with `overrides`, minus `:id`."
+  @spec params_for(factory_name(), overrides()) :: map()
+  def params_for(name, overrides) do
+    name
+    |> build(overrides)
+    |> Map.from_struct()
+    |> Map.delete(:id)
+  end
+
+  # -------------------------------------------------------------------------
+  # Internal helpers
+  # -------------------------------------------------------------------------
+
+  @spec merge_overrides(struct(), overrides()) :: struct()
+  defp merge_overrides(base, []), do: base
+  defp merge_overrides(base, overrides), do: struct(base, overrides)
+
+  @spec resolve_thunks(struct()) :: struct()
+  defp resolve_thunks(%mod{} = s) do
+    resolved =
+      s
+      |> Map.from_struct()
+      |> Enum.map(fn
+        {key, fun} when is_function(fun, 0) -> {key, fun.()}
+        pair -> pair
+      end)
+
+    struct(mod, resolved)
+  end
+
+  @spec ensure_agent_started() :: :ok
+  defp ensure_agent_started do
+    case Process.whereis(@agent) do
+      nil ->
+        Agent.start_link(fn -> %{} end, name: @agent)
+        :ok
+
+      _pid ->
+        :ok
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Factory definitions
+  # -------------------------------------------------------------------------
+
+  @spec factory(factory_name()) :: struct()
+  defp factory(:user) do
+    struct!(MyApp.User,
+      name: sequence(:user_name, &"User #{&1}"),
+      email: sequence(:user_email, &"user-#{&1}@example.com")
+    )
+  end
+
+  defp factory(:post) do
+    struct!(MyApp.Post,
+      title: sequence(:post_title, &"Post title #{&1}"),
+      body: sequence(:post_body, &"Post body #{&1}. Lorem ipsum dolor sit amet."),
+      user_id: fn -> insert(:user).id end
+    )
+  end
+
+  defp factory(name) do
+    raise ArgumentError, "No factory defined for #{inspect(name)}."
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+def sequence(name, formatter_fn) when is_function(formatter_fn, 1) do
+  ensure_agent_started()
+
+  n =
+    Agent.get_and_update(@agent, fn counters ->
+      next = Map.get(counters, name, 0) + 1
+      {next, Map.put(counters, name, next)}
+    end)
+
+  formatter_fn.(n)
+end
+</file>
+18:10:37.123 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3912, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3912, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3912, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3912, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2923, "type" => "message"}], "output_tokens" => 2923, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+18:10:37.142 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_071_003_bulk_list_factory_with_concurrent_insertion_03/071_003_bulk_list_factory_with_concurrent_insertion_03 solution.ex
+18:10:37.882 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":11,"lines_over_98":0,"max_line_length":69,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"071_003_bulk_list_factory_with_concurrent_insertion_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_071_003_bulk_list_factory_with_concurrent_insertion_03/071_003_bulk_list_factory_with_concurrent_insertion_03/solution.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:10:37.857799Z"}
+18:10:37.882 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_071_003_bulk_list_factory_with_concurrent_insertion_03/071_003_bulk_list_factory_with_concurrent_insertion_03 .gen_staging/fim_071_003_bulk_list_factory_with_concurrent_insertion_03/mutant.ex
+18:10:38.596 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":69,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"parent":"071_003_bulk_list_factory_with_concurrent_insertion_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.7,"mode":"fim","overall":0.35,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 15/17 failed"],"tests":0.12},"shape":"fim","solution_file":".gen_staging/fim_071_003_bulk_list_factory_with_concurrent_insertion_03/mutant.ex","task":"071_003_bulk_list_factory_with_concurrent_insertion_03","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test build/1 returns a struct without touching the DB"},{"message":"MUTATION","module":"FactoryTest","test":"test insert/2 persists with overrides"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list/2 returns the requested count"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list elements have unique sequence-driven emails"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list/3 applies overrides to every element"},{"message":"MUTATION","module":"FactoryTest","test":"test build_list does not persist anything by itself"},{"message":"{:EXIT, #PID<0.230.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :sequence, 2, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 38, error_info: %{module: Exception}]}, {Factory, :factory, 1, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 153]}, {Factory, :build, 2, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 53]}, {Factory, :insert, 2, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 66]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test insert_list/2 persists the requested count"},{"message":"{:EXIT, #PID<0.241.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :sequence, 2, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 38, error_info: %{module: Exception}]}, {Factory, :factory, 1, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 153]}, {Factory, :build, 2, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 53]}, {Factory, :insert, 2, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 66]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test insert_list assigns unique ids under concurrency"},{"message":"{:EXIT, #PID<0.292.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :sequence, 2, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 38, error_info: %{module: Exception}]}, {Factory, :factory, 1, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 153]}, {Factory, :build, 2, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 53]}, {Factory, :insert, 2, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 66]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test insert_list keeps sequence-driven emails unique under concurrency"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for returns a plain map without :id"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for applies overrides"},{"message":"MUTATION","module":"FactoryTest","test":"test params_for(:post) resolves the association to an integer user_id"},{"message":"MUTATION","module":"FactoryTest","test":"test insert(:post) inserts both post and user"},{"message":"MUTATION","module":"FactoryTest","test":"test sequence/2 returns distinct consecutive values"},{"message":"{:EXIT, #PID<0.349.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Factory, :sequence, 2, [file: ~c\"/tmp/evalfim_1008085_388.ex\", line: 38, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FactoryTest","test":"test sequences are safe under concurrent access"}],"tests_errors":0,"tests_excluded":0,"tests_failed":15,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:10:38.569732Z"}
+18:10:38.596 [debug] fim mutation gate: killed
+18:10:38.597 [info] promoted 071_003_bulk_list_factory_with_concurrent_insertion_03 -> tasks/071_003_bulk_list_factory_with_concurrent_insertion_03

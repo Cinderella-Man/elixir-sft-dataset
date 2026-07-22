@@ -1,0 +1,205 @@
+22:19:50.785 [info] FIM candidate-select for 098_003_attenuable_capability_token_with_chained_caveats_01 (up to 1)
+22:19:50.785 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+22:19:50.785 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 1 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+Do NOT pick any of these — they are already covered or known to be untested by the harness:
+  - authorize/3
+  - decode/1
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `CapabilityToken` that implements
+**attenuable capability tokens** (macaroon-style) — bearer tokens that
+anyone holding them can *narrow* offline, without the signing key, but
+that nobody can *widen*.
+
+There is no server, no database, and no stored state: a token is a
+self-contained binary, and verification is a pure recomputation from the
+root key.
+
+## Public API
+
+- `CapabilityToken.mint(root_key, identifier)` — `root_key` is a binary
+  signing key, `identifier` is a binary naming the capability (e.g.
+  `"user:42"`). Returns a URL-safe binary token with zero caveats.
+
+- `CapabilityToken.attenuate(token, caveat)` — appends one caveat to a
+  token **without needing the root key**. `caveat` is a non-empty binary
+  (1..65_535 bytes). Returns `{:ok, new_token}`. Returns
+  `{:error, :malformed}` if `token` is not a decodable token, if `token`
+  or `caveat` is not a binary, or if `caveat` is empty or longer than
+  65_535 bytes. The original token is unchanged (tokens are immutable
+  binaries); the new token carries the old caveats in order, followed by
+  the new one.
+
+- `CapabilityToken.inspect_token(token)` — decodes a token **without any
+  key and without checking the signature**. Returns
+  `{:ok, %{identifier: identifier, caveats: caveats}}` where `caveats` is
+  the list of caveat binaries in the order they were attached, or
+  `{:error, :malformed}` if the token cannot be decoded (including for
+  non-binary input). This is a debugging/introspection helper — it makes
+  no authenticity claim whatsoever.
+
+- `CapabilityToken.authorize(token, root_key, context)` — the real check.
+  `context` is a map describing the request being authorized. Returns
+  `:ok` if the token's signature chain verifies under `root_key` **and**
+  every caveat is satisfied by `context`. Otherwise returns
+  `{:error, reason}` (see below).
+
+## Wire format
+
+Build the decoded binary exactly like this (all integers big-endian,
+unsigned), then `Base.url_encode64/2` it with `padding: false` so the
+token is URL-safe and contains no `+`, `/`, or `=`:
+
+    <<1,                              # version byte, always 1
+      id_size::16, identifier::binary-size(id_size),
+      caveat_count::16,
+      # caveat_count repetitions of:
+      #   <<len::16, caveat::binary-size(len)>>
+      signature::binary-32>>
+
+So the signature is always the trailing 32 bytes of the decoded binary.
+
+## Signature chain
+
+The signature is an HMAC-SHA256 chain in which each caveat re-keys the
+MAC with the previous signature:
+
+    sig_0 = :crypto.mac(:hmac, :sha256, root_key, identifier)
+    sig_i = :crypto.mac(:hmac, :sha256, sig_{i-1}, caveat_i)
+
+The token carries only the final signature `sig_n`. This is what makes
+attenuation keyless (you can extend the chain from the signature you
+hold) while forgery stays impossible (you cannot walk the chain
+backwards to drop, reorder, or edit a caveat — doing so requires the
+root key). `authorize/3` recomputes the whole chain from `root_key` and
+the token's own identifier + caveats and compares the result to the
+carried signature **in constant time** (no short-circuit on the first
+differing byte).
+
+## Caveat language
+
+A caveat is a binary of the form `"key = value"` — a key, then a space,
+an equals sign, and a space, then the value (the value may itself
+contain spaces or `=`; only the first `" = "` separates). Exactly three
+keys are recognized:
+
+- `"expires_at = <integer>"` — satisfied iff `context[:now]` is an
+  integer and `context[:now] < <integer>`. Strictly less: at exactly the
+  expiry second the caveat is **not** satisfied. The value must parse as
+  a complete integer (leading `-` allowed, trailing garbage not).
+- `"action = <string>"` — satisfied iff `context[:action]` is exactly
+  equal to `<string>` (binary equality).
+- `"resource_prefix = <string>"` — satisfied iff `context[:resource]` is
+  a binary that starts with `<string>`.
+
+Everything else **fails closed**: an unrecognized key, a caveat with no
+`" = "` separator, a non-integer `expires_at` value, or a context that
+is missing the key a caveat needs — all count as *not satisfied*. Never
+treat an unknown caveat as vacuously true.
+
+## Check order and error values inside `authorize/3`
+
+Exactly this order:
+
+1. base64 decode → structural parse (version byte, sizes, caveat count,
+   exactly 32 trailing signature bytes). Any failure here, or a
+   non-binary token / non-binary root key / non-map context, yields
+   `{:error, :malformed}`.
+2. signature chain verification → mismatch yields
+   `{:error, :invalid_signature}`.
+3. caveats, evaluated in attachment order → the **first** unsatisfied
+   caveat yields `{:error, {:caveat_failed, caveat}}`, where `caveat` is
+   that caveat's exact binary. Later caveats are not evaluated.
+
+Signature verification always precedes caveat evaluation, so a token
+that is both expired and signed with the wrong key reports
+`:invalid_signature`, never `{:caveat_failed, _}`.
+
+## Implementation requirements
+
+- `:crypto.mac/4` with SHA-256 for every link of the chain.
+- `Base.url_encode64/2` / `Base.url_decode64/2` with `padding: false`.
+- Constant-time signature comparison.
+- No external dependencies — Elixir standard library and OTP only.
+- No process state, no ETS, no files.
+
+Give me the complete module in a single file.
+
+=== MODULE ===
+```elixir
+defmodule CapabilityToken do
+  @moduledoc """
+  Attenuable, macaroon-style capability tokens.
+
+  A token is a self-contained, URL-safe binary that names a capability (an
+  *identifier*) and carries an ordered list of *caveats* narrowing what the
+  bearer may do. Anyone holding a token can **narrow** it offline — appending a
+  caveat requires no key — but nobody can **widen** it: dropping, reordering or
+  editing a caveat would require walking the HMAC chain backwards, which is
+  infeasible without the root key.
+
+  ## Wire format
+
+  All integers are big-endian unsigned. The decoded binary is:
+
+      <<1,                              # version byte
+        id_size::16, identifier::binary-size(id_size),
+        caveat_count::16,
+        # caveat_count repetitions of <<len::16, caveat::binary-size(len)>>
+        signature::binary-32>>
+
+  and the token itself is that binary under `Base.url_encode64/2` with
+  `padding: false`.
+
+  ## Signature chain
+
+      sig_0 = :crypto.mac(:hmac, :sha256, root_key, identifier)
+      sig_i = :crypto.mac(:hmac, :sha256, sig_(i-1), caveat_i)
+
+  Only the final signature travels with the token. `authorize/3` recomputes the
+  whole chain from the root key and compares in constant time.
+
+  ## Caveat language
+
+  A caveat is `"key = value"` (the first `" = "` separates; the value may itself
+  contain spaces or `=`). Three keys are recognized:
+
+    * `"expires_at = <integer>"` — needs integer `context[:now]`, satisfied iff
+      `now < integer` (strictly).
+    * `"action = <string>"` — satisfied iff `context[:action] == <string>`.
+    * `"resource_prefix = <string>"` — satisfied iff `context[:resource]` is a
+      binary starting with `<string>`.
+
+  Anything else fails closed: unknown keys, malformed caveats, non-integer
+  expiries and missing context keys are all *not satisfied*.
+  """
+
+  @version 1
+  @sig_size 32
+  @max_caveat_size 65_535
+
+  @type token :: binary()
+  @type caveat :: binary()
+  @type context :: %{optional(atom()) => term()}
+  @type reason :: :malformed | :invalid_signature | {:caveat_failed, caveat()}
+
+  @doc """
+ (truncated)
+22:19:53.810 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+satisfied?/3
+</file>
+22:19:53.810 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 24406, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 24406, "input_tokens" => 2, "output_tokens" => 24, "type" => "message"}], "output_tokens" => 24, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

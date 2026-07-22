@@ -1,0 +1,1351 @@
+07:31:41.454 [info] VARIATION 098_004_key_rotation_keyring_token_01: Key-Rotation Keyring Token
+07:31:41.454 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+07:31:41.454 [debug] claude -p USER prompt:
+Write me an Elixir module called `RotatingToken` that generates and validates
+signed, expiring tokens against a **keyring** of multiple secrets, so keys can
+be rotated without invalidating tokens still in flight. Each token records
+*which* key signed it, and verification looks that key up in a caller-supplied
+keyring. There is no database or persistent state.
+
+A **keyring** is a map `%{key_id => secret}` where `key_id` is a binary key
+identifier (a "kid") and `secret` is a binary signing key.
+
+Public API:
+
+- `RotatingToken.generate(payload, keyring, active_kid, ttl_seconds, opts \\ [])`
+  where `payload` is any Elixir term, `keyring` is such a map, `active_kid` is
+  the key id to sign with (it must be a key present in `keyring`), and
+  `ttl_seconds` is a positive integer. It signs with `keyring[active_kid]`
+  and returns a URL-safe binary token (no padding issues, safe to embed in
+  URLs or headers) that encodes the key id, the payload, the issue timestamp,
+  the expiration timestamp, and an HMAC-SHA256 signature over all of that
+  data.
+
+- `RotatingToken.verify(token, keyring, opts \\ [])` decodes the token, reads
+  the embedded key id, looks it up in `keyring`, and validates. Return
+  `{:ok, payload}` if the key id is known, the signature is valid, and the
+  token has not expired. Otherwise return one of `{:error, :expired}`,
+  `{:error, :invalid_signature}`, `{:error, :unknown_key}`, or
+  `{:error, :malformed}` as described below.
+
+The check order inside `verify` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header (key id, timestamps)
+and payload → key-id lookup in the keyring → HMAC verification with the
+looked-up key → expiry check → payload deserialization. Consequences:
+
+- Any failure before the key-id lookup yields `:malformed` (bad base64, too
+  short to contain a MAC, a header that doesn't match the remaining bytes,
+  non-binary input, and so on).
+- If the embedded key id is not a key in `keyring`, return `:unknown_key`.
+  Because the lookup precedes both HMAC verification and the expiry check, a
+  token whose key id has been dropped from the keyring returns `:unknown_key`
+  even if its signature would be wrong and even if it is already expired. This
+  is how you retire a key: remove its id from the keyring and every token
+  signed with it becomes `:unknown_key`.
+- If the key id is known but the HMAC computed with `keyring[key_id]` does not
+  match, return `:invalid_signature`. Because the signature check precedes the
+  expiry check, an expired token that also fails the signature returns
+  `:invalid_signature`.
+- A known-key, valid-signature, but expired token yields `:expired`. A token
+  whose `expires_at` equals the current time is already expired (use strict
+  `<` on the validity check, not `<=`).
+- A post-HMAC deserialization failure yields `:malformed`.
+
+Both `generate` and `verify` take an optional `opts` keyword. The only
+recognized key is `:clock`, a zero-arity function returning a Unix epoch
+second. When omitted, the current time is read from `System.os_time(:second)`.
+This is purely a test seam for deterministic expiry testing.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Use `Base.url_encode64/2` with `padding: false`.
+- The key id must live inside the signed region along with the payload and
+  timestamps, so an attacker cannot swap the key id without invalidating the
+  signature. Include whatever length prefixes you need for framing (the key
+  id is a variable-length binary) inside the signed region too.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Deserialize the payload with `:erlang.binary_to_term/2` using `[:safe]`.
+- Do not use any external dependencies — only the Elixir standard library
+  and OTP.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+07:32:46.758 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule RotatingToken do
+  @moduledoc """
+  Signed, expiring tokens validated against a *keyring* of multiple secrets.
+
+  A keyring is a map `%{key_id => secret}` where `key_id` ("kid") is a binary
+  identifier and `secret` is a binary HMAC signing key. Every token records the
+  key id that signed it, and `verify/3` looks that id up in a caller-supplied
+  keyring. This lets you rotate signing keys without invalidating tokens still
+  in flight: keep the old id in the keyring while both are valid, then drop it
+  to retire every token it signed (they become `{:error, :unknown_key}`).
+
+  Tokens are URL-safe (`Base.url_encode64/2` with `padding: false`) and carry,
+  inside a single HMAC-SHA256 signed region, the key id, the payload, and the
+  issue and expiry timestamps. Because the key id lives inside the signed
+  region, it cannot be swapped without invalidating the signature.
+
+  There is no database or persistent state. The only non-pure input is the
+  clock, which can be injected through the `:clock` option for deterministic
+  testing.
+  """
+
+  import Bitwise
+
+  @typedoc "A keyring mapping binary key ids to binary signing secrets."
+  @type keyring :: %{optional(binary()) => binary()}
+
+  @mac_size 32
+
+  @doc """
+  Generate a URL-safe token for `payload`, signed with `keyring[active_kid]`.
+
+  `keyring` is a `%{key_id => secret}` map, `active_kid` must be a key present
+  in `keyring`, and `ttl_seconds` is a positive integer controlling how long
+  the token stays valid. The signed region encodes the key id, the payload and
+  the issue and expiry timestamps, protected by an HMAC-SHA256 signature.
+
+  Options:
+
+    * `:clock` — a zero-arity function returning a Unix epoch second, used as
+      a test seam. Defaults to `System.os_time(:second)`.
+  """
+  @spec generate(term(), keyring(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, keyring, active_kid, ttl_seconds, opts \\ [])
+      when is_binary(active_kid) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    secret = Map.fetch!(keyring, active_kid)
+    issued_at = now(opts)
+    expires_at = issued_at + ttl_seconds
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<byte_size(active_kid)::unsigned-big-16, active_kid::binary,
+        issued_at::unsigned-big-64, expires_at::unsigned-big-64, payload_bin::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, signed)
+    Base.url_encode64(signed <> mac, padding: false)
+  end
+
+  @doc """
+  Decode and validate `token` against `keyring`.
+
+  Returns `{:ok, payload}` when the embedded key id is known, the signature is
+  valid, and the token has not expired. The checks run in a fixed order:
+  base64 decode, split off the trailing MAC, structural parse, key-id lookup,
+  HMAC verification, expiry check, payload deserialization.
+
+  Error results:
+
+    * `{:error, :malformed}` — any failure before the key-id lookup (bad
+      base64, too short, header that doesn't match the bytes, non-binary
+      input) or a post-HMAC deserialization failure.
+    * `{:error, :unknown_key}` — the key id is not in `keyring`.
+    * `{:error, :invalid_signature}` — the HMAC does not match.
+    * `{:error, :expired}` — a known-key, valid-signature token whose
+      `expires_at` is `<=` the current time.
+
+  Options:
+
+    * `:clock` — a zero-arity function returning a Unix epoch second, used as
+      a test seam. Defaults to `System.os_time(:second)`.
+  """
+  @spec verify(binary(), keyring(), keyword()) ::
+          {:ok, term()}
+          | {:error, :expired | :invalid_signature | :unknown_key | :malformed}
+  def verify(token, keyring, opts \\ []) do
+    with true <- is_binary(token),
+         {:ok, decoded} <- decode(token),
+         {:ok, signed, mac} <- split_mac(decoded),
+         {:ok, kid, expires_at, payload_bin} <- parse(signed) do
+      verify_key(keyring, kid, signed, mac, expires_at, payload_bin, opts)
+    else
+      _ -> {:error, :malformed}
+    end
+  end
+
+  @spec decode(binary()) :: {:ok, binary()} | :error
+  defp decode(token), do: Base.url_decode64(token, padding: false)
+
+  @spec split_mac(binary()) :: {:ok, binary(), binary()} | :error
+  defp split_mac(bin) do
+    size = byte_size(bin)
+
+    if size >= @mac_size do
+      signed = binary_part(bin, 0, size - @mac_size)
+      mac = binary_part(bin, size - @mac_size, @mac_size)
+      {:ok, signed, mac}
+    else
+      :error
+    end
+  end
+
+  @spec parse(binary()) :: {:ok, binary(), non_neg_integer(), binary()} | :error
+  defp parse(signed) do
+    with <<kid_len::unsigned-big-16, rest::binary>> <- signed,
+         <<kid::binary-size(kid_len), _issued_at::unsigned-big-64,
+           expires_at::unsigned-big-64, payload_bin::binary>> <- rest do
+      {:ok, kid, expires_at, payload_bin}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec verify_key(
+          keyring(),
+          binary(),
+          binary(),
+          binary(),
+          non_neg_integer(),
+          binary(),
+          keyword()
+        ) :: {:ok, term()} | {:error, :expired | :invalid_signature | :unknown_key | :malformed}
+  defp verify_key(keyring, kid, signed, mac, expires_at, payload_bin, opts) do
+    case Map.fetch(keyring, kid) do
+      :error ->
+        {:error, :unknown_key}
+
+      {:ok, secret} ->
+        expected = :crypto.mac(:hmac, :sha256, secret, signed)
+
+        cond do
+          not secure_compare(mac, expected) -> {:error, :invalid_signature}
+          now(opts) >= expires_at -> {:error, :expired}
+          true -> deserialize(payload_bin)
+        end
+    end
+  end
+
+  @spec deserialize(binary()) :: {:ok, term()} | {:error, :malformed}
+  defp deserialize(bin) do
+    {:ok, :erlang.binary_to_term(bin, [:safe])}
+  rescue
+    ArgumentError -> {:error, :malformed}
+  end
+
+  @spec now(keyword()) :: integer()
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      nil -> System.os_time(:second)
+      fun when is_function(fun, 0) -> fun.()
+    end
+  end
+
+  @spec secure_compare(binary(), binary()) :: boolean()
+  defp secure_compare(a, b) when byte_size(a) == byte_size(b) do
+    secure_compare(a, b, 0) == 0
+  end
+
+  defp secure_compare(_a, _b), do: false
+
+  @spec secure_compare(binary(), binary(), non_neg_integer()) :: non_neg_integer()
+  defp secure_compare(<<x, a::binary>>, <<y, b::binary>>, acc) do
+    secure_compare(a, b, bor(acc, bxor(x, y)))
+  end
+
+  defp secure_compare(<<>>, <<>>, acc), do: acc
+end
+</file>
+07:32:46.758 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2144, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2144, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2144, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2144, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 5506, "type" => "message"}], "output_tokens" => 5506, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+07:32:46.782 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_004_key_rotation_keyring_token_01 solution.ex
+07:32:47.459 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":176,"lines_over_98":0,"max_line_length":96,"mode":"full","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_004_key_rotation_keyring_token_01/solution.ex","task":"098_004_key_rotation_keyring_token_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-10T05:32:47.436249Z"}
+07:32:47.460 [info] cycle 098_004_key_rotation_keyring_token_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+07:32:47.460 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+07:32:47.460 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `RotatingToken` that generates and validates
+signed, expiring tokens against a **keyring** of multiple secrets, so keys can
+be rotated without invalidating tokens still in flight. Each token records
+*which* key signed it, and verification looks that key up in a caller-supplied
+keyring. There is no database or persistent state.
+
+A **keyring** is a map `%{key_id => secret}` where `key_id` is a binary key
+identifier (a "kid") and `secret` is a binary signing key.
+
+Public API:
+
+- `RotatingToken.generate(payload, keyring, active_kid, ttl_seconds, opts \\ [])`
+  where `payload` is any Elixir term, `keyring` is such a map, `active_kid` is
+  the key id to sign with (it must be a key present in `keyring`), and
+  `ttl_seconds` is a positive integer. It signs with `keyring[active_kid]`
+  and returns a URL-safe binary token (no padding issues, safe to embed in
+  URLs or headers) that encodes the key id, the payload, the issue timestamp,
+  the expiration timestamp, and an HMAC-SHA256 signature over all of that
+  data.
+
+- `RotatingToken.verify(token, keyring, opts \\ [])` decodes the token, reads
+  the embedded key id, looks it up in `keyring`, and validates. Return
+  `{:ok, payload}` if the key id is known, the signature is valid, and the
+  token has not expired. Otherwise return one of `{:error, :expired}`,
+  `{:error, :invalid_signature}`, `{:error, :unknown_key}`, or
+  `{:error, :malformed}` as described below.
+
+The check order inside `verify` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header (key id, timestamps)
+and payload → key-id lookup in the keyring → HMAC verification with the
+looked-up key → expiry check → payload deserialization. Consequences:
+
+- Any failure before the key-id lookup yields `:malformed` (bad base64, too
+  short to contain a MAC, a header that doesn't match the remaining bytes,
+  non-binary input, and so on).
+- If the embedded key id is not a key in `keyring`, return `:unknown_key`.
+  Because the lookup precedes both HMAC verification and the expiry check, a
+  token whose key id has been dropped from the keyring returns `:unknown_key`
+  even if its signature would be wrong and even if it is already expired. This
+  is how you retire a key: remove its id from the keyring and every token
+  signed with it becomes `:unknown_key`.
+- If the key id is known but the HMAC computed with `keyring[key_id]` does not
+  match, return `:invalid_signature`. Because the signature check precedes the
+  expiry check, an expired token that also fails the signature returns
+  `:invalid_signature`.
+- A known-key, valid-signature, but expired token yields `:expired`. A token
+  whose `expires_at` equals the current time is already expired (use strict
+  `<` on the validity check, not `<=`).
+- A post-HMAC deserialization failure yields `:malformed`.
+
+Both `generate` and `verify` take an optional `opts` keyword. The only
+recognized key is `:clock`, a zero-arity function returning a Unix epoch
+second. When omitted, the current time is read from `System.os_time(:second)`.
+This is purely a test seam for deterministic expiry testing.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Use `Base.url_encode64/2` with `padding: false`.
+- The key id must live inside the signed region along with the payload and
+  timestamps, so an attacker cannot swap the key id without invalidating the
+  signature. Include whatever length prefixes you need for framing (the key
+  id is a variable-length binary) inside the signed region too.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Deserialize the payload with `:erlang.binary_to_term/2` using `[:safe]`.
+- Do not use any external dependencies — only the Elixir standard library
+  and OTP.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule RotatingToken do
+  @moduledoc """
+  Signed, expiring tokens validated against a *keyring* of multiple secrets.
+
+  A keyring is a map `%{key_id => secret}` where `key_id` ("kid") is a binary
+  identifier and `secret` is a binary HMAC signing key. Every token records the
+  key id that signed it, and `verify/3` looks that id up in a caller-supplied
+  keyring. This lets you rotate signing keys without invalidating tokens still
+  in flight: keep the old id in the keyring while both are valid, then drop it
+  to retire every token it signed (they become `{:error, :unknown_key}`).
+
+  Tokens are URL-safe (`Base.url_encode64/2` with `padding: false`) and carry,
+  inside a single HMAC-SHA256 signed region, the key id, the payload, and the
+  issue and expiry timestamps. Because the key id lives inside the signed
+  region, it cannot be swapped without invalidating the signature.
+
+  There is no database or persistent state. The only non-pure input is the
+  clock, which can be injected through the `:clock` option for deterministic
+  testing.
+  """
+
+  import Bitwise
+
+  @typedoc "A keyring mapping binary key ids to binary signing secrets."
+  @type keyring :: %{optional(binary()) => binary()}
+
+  @mac_size 32
+
+  @doc """
+  Generate a URL-safe token for `payload`, signed with `keyring[active_kid]`.
+
+  `keyring` is a `%{key_id => secret}` map, `active_kid` must be a key present
+  in `keyring`, and `ttl_seconds` is a positive integer controlling how long
+  the token stays valid. The signed region encodes the key id, the payload and
+  the issue and expiry timestamps, protected by an HMAC-SHA256 signature.
+
+  Options:
+
+    * `:clock` — a zero-arity function returning a Unix epoch second, used as
+      a test seam. Defaults to `System.os_time(:second)`.
+  """
+  @spec generate(term(), keyring(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, keyring, active_kid, ttl_seconds, opts \\ [])
+      when is_binary(active_kid) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    secret = Map.fetch!(keyring, active_kid)
+    issued_at = now(opts)
+    expires_at = issued_at + ttl_seconds
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<byte_size(active_kid)::unsigned-big-16, active_kid::binary, issued_at::unsigned-big-64,
+        expires_at::unsigned-big-64, payload_bin::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, signed)
+    Base.url_encode64(signed <> mac, padding: false)
+  end
+
+  @doc """
+  Decode and validate `token` against `keyring`.
+
+  Returns `{:ok, payload}` when the embedded key id is known, the signature is
+  valid, and the token has not expired. The checks run in a fixed order:
+  base64 decode, split off the trailing MAC, structural parse, key-id lookup,
+  HMAC verification, expiry check, payload deserialization.
+
+  Error results:
+
+    * `{:error, :malformed}` — any failure before the key-id lookup (bad
+      base64, too short, header that doesn't match the bytes, non-binary
+      input) or a post-HMAC deserialization failure.
+    * `{:error, :unknown_key}` — the key id is (truncated)
+07:41:21.703 [debug] claude -p RESULT (stop="end_turn"):
+## Analysis
+
+The solution is green and already has `@moduledoc`, `@spec`/`@doc` on public functions, no `TODO` markers, and no unused variables or float-zero matches. So the single compile warning isn't any of those.
+
+The real culprit is a **type-checker warning** (Elixir 1.18+/OTP 27). The test harness calls:
+
+```elixir
+RotatingToken.verify(12345, @keyring, clock: &Clock.now/0)
+```
+
+i.e. it passes an **integer** as the first argument (intentionally, to exercise the `:malformed` path). But `verify/3`'s spec declares the first argument as `binary()`:
+
+```elixir
+@spec verify(binary(), keyring(), keyword()) :: ...
+```
+
+`integer()` is not a subtype of `binary()`, so the compiler emits a type-mismatch warning at that call site. The function itself is *designed* to accept any term (it does `is_binary(token)` and returns `:malformed` for non-binaries), so the correct fix is to widen the spec's first parameter to `term()`. This is behavior-neutral, keeps house style intact, and doesn't touch the test.
+
+<file path="solution.ex">
+defmodule RotatingToken do
+  @moduledoc """
+  Signed, expiring tokens validated against a *keyring* of multiple secrets.
+
+  A keyring is a map `%{key_id => secret}` where `key_id` ("kid") is a binary
+  identifier and `secret` is a binary HMAC signing key. Every token records the
+  key id that signed it, and `verify/3` looks that id up in a caller-supplied
+  keyring. This lets you rotate signing keys without invalidating tokens still
+  in flight: keep the old id in the keyring while both are valid, then drop it
+  to retire every token it signed (they become `{:error, :unknown_key}`).
+
+  Tokens are URL-safe (`Base.url_encode64/2` with `padding: false`) and carry,
+  inside a single HMAC-SHA256 signed region, the key id, the payload, and the
+  issue and expiry timestamps. Because the key id lives inside the signed
+  region, it cannot be swapped without invalidating the signature.
+
+  There is no database or persistent state. The only non-pure input is the
+  clock, which can be injected through the `:clock` option for deterministic
+  testing.
+  """
+
+  import Bitwise
+
+  @typedoc "A keyring mapping binary key ids to binary signing secrets."
+  @type keyring :: %{optional(binary()) => binary()}
+
+  @mac_size 32
+
+  @doc """
+  Generate a URL-safe token for `payload`, signed with `keyring[active_kid]`.
+
+  `keyring` is a `%{key_id => secret}` map, `active_kid` must be a key present
+  in `keyring`, and `ttl_seconds` is a positive integer controlling how long
+  the token stays valid. The signed region encodes the key id, the payload and
+  the issue and expiry timestamps, protected by an HMAC-SHA256 signature.
+
+  Options:
+
+    * `:clock` — a zero-arity function returning a Unix epoch second, used as
+      a test seam. Defaults to `System.os_time(:second)`.
+  """
+  @spec generate(term(), keyring(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, keyring, active_kid, ttl_seconds, opts \\ [])
+      when is_binary(active_kid) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    secret = Map.fetch!(keyring, active_kid)
+    issued_at = now(opts)
+    expires_at = issued_at + ttl_seconds
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<byte_size(active_kid)::unsigned-big-16, active_kid::binary, issued_at::unsigned-big-64,
+        expires_at::unsigned-big-64, payload_bin::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, signed)
+    Base.url_encode64(signed <> mac, padding: false)
+  end
+
+  @doc """
+  Decode and validate `token` against `keyring`.
+
+  Returns `{:ok, payload}` when the embedded key id is known, the signature is
+  valid, and the token has not expired. The checks run in a fixed order:
+  base64 decode, split off the trailing MAC, structural parse, key-id lookup,
+  HMAC verification, expiry check, payload deserialization.
+
+  `token` may be any term; anything that is not a well-formed binary token
+  yields `{:error, :malformed}`.
+
+  Error results:
+
+    * `{:error, :malformed}` — any failure before the key-id lookup (bad
+      base64, too short, header that doesn't match the bytes, non-binary
+      input) or a post-HMAC deserialization failure.
+    * `{:error, :unknown_key}` — the key id is not in `keyring`.
+    * `{:error, :invalid_signature}` — the HMAC does not match.
+    * `{:error, :expired}` — a known-key, valid-signature token whose
+      `expires_at` is `<=` the current time.
+
+  Options:
+
+    * `:clock` — a zero-arity function returning a Unix epoch second, used as
+      a test seam. Defaults to `System.os_time(:second)`.
+  """
+  @spec verify(term(), keyring(), keyword()) ::
+          {:ok, term()}
+          | {:error, :expired | :invalid_signature | :unknown_key | :malformed}
+  def verify(token, keyring, opts \\ []) do
+    with true <- is_binary(token),
+         {:ok, decoded} <- decode(token),
+         {:ok, signed, mac} <- split_mac(decoded),
+         {:ok, kid, expires_at, payload_bin} <- parse(signed) do
+      verify_key(keyring, kid, signed, mac, expires_at, payload_bin, opts)
+    else
+      _ -> {:error, :malformed}
+    end
+  end
+
+  @spec decode(binary()) :: {:ok, binary()} | :error
+  defp decode(token), do: Base.url_decode64(token, padding: false)
+
+  @spec split_mac(binary()) :: {:ok, binary(), binary()} | :error
+  defp split_mac(bin) do
+    size = byte_size(bin)
+
+    if size >= @mac_size do
+      signed = binary_part(bin, 0, size - @mac_size)
+      mac = binary_part(bin, size - @mac_size, @mac_size)
+      {:ok, signed, mac}
+    else
+      :error
+    end
+  end
+
+  @spec parse(binary()) :: {:ok, binary(), non_neg_integer(), binary()} | :error
+  defp parse(signed) do
+    with <<kid_len::unsigned-big-16, rest::binary>> <- signed,
+         <<kid::binary-size(kid_len), _issued_at::unsigned-big-64, expires_at::unsigned-big-64,
+           payload_bin::binary>> <- rest do
+      {:ok, kid, expires_at, payload_bin}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec verify_key(
+          keyring(),
+          binary(),
+          binary(),
+          binary(),
+          non_neg_integer(),
+          binary(),
+          keyword()
+        ) :: {:ok, term()} | {:error, :expired | :invalid_signature | :unknown_key | :malformed}
+  defp verify_key(keyring, kid, signed, mac, expires_at, payload_bin, opts) do
+    case Map.fetch(keyring, kid) do
+      :error ->
+        {:error, :unknown_key}
+
+      {:ok, secret} ->
+        expected = :crypto.mac(:hmac, :sha256, secret, signed)
+
+        cond do
+          not secure_compare(mac, expected) -> {:error, :invalid_signature}
+          now(opts) >= expires_at -> {:error, :expired}
+          true -> deserialize(payload_bin)
+        end
+    end
+  end
+
+  @spec deserialize(binary()) :: {:ok, term()} | {:error, :malformed}
+  defp deserialize(bin) do
+    {:ok, :erlang.binary_to_term(bin, [:safe])}
+  rescue
+    ArgumentError -> {:error, :malformed}
+  end
+
+  @spec now(keyword()) :: integer()
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      nil -> System.os_time(:second)
+      fun when is_function(fun, 0) -> fun.()
+    end
+  end
+
+  @spec secure_compare(binary(), binary()) :: boolean()
+  defp secure_compare(a, b) when byte_size(a) == byte_size(b) do
+    secure_compare(a, b, 0) == 0
+  end
+
+  defp secure_compare(_a, _b), do: false
+
+  @spec secure_compare(binary(), binary(), non_neg_integer()) :: non_neg_integer()
+  defp secure_compare(<<x, a::binary>>, <<y, b::binary>>, acc) do
+    secure_compare(a, b, bor(acc, bxor(x, y)))
+  end
+
+  defp secure_compare(<<>>, <<>>, acc), do: acc
+end
+</file>
+07:41:21.703 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7635, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7635, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7635, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7635, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 39092, "type" => "message"}], "output_tokens" => 39092, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+07:41:21.727 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_004_key_rotation_keyring_token_01 solution.ex
+07:41:22.381 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":179,"lines_over_98":0,"max_line_length":96,"mode":"full","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_004_key_rotation_keyring_token_01/solution.ex","task":"098_004_key_rotation_keyring_token_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-10T05:41:22.356809Z"}
+07:41:22.382 [info] cycle 098_004_key_rotation_keyring_token_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+07:41:22.382 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+07:41:22.382 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `RotatingToken` that generates and validates
+signed, expiring tokens against a **keyring** of multiple secrets, so keys can
+be rotated without invalidating tokens still in flight. Each token records
+*which* key signed it, and verification looks that key up in a caller-supplied
+keyring. There is no database or persistent state.
+
+A **keyring** is a map `%{key_id => secret}` where `key_id` is a binary key
+identifier (a "kid") and `secret` is a binary signing key.
+
+Public API:
+
+- `RotatingToken.generate(payload, keyring, active_kid, ttl_seconds, opts \\ [])`
+  where `payload` is any Elixir term, `keyring` is such a map, `active_kid` is
+  the key id to sign with (it must be a key present in `keyring`), and
+  `ttl_seconds` is a positive integer. It signs with `keyring[active_kid]`
+  and returns a URL-safe binary token (no padding issues, safe to embed in
+  URLs or headers) that encodes the key id, the payload, the issue timestamp,
+  the expiration timestamp, and an HMAC-SHA256 signature over all of that
+  data.
+
+- `RotatingToken.verify(token, keyring, opts \\ [])` decodes the token, reads
+  the embedded key id, looks it up in `keyring`, and validates. Return
+  `{:ok, payload}` if the key id is known, the signature is valid, and the
+  token has not expired. Otherwise return one of `{:error, :expired}`,
+  `{:error, :invalid_signature}`, `{:error, :unknown_key}`, or
+  `{:error, :malformed}` as described below.
+
+The check order inside `verify` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header (key id, timestamps)
+and payload → key-id lookup in the keyring → HMAC verification with the
+looked-up key → expiry check → payload deserialization. Consequences:
+
+- Any failure before the key-id lookup yields `:malformed` (bad base64, too
+  short to contain a MAC, a header that doesn't match the remaining bytes,
+  non-binary input, and so on).
+- If the embedded key id is not a key in `keyring`, return `:unknown_key`.
+  Because the lookup precedes both HMAC verification and the expiry check, a
+  token whose key id has been dropped from the keyring returns `:unknown_key`
+  even if its signature would be wrong and even if it is already expired. This
+  is how you retire a key: remove its id from the keyring and every token
+  signed with it becomes `:unknown_key`.
+- If the key id is known but the HMAC computed with `keyring[key_id]` does not
+  match, return `:invalid_signature`. Because the signature check precedes the
+  expiry check, an expired token that also fails the signature returns
+  `:invalid_signature`.
+- A known-key, valid-signature, but expired token yields `:expired`. A token
+  whose `expires_at` equals the current time is already expired (use strict
+  `<` on the validity check, not `<=`).
+- A post-HMAC deserialization failure yields `:malformed`.
+
+Both `generate` and `verify` take an optional `opts` keyword. The only
+recognized key is `:clock`, a zero-arity function returning a Unix epoch
+second. When omitted, the current time is read from `System.os_time(:second)`.
+This is purely a test seam for deterministic expiry testing.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Use `Base.url_encode64/2` with `padding: false`.
+- The key id must live inside the signed region along with the payload and
+  timestamps, so an attacker cannot swap the key id without invalidating the
+  signature. Include whatever length prefixes you need for framing (the key
+  id is a variable-length binary) inside the signed region too.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Deserialize the payload with `:erlang.binary_to_term/2` using `[:safe]`.
+- Do not use any external dependencies — only the Elixir standard library
+  and OTP.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule RotatingToken do
+  @moduledoc """
+  Signed, expiring tokens validated against a *keyring* of multiple secrets.
+
+  A keyring is a map `%{key_id => secret}` where `key_id` ("kid") is a binary
+  identifier and `secret` is a binary HMAC signing key. Every token records the
+  key id that signed it, and `verify/3` looks that id up in a caller-supplied
+  keyring. This lets you rotate signing keys without invalidating tokens still
+  in flight: keep the old id in the keyring while both are valid, then drop it
+  to retire every token it signed (they become `{:error, :unknown_key}`).
+
+  Tokens are URL-safe (`Base.url_encode64/2` with `padding: false`) and carry,
+  inside a single HMAC-SHA256 signed region, the key id, the payload, and the
+  issue and expiry timestamps. Because the key id lives inside the signed
+  region, it cannot be swapped without invalidating the signature.
+
+  There is no database or persistent state. The only non-pure input is the
+  clock, which can be injected through the `:clock` option for deterministic
+  testing.
+  """
+
+  import Bitwise
+
+  @typedoc "A keyring mapping binary key ids to binary signing secrets."
+  @type keyring :: %{optional(binary()) => binary()}
+
+  @mac_size 32
+
+  @doc """
+  Generate a URL-safe token for `payload`, signed with `keyring[active_kid]`.
+
+  `keyring` is a `%{key_id => secret}` map, `active_kid` must be a key present
+  in `keyring`, and `ttl_seconds` is a positive integer controlling how long
+  the token stays valid. The signed region encodes the key id, the payload and
+  the issue and expiry timestamps, protected by an HMAC-SHA256 signature.
+
+  Options:
+
+    * `:clock` — a zero-arity function returning a Unix epoch second, used as
+      a test seam. Defaults to `System.os_time(:second)`.
+  """
+  @spec generate(term(), keyring(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, keyring, active_kid, ttl_seconds, opts \\ [])
+      when is_binary(active_kid) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    secret = Map.fetch!(keyring, active_kid)
+    issued_at = now(opts)
+    expires_at = issued_at + ttl_seconds
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<byte_size(active_kid)::unsigned-big-16, active_kid::binary, issued_at::unsigned-big-64,
+        expires_at::unsigned-big-64, payload_bin::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, signed)
+    Base.url_encode64(signed <> mac, padding: false)
+  end
+
+  @doc """
+  Decode and validate `token` against `keyring`.
+
+  Returns `{:ok, payload}` when the embedded key id is known, the signature is
+  valid, and the token has not expired. The checks run in a fixed order:
+  base64 decode, split off the trailing MAC, structural parse, key-id lookup,
+  HMAC verification, expiry check, payload deserialization.
+
+  `token` may be any term; anything that is not a well-formed binary token
+  yields `{:error, :malformed}`.
+
+  Error results:
+
+    * `{:error, :malformed}` — any failure before the key-id lookup (bad
+      base64, too short, header that doesn't match the bytes, non (truncated)
+07:49:17.040 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the solution already has `@moduledoc`, `@spec`, `@doc`, no TODO markers, and appears clean. The lone compile warning comes from the heterogeneous `with` in `verify/3` that mixes a boolean value-match (`true <- is_binary(token)`) with tuple result-matches — under the modern Elixir type checker this triggers a warning. I'll silence it by hoisting the binary check into an explicit guard clause (behavior stays identical: non-binary input still yields `:malformed`).
+
+<file path="solution.ex">
+defmodule RotatingToken do
+  @moduledoc """
+  Signed, expiring tokens validated against a *keyring* of multiple secrets.
+
+  A keyring is a map `%{key_id => secret}` where `key_id` ("kid") is a binary
+  identifier and `secret` is a binary HMAC signing key. Every token records the
+  key id that signed it, and `verify/3` looks that id up in a caller-supplied
+  keyring. This lets you rotate signing keys without invalidating tokens still
+  in flight: keep the old id in the keyring while both are valid, then drop it
+  to retire every token it signed (they become `{:error, :unknown_key}`).
+
+  Tokens are URL-safe (`Base.url_encode64/2` with `padding: false`) and carry,
+  inside a single HMAC-SHA256 signed region, the key id, the payload, and the
+  issue and expiry timestamps. Because the key id lives inside the signed
+  region, it cannot be swapped without invalidating the signature.
+
+  There is no database or persistent state. The only non-pure input is the
+  clock, which can be injected through the `:clock` option for deterministic
+  testing.
+  """
+
+  import Bitwise
+
+  @typedoc "A keyring mapping binary key ids to binary signing secrets."
+  @type keyring :: %{optional(binary()) => binary()}
+
+  @mac_size 32
+
+  @doc """
+  Generate a URL-safe token for `payload`, signed with `keyring[active_kid]`.
+
+  `keyring` is a `%{key_id => secret}` map, `active_kid` must be a key present
+  in `keyring`, and `ttl_seconds` is a positive integer controlling how long
+  the token stays valid. The signed region encodes the key id, the payload and
+  the issue and expiry timestamps, protected by an HMAC-SHA256 signature.
+
+  Options:
+
+    * `:clock` — a zero-arity function returning a Unix epoch second, used as
+      a test seam. Defaults to `System.os_time(:second)`.
+  """
+  @spec generate(term(), keyring(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, keyring, active_kid, ttl_seconds, opts \\ [])
+      when is_binary(active_kid) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    secret = Map.fetch!(keyring, active_kid)
+    issued_at = now(opts)
+    expires_at = issued_at + ttl_seconds
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<byte_size(active_kid)::unsigned-big-16, active_kid::binary, issued_at::unsigned-big-64,
+        expires_at::unsigned-big-64, payload_bin::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, signed)
+    Base.url_encode64(signed <> mac, padding: false)
+  end
+
+  @doc """
+  Decode and validate `token` against `keyring`.
+
+  Returns `{:ok, payload}` when the embedded key id is known, the signature is
+  valid, and the token has not expired. The checks run in a fixed order:
+  base64 decode, split off the trailing MAC, structural parse, key-id lookup,
+  HMAC verification, expiry check, payload deserialization.
+
+  `token` may be any term; anything that is not a well-formed binary token
+  yields `{:error, :malformed}`.
+
+  Error results:
+
+    * `{:error, :malformed}` — any failure before the key-id lookup (bad
+      base64, too short, header that doesn't match the bytes, non-binary
+      input) or a post-HMAC deserialization failure.
+    * `{:error, :unknown_key}` — the key id is not in `keyring`.
+    * `{:error, :invalid_signature}` — the HMAC does not match.
+    * `{:error, :expired}` — a known-key, valid-signature token whose
+      `expires_at` is `<=` the current time.
+
+  Options:
+
+    * `:clock` — a zero-arity function returning a Unix epoch second, used as
+      a test seam. Defaults to `System.os_time(:second)`.
+  """
+  @spec verify(term(), keyring(), keyword()) ::
+          {:ok, term()}
+          | {:error, :expired | :invalid_signature | :unknown_key | :malformed}
+  def verify(token, keyring, opts \\ [])
+
+  def verify(token, keyring, opts) when is_binary(token) do
+    with {:ok, decoded} <- decode(token),
+         {:ok, signed, mac} <- split_mac(decoded),
+         {:ok, kid, expires_at, payload_bin} <- parse(signed) do
+      verify_key(keyring, kid, signed, mac, expires_at, payload_bin, opts)
+    else
+      _ -> {:error, :malformed}
+    end
+  end
+
+  def verify(_token, _keyring, _opts), do: {:error, :malformed}
+
+  @spec decode(binary()) :: {:ok, binary()} | :error
+  defp decode(token), do: Base.url_decode64(token, padding: false)
+
+  @spec split_mac(binary()) :: {:ok, binary(), binary()} | :error
+  defp split_mac(bin) do
+    size = byte_size(bin)
+
+    if size >= @mac_size do
+      signed = binary_part(bin, 0, size - @mac_size)
+      mac = binary_part(bin, size - @mac_size, @mac_size)
+      {:ok, signed, mac}
+    else
+      :error
+    end
+  end
+
+  @spec parse(binary()) :: {:ok, binary(), non_neg_integer(), binary()} | :error
+  defp parse(signed) do
+    with <<kid_len::unsigned-big-16, rest::binary>> <- signed,
+         <<kid::binary-size(kid_len), _issued_at::unsigned-big-64, expires_at::unsigned-big-64,
+           payload_bin::binary>> <- rest do
+      {:ok, kid, expires_at, payload_bin}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec verify_key(
+          keyring(),
+          binary(),
+          binary(),
+          binary(),
+          non_neg_integer(),
+          binary(),
+          keyword()
+        ) :: {:ok, term()} | {:error, :expired | :invalid_signature | :unknown_key | :malformed}
+  defp verify_key(keyring, kid, signed, mac, expires_at, payload_bin, opts) do
+    case Map.fetch(keyring, kid) do
+      :error ->
+        {:error, :unknown_key}
+
+      {:ok, secret} ->
+        expected = :crypto.mac(:hmac, :sha256, secret, signed)
+
+        cond do
+          not secure_compare(mac, expected) -> {:error, :invalid_signature}
+          now(opts) >= expires_at -> {:error, :expired}
+          true -> deserialize(payload_bin)
+        end
+    end
+  end
+
+  @spec deserialize(binary()) :: {:ok, term()} | {:error, :malformed}
+  defp deserialize(bin) do
+    {:ok, :erlang.binary_to_term(bin, [:safe])}
+  rescue
+    ArgumentError -> {:error, :malformed}
+  end
+
+  @spec now(keyword()) :: integer()
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      nil -> System.os_time(:second)
+      fun when is_function(fun, 0) -> fun.()
+    end
+  end
+
+  @spec secure_compare(binary(), binary()) :: boolean()
+  defp secure_compare(a, b) when byte_size(a) == byte_size(b) do
+    secure_compare(a, b, 0) == 0
+  end
+
+  defp secure_compare(_a, _b), do: false
+
+  @spec secure_compare(binary(), binary(), non_neg_integer()) :: non_neg_integer()
+  defp secure_compare(<<x, a::binary>>, <<y, b::binary>>, acc) do
+    secure_compare(a, b, bor(acc, bxor(x, y)))
+  end
+
+  defp secure_compare(<<>>, <<>>, acc), do: acc
+end
+</file>
+07:49:17.040 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7673, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7673, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7673, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7673, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 35561, "type" => "message"}], "output_tokens" => 35561, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+07:49:17.065 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_004_key_rotation_keyring_token_01 solution.ex
+07:49:17.742 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":182,"lines_over_98":0,"max_line_length":96,"mode":"full","pipe_chain_count":0,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_004_key_rotation_keyring_token_01/solution.ex","task":"098_004_key_rotation_keyring_token_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-10T05:49:17.717779Z"}
+07:49:17.743 [info] cycle 098_004_key_rotation_keyring_token_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+07:49:17.743 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+07:49:17.743 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `RotatingToken` that generates and validates
+signed, expiring tokens against a **keyring** of multiple secrets, so keys can
+be rotated without invalidating tokens still in flight. Each token records
+*which* key signed it, and verification looks that key up in a caller-supplied
+keyring. There is no database or persistent state.
+
+A **keyring** is a map `%{key_id => secret}` where `key_id` is a binary key
+identifier (a "kid") and `secret` is a binary signing key.
+
+Public API:
+
+- `RotatingToken.generate(payload, keyring, active_kid, ttl_seconds, opts \\ [])`
+  where `payload` is any Elixir term, `keyring` is such a map, `active_kid` is
+  the key id to sign with (it must be a key present in `keyring`), and
+  `ttl_seconds` is a positive integer. It signs with `keyring[active_kid]`
+  and returns a URL-safe binary token (no padding issues, safe to embed in
+  URLs or headers) that encodes the key id, the payload, the issue timestamp,
+  the expiration timestamp, and an HMAC-SHA256 signature over all of that
+  data.
+
+- `RotatingToken.verify(token, keyring, opts \\ [])` decodes the token, reads
+  the embedded key id, looks it up in `keyring`, and validates. Return
+  `{:ok, payload}` if the key id is known, the signature is valid, and the
+  token has not expired. Otherwise return one of `{:error, :expired}`,
+  `{:error, :invalid_signature}`, `{:error, :unknown_key}`, or
+  `{:error, :malformed}` as described below.
+
+The check order inside `verify` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header (key id, timestamps)
+and payload → key-id lookup in the keyring → HMAC verification with the
+looked-up key → expiry check → payload deserialization. Consequences:
+
+- Any failure before the key-id lookup yields `:malformed` (bad base64, too
+  short to contain a MAC, a header that doesn't match the remaining bytes,
+  non-binary input, and so on).
+- If the embedded key id is not a key in `keyring`, return `:unknown_key`.
+  Because the lookup precedes both HMAC verification and the expiry check, a
+  token whose key id has been dropped from the keyring returns `:unknown_key`
+  even if its signature would be wrong and even if it is already expired. This
+  is how you retire a key: remove its id from the keyring and every token
+  signed with it becomes `:unknown_key`.
+- If the key id is known but the HMAC computed with `keyring[key_id]` does not
+  match, return `:invalid_signature`. Because the signature check precedes the
+  expiry check, an expired token that also fails the signature returns
+  `:invalid_signature`.
+- A known-key, valid-signature, but expired token yields `:expired`. A token
+  whose `expires_at` equals the current time is already expired (use strict
+  `<` on the validity check, not `<=`).
+- A post-HMAC deserialization failure yields `:malformed`.
+
+Both `generate` and `verify` take an optional `opts` keyword. The only
+recognized key is `:clock`, a zero-arity function returning a Unix epoch
+second. When omitted, the current time is read from `System.os_time(:second)`.
+This is purely a test seam for deterministic expiry testing.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Use `Base.url_encode64/2` with `padding: false`.
+- The key id must live inside the signed region along with the payload and
+  timestamps, so an attacker cannot swap the key id without invalidating the
+  signature. Include whatever length prefixes you need for framing (the key
+  id is a variable-length binary) inside the signed region too.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Deserialize the payload with `:erlang.binary_to_term/2` using `[:safe]`.
+- Do not use any external dependencies — only the Elixir standard library
+  and OTP.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule RotatingToken do
+  @moduledoc """
+  Signed, expiring tokens validated against a *keyring* of multiple secrets.
+
+  A keyring is a map `%{key_id => secret}` where `key_id` ("kid") is a binary
+  identifier and `secret` is a binary HMAC signing key. Every token records the
+  key id that signed it, and `verify/3` looks that id up in a caller-supplied
+  keyring. This lets you rotate signing keys without invalidating tokens still
+  in flight: keep the old id in the keyring while both are valid, then drop it
+  to retire every token it signed (they become `{:error, :unknown_key}`).
+
+  Tokens are URL-safe (`Base.url_encode64/2` with `padding: false`) and carry,
+  inside a single HMAC-SHA256 signed region, the key id, the payload, and the
+  issue and expiry timestamps. Because the key id lives inside the signed
+  region, it cannot be swapped without invalidating the signature.
+
+  There is no database or persistent state. The only non-pure input is the
+  clock, which can be injected through the `:clock` option for deterministic
+  testing.
+  """
+
+  import Bitwise
+
+  @typedoc "A keyring mapping binary key ids to binary signing secrets."
+  @type keyring :: %{optional(binary()) => binary()}
+
+  @mac_size 32
+
+  @doc """
+  Generate a URL-safe token for `payload`, signed with `keyring[active_kid]`.
+
+  `keyring` is a `%{key_id => secret}` map, `active_kid` must be a key present
+  in `keyring`, and `ttl_seconds` is a positive integer controlling how long
+  the token stays valid. The signed region encodes the key id, the payload and
+  the issue and expiry timestamps, protected by an HMAC-SHA256 signature.
+
+  Options:
+
+    * `:clock` — a zero-arity function returning a Unix epoch second, used as
+      a test seam. Defaults to `System.os_time(:second)`.
+  """
+  @spec generate(term(), keyring(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, keyring, active_kid, ttl_seconds, opts \\ [])
+      when is_binary(active_kid) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    secret = Map.fetch!(keyring, active_kid)
+    issued_at = now(opts)
+    expires_at = issued_at + ttl_seconds
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<byte_size(active_kid)::unsigned-big-16, active_kid::binary, issued_at::unsigned-big-64,
+        expires_at::unsigned-big-64, payload_bin::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, signed)
+    Base.url_encode64(signed <> mac, padding: false)
+  end
+
+  @doc """
+  Decode and validate `token` against `keyring`.
+
+  Returns `{:ok, payload}` when the embedded key id is known, the signature is
+  valid, and the token has not expired. The checks run in a fixed order:
+  base64 decode, split off the trailing MAC, structural parse, key-id lookup,
+  HMAC verification, expiry check, payload deserialization.
+
+  `token` may be any term; anything that is not a well-formed binary token
+  yields `{:error, :malformed}`.
+
+  Error results:
+
+    * `{:error, :malformed}` — any failure before the key-id lookup (bad
+      base64, too short, header that doesn't match the bytes, non (truncated)
+07:54:35.685 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, all variables are used and functions are all referenced, so the warning is almost certainly the `import Bitwise` line combined with the hand-rolled comparison. The idiomatic, warning-free constant-time comparison in OTP is `:crypto.hash_equals/2`, which lets me drop the `import Bitwise` entirely (imports are the classic compile-warning vector) while keeping behavior identical.
+
+<file path="solution.ex">
+defmodule RotatingToken do
+  @moduledoc """
+  Signed, expiring tokens validated against a *keyring* of multiple secrets.
+
+  A keyring is a map `%{key_id => secret}` where `key_id` ("kid") is a binary
+  identifier and `secret` is a binary HMAC signing key. Every token records the
+  key id that signed it, and `verify/3` looks that id up in a caller-supplied
+  keyring. This lets you rotate signing keys without invalidating tokens still
+  in flight: keep the old id in the keyring while both are valid, then drop it
+  to retire every token it signed (they become `{:error, :unknown_key}`).
+
+  Tokens are URL-safe (`Base.url_encode64/2` with `padding: false`) and carry,
+  inside a single HMAC-SHA256 signed region, the key id, the payload, and the
+  issue and expiry timestamps. Because the key id lives inside the signed
+  region, it cannot be swapped without invalidating the signature.
+
+  There is no database or persistent state. The only non-pure input is the
+  clock, which can be injected through the `:clock` option for deterministic
+  testing.
+  """
+
+  @typedoc "A keyring mapping binary key ids to binary signing secrets."
+  @type keyring :: %{optional(binary()) => binary()}
+
+  @mac_size 32
+
+  @doc """
+  Generate a URL-safe token for `payload`, signed with `keyring[active_kid]`.
+
+  `keyring` is a `%{key_id => secret}` map, `active_kid` must be a key present
+  in `keyring`, and `ttl_seconds` is a positive integer controlling how long
+  the token stays valid. The signed region encodes the key id, the payload and
+  the issue and expiry timestamps, protected by an HMAC-SHA256 signature.
+
+  Options:
+
+    * `:clock` — a zero-arity function returning a Unix epoch second, used as
+      a test seam. Defaults to `System.os_time(:second)`.
+  """
+  @spec generate(term(), keyring(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, keyring, active_kid, ttl_seconds, opts \\ [])
+      when is_binary(active_kid) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    secret = Map.fetch!(keyring, active_kid)
+    issued_at = now(opts)
+    expires_at = issued_at + ttl_seconds
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<byte_size(active_kid)::unsigned-big-16, active_kid::binary, issued_at::unsigned-big-64,
+        expires_at::unsigned-big-64, payload_bin::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, signed)
+    Base.url_encode64(signed <> mac, padding: false)
+  end
+
+  @doc """
+  Decode and validate `token` against `keyring`.
+
+  Returns `{:ok, payload}` when the embedded key id is known, the signature is
+  valid, and the token has not expired. The checks run in a fixed order:
+  base64 decode, split off the trailing MAC, structural parse, key-id lookup,
+  HMAC verification, expiry check, payload deserialization.
+
+  `token` may be any term; anything that is not a well-formed binary token
+  yields `{:error, :malformed}`.
+
+  Error results:
+
+    * `{:error, :malformed}` — any failure before the key-id lookup (bad
+      base64, too short, header that doesn't match the bytes, non-binary
+      input) or a post-HMAC deserialization failure.
+    * `{:error, :unknown_key}` — the key id is not in `keyring`.
+    * `{:error, :invalid_signature}` — the HMAC does not match.
+    * `{:error, :expired}` — a known-key, valid-signature token whose
+      `expires_at` is `<=` the current time.
+
+  Options:
+
+    * `:clock` — a zero-arity function returning a Unix epoch second, used as
+      a test seam. Defaults to `System.os_time(:second)`.
+  """
+  @spec verify(term(), keyring(), keyword()) ::
+          {:ok, term()}
+          | {:error, :expired | :invalid_signature | :unknown_key | :malformed}
+  def verify(token, keyring, opts \\ [])
+
+  def verify(token, keyring, opts) when is_binary(token) do
+    with {:ok, decoded} <- decode(token),
+         {:ok, signed, mac} <- split_mac(decoded),
+         {:ok, kid, expires_at, payload_bin} <- parse(signed) do
+      verify_key(keyring, kid, signed, mac, expires_at, payload_bin, opts)
+    else
+      _ -> {:error, :malformed}
+    end
+  end
+
+  def verify(_token, _keyring, _opts), do: {:error, :malformed}
+
+  @spec decode(binary()) :: {:ok, binary()} | :error
+  defp decode(token), do: Base.url_decode64(token, padding: false)
+
+  @spec split_mac(binary()) :: {:ok, binary(), binary()} | :error
+  defp split_mac(bin) do
+    size = byte_size(bin)
+
+    if size >= @mac_size do
+      signed = binary_part(bin, 0, size - @mac_size)
+      mac = binary_part(bin, size - @mac_size, @mac_size)
+      {:ok, signed, mac}
+    else
+      :error
+    end
+  end
+
+  @spec parse(binary()) :: {:ok, binary(), non_neg_integer(), binary()} | :error
+  defp parse(signed) do
+    with <<kid_len::unsigned-big-16, rest::binary>> <- signed,
+         <<kid::binary-size(kid_len), _issued_at::unsigned-big-64, expires_at::unsigned-big-64,
+           payload_bin::binary>> <- rest do
+      {:ok, kid, expires_at, payload_bin}
+    else
+      _ -> :error
+    end
+  end
+
+  @spec verify_key(
+          keyring(),
+          binary(),
+          binary(),
+          binary(),
+          non_neg_integer(),
+          binary(),
+          keyword()
+        ) :: {:ok, term()} | {:error, :expired | :invalid_signature | :unknown_key | :malformed}
+  defp verify_key(keyring, kid, signed, mac, expires_at, payload_bin, opts) do
+    case Map.fetch(keyring, kid) do
+      :error ->
+        {:error, :unknown_key}
+
+      {:ok, secret} ->
+        expected = :crypto.mac(:hmac, :sha256, secret, signed)
+
+        cond do
+          not secure_compare(mac, expected) -> {:error, :invalid_signature}
+          now(opts) >= expires_at -> {:error, :expired}
+          true -> deserialize(payload_bin)
+        end
+    end
+  end
+
+  @spec deserialize(binary()) :: {:ok, term()} | {:error, :malformed}
+  defp deserialize(bin) do
+    {:ok, :erlang.binary_to_term(bin, [:safe])}
+  rescue
+    ArgumentError -> {:error, :malformed}
+  end
+
+  @spec now(keyword()) :: integer()
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      nil -> System.os_time(:second)
+      fun when is_function(fun, 0) -> fun.()
+    end
+  end
+
+  @spec secure_compare(binary(), binary()) :: boolean()
+  defp secure_compare(a, b) when byte_size(a) == byte_size(b) do
+    :crypto.hash_equals(a, b)
+  end
+
+  defp secure_compare(_a, _b), do: false
+end
+</file>
+07:54:35.685 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7713, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7713, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7713, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7713, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 23584, "type" => "message"}], "output_tokens" => 23584, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+07:54:35.710 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_004_key_rotation_keyring_token_01 solution.ex
+07:54:36.394 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":173,"lines_over_98":0,"max_line_length":96,"mode":"full","pipe_chain_count":0,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_004_key_rotation_keyring_token_01/solution.ex","task":"098_004_key_rotation_keyring_token_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-10T05:54:36.370021Z"}
+07:54:36.395 [info] cycle 098_004_key_rotation_keyring_token_01: REJECTED after 4 attempt(s)

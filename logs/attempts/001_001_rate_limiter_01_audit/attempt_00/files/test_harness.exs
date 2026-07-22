@@ -1,0 +1,401 @@
+defmodule RateLimiterTest do
+  use ExUnit.Case, async: false
+
+  # --- Fake clock for deterministic testing ---
+
+  defmodule Clock do
+    use Agent
+
+    def start_link(initial \\ 0) do
+      Agent.start_link(fn -> initial end, name: __MODULE__)
+    end
+
+    def now, do: Agent.get(__MODULE__, & &1)
+    def advance(ms), do: Agent.update(__MODULE__, &(&1 + ms))
+    def set(ms), do: Agent.update(__MODULE__, fn _ -> ms end)
+  end
+
+  setup do
+    # Start fresh clock at time 0 for each test
+    start_supervised!({Clock, 0})
+
+    {:ok, pid} =
+      RateLimiter.start_link(
+        clock: &Clock.now/0,
+        # disable auto-cleanup in tests
+        cleanup_interval_ms: :infinity
+      )
+
+    %{rl: pid}
+  end
+
+  # -------------------------------------------------------
+  # Basic allow / reject
+  # -------------------------------------------------------
+
+  test "allows requests within the limit", %{rl: rl} do
+    assert {:ok, 2} = RateLimiter.check(rl, "user:1", 3, 1_000)
+    assert {:ok, 1} = RateLimiter.check(rl, "user:1", 3, 1_000)
+    assert {:ok, 0} = RateLimiter.check(rl, "user:1", 3, 1_000)
+  end
+
+  test "rejects the request that exceeds the limit", %{rl: rl} do
+    for _ <- 1..3, do: RateLimiter.check(rl, "k", 3, 1_000)
+
+    assert {:error, :rate_limited, retry_after} =
+             RateLimiter.check(rl, "k", 3, 1_000)
+
+    assert is_integer(retry_after)
+    assert retry_after > 0
+    assert retry_after <= 1_000
+  end
+
+  # -------------------------------------------------------
+  # Window sliding
+  # -------------------------------------------------------
+
+  test "allows requests again after the window slides", %{rl: rl} do
+    for _ <- 1..3, do: RateLimiter.check(rl, "k", 3, 1_000)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Advance past the window
+    Clock.advance(1_001)
+
+    assert {:ok, _remaining} = RateLimiter.check(rl, "k", 3, 1_000)
+  end
+
+  test "sliding window drops old requests correctly", %{rl: rl} do
+    # Time 0: first request
+    assert {:ok, 2} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Time 400: second request
+    Clock.advance(400)
+    assert {:ok, 1} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Time 800: third request
+    Clock.advance(400)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Time 800: fourth request — rejected
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Time 1001: first request (from time 0) has expired, one slot free
+    Clock.advance(201)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Still blocked (requests from 400 and 800 still in window)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 3, 1_000)
+  end
+
+  # -------------------------------------------------------
+  # Key independence
+  # -------------------------------------------------------
+
+  test "different keys are completely independent", %{rl: rl} do
+    # Exhaust key "a"
+    for _ <- 1..3, do: RateLimiter.check(rl, "a", 3, 1_000)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "a", 3, 1_000)
+
+    # Key "b" should be unaffected
+    assert {:ok, 2} = RateLimiter.check(rl, "b", 3, 1_000)
+    assert {:ok, 1} = RateLimiter.check(rl, "b", 3, 1_000)
+    assert {:ok, 0} = RateLimiter.check(rl, "b", 3, 1_000)
+  end
+
+  # -------------------------------------------------------
+  # retry_after accuracy
+  # -------------------------------------------------------
+
+  test "retry_after tells the caller how long until a slot opens", %{rl: rl} do
+    # Request at time 0
+    RateLimiter.check(rl, "k", 1, 1_000)
+
+    # Advance to time 300
+    Clock.advance(300)
+
+    assert {:error, :rate_limited, retry_after} =
+             RateLimiter.check(rl, "k", 1, 1_000)
+
+    # The earliest request (at time 0) expires at time 1000.
+    # We're at time 300, so retry_after should be ~700
+    assert retry_after >= 600 and retry_after <= 800
+  end
+
+  # -------------------------------------------------------
+  # Edge cases
+  # -------------------------------------------------------
+
+  test "max_requests of 1 allows exactly one call", %{rl: rl} do
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 500)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 1, 500)
+  end
+
+  test "works with very large window", %{rl: rl} do
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 86_400_000)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 1, 86_400_000)
+
+    Clock.advance(86_400_001)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 86_400_000)
+  end
+
+  # -------------------------------------------------------
+  # Multiple keys interleaved
+  # -------------------------------------------------------
+
+  test "interleaved operations on multiple keys", %{rl: rl} do
+    assert {:ok, 1} = RateLimiter.check(rl, "x", 2, 1_000)
+    assert {:ok, 4} = RateLimiter.check(rl, "y", 5, 2_000)
+    assert {:ok, 0} = RateLimiter.check(rl, "x", 2, 1_000)
+    assert {:ok, 3} = RateLimiter.check(rl, "y", 5, 2_000)
+
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "x", 2, 1_000)
+    assert {:ok, 2} = RateLimiter.check(rl, "y", 5, 2_000)
+  end
+
+  # -------------------------------------------------------
+  # Cleanup (memory leak prevention)
+  # -------------------------------------------------------
+
+  test "expired keys are cleaned up and don't accumulate", %{rl: rl} do
+    # Create entries for 100 different keys
+    for i <- 1..100 do
+      RateLimiter.check(rl, "key:#{i}", 1, 100)
+    end
+
+    # Advance past all windows
+    Clock.advance(200)
+
+    # Trigger the sweep manually via the documented :cleanup message
+    send(rl, :cleanup)
+
+    # A GenServer processes its mailbox in order, so the calls below also
+    # confirm the sweep finished without crashing the server. Internal state
+    # is implementation-dependent and deliberately not inspected; the
+    # observable contract is that previously tracked keys start a fresh
+    # window after expiry (remaining = max - 1).
+    assert {:ok, 0} = RateLimiter.check(rl, "key:1", 1, 100)
+    assert {:ok, 0} = RateLimiter.check(rl, "key:100", 1, 100)
+    assert Process.alive?(rl)
+  end
+
+  # -------------------------------------------------------
+  # Window boundary is exclusive: ts is active iff ts > now - window_ms
+  # -------------------------------------------------------
+
+  test "an entry exactly window_ms old is no longer active", %{rl: rl} do
+    # Three calls at time 0 exhaust the limit.
+    assert {:ok, 2} = RateLimiter.check(rl, "k", 3, 1_000)
+    assert {:ok, 1} = RateLimiter.check(rl, "k", 3, 1_000)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 3, 1_000)
+    assert {:error, :rate_limited, 1_000} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # At exactly time 1000 the time-0 entries have fallen out of the window
+    # (0 > 1000 - 1000 is false), so the window is empty again.
+    Clock.advance(1_000)
+    assert {:ok, 2} = RateLimiter.check(rl, "k", 3, 1_000)
+  end
+
+  # -------------------------------------------------------
+  # retry_after is exact, and waiting exactly that long works
+  # -------------------------------------------------------
+
+  test "retry_after is the exact wait until the oldest entry expires", %{rl: rl} do
+    # Single request at time 0 under a limit of 1 per 1000ms.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    # At time 999 the entry expires in exactly 1ms: max(0 + 1000 - 999, 1) == 1.
+    Clock.advance(999)
+    assert {:error, :rate_limited, 1} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    # Waiting exactly retry_after_ms must succeed (no calls in between; a denied
+    # call records no timestamp, so the window did not move forward).
+    Clock.advance(1)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+  end
+
+  # -------------------------------------------------------
+  # Argument guards on check/4
+  # -------------------------------------------------------
+
+  test "check/4 guards reject non-positive limits but accept 1", %{rl: rl} do
+    assert_raise FunctionClauseError, fn ->
+      RateLimiter.check(rl, "k", 0, 1_000)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      RateLimiter.check(rl, "k", 1, 0)
+    end
+
+    # 1 is a positive integer and must be inside the contract for both args.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1)
+    assert Process.alive?(rl)
+  end
+
+  # -------------------------------------------------------
+  # Cleanup drops keys at the same exclusive boundary check/4 uses
+  # -------------------------------------------------------
+
+  test "cleanup removes a key whose entries are exactly window_ms old", %{rl: rl} do
+    # Entry recorded at time 0 with a 1000ms window.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    # At exactly time 1000 the entry is not active (0 > 1000 - 1000 is false),
+    # so the key's active list is empty and the key is removed entirely.
+    Clock.advance(1_000)
+    send(rl, :cleanup)
+
+    # A removed key behaves exactly like a never-seen key: checked here with a
+    # wider window that would still have covered the time-0 entry had it been
+    # retained, the first call must be allowed with remaining = max - 1.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 2_000)
+    assert Process.alive?(rl)
+  end
+
+  test "check/4 works through the registered name and the pid alike" do
+    name = :rate_limiter_registered_name_test
+
+    {:ok, pid} =
+      RateLimiter.start_link(
+        name: name,
+        clock: &Clock.now/0,
+        cleanup_interval_ms: :infinity
+      )
+
+    # Same process reached two ways: state accumulates across both call styles.
+    assert {:ok, 4} = RateLimiter.check(name, "u", 5, 1_000)
+    assert {:ok, 3} = RateLimiter.check(pid, "u", 5, 1_000)
+  end
+
+  test "repeated denials never postpone when the original entry frees a slot", %{rl: rl} do
+    # One request at time 0 exhausts a limit of 1 per 1000ms.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    # Hammer the limited key twice while blocked; neither denial records a ts.
+    Clock.advance(500)
+    assert {:error, :rate_limited, 500} = RateLimiter.check(rl, "k", 1, 1_000)
+    Clock.advance(400)
+    assert {:error, :rate_limited, 100} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    # At time 1000 only the time-0 entry mattered; the hammering did not push
+    # its expiry forward, so a slot is free.
+    Clock.advance(100)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+  end
+
+  test "cleanup reclaims an expired entry before a wider-window check", %{rl: rl} do
+    # Record a request at time 0 under a 1000ms window (stored window = 1000).
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    Clock.advance(1_500)
+
+    # A cleanup pass prunes using the key's last-seen 1000ms window. At time 1500
+    # the time-0 entry is not active for that window (0 > 1500 - 1000 is false),
+    # so the key's active list becomes empty and the key is removed entirely —
+    # exactly the memory-reclamation the cleanup contract mandates.
+    send(rl, :cleanup)
+
+    # The reclaimed key now behaves exactly like a never-seen key: even a wider
+    # 2000ms window starts a fresh window rather than resurrecting the pruned
+    # entry, so the first call must be allowed with remaining = max - 1.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 2_000)
+  end
+
+  test "cleanup keeps a key that still has an active timestamp", %{rl: rl} do
+    assert {:ok, 1} = RateLimiter.check(rl, "k", 2, 1_000)
+    Clock.advance(600)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 2, 1_000)
+
+    # Time 1100: the time-0 entry falls out, the time-600 entry stays active.
+    Clock.advance(500)
+    send(rl, :cleanup)
+
+    # The retained (pruned) list still holds the time-600 entry, so a limit of 1
+    # must be denied — a wrongly dropped key would return {:ok, 0} here.
+    assert {:error, :rate_limited, 500} = RateLimiter.check(rl, "k", 1, 1_000)
+  end
+
+  test "an unexpected message leaves tracking state untouched", %{rl: rl} do
+    assert {:ok, 1} = RateLimiter.check(rl, "k", 2, 1_000)
+
+    send(rl, :some_unexpected_message)
+    send(rl, {:weird, :tuple, 123})
+
+    # State unaltered: the earlier request still counts toward the limit.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 2, 1_000)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 2, 1_000)
+    assert Process.alive?(rl)
+  end
+
+  test "cleanup on a fresh empty state is a harmless no-op", %{rl: rl} do
+    send(rl, :cleanup)
+    send(rl, :cleanup)
+
+    # An untouched key still behaves like a brand-new key after empty sweeps.
+    assert {:ok, 4} = RateLimiter.check(rl, "brand:new", 5, 1_000)
+    assert Process.alive?(rl)
+  end
+
+  test "keys are compared by value across term types", %{rl: rl} do
+    # A tuple key and an equal tuple share one bucket (compared by value).
+    assert {:ok, 1} = RateLimiter.check(rl, {:user, 1}, 2, 1_000)
+    assert {:ok, 0} = RateLimiter.check(rl, {:user, 1}, 2, 1_000)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, {:user, 1}, 2, 1_000)
+
+    # An integer key and an atom key are independent from the tuple and each other.
+    assert {:ok, 1} = RateLimiter.check(rl, 42, 2, 1_000)
+    assert {:ok, 1} = RateLimiter.check(rl, :admin, 2, 1_000)
+
+    # A different-valued tuple is its own bucket, unaffected by the exhausted one.
+    assert {:ok, 1} = RateLimiter.check(rl, {:user, 2}, 2, 1_000)
+  end
+
+  test "pruning uses the window_ms of the current call not a stored one", %{rl: rl} do
+    # Record one timestamp at time 0 under a 1000ms window.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    # At time 600 a check with a narrower 500ms window prunes the time-0 entry
+    # (0 > 600 - 500 is false), so the request must be allowed. Had the stored
+    # 1000ms window governed, the entry would still be active and this would deny.
+    Clock.advance(600)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 500)
+  end
+
+  test "cleanup prunes using the most recently seen window for a key", %{rl: rl} do
+    # First seen with a narrow 500ms window at time 0.
+    assert {:ok, 1} = RateLimiter.check(rl, "k", 2, 500)
+
+    # Re-seen with a much wider 5000ms window at time 100; stored window becomes 5000.
+    Clock.advance(100)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 2, 5_000)
+
+    # At time 1000 a sweep must prune with the last-seen 5000ms window, keeping both
+    # entries. Using the stale 500ms window would drop the key entirely.
+    Clock.advance(900)
+    send(rl, :cleanup)
+
+    # Both time-0 and time-100 entries are still active under 5000ms, so a limit of
+    # 2 is now exhausted; retry_after is oldest(0) + 5000 - 1000 = 4000.
+    assert {:error, :rate_limited, 4_000} = RateLimiter.check(rl, "k", 2, 5_000)
+  end
+
+  test "check/4 raises on non-integer limits", %{rl: rl} do
+    assert_raise FunctionClauseError, fn ->
+      RateLimiter.check(rl, "k", 2.0, 1_000)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      RateLimiter.check(rl, "k", 2, 1_000.0)
+    end
+
+    assert Process.alive?(rl)
+  end
+
+  test "start_link with no arguments starts an empty server" do
+    {:ok, pid} = RateLimiter.start_link()
+    assert is_pid(pid)
+
+    # Freshly started with zero keys tracked: the first check for any key is
+    # allowed with remaining = max - 1, independent of the (real) clock value.
+    assert {:ok, 4} = RateLimiter.check(pid, "fresh", 5, 1_000)
+  end
+end

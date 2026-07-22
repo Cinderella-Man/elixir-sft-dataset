@@ -1,0 +1,399 @@
+13:38:26.036 [info] VARIATIONS gen for 045_001_ets_based_feature_flag_store_01 (3 slot(s))
+13:38:26.037 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:38:26.037 [debug] claude -p USER prompt:
+I have this SFT task (idea #45 — "ETS-Based Feature Flag Store"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 45 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `FeatureFlags` that manages feature flags using ETS for fast reads, backed by a GenServer for writes.
+
+I need these functions in the public API:
+
+- `FeatureFlags.start_link(opts)` to start the process. It should accept an optional `:table_name` for the ETS table (default `:feature_flags`), and an optional `:name` for process registration.
+- `FeatureFlags.enable(flag_name)` — sets the flag to `:on` for everyone.
+- `FeatureFlags.disable(flag_name)` — sets the flag to `:off` for everyone.
+- `FeatureFlags.enable_for_percentage(flag_name, percentage)` — sets the flag to `:percentage` mode with a value between `0` and `100` (integers). Calling with `0` is equivalent to `:off`, and `100` is equivalent to `:on`.
+- `FeatureFlags.enabled?(flag_name)` — returns `true` if the flag is `:on`, `false` otherwise (`:off` or `:percentage` flags return `false` here). Unknown flags default to `false`.
+- `FeatureFlags.enabled_for?(flag_name, user_id)` — returns `true` if the flag is `:on`, or if the flag is in `:percentage` mode and the user falls within the enabled bucket. The bucket must be **deterministic**: the same `{flag_name, user_id}` pair must always produce the same result across calls. Use `:erlang.phash2({flag_name, user_id}, 100)` to compute a 0–99 hash and compare it against the percentage threshold. If the flag is `:off`, always return `false`. Unknown flags default to `false`.
+
+Implementation requirements:
+- ETS table should be of type `:set`, with `read_concurrency: true`, owned by the GenServer, and named so any process can read directly without going through the GenServer process for `enabled?` and `enabled_for?` reads.
+- All writes (`enable`, `disable`, `enable_for_percentage`) must go through the GenServer via `call` to serialise updates.
+- The ETS table must be created in `init/1` and the table name should be accessible via a module attribute or passed through the GenServer state.
+
+Give me the complete module in a single file. Use only the OTP standard library, no external dependencies.
+
+=== BASE solution.ex ===
+defmodule FeatureFlags do
+  @moduledoc """
+  Manages feature flags using ETS for fast, concurrent reads and a GenServer
+  for serialised writes.
+
+  ## Flag states
+
+  Each flag can be in one of three states:
+
+  - `{:on}` — enabled for everyone.
+  - `{:off}` — disabled for everyone.
+  - `{:percentage, n}` — enabled for the `n`% of users whose
+    `:erlang.phash2({flag_name, user_id}, 100)` hash falls below `n`.
+
+  ## Usage
+
+      {:ok, _pid} = FeatureFlags.start_link([])
+
+      FeatureFlags.enable(:dark_mode)
+      FeatureFlags.enabled?(:dark_mode)            #=> true
+      FeatureFlags.enabled_for?(:dark_mode, "u1")  #=> true
+
+      FeatureFlags.enable_for_percentage(:beta, 30)
+      FeatureFlags.enabled?(:beta)                 #=> false  (not globally on)
+      FeatureFlags.enabled_for?(:beta, "u1")       #=> deterministic true/false
+
+      FeatureFlags.disable(:dark_mode)
+      FeatureFlags.enabled?(:dark_mode)            #=> false
+  """
+
+  use GenServer
+
+  @default_table :feature_flags
+  @default_name __MODULE__
+
+  @pt_server {__MODULE__, :server}
+  @pt_table  {__MODULE__, :table_name}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the `FeatureFlags` GenServer and creates the backing ETS table.
+
+  ## Options
+
+  - `:table_name` – atom used as the ETS table name (default: `:feature_flags`).
+  - `:name`       – name used to register the GenServer process
+                    (default: `FeatureFlags`). Pass `nil` to skip registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    table_name = Keyword.get(opts, :table_name, @default_table)
+    name       = Keyword.get(opts, :name, @default_name)
+
+    # Only forward the :name option when a non-nil name is requested;
+    # passing `name: nil` to GenServer.start_link/3 is not valid.
+    gen_opts = if name, do: [name: name], else: []
+
+    GenServer.start_link(__MODULE__, %{table_name: table_name}, gen_opts)
+  end
+
+  @doc "Enables `flag_name` for **all** users (`:on` state)."
+  @spec enable(atom()) :: :ok
+  def enable(flag_name) do
+    GenServer.call(server(), {:set, flag_name, {:on}})
+  end
+
+  @doc "Disables `flag_name` for **all** users (`:off` state)."
+  @spec disable(atom()) :: :ok
+  def disable(flag_name) do
+    GenServer.call(server(), {:set, flag_name, {:off}})
+  end
+
+  @doc """
+  Enables `flag_name` for `percentage`% of users (0–100).
+
+  The bucket assignment is deterministic per `{flag_name, user_id}` pair.
+  Passing `0` is equivalent to `disable/1`; passing `100` is equivalent
+  to `enable/1`.
+  """
+  @spec enable_for_percentage(atom(), 0..100) :: :ok
+  def enable_for_percentage(flag_name, percentage)
+      when is_integer(percentage) and percentage >= 0 and percentage <= 100 do
+    GenServer.call(server(), {:set, flag_name, {:percentage, percentage}})
+  end
+
+  @doc """
+  Returns `true` only when `flag_name` is in the `:on` state.
+
+  Reads directly from ETS — no GenServer round-trip.
+  Unknown flags return `false`.
+  """
+  @spec enabled?(atom()) :: boolean()
+  def enabled?(flag_name) do
+    case lookup(flag_name) do
+      {:on} -> true
+      _     -> false
+    end
+  end
+
+  @doc """
+  Returns `true` when:
+
+  - the flag is `:on`, **or**
+  - the flag is in `:percentage` mode and
+    `phash2({flag_name, user_id}, 100) < percentage`.
+
+  Reads directly from ETS — no GenServer round-trip.
+  Unknown flags return `false`.
+  """
+  @spec enabled_for?(atom(), term()) :: boolean()
+  def enabled_for?(flag_name, user_id) do
+    case lookup(flag_name) do
+      {:on}              -> true
+      {:off}             -> false
+      {:percentage, pct} -> :erlang.phash2({flag_name, user_id}, 100) < pct
+      nil                -> false
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Returns the GenServer pid stored at startup — works whether the server
+  # was registered by name or started anonymously.
+  defp server, do: :persistent_term.get(@pt_server)
+
+  # Reads the flag value directly from ETS in the calling process.
+  defp lookup(flag_name) do
+    table = :persistent_term.get(@pt_table, @default_table)
+
+    case :ets.lookup(table, flag_name) do
+      [{^flag_name, value}] -> value
+      []                    -> nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(%{table_name: table_name}) do
+    table =
+      :ets.new(table_name, [
+        :set,
+        :named_table,
+        :public,
+        read_concurrency: true
+      ])
+
+    # Publish both the pid and the table name so the public functions can
+    # reach them without a GenServer call, regardless of registration name.
+ (truncated)
+13:44:13.281 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `FeatureFlags` that manages **multivariate** feature flags (A/B/C-style experiments) using ETS for fast reads, backed by a GenServer for writes.
+
+Unlike a plain on/off flag, a multivariate flag deterministically assigns each user to one of several named **variants** according to a weighted split, so you can run experiments where (say) 50% of users see variant `:a`, 30% see `:b`, and 20% see `:c`.
+
+I need these functions in the public API:
+
+- `FeatureFlags.start_link(opts)` to start the process. It should accept an optional `:table_name` for the ETS table (default `:feature_flags`), and an optional `:name` for process registration (pass `nil` to skip registration).
+- `FeatureFlags.enable(flag_name)` — sets the flag globally on (`:on`).
+- `FeatureFlags.disable(flag_name)` — sets the flag globally off (`:off`).
+- `FeatureFlags.set_variants(flag_name, variants)` — puts the flag into multivariate mode. `variants` is a list of `{variant_name, weight}` tuples, where `variant_name` is an atom and `weight` is a non-negative integer. The weights **must sum to exactly 100**; otherwise raise an `ArgumentError`. A variant with weight `0` receives no users.
+- `FeatureFlags.enabled?(flag_name)` — returns `true` only when the flag is globally `:on`. Variant flags and `:off`/unknown flags return `false`.
+- `FeatureFlags.variant_for(flag_name, user_id)` — returns the atom the user is assigned to:
+  - `:on` flags return `:on`.
+  - `:off` and unknown flags return `:off`.
+  - variant flags return the assigned variant atom. The assignment must be **deterministic**: the same `{flag_name, user_id}` pair always yields the same variant. Compute `bucket = :erlang.phash2({flag_name, user_id}, 100)` (a 0–99 value) and walk the variants in the order given, accumulating weights, returning the variant whose cumulative range contains the bucket (variant 1 owns `0..w1-1`, variant 2 owns `w1..w1+w2-1`, etc.).
+- `FeatureFlags.enabled_for?(flag_name, user_id)` — returns `true` when `variant_for/2` is anything other than `:off`.
+
+Implementation requirements:
+- ETS table should be of type `:set`, with `read_concurrency: true`, owned by the GenServer, and named so any process can read directly (for `enabled?`, `variant_for`, `enabled_for?`) without going through the GenServer.
+- All writes (`enable`, `disable`, `set_variants`) must go through the GenServer via `call` to serialise updates.
+- The ETS table must be created in `init/1`.
+
+Give me the complete module in a single file. Use only the OTP standard library, no external dependencies.
+</file>
+
+<file path="v1/solution.ex">
+defmodule FeatureFlags do
+  @moduledoc """
+  Multivariate (A/B/C) feature flags backed by ETS for concurrent reads and a
+  GenServer for serialised writes.
+
+  A flag is in one of three states:
+
+  - `{:on}`  — globally enabled; every user is assigned `:on`.
+  - `{:off}` — globally disabled; every user is assigned `:off`.
+  - `{:variants, [{name, weight}, ...]}` — users are deterministically split
+    across variants by weight. `:erlang.phash2({flag, user}, 100)` yields a
+    0–99 bucket which is matched against the cumulative weight ranges.
+  """
+
+  use GenServer
+
+  @default_table :feature_flags
+  @default_name __MODULE__
+
+  @pt_server {__MODULE__, :server}
+  @pt_table {__MODULE__, :table_name}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    table_name = Keyword.get(opts, :table_name, @default_table)
+    name = Keyword.get(opts, :name, @default_name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, %{table_name: table_name}, gen_opts)
+  end
+
+  @doc "Enables `flag_name` globally (`:on`)."
+  @spec enable(atom()) :: :ok
+  def enable(flag_name), do: GenServer.call(server(), {:set, flag_name, {:on}})
+
+  @doc "Disables `flag_name` globally (`:off`)."
+  @spec disable(atom()) :: :ok
+  def disable(flag_name), do: GenServer.call(server(), {:set, flag_name, {:off}})
+
+  @doc """
+  Puts `flag_name` into multivariate mode.
+
+  `variants` is a list of `{variant_atom, weight_integer}` tuples whose weights
+  must sum to exactly 100. Raises `ArgumentError` otherwise.
+  """
+  @spec set_variants(atom(), [{atom(), non_neg_integer()}]) :: :ok
+  def set_variants(flag_name, variants) when is_list(variants) do
+    validated = validate_variants(variants)
+    GenServer.call(server(), {:set, flag_name, {:variants, validated}})
+  end
+
+  @doc "Returns `true` only when `flag_name` is globally `:on`."
+  @spec enabled?(atom()) :: boolean()
+  def enabled?(flag_name) do
+    case lookup(flag_name) do
+      {:on} -> true
+      _ -> false
+    end
+  end
+
+  @doc """
+  Returns the variant `user_id` is assigned to for `flag_name`.
+
+  `:on` flags return `:on`; `:off`/unknown flags return `:off`; variant flags
+  return the deterministically assigned variant atom.
+  """
+  @spec variant_for(atom(), term()) :: atom()
+  def variant_for(flag_name, user_id) do
+    case lookup(flag_name) do
+      {:on} -> :on
+      {:off} -> :off
+      {:variants, variants} -> pick_variant(flag_name, user_id, variants)
+      nil -> :off
+    end
+  end
+
+  @doc "Returns `true` when `variant_for/2` is anything other than `:off`."
+  @spec enabled_for?(atom(), term()) :: boolean()
+  def enabled_for?(flag_name, user_id), do: variant_for(flag_name, user_id) != :off
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp validate_variants(variants) do
+    Enum.each(variants, fn
+      {name, weight} when is_atom(name) and is_integer(weight) and weight >= 0 ->
+        :ok
+
+      other ->
+        raise ArgumentError, "invalid variant spec: #{inspect(other)}"
+    end)
+
+    total = Enum.reduce(variants, 0, fn {_name, weight}, acc -> acc + weight end)
+
+    unless total == 100 do
+      raise ArgumentError, "variant weights must sum to 100, got #{total}"
+    end
+
+    variants
+  end
+
+  defp pick_variant(flag_name, user_id, variants) do
+    bucket = :erlang.phash2({flag_name, user_id}, 100)
+    select(variants, bucket, 0)
+  end
+
+  defp select([{name, weight} | rest], bucket, acc) do
+    upper = acc + weight
+    if bucket < upper, do: name, else: select(rest, bucket, upper)
+  end
+
+  defp select([], _bucket, _acc), do: :off
+
+  defp server, do: :persistent_term.get(@pt_server)
+
+  defp lookup(flag_name) do
+    table = :persistent_term.get(@pt_table, @default_table)
+
+    case :ets.lookup(table, flag_name) do
+      [{^flag_name, value}] -> value
+      [] -> nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(%{table_name: table_name}) do
+    table =
+      :ets.new(table_name, [:set, :named_table, :public, read_concurrency: true])
+
+    :persistent_term.put(@pt_server, self())
+    :persistent_term.put(@pt_table, table)
+    {:ok, %{table: table}}
+  end
+
+  @impl true
+  def handle_call({:set, flag_name, value}, _from, %{table: table} = state) do
+    :ets.insert(table, {flag_name, value})
+    {:reply, :ok, state}
+  end
+end
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule FeatureFlagsTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    table = :feature_flags_test
+    {:ok, pid} = FeatureFlags.start_link(table_name: table, name: nil)
+    %{pid: pid, table: table}
+  end
+
+  test "unknown flag has :off variant and is not enabled" do
+    assert FeatureFlags.variant_for(:nope, "u1") == :off
+    refute FeatureFlags.enabled?(:nope)
+    refute FeatureFlags.enabled_for?(:nope, "u1")
+  end
+
+  test "enable makes flag :on for everyone" do
+    FeatureFlags.enable(:feat)
+    assert FeatureFlags.enabled?(:feat)
+    assert FeatureFlags.variant_for( (truncated)
+13:44:13.281 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 24229, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 24229, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 24229, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 24229, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 33008, "type" => "message"}], "output_tokens" => 33008, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

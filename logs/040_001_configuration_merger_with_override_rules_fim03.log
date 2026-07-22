@@ -1,0 +1,399 @@
+09:40:10.952 [info] FIM 040_001_configuration_merger_with_override_rules_fim03 → 040_001_configuration_merger_with_override_rules_04: target resolve_opts/1
+09:40:10.952 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+09:40:10.952 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `resolve_opts/1`.
+
+Generate a prompt describing how to implement `resolve_opts/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `resolve_opts/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `resolve_opts/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `resolve_opts/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `ConfigMerger` that deep-merges configuration maps with a configurable override strategy.
+
+I need one primary public function:
+- `ConfigMerger.merge(base_config, override_config, opts \\ [])` which deep-merges two maps and returns the merged result.
+
+The merging rules are:
+- **Later sources win by default**: scalar values (strings, integers, atoms, booleans) in `override_config` replace those in `base_config` at the same key path.
+- **Deep merging**: if both `base_config` and `override_config` have a map at the same key, recurse into it rather than replacing the whole map.
+- **List strategy**: lists can be merged in two ways, controlled by the `:list_strategy` option. The default is `:replace` (override list replaces base list). If set to `:append`, the override list is appended to the base list. The strategy applies uniformly to all lists unless overridden per-key (see below).
+- **Per-key list strategy**: the `:list_strategies` option accepts a map where keys are key-path tuples (e.g. `{:servers, :hosts}` for a nested key) and values are `:replace` or `:append`. These take precedence over the global `:list_strategy`.
+- **Locked keys**: the `:locked` option accepts a list of key-path tuples (e.g. `[:database, :password]` meaning the key `:password` nested under `:database`). Any key whose full path matches a locked path must not be overridden — the base value must be preserved. Locking a key at a given path does not affect the same key at a different path.
+
+The key-path tuple convention for both `:list_strategies` and `:locked` is a list of atoms representing the nesting from root to the target key, e.g. `[:a, :b, :c]` refers to `base_config.a.b.c`.
+
+Return the merged map directly — no wrapping in `{:ok, ...}` tuples needed.
+
+Give me the complete module in a single file. Use only the Elixir standard library, no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule ConfigMerger do
+  @moduledoc """
+  Deep-merges configuration maps with a configurable override strategy.
+
+  ## Options
+
+    * `:list_strategy` - Global list merge strategy. Either `:replace` (default) or
+      `:append`. `:replace` means the override list wins outright; `:append` means
+      the override list is concatenated onto the end of the base list.
+
+    * `:list_strategies` - A map of `key_path => strategy` pairs that override the
+      global `:list_strategy` for specific paths. Key paths are lists of atoms, e.g.
+      `[:servers, :hosts]`. Values are `:replace` or `:append`.
+
+    * `:locked` - A list of key paths (each a list of atoms) whose values must not
+      be changed by the override. The base value is always preserved for locked paths.
+
+  ## Examples
+
+      iex> base   = %{db: %{host: "localhost", port: 5432}, tags: ["a"]}
+      iex> over   = %{db: %{port: 5433, name: "mydb"},      tags: ["b"]}
+
+      # Default (scalars replaced, lists replaced)
+      iex> ConfigMerger.merge(base, over)
+      %{db: %{host: "localhost", port: 5433, name: "mydb"}, tags: ["b"]}
+
+      # Append lists globally
+      iex> ConfigMerger.merge(base, over, list_strategy: :append)
+      %{db: %{host: "localhost", port: 5433, name: "mydb"}, tags: ["a", "b"]}
+
+      # Lock a nested key
+      iex> ConfigMerger.merge(base, over, locked: [[:db, :port]])
+      %{db: %{host: "localhost", port: 5432, name: "mydb"}, tags: ["b"]}
+  """
+
+  @type key_path    :: [atom()]
+  @type strategy    :: :replace | :append
+  @type config_map  :: map()
+
+  @type opts :: [
+    list_strategy:   strategy(),
+    list_strategies: %{key_path() => strategy()},
+    locked:          [key_path()]
+  ]
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Deep-merges `override_config` into `base_config`.
+
+  Returns the merged map directly.
+  """
+  @spec merge(config_map(), config_map(), opts()) :: config_map()
+  def merge(base_config, override_config, opts \\ [])
+      when is_map(base_config) and is_map(override_config) do
+    resolved_opts = resolve_opts(opts)
+    do_merge(base_config, override_config, _current_path = [], resolved_opts)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Option normalisation
+  # ---------------------------------------------------------------------------
+
+  defp resolve_opts(opts) do
+    global_strategy  = Keyword.get(opts, :list_strategy, :replace)
+    per_key_raw      = Keyword.get(opts, :list_strategies, %{})
+    locked_raw       = Keyword.get(opts, :locked, [])
+
+    unless global_strategy in [:replace, :append] do
+      raise ArgumentError,
+            "`:list_strategy` must be `:replace` or `:append`, got: #{inspect(global_strategy)}"
+    end
+
+    # Normalise per-key strategies: allow both list and tuple keys for ergonomics,
+    # but store everything as lists internally.
+    per_key =
+      Map.new(per_key_raw, fn {path, strat} ->
+        normalised_path = normalise_path(path, :list_strategies)
+
+        unless strat in [:replace, :append] do
+          raise ArgumentError,
+                "`:list_strategies` values must be `:replace` or `:append`, " <>
+                  "got #{inspect(strat)} for path #{inspect(normalised_path)}"
+        end
+
+        {normalised_path, strat}
+      end)
+
+    locked = Enum.map(locked_raw, &normalise_path(&1, :locked))
+
+    %{
+      global_list_strategy: global_strategy,
+      per_key_strategies:   per_key,
+      locked_paths:         locked
+    }
+  end
+
+  # Accept both list paths ([:a, :b]) and tuple paths ({:a, :b}) transparently.
+  defp normalise_path(path, _opt) when is_list(path),  do: path
+  defp normalise_path(path, _opt) when is_tuple(path), do: Tuple.to_list(path)
+  defp normalise_path(path, opt) do
+    raise ArgumentError,
+          "Key paths in `#{inspect(opt)}` must be lists or tuples of atoms, " <>
+            "got: #{inspect(path)}"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Recursive merge
+  # ---------------------------------------------------------------------------
+
+  defp do_merge(base, override, current_path, opts) when is_map(base) and is_map(override) do
+    # Collect all keys from both maps.
+    all_keys = Map.keys(base) ++ Map.keys(override)
+    all_keys = Enum.uniq(all_keys)
+
+    Map.new(all_keys, fn key ->
+      key_path = current_path ++ [key]
+
+      merged_value =
+        cond do
+          # Key only exists in base — keep it unconditionally.
+          not Map.has_key?(override, key) ->
+            Map.fetch!(base, key)
+
+          # Key only exists in override — but respect lock (do not introduce
+          # a locked key if it genuinely isn't in base either; if it *is* in
+          # base the guard below handles it).
+          not Map.has_key?(base, key) ->
+            Map.fetch!(override, key)
+
+          # Both maps have the key. Check lock first.
+          locked?(key_path (truncated)
+09:40:47.654 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Task: Implement `resolve_opts/1`
+
+Implement the private `resolve_opts/1` function for the `ConfigMerger` module.
+
+This function normalises the user-supplied keyword `opts` into an internal
+configuration map that the rest of the merge machinery consumes. It must:
+
+- Read the following options, each with a default:
+  - `:list_strategy` — the global list merge strategy, defaulting to `:replace`.
+  - `:list_strategies` — a map of `key_path => strategy` pairs, defaulting to `%{}`.
+  - `:locked` — a list of key paths, defaulting to `[]`.
+- Validate the global `:list_strategy`: it must be either `:replace` or `:append`.
+  If it is anything else, raise an `ArgumentError` whose message reports the offending
+  value (via `inspect/1`).
+- Normalise the per-key strategies into a new map: for each `{path, strat}` pair,
+  convert `path` to its canonical list form using `normalise_path/2` (passing
+  `:list_strategies` as the option name), and validate that `strat` is `:replace` or
+  `:append`. If a value is invalid, raise an `ArgumentError` whose message reports the
+  offending strategy and the normalised path (both via `inspect/1`). Store the result
+  keyed by the normalised path.
+- Normalise every entry in the `:locked` list using `normalise_path/2` (passing
+  `:locked` as the option name), producing a list of canonical list paths.
+- Return a map with exactly these keys:
+  - `:global_list_strategy` — the validated global strategy.
+  - `:per_key_strategies` — the normalised per-key strategy map.
+  - `:locked_paths` — the normalised list of locked paths.
+
+The whole module is given below, with only the body of `resolve_opts/1` replaced by
+`# TODO`. Implement that body.
+
+```elixir
+defmodule ConfigMerger do
+  @moduledoc """
+  Deep-merges configuration maps with a configurable override strategy.
+
+  ## Options
+
+    * `:list_strategy` - Global list merge strategy. Either `:replace` (default) or
+      `:append`. `:replace` means the override list wins outright; `:append` means
+      the override list is concatenated onto the end of the base list.
+
+    * `:list_strategies` - A map of `key_path => strategy` pairs that override the
+      global `:list_strategy` for specific paths. Key paths are lists of atoms, e.g.
+      `[:servers, :hosts]`. Values are `:replace` or `:append`.
+
+    * `:locked` - A list of key paths (each a list of atoms) whose values must not
+      be changed by the override. The base value is always preserved for locked paths.
+
+  ## Examples
+
+      iex> base   = %{db: %{host: "localhost", port: 5432}, tags: ["a"]}
+      iex> over   = %{db: %{port: 5433, name: "mydb"},      tags: ["b"]}
+
+      # Default (scalars replaced, lists replaced)
+      iex> ConfigMerger.merge(base, over)
+      %{db: %{host: "localhost", port: 5433, name: "mydb"}, tags: ["b"]}
+
+      # Append lists globally
+      iex> ConfigMerger.merge(base, over, list_strategy: :append)
+      %{db: %{host: "localhost", port: 5433, name: "mydb"}, tags: ["a", "b"]}
+
+      # Lock a nested key
+      iex> ConfigMerger.merge(base, over, locked: [[:db, :port]])
+      %{db: %{host: "localhost", port: 5432, name: "mydb"}, tags: ["b"]}
+  """
+
+  @type key_path    :: [atom()]
+  @type strategy    :: :replace | :append
+  @type config_map  :: map()
+
+  @type opts :: [
+    list_strategy:   strategy(),
+    list_strategies: %{key_path() => strategy()},
+    locked:          [key_path()]
+  ]
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Deep-merges `override_config` into `base_config`.
+
+  Returns the merged map directly.
+  """
+  @spec merge(config_map(), config_map(), opts()) :: config_map()
+  def merge(base_config, override_config, opts \\ [])
+      when is_map(base_config) and is_map(override_config) do
+    resolved_opts = resolve_opts(opts)
+    do_merge(base_config, override_config, _current_path = [], resolved_opts)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Option normalisation
+  # ---------------------------------------------------------------------------
+
+  defp resolve_opts(opts) do
+    # TODO
+  end
+
+  # Accept both list paths ([:a, :b]) and tuple paths ({:a, :b}) transparently.
+  defp normalise_path(path, _opt) when is_list(path),  do: path
+  defp normalise_path(path, _opt) when is_tuple(path), do: Tuple.to_list(path)
+  defp normalise_path(path, opt) do
+    raise ArgumentError,
+          "Key paths in `#{inspect(opt)}` must be lists or tuples of atoms, " <>
+            "got: #{inspect(path)}"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Recursive merge
+  # ---------------------------------------------------------------------------
+
+  defp do_merge(base, override, current_path, opts) when is_map(base) and is_map(override) do
+    # Collect all keys from both maps.
+    all_keys = Map.keys(base) ++ Map.keys(override)
+    all_keys = Enum.uniq(all_keys)
+
+    Map.new(all_keys, fn key ->
+      key_path = current_path ++ [key]
+
+      merged_value =
+        cond do
+          # Key only exists in base — keep it unconditionally.
+          not Map.has_key?(override, key) ->
+            Map.fetch!(base, key)
+
+          # Key only exists in override — but respect lock (do not introduce
+          # a locked key if it genuinely isn't in base either; if it *is* in
+          # base the guard below handles it).
+          not Map.has_key?(base, key) ->
+            Map.fetch!(override, key)
+
+          # Both maps have the key. Check lock first.
+          locked?(key_path, opts) ->
+            Map.fetch!(base, key)
+
+          # Both maps have the key, key is not locked — merge the values.
+          true ->
+            merge_values(
+              Map.fetch!(base, key),
+              Map.fetch!(override, key),
+              key_path,
+              opts
+            )
+        end
+
+      {key, merged_value}
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Value-level merging
+  # ---------------------------------------------------------------------------
+
+  # Both values are maps → recurse.
+  defp merge_values(base_val, override_val, key_path, opts)
+       when is_map(base_val) and is_map(override_val) do
+    do_merge(base_val, override_val, key_path, opts)
+  end
+
+  # Both values are lists → apply the applicable list strategy.
+  defp merge_values(base_val, override_val, key_path, opts)
+       when is_list(base_val) and is_list(override_val) do
+    strategy = list_strategy_for(key_path, opts)
+
+    case strategy do
+      :replace -> override_val
+      :append  -> base_val ++ override_val
+    end
+  end
+
+  # Any other combination (scalar vs scalar, type mismatch, etc.) → override wins.
+  defp merge_values(_base_val, override_val, _key_path, _opts), do: override_val
+
+  # ---------------------------------------------------------------------------
+  # Helpers
+  # ---------------------------------------------------------------------------
+
+  # Check whether a key path is in the locked set.
+  defp locked?(key_path, %{locked_paths: locked_paths}) do
+    key_path in locked_paths
+  end
+
+  # Look up the list strategy for a given key path.
+  # Per-key strategies take precedence over the global default.
+  defp list_strategy_for(key_path, %{per_key_strategies: per_key, global_list_strategy: global}) do
+    Map.get(per_key, key_path, global)
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp resolve_opts(opts) do
+    global_strategy  = Keyword.get(opts, :list_strategy, :replace)
+    per_key_raw      = Keyword.get(opts, :list_strategies, %{})
+    locked_raw       = Keyword.get(opts, :locked, [])
+
+    unless global_strategy in [:replace, :append] do
+      raise ArgumentError,
+            "`:list_strategy` must be `:replace` or `:append`, got: #{inspect(global_strategy)}"
+    end
+
+    # Normalise per-key strategies: allow both list and tuple keys for ergonomics,
+    # but store  (truncated)
+09:40:47.654 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4023, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4023, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4023, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4023, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3541, "type" => "message"}], "output_tokens" => 3541, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+09:40:47.674 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_040_001_configuration_merger_with_override_rules_04/040_001_configuration_merger_with_override_rules_04 solution.ex
+09:40:48.354 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":33,"lines_over_98":0,"max_line_length":96,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"040_001_configuration_merger_with_override_rules_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_040_001_configuration_merger_with_override_rules_04/040_001_configuration_merger_with_override_rules_04/solution.ex","task":"040_001_configuration_merger_with_override_rules_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-04T07:40:48.324188Z"}
+09:40:48.355 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_040_001_configuration_merger_with_override_rules_04/040_001_configuration_merger_with_override_rules_04 .gen_staging/fim_040_001_configuration_merger_with_override_rules_04/mutant.ex
+09:40:49.017 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":26,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"parent":"040_001_configuration_merger_with_override_rules_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.7,"mode":"fim","overall":0.27,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 20/20 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_040_001_configuration_merger_with_override_rules_04/mutant.ex","task":"040_001_configuration_merger_with_override_rules_04","test_failures":[{"message":"MUTATION","module":"ConfigMergerTest","test":"test override replaces scalar at top-level key"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test keys absent in override are preserved from base"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test keys present only in override are added"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test nested map is deep-merged, not replaced wholesale"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test 3-level deep merge preserves untouched branches"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test 4-level deep merge"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test lists are replaced by default"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test explicit :replace strategy replaces lists"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test :append strategy concatenates lists"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test :append on nested list"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test per-key list strategy overrides global strategy"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test per-key strategy on deeply nested list"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test locked top-level key is not overridden"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test locked nested key is not overridden"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test locked key at one path does not protect same key at another path"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test multiple locked keys work together"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test locked key inside deep map with other keys merging normally"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test append list strategy + locked key in same merge"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test merging empty override returns base unchanged"},{"message":"MUTATION","module":"ConfigMergerTest","test":"test merging empty base with override returns override"}],"tests_errors":0,"tests_excluded":0,"tests_failed":20,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-04T07:40:48.993213Z"}
+09:40:49.017 [debug] fim mutation gate: killed
+09:40:49.019 [info] promoted 040_001_configuration_merger_with_override_rules_04 -> tasks/040_001_configuration_merger_with_override_rules_04

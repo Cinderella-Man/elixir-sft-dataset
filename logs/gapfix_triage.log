@@ -1,0 +1,14 @@
+Screen triage: 4 untriaged RED task(s) — model=opus
+[1/4] 019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01 ... PROMPT GAP: In `{:validation, errors_map}`, `errors_map` maps the offending field's **string** key (e.g. `"name"`, `"price"`) to a list of error message strings.
+[2/4] 031_001_csv_importer_with_validation_and_error_report_01 ... ENTAILED (solver-weak — keep)
+[3/4] 073_004_fk_dependency_ordered_deletion_cleaner_01 ... ENTAILED (solver-weak — keep)
+[4/4] 074_004_numeric_tolerance_and_exception_assertion_helpers_01 ... PROMPT GAP: In the `assert_raises_message` case where the correct exception type is raised but its message lacks `needle`, the failure message must contain the literal substring "did not contain".
+
+=== SCREEN TRIAGE SUMMARY (whole ledger) ===
+  triaged: 121   entailed/keep: 85   open prompt gaps: 2   stale/resolved gaps: 31   errors: 0
+
+  PROMPT GAPS (human sign-off + backfill needed — cascade per docs/10 inv. #5):
+    - 074_004_numeric_tolerance_and_exception_assertion_helpers_01
+        In the `assert_raises_message` case where the correct exception type is raised but its message lacks `needle`, the failure message must contain the literal substring "did not contain".
+    - 019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01
+        In `{:validation, errors_map}`, `errors_map` maps the offending field's **string** key (e.g. `"name"`, `"price"`) to a list of error message strings.

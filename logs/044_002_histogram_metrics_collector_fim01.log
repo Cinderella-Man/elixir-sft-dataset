@@ -1,0 +1,386 @@
+13:32:44.416 [info] FIM 044_002_histogram_metrics_collector_fim01 → 044_002_histogram_metrics_collector_02: target get/1
+13:32:44.416 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:32:44.416 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `get/1`.
+
+Generate a prompt describing how to implement `get/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `get/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `get/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `get/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Metrics` that collects **latency/size distributions** using ETS for fast, concurrent-safe storage. This is a histogram collector (Prometheus-style), not a scalar counter/gauge collector.
+
+I need these functions in the public API:
+
+- `Metrics.start_link(opts \\ [])` to start the backing GenServer. It should accept a `:name` option for process registration (defaulting to `__MODULE__`) and a `:buckets` option: a sorted ascending list of integer upper bounds. Default to `[10, 50, 100, 500, 1000]`.
+- `Metrics.observe(name, value)` to record a single integer observation (e.g. a request latency in ms) for the histogram `name`. `value` must be a non-negative integer. This is the hot path and MUST NOT serialize through the GenServer — it must go directly to ETS using `:ets.update_counter`. Recording an observation atomically bumps the total count, the running sum, and the count for the matching bucket. A value `v` falls into the bucket of the smallest boundary `b` such that `v <= b`; a value larger than every boundary falls into the implicit `+Inf` bucket.
+- `Metrics.get(name)` to return the current summary of the histogram as a map `%{count: c, sum: s, average: avg, buckets: %{...}}`, or `nil` if nothing has ever been observed for `name`. The `:buckets` map is **cumulative** ("less-than-or-equal"): each configured boundary maps to the number of observations `<= that boundary`, plus an `:infinity` key mapping to the total count. `:average` is `sum / count` as a float (the average of an empty histogram never arises because `get` returns `nil` when there are no observations).
+- `Metrics.all()` to return a map of `%{name => total_count}` across every histogram.
+- `Metrics.reset(name)` to erase all recorded data for `name` so that a subsequent `get(name)` returns `nil`.
+
+The ETS table must be public and named so `observe` can bypass the owning process for maximum throughput. The GenServer exists only to own the table and to hold the bucket configuration. Use only OTP/stdlib — no external dependencies. Give me the complete implementation in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Metrics do
+  @moduledoc """
+  A concurrent-safe histogram collector backed by a named public ETS table.
+
+  Each observation atomically bumps three ETS counters — the total count, the
+  running sum, and the matching bucket — all via `:ets.update_counter/4`, so
+  the hot path never serialises through the owning GenServer. The GenServer
+  exists only to own the table and hold the bucket configuration.
+
+  ## Quick start
+
+      {:ok, _pid} = Metrics.start_link()
+      Metrics.observe(:latency_ms, 42)      # => :ok
+      Metrics.get(:latency_ms)
+      # => %{count: 1, sum: 42, average: 42.0,
+      #      buckets: %{10 => 0, 50 => 1, 100 => 1, 500 => 1, 1000 => 1, infinity: 1}}
+  """
+
+  use GenServer
+
+  @table __MODULE__
+  @default_buckets [10, 50, 100, 500, 1000]
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the backing GenServer and creates the ETS table.
+
+  ## Options
+
+    * `:name` — registration name for the process. Defaults to `#{__MODULE__}`.
+    * `:buckets` — sorted ascending list of integer upper bounds.
+      Defaults to `#{inspect(@default_buckets)}`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, init_opts} = Keyword.pop(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, init_opts, name: name)
+  end
+
+  @doc """
+  Records a single non-negative integer observation for histogram `name`.
+
+  Atomically increments the total count, the running sum and the count for the
+  bucket that `value` falls into. Returns `:ok`.
+  """
+  @spec observe(term(), non_neg_integer()) :: :ok
+  def observe(name, value) when is_integer(value) and value >= 0 do
+    :ets.update_counter(@table, {name, :count}, {2, 1}, {{name, :count}, 0})
+    :ets.update_counter(@table, {name, :sum}, {2, value}, {{name, :sum}, 0})
+    u = bucket_for(value)
+    :ets.update_counter(@table, {name, :bucket, u}, {2, 1}, {{name, :bucket, u}, 0})
+    :ok
+  end
+
+  @doc """
+  Returns the histogram summary for `name`, or `nil` if nothing was observed.
+
+  The `:buckets` map is cumulative: each configured boundary maps to the number
+  of observations `<=` that boundary, plus an `:infinity` key for the total.
+  """
+  @spec get(term()) :: map() | nil
+  def get(name) do
+    case :ets.lookup(@table, {name, :count}) do
+      [] ->
+        nil
+
+      [{_, count}] ->
+        sum = counter({name, :sum})
+        boundaries = :persistent_term.get({@table, :buckets})
+
+        {cumulative, _running} =
+          Enum.reduce(boundaries, {%{}, 0}, fn b, {acc, running} ->
+            running = running + counter({name, :bucket, b})
+            {Map.put(acc, b, running), running}
+          end)
+
+        buckets = Map.put(cumulative, :infinity, count)
+        %{count: count, sum: sum, average: sum / count, buckets: buckets}
+    end
+  end
+
+  @doc """
+  Returns a map of `%{name => total_count}` across every histogram.
+  """
+  @spec all() :: %{term() => non_neg_integer()}
+  def all do
+    :ets.foldl(
+      fn
+        {{name, :count}, v}, acc -> Map.put(acc, name, v)
+        _other, acc -> acc
+      end,
+      %{},
+      @table
+    )
+  end
+
+  @doc """
+  Erases all recorded data for `name`, so a later `get/1` returns `nil`.
+  """
+  @spec reset(term()) :: :ok
+  def reset(name) do
+    :ets.match_delete(@table, {{name, :count}, :_})
+    :ets.match_delete(@table, {{name, :sum}, :_})
+    :ets.match_delete(@table, {{name, :bucket, :_}, :_})
+    :ok
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  defp bucket_for(value) do
+    boundaries = :persistent_term.get({@table, :buckets})
+    Enum.find(boundaries, :inf, fn b -> value <= b end)
+  end
+
+  defp counter(key) do
+    case :ets.lookup(@table, key) do
+      [{^key, v}] -> v
+      [] -> 0
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(opts) do
+    buckets = Keyword.get(opts, :buckets, @default_buckets)
+    :persistent_term.put({@table, :buckets}, buckets)
+
+    :ets.new(@table, [
+      :set,
+      :named_table,
+      :public,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
+
+    {:ok, %{buckets: buckets}}
+  end
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file c (truncated)
+13:33:12.960 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `get/1` function.
+
+`get(name)` returns the current summary of the histogram `name` as a map of the
+shape `%{count: c, sum: s, average: avg, buckets: %{...}}`, or `nil` if nothing
+has ever been observed for `name`.
+
+Begin by looking up the `{name, :count}` counter in the ETS table (`@table`). If
+the lookup returns `[]`, nothing has been recorded for `name`, so return `nil`.
+
+Otherwise, extract the total `count` from the looked-up row. Read the running
+`sum` from the `{name, :sum}` counter (use the `counter/1` helper). Fetch the
+configured, sorted-ascending list of bucket boundaries from
+`:persistent_term.get({@table, :buckets})`.
+
+Build the **cumulative** buckets map by reducing over the boundaries while
+carrying a running total: for each boundary `b`, add that bucket's raw count
+(`counter({name, :bucket, b})`) to the running total, and store the running
+total under key `b`. This makes each boundary map to the number of observations
+`<=` that boundary. Finally add an `:infinity` key mapping to the total `count`.
+
+Return `%{count: count, sum: sum, average: sum / count, buckets: buckets}`, where
+`:average` is `sum / count` as a float.
+
+```elixir
+defmodule Metrics do
+  @moduledoc """
+  A concurrent-safe histogram collector backed by a named public ETS table.
+
+  Each observation atomically bumps three ETS counters — the total count, the
+  running sum, and the matching bucket — all via `:ets.update_counter/4`, so
+  the hot path never serialises through the owning GenServer. The GenServer
+  exists only to own the table and hold the bucket configuration.
+
+  ## Quick start
+
+      {:ok, _pid} = Metrics.start_link()
+      Metrics.observe(:latency_ms, 42)      # => :ok
+      Metrics.get(:latency_ms)
+      # => %{count: 1, sum: 42, average: 42.0,
+      #      buckets: %{10 => 0, 50 => 1, 100 => 1, 500 => 1, 1000 => 1, infinity: 1}}
+  """
+
+  use GenServer
+
+  @table __MODULE__
+  @default_buckets [10, 50, 100, 500, 1000]
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the backing GenServer and creates the ETS table.
+
+  ## Options
+
+    * `:name` — registration name for the process. Defaults to `#{__MODULE__}`.
+    * `:buckets` — sorted ascending list of integer upper bounds.
+      Defaults to `#{inspect(@default_buckets)}`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, init_opts} = Keyword.pop(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, init_opts, name: name)
+  end
+
+  @doc """
+  Records a single non-negative integer observation for histogram `name`.
+
+  Atomically increments the total count, the running sum and the count for the
+  bucket that `value` falls into. Returns `:ok`.
+  """
+  @spec observe(term(), non_neg_integer()) :: :ok
+  def observe(name, value) when is_integer(value) and value >= 0 do
+    :ets.update_counter(@table, {name, :count}, {2, 1}, {{name, :count}, 0})
+    :ets.update_counter(@table, {name, :sum}, {2, value}, {{name, :sum}, 0})
+    u = bucket_for(value)
+    :ets.update_counter(@table, {name, :bucket, u}, {2, 1}, {{name, :bucket, u}, 0})
+    :ok
+  end
+
+  @doc """
+  Returns the histogram summary for `name`, or `nil` if nothing was observed.
+
+  The `:buckets` map is cumulative: each configured boundary maps to the number
+  of observations `<=` that boundary, plus an `:infinity` key for the total.
+  """
+  @spec get(term()) :: map() | nil
+  def get(name) do
+    # TODO
+  end
+
+  @doc """
+  Returns a map of `%{name => total_count}` across every histogram.
+  """
+  @spec all() :: %{term() => non_neg_integer()}
+  def all do
+    :ets.foldl(
+      fn
+        {{name, :count}, v}, acc -> Map.put(acc, name, v)
+        _other, acc -> acc
+      end,
+      %{},
+      @table
+    )
+  end
+
+  @doc """
+  Erases all recorded data for `name`, so a later `get/1` returns `nil`.
+  """
+  @spec reset(term()) :: :ok
+  def reset(name) do
+    :ets.match_delete(@table, {{name, :count}, :_})
+    :ets.match_delete(@table, {{name, :sum}, :_})
+    :ets.match_delete(@table, {{name, :bucket, :_}, :_})
+    :ok
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  defp bucket_for(value) do
+    boundaries = :persistent_term.get({@table, :buckets})
+    Enum.find(boundaries, :inf, fn b -> value <= b end)
+  end
+
+  defp counter(key) do
+    case :ets.lookup(@table, key) do
+      [{^key, v}] -> v
+      [] -> 0
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(opts) do
+    buckets = Keyword.get(opts, :buckets, @default_buckets)
+    :persistent_term.put({@table, :buckets}, buckets)
+
+    :ets.new(@table, [
+      :set,
+      :named_table,
+      :public,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
+
+    {:ok, %{buckets: buckets}}
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+def get(name) do
+  case :ets.lookup(@table, {name, :count}) do
+    [] ->
+      nil
+
+    [{_, count}] ->
+      sum = counter({name, :sum})
+      boundaries = :persistent_term.get({@table, :buckets})
+
+      {cumulative, _running} =
+        Enum.reduce(boundaries, {%{}, 0}, fn b, {acc, running} ->
+          running = running + counter({name, :bucket, b})
+          {Map.put(acc, b, running), running}
+        end)
+
+      buckets = Map.put(cumulative, :infinity, count)
+      %{count: count, sum: sum, average: sum / count, buckets: buckets}
+  end
+end
+</file>
+13:33:12.960 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3374, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3374, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3374, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3374, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2457, "type" => "message"}], "output_tokens" => 2457, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:33:12.980 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_044_002_histogram_metrics_collector_02/044_002_histogram_metrics_collector_02 solution.ex
+13:33:13.629 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":19,"lines_over_98":0,"max_line_length":71,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"044_002_histogram_metrics_collector_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_044_002_histogram_metrics_collector_02/044_002_histogram_metrics_collector_02/solution.ex","task":"044_002_histogram_metrics_collector_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T11:33:13.605790Z"}
+13:33:13.630 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_044_002_histogram_metrics_collector_02/044_002_histogram_metrics_collector_02 .gen_staging/fim_044_002_histogram_metrics_collector_02/mutant.ex
+13:33:14.266 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":18,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"044_002_histogram_metrics_collector_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.34,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 10/11 failed"],"tests":0.09},"shape":"fim","solution_file":".gen_staging/fim_044_002_histogram_metrics_collector_02/mutant.ex","task":"044_002_histogram_metrics_collector_02","test_failures":[{"message":"MUTATION","module":"MetricsTest","test":"test get returns nil for a histogram that has never been observed"},{"message":"MUTATION","module":"MetricsTest","test":"test a single observation produces count 1 and matching sum"},{"message":"MUTATION","module":"MetricsTest","test":"test count, sum and average accumulate across observations"},{"message":"MUTATION","module":"MetricsTest","test":"test buckets are cumulative (less-than-or-equal)"},{"message":"MUTATION","module":"MetricsTest","test":"test values above every boundary land only in the +Inf bucket"},{"message":"MUTATION","module":"MetricsTest","test":"test a value exactly on a boundary is included at that boundary"},{"message":"MUTATION","module":"MetricsTest","test":"test custom bucket boundaries are honoured"},{"message":"MUTATION","module":"MetricsTest","test":"test reset erases a histogram entirely"},{"message":"MUTATION","module":"MetricsTest","test":"test reset of one histogram leaves others intact"},{"message":"MUTATION","module":"MetricsTest","test":"test 100 concurrent observations aggregate correctly"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T11:33:14.242189Z"}
+13:33:14.266 [debug] fim mutation gate: killed
+13:33:14.267 [info] promoted 044_002_histogram_metrics_collector_02 -> tasks/044_002_histogram_metrics_collector_02

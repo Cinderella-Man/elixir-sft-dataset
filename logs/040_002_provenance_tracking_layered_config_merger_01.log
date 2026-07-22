@@ -1,0 +1,360 @@
+09:37:19.627 [info] VARIATION 040_002_provenance_tracking_layered_config_merger_01: Provenance-Tracking Layered Config Merger
+09:37:19.628 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_002_provenance_tracking_layered_config_merger_01 solution.ex
+09:37:20.280 [debug] grade JSON: {"analysis":{"defp_count":12,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":true,"line_count":127,"lines_over_98":0,"max_line_length":96,"mode":"full","pipe_chain_count":2,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.97,"reasons":["analysis: @doc on public functions → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/040_002_provenance_tracking_layered_config_merger_01/solution.ex","task":"040_002_provenance_tracking_layered_config_merger_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T07:37:20.255731Z"}
+09:37:20.281 [info] cycle 040_002_provenance_tracking_layered_config_merger_01: repairing — The solution is green but does not meet the house style: no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+09:37:20.281 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+09:37:20.281 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `LayeredConfig` that merges an ordered stack of
+named configuration layers into a single effective configuration **and reports the
+provenance** of every effective value (which layer it came from).
+
+I need one primary public function:
+- `LayeredConfig.merge(layers, opts \\ [])` where `layers` is a non-empty list of
+  `{layer_name, config_map}` tuples given in **increasing precedence order** (the
+  first tuple is the base, each later layer overrides the ones before it).
+
+It must return a map with exactly two keys:
+- `:config` — the deep-merged effective configuration map.
+- `:provenance` — a map from **key-path** (a list of atoms from root to a leaf,
+  e.g. `[:db, :port]`) to the name of the layer that supplied the winning value.
+
+The merging rules:
+- **Deep merging**: if two layers both hold a map at the same key, recurse into it
+  rather than replacing the whole map.
+- **Later layers win** for scalars (strings, integers, atoms, booleans): the value
+  from the highest-precedence layer that set the leaf wins, and provenance records
+  that layer's name.
+- **List strategy**: controlled by the `:list_strategy` option, either `:replace`
+  (default, higher layer's list wins) or `:append` (higher layer's list is
+  concatenated onto the accumulated list). For an appended leaf, its provenance is
+  the **list of layer names** (in precedence order) that contributed elements.
+- **Per-key list strategy**: the `:list_strategies` option accepts a map of
+  `key_path => :replace | :append` (key paths as lists or tuples of atoms) that
+  overrides the global `:list_strategy` for those specific paths.
+- **Locked keys**: the `:locked` option accepts a list of key-path tuples/lists.
+  When a locked path already exists in a lower-precedence layer, higher layers must
+  not change it — the earlier value and its provenance are preserved. Locking only
+  applies where the key already exists in an earlier layer.
+
+Key paths for `:list_strategies` and `:locked` are lists (or tuples) of atoms from
+root to the target key.
+
+A single-layer stack must return that layer's config unchanged with every leaf's
+provenance pointing at that one layer. Raise `ArgumentError` on an empty layer list.
+
+Give me the complete module in a single file. Use only the Elixir standard library.
+
+----- solution.ex -----
+defmodule LayeredConfig do
+  @moduledoc """
+  Merges an ordered stack of named configuration layers into a single effective
+  configuration and reports the provenance of every effective value.
+
+  `merge/2` takes a non-empty list of `{layer_name, config_map}` tuples in
+  increasing precedence order and returns `%{config: map, provenance: map}` where
+  `provenance` maps each leaf key-path (a list of atoms) to the layer that supplied
+  the winning value (or, for appended lists, the ordered list of contributing
+  layers).
+  """
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec merge([{term(), map()}], keyword()) :: %{config: map(), provenance: map()}
+  def merge(layers, opts \\ []) when is_list(layers) do
+    if layers == [] do
+      raise ArgumentError, "`layers` must be a non-empty list of {name, map} tuples"
+    end
+
+    resolved = resolve_opts(opts)
+
+    [{first_name, first_map} | rest] = Enum.map(layers, &normalise_layer/1)
+    init_prov = leaf_provenance(first_map, first_name, [], %{})
+
+    {config, provenance} =
+      Enum.reduce(rest, {first_map, init_prov}, fn {name, map}, {acc_map, acc_prov} ->
+        merge_map(acc_map, map, name, [], acc_prov, resolved)
+      end)
+
+    %{config: config, provenance: provenance}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Layer / option normalisation
+  # ---------------------------------------------------------------------------
+
+  defp normalise_layer({name, map}) when is_map(map), do: {name, map}
+
+  defp normalise_layer(other) do
+    raise ArgumentError, "each layer must be a {name, map} tuple, got: #{inspect(other)}"
+  end
+
+  defp resolve_opts(opts) do
+    global = Keyword.get(opts, :list_strategy, :replace)
+
+    per_key =
+      opts
+      |> Keyword.get(:list_strategies, %{})
+      |> Map.new(fn {path, strat} -> {normalise_path(path), strat} end)
+
+    locked = Enum.map(Keyword.get(opts, :locked, []), &normalise_path/1)
+
+    %{global_list_strategy: global, per_key_strategies: per_key, locked_paths: locked}
+  end
+
+  defp normalise_path(path) when is_list(path), do: path
+  defp normalise_path(path) when is_tuple(path), do: Tuple.to_list(path)
+
+  defp normalise_path(path) do
+    raise ArgumentError, "key paths must be lists or tuples of atoms, got: #{inspect(path)}"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Recursive merge (threads the provenance map through)
+  # ---------------------------------------------------------------------------
+
+  defp merge_map(base_map, over_map, name, path, prov, opts) do
+    Enum.reduce(over_map, {base_map, prov}, fn {k, ov}, {acc, pr} ->
+      kpath = path ++ [k]
+
+      cond do
+        locked?(kpath, opts) and Map.has_key?(base_map, k) ->
+          {acc, pr}
+
+        Map.has_key?(base_map, k) ->
+          {mv, pr2} = merge_value(Map.fetch!(base_map, k), ov, name, kpath, pr, opts)
+          {Map.put(acc, k, mv), pr2}
+
+        true ->
+          {Map.put(acc, k, ov), leaf_provenance(ov, name, kpath, pr)}
+      end
+    end)
+  end
+
+  defp merge_value(bv, ov, name, kpath, pr, opts) do
+    cond do
+      is_map(bv) and is_map(ov) ->
+        merge_map(bv, ov, name, kpath, pr, opts)
+
+      is_list(bv) and is_list(ov) ->
+        case list_strategy_for(kpath, opts) do
+          :replace ->
+            {ov, Map.put(pr, kpath, name)}
+
+          :append ->
+            names = List.wrap(Map.get(pr, kpath)) ++ [name]
+            {bv ++ ov, Map.put(pr, kpath, names)}
+        end
+
+      is_map(ov) ->
+        # Override replaces a scalar/list with a whole subtree.
+        {ov, leaf_provenance(ov, name, kpath, Map.delete(pr, kpath))}
+
+      true ->
+        {ov, Map.put(pr, kpath, name)}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Helpers
+  # ---------------------------------------------------------------------------
+
+  defp leaf_provenance(value, name, path, pr) when is_map(value) do
+    Enum.reduce(value, pr, fn {k, v}, acc -> leaf_provenance(v, name, path ++ [k], acc) end)
+  end
+
+  defp leaf_provenance(_value, name, path, pr), do: Map.put(pr, path, name)
+
+  defp locked?(kpath, %{locked_paths: locked}), do: kpath in locked
+
+  defp list_strategy_for(kpath, %{per_key_strategies: per_key, global_list_strategy: global}) do
+    Map.get(per_key, kpath, global)
+  end
+end
+
+----- test_harness.exs -----
+defmodule LayeredConfigTest do
+  use ExUnit.Case, async: false
+
+  # -------------------------------------------------------
+  # Basic scalar layering + provenance
+  # -------------------------------------------------------
+
+  test "single layer returns config unchanged with self pr (truncated)
+09:37:45.046 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule LayeredConfig do
+  @moduledoc """
+  Merges an ordered stack of named configuration layers into a single effective
+  configuration and reports the provenance of every effective value.
+
+  `merge/2` takes a non-empty list of `{layer_name, config_map}` tuples in
+  increasing precedence order and returns `%{config: map, provenance: map}` where
+  `provenance` maps each leaf key-path (a list of atoms) to the layer that supplied
+  the winning value (or, for appended lists, the ordered list of contributing
+  layers).
+  """
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Merges `layers` (a non-empty list of `{name, config_map}` tuples in increasing
+  precedence order) into a single effective configuration.
+
+  Returns a map with two keys: `:config`, the deep-merged configuration, and
+  `:provenance`, a map from each leaf key-path (a list of atoms) to the layer name
+  that supplied the winning value. For appended lists the provenance is the ordered
+  list of contributing layer names.
+
+  Supported `opts`:
+
+    * `:list_strategy` — `:replace` (default) or `:append` for list leaves.
+    * `:list_strategies` — a map of `key_path => :replace | :append` overriding the
+      global strategy for specific paths.
+    * `:locked` — a list of key-paths that, once set by a lower layer, cannot be
+      changed by higher layers.
+
+  Key paths for `:list_strategies` and `:locked` are lists or tuples of atoms.
+  Raises `ArgumentError` when `layers` is empty.
+  """
+  @spec merge([{term(), map()}], keyword()) :: %{config: map(), provenance: map()}
+  def merge(layers, opts \\ []) when is_list(layers) do
+    if layers == [] do
+      raise ArgumentError, "`layers` must be a non-empty list of {name, map} tuples"
+    end
+
+    resolved = resolve_opts(opts)
+
+    [{first_name, first_map} | rest] = Enum.map(layers, &normalise_layer/1)
+    init_prov = leaf_provenance(first_map, first_name, [], %{})
+
+    {config, provenance} =
+      Enum.reduce(rest, {first_map, init_prov}, fn {name, map}, {acc_map, acc_prov} ->
+        merge_map(acc_map, map, name, [], acc_prov, resolved)
+      end)
+
+    %{config: config, provenance: provenance}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Layer / option normalisation
+  # ---------------------------------------------------------------------------
+
+  defp normalise_layer({name, map}) when is_map(map), do: {name, map}
+
+  defp normalise_layer(other) do
+    raise ArgumentError, "each layer must be a {name, map} tuple, got: #{inspect(other)}"
+  end
+
+  defp resolve_opts(opts) do
+    global = Keyword.get(opts, :list_strategy, :replace)
+
+    per_key =
+      opts
+      |> Keyword.get(:list_strategies, %{})
+      |> Map.new(fn {path, strat} -> {normalise_path(path), strat} end)
+
+    locked = Enum.map(Keyword.get(opts, :locked, []), &normalise_path/1)
+
+    %{global_list_strategy: global, per_key_strategies: per_key, locked_paths: locked}
+  end
+
+  defp normalise_path(path) when is_list(path), do: path
+  defp normalise_path(path) when is_tuple(path), do: Tuple.to_list(path)
+
+  defp normalise_path(path) do
+    raise ArgumentError, "key paths must be lists or tuples of atoms, got: #{inspect(path)}"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Recursive merge (threads the provenance map through)
+  # ---------------------------------------------------------------------------
+
+  defp merge_map(base_map, over_map, name, path, prov, opts) do
+    Enum.reduce(over_map, {base_map, prov}, fn {k, ov}, {acc, pr} ->
+      kpath = path ++ [k]
+
+      cond do
+        locked?(kpath, opts) and Map.has_key?(base_map, k) ->
+          {acc, pr}
+
+        Map.has_key?(base_map, k) ->
+          {mv, pr2} = merge_value(Map.fetch!(base_map, k), ov, name, kpath, pr, opts)
+          {Map.put(acc, k, mv), pr2}
+
+        true ->
+          {Map.put(acc, k, ov), leaf_provenance(ov, name, kpath, pr)}
+      end
+    end)
+  end
+
+  defp merge_value(bv, ov, name, kpath, pr, opts) do
+    cond do
+      is_map(bv) and is_map(ov) ->
+        merge_map(bv, ov, name, kpath, pr, opts)
+
+      is_list(bv) and is_list(ov) ->
+        case list_strategy_for(kpath, opts) do
+          :replace ->
+            {ov, Map.put(pr, kpath, name)}
+
+          :append ->
+            names = List.wrap(Map.get(pr, kpath)) ++ [name]
+            {bv ++ ov, Map.put(pr, kpath, names)}
+        end
+
+      is_map(ov) ->
+        # Override replaces a scalar/list with a whole subtree.
+        {ov, leaf_provenance(ov, name, kpath, Map.delete(pr, kpath))}
+
+      true ->
+        {ov, Map.put(pr, kpath, name)}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Helpers
+  # ---------------------------------------------------------------------------
+
+  defp leaf_provenance(value, name, path, pr) when is_map(value) do
+    Enum.reduce(value, pr, fn {k, v}, acc -> leaf_provenance(v, name, path ++ [k], acc) end)
+  end
+
+  defp leaf_provenance(_value, name, path, pr), do: Map.put(pr, path, name)
+
+  defp locked?(kpath, %{locked_paths: locked}), do: kpath in locked
+
+  defp list_strategy_for(kpath, %{per_key_strategies: per_key, global_list_strategy: global}) do
+    Map.get(per_key, kpath, global)
+  end
+end
+</file>
+09:37:45.046 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5634, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5634, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5634, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5634, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 2265, "type" => "message"}], "output_tokens" => 2265, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+09:37:45.064 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_002_provenance_tracking_layered_config_merger_01 solution.ex
+09:37:45.724 [debug] grade JSON: {"analysis":{"defp_count":12,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":147,"lines_over_98":0,"max_line_length":96,"mode":"full","pipe_chain_count":2,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/040_002_provenance_tracking_layered_config_merger_01/solution.ex","task":"040_002_provenance_tracking_layered_config_merger_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T07:37:45.700204Z"}
+09:37:45.727 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/040_002_provenance_tracking_layered_config_merger_01_mut solution.ex
+09:37:46.391 [debug] grade JSON: {"analysis":{"defp_count":12,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":97,"lines_over_98":2,"max_line_length":886,"mode":"full","pipe_chain_count":2,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":9,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.1,"mode":"full","overall":0.19,"reasons":["compilation: 9 warning(s) → -0.9 pts","tests: 13/13 failed","analysis: no lines over 98 chars (found 2) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/040_002_provenance_tracking_layered_config_merger_01_mut/solution.ex","task":"040_002_provenance_tracking_layered_config_merger_01_mut","test_failures":[{"message":"MUTATION","module":"LayeredConfigTest","test":"test single layer returns config unchanged with self provenance"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test later layer overrides scalar and records provenance"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test three layers apply in increasing precedence"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test nested map is deep-merged across layers with per-leaf provenance"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test keys introduced by a higher layer get that layer's provenance"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test lists are replaced by default"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test append strategy concatenates and provenance is a list of layer names"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test append across three layers accumulates provenance in order"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test per-key list strategy overrides the global strategy"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test locked key preserves the earlier value and provenance"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test locked nested key is preserved while siblings merge"},{"message":"MUTATION","module":"LayeredConfigTest","test":"test locking one path does not protect the same key elsewhere"},{"message":"\n\nExpected exception ArgumentError but got RuntimeError (MUTATION)\n","module":"LayeredConfigTest","test":"test empty layer list raises ArgumentError"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T07:37:46.365600Z"}
+09:37:46.392 [info] cycle 040_002_provenance_tracking_layered_config_merger_01: ACCEPTED on attempt 1
+09:37:46.393 [info] promoted 040_002_provenance_tracking_layered_config_merger_01 -> tasks/040_002_provenance_tracking_layered_config_merger_01

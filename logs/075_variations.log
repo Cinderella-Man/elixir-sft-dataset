@@ -1,0 +1,426 @@
+19:19:16.077 [info] VARIATIONS gen for 075_001_property_based_test_generators_01 (3 slot(s))
+19:19:16.078 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+19:19:16.078 [debug] claude -p USER prompt:
+I have this SFT task (idea #75 — "Property-Based Test Generators"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 75 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `Generators` that provides reusable `StreamData` generators for common domain models, intended for use with property-based testing via the `StreamData` and `ExUnitProperties` libraries.
+
+I need these generators in the public API:
+
+- `Generators.user()` — produces maps with the following keys: `:id` (positive integer), `:name` (non-empty string, letters only, max 50 chars), `:email` (string in the format `"<local>@<domain>.<tld>"` where each part is a non-empty lowercase alphanumeric string), `:age` (integer between 18 and 120), and `:role` (one of `:admin`, `:editor`, `:viewer`).
+- `Generators.money()` — produces `%{amount: amount, currency: currency}` maps where `amount` is a non-negative integer (representing cents, 0 to 10_000_000) and `currency` is one of `"USD"`, `"EUR"`, `"GBP"`, `"JPY"`, `"CHF"`.
+- `Generators.date_range()` — produces `%{start_date: start, end_date: end_}` maps where both values are `Date` structs in the range `~D[2000-01-01]` to `~D[2100-12-31]`, and `start_date` is always less than or equal to `end_date`.
+- `Generators.non_empty_list(generator)` — a combinator that takes any other generator and produces a list of 1 to 20 elements drawn from it.
+- `Generators.one_of_weighted(weighted_list)` — takes a list of `{weight, generator}` tuples and produces values from the generators proportional to their weights.
+
+Each generator must be composable with standard `StreamData` combinators (i.e., they return `%StreamData{}` structs). All constraints must be enforced within the generator itself — consumers should never need to filter or reject generated values.
+
+Give me the complete module in a single file. Use only `stream_data` as an external dependency, no others.
+
+=== BASE solution.ex ===
+defmodule Generators do
+  @moduledoc """
+  Reusable `StreamData` generators for common domain models, intended for use
+  with property-based testing via the `StreamData` and `ExUnitProperties` libraries.
+
+  ## Usage
+
+      use ExUnitProperties
+
+      property "users have valid roles" do
+        check all user <- Generators.user() do
+          assert user.role in [:admin, :editor, :viewer]
+        end
+      end
+
+  All generators return `%StreamData{}` structs and are fully composable with
+  the standard `StreamData` combinator API (`StreamData.map/2`,
+  `StreamData.bind/2`, `StreamData.filter/2`, etc.).
+  """
+
+  # Qualify every call explicitly rather than bulk-importing StreamData.
+  # A bare `import StreamData` pulls in dozens of functions and can produce
+  # hard-to-diagnose compile errors when any of their arities clash with
+  # auto-imported Kernel functions — particularly on older OTP releases.
+  alias StreamData, as: SD
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Produces maps representing a user domain model.
+
+  ## Shape
+
+      %{
+        id:    pos_integer(),
+        name:  String.t(),   # letters only, 1–50 chars
+        email: String.t(),   # "<local>@<domain>.<tld>"
+        age:   integer(),    # 18–120
+        role:  :admin | :editor | :viewer
+      }
+
+  All constraints are enforced inside the generator; consumers never need to
+  call `StreamData.filter/2` to discard values.
+  """
+  @spec user() :: StreamData.t(map())
+  def user do
+    SD.fixed_map(%{
+      id:    SD.positive_integer(),
+      name:  user_name(),
+      email: email(),
+      age:   SD.integer(18..120),
+      role:  SD.member_of([:admin, :editor, :viewer])
+    })
+  end
+
+  @doc """
+  Produces maps representing a monetary value.
+
+  ## Shape
+
+      %{
+        amount:   non_neg_integer(),  # cents, 0–10_000_000
+        currency: String.t()          # "USD" | "EUR" | "GBP" | "JPY" | "CHF"
+      }
+  """
+  @spec money() :: StreamData.t(map())
+  def money do
+    SD.fixed_map(%{
+      amount:   SD.integer(0..10_000_000),
+      currency: SD.member_of(["USD", "EUR", "GBP", "JPY", "CHF"])
+    })
+  end
+
+  @doc """
+  Produces maps representing an inclusive date range.
+
+  ## Shape
+
+      %{
+        start_date: Date.t(),  # within 2000-01-01..2100-12-31
+        end_date:   Date.t()   # >= start_date, within the same bounds
+      }
+
+  The guarantee `start_date <= end_date` is enforced structurally: the
+  end-day range opens at `start_day`, so rejection-filtering is never needed.
+  """
+  @spec date_range() :: StreamData.t(map())
+  def date_range do
+    min_day = Date.to_gregorian_days(~D[2000-01-01])
+    max_day = Date.to_gregorian_days(~D[2100-12-31])
+
+    SD.bind(SD.integer(min_day..max_day), fn start_day ->
+      # Use one_of to split between two explicit branches:
+      #   1. same-day (start == end) — guaranteed to appear in every test run
+      #   2. any valid end-day in [start_day, max_day] — covers multi-day ranges
+      # Relying on bias alone (e.g. integer(0..36524) happening to pick 0) is
+      # too probabilistic; with 100 default runs it fails intermittently.
+      same_day = SD.constant(start_day)
+      any_day  = SD.integer(start_day..max_day)
+
+      SD.bind(SD.one_of([same_day, any_day]), fn end_day ->
+        SD.constant(%{
+          start_date: Date.from_gregorian_days(start_day),
+          end_date:   Date.from_gregorian_days(end_day)
+        })
+      end)
+    end)
+  end
+
+  @doc """
+  A combinator that wraps any generator and produces non-empty lists of 1–20
+  elements drawn from it.
+
+  ## Example
+
+      Generators.non_empty_list(StreamData.integer())
+      # => [3, -1, 42, 7]  (between 1 and 20 elements)
+
+      Generators.non_empty_list(Generators.user())
+      # => [%{id: 1, name: "Alice", ...}, ...]
+  """
+  @spec non_empty_list(StreamData.t(a)) :: StreamData.t(nonempty_list(a)) when a: term()
+  def non_empty_list(generator) do
+    SD.bind(SD.integer(1..20), fn size ->
+      SD.list_of(generator, length: size)
+    end)
+  end
+
+  @doc """
+  A combinator that accepts a list of `{weight, generator}` tuples and produces
+  values from the generators with probability proportional to each weight.
+
+  Weights must be positive integers. The likelihood of a value being drawn from
+  a particular generator equals `weight / sum(all_weights)`.
+
+  ## Example
+
+      Generators.one_of_weighted([
+        {10, StreamData.constant(:common)},
+        {1,  StreamData.constant(:rare)}
+      ])
+      # => :common roughly 10× more often than :rare
+  """
+  @spec one_of_weighted([{pos_integer(), StreamData.t(a)}]) :: StreamData.t(a) when a: term()
+  def one_of_weighted(weighted_list) when is_list(weighted_list) and weighted_list != [] do
+    # Expand each {weight, gen} pair into `weight` copies of `gen`, then hand
+    # off to `StreamData.one_of/1` for uniform selection. This keeps the
+    # implementation a single pipeline with no custom sampling math, and
+    # correctly propagates shrinking through the underlying generators.
+    expanded =
+      Enum.flat_map(weighted_list, fn {weight, gen}
+          when is_integer(weight) and weight >= 0 ->
+        # weight 0 → List.duplicate returns [] → generator is never selected
+        List.dup (truncated)
+19:24:00.107 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `JsonGenerators` that provides reusable `StreamData` generators for **recursive, JSON-shaped values**, intended for use with property-based testing via the `StreamData` and `ExUnitProperties` libraries.
+
+Unlike flat domain-model generators, the interesting constraint here is **bounded recursion depth**: nested arrays and objects must never nest deeper than a caller-specified limit, and that bound must be guaranteed structurally (never by rejection/filtering).
+
+Define the depth of a value as: a scalar (null, boolean, integer, string) has depth `0`; a container (array or object) has depth `1 + max(depth of its children)`, where an empty container has depth `1`.
+
+I need these generators in the public API:
+
+- `JsonGenerators.scalar()` — produces a JSON scalar: one of `nil`, a boolean, an integer, or an alphanumeric string (max 8 chars). Depth is always `0`.
+- `JsonGenerators.array(element_gen, max_length)` — produces a list of `0..max_length` elements drawn from `element_gen`.
+- `JsonGenerators.object(value_gen, max_length)` — produces a map with `0..max_length` entries, where each key is a **non-empty** alphanumeric string and each value is drawn from `value_gen`.
+- `JsonGenerators.value(max_depth)` — produces an arbitrary JSON value (scalar, array, or object). When `max_depth <= 0` it always produces a scalar; otherwise it may produce scalars or containers whose children are drawn from `value(max_depth - 1)`. The generated value's depth must **always** be `<= max_depth`.
+
+All depth and shape constraints must be enforced inside the generators themselves — consumers should never need to call `StreamData.filter/2`. Each generator must return a `%StreamData{}` struct so it composes with the standard `StreamData` combinators.
+
+Give me the complete module in a single file. Use only `stream_data` as an external dependency, no others.
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule JsonGeneratorsTest do
+  use ExUnit.Case, async: false
+  use ExUnitProperties
+
+  # -------------------------------------------------------
+  # Helpers
+  # -------------------------------------------------------
+
+  defp depth(v) when is_list(v) do
+    1 + Enum.reduce(v, 0, fn e, acc -> max(acc, depth(e)) end)
+  end
+
+  defp depth(v) when is_map(v) do
+    1 + Enum.reduce(Map.values(v), 0, fn e, acc -> max(acc, depth(e)) end)
+  end
+
+  defp depth(_scalar), do: 0
+
+  defp scalar?(v) do
+    is_nil(v) or is_boolean(v) or is_integer(v) or is_binary(v)
+  end
+
+  # -------------------------------------------------------
+  # JsonGenerators.scalar/0
+  # -------------------------------------------------------
+
+  describe "JsonGenerators.scalar/0" do
+    property "always produces a JSON scalar of depth 0" do
+      check all(v <- JsonGenerators.scalar()) do
+        assert scalar?(v)
+        assert depth(v) == 0
+      end
+    end
+
+    property "strings are alphanumeric and at most 8 chars" do
+      check all(v <- JsonGenerators.scalar()) do
+        if is_binary(v) do
+          assert String.length(v) <= 8
+          assert v == "" or String.match?(v, ~r/^[a-zA-Z0-9]+$/)
+        end
+      end
+    end
+
+    property "produces diverse scalar kinds across many samples" do
+      kinds =
+        Enum.map(1..400, fn _ ->
+          [v] = Enum.take(JsonGenerators.scalar(), 1)
+
+          cond do
+            is_nil(v) -> :null
+            is_boolean(v) -> :bool
+            is_integer(v) -> :int
+            is_binary(v) -> :string
+          end
+        end)
+
+      assert :null in kinds
+      assert :bool in kinds
+      assert :int in kinds
+      assert :string in kinds
+    end
+  end
+
+  # -------------------------------------------------------
+  # JsonGenerators.array/2
+  # -------------------------------------------------------
+
+  describe "JsonGenerators.array/2" do
+    property "produces lists within the length bound" do
+      check all(list <- JsonGenerators.array(JsonGenerators.scalar(), 5)) do
+        assert is_list(list)
+        assert length(list) <= 5
+      end
+    end
+
+    property "all elements come from the inner generator" do
+      check all(list <- JsonGenerators.array(StreamData.integer(), 6)) do
+        assert Enum.all?(list, &is_integer/1)
+      end
+    end
+
+    property "produces empty and non-empty lists across samples" do
+      lengths =
+        Enum.map(1..300, fn _ ->
+          [list] = Enum.take(JsonGenerators.array(JsonGenerators.scalar(), 5), 1)
+          length(list)
+        end)
+
+      assert Enum.min(lengths) == 0
+      assert Enum.max(lengths) > 0
+    end
+  end
+
+  # -------------------------------------------------------
+  # JsonGenerators.object/2
+  # -------------------------------------------------------
+
+  describe "JsonGenerators.object/2" do
+    property "produces maps within the size bound" do
+      check all(obj <- JsonGenerators.object(JsonGenerators.scalar(), 5)) do
+        assert is_map(obj)
+        assert map_size(obj) <= 5
+      end
+    end
+
+    property "all keys are non-empty alphanumeric strings" do
+      check all(obj <- JsonGenerators.object(StreamData.integer(), 5)) do
+        for {k, _v} <- obj do
+          assert is_binary(k)
+          assert k != ""
+          assert String.match?(k, ~r/^[a-zA-Z0-9]+$/)
+        end
+      end
+    end
+
+    property "all values come from the inner generator" do
+      check all(obj <- JsonGenerators.object(StreamData.boolean(), 5)) do
+        assert Enum.all?(Map.values(obj), &is_boolean/1)
+      end
+    end
+  end
+
+  # -------------------------------------------------------
+  # JsonGenerators.value/1
+  # -------------------------------------------------------
+
+  describe "JsonGenerators.value/1" do
+    property "value(0) is always a scalar" do
+      check all(v <- JsonGenerators.value(0)) do
+        assert scalar?(v)
+        assert depth(v) == 0
+      end
+    end
+
+    property "negative depth is treated as a scalar" do
+      check all(v <- JsonGenerators.value(-3)) do
+        assert scalar?(v)
+      end
+    end
+
+    property "value(2) never exceeds depth 2" do
+      check all(v <- JsonGenerators.value(2)) do
+        assert depth(v) <= 2
+      end
+    end
+
+    property "value(4) never exceeds depth 4" do
+      check all(v <- JsonGenerators.value(4)) do
+        assert depth(v) <= 4
+      end
+    end
+
+    property "every produced value is JSON-shaped (scalar, list, or map)" do
+      check all(v <- JsonGenerators.value(3)) do
+        assert scalar?(v) or is_list(v) or is_map(v)
+      end
+    end
+
+    property "produces scalars, arrays, and objects across many samples" do
+      kinds =
+        Enum.map(1..500, fn _ ->
+          [v] = Enum.take(JsonGenerators.value(3), 1)
+
+          cond do
+            is_list(v) -> :array
+            is_map(v) -> :object
+            true -> :scalar
+          end
+        end)
+
+      assert :scalar in kinds
+      assert :array in kinds
+      assert :object in kinds
+    end
+  end
+
+  # -------------------------------------------------------
+  # Composability
+  # -------------------------------------------------------
+
+  describe "composability with StreamData" do
+    property "value can be nested inside list_of" do
+      check all(list <- StreamData.list_of(JsonGenerators.value(2), length: 3)) do
+        assert length(list) == 3
+        assert Enum.all?(list, fn v -> depth(v) <= 2 end)
+      end
+    end
+
+    property "value can be filtered to only containers" do
+      gen = StreamData.filter(JsonGenerators.value(3), fn v -> is_list(v) or is_map(v) end)
+
+      check all(v <- gen) do
+        assert is_list(v) or is_map(v)
+        assert depth(v) <= 3
+      end
+    end
+  end
+end
+</file>
+
+<file path="v1/solution.ex">
+defmodule JsonGenerators do
+  @moduledoc """
+  Reusable `StreamData` generators for recursive, JSON-shaped values, intended
+  for use with property-based testing via `StreamData` and `ExUnitProperties`.
+
+  The distinguishing feature of these generators is **structurally-bounded
+  recursion depth**: `value/1` never produces a value that nests deeper than the
+  requested limit, and that gua (truncated)
+19:24:00.107 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 26863, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 26863, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 26863, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 26863, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 24586, "type" => "message"}], "output_tokens" => 24586, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

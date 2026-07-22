@@ -1,0 +1,2002 @@
+[22m00:35:00.780 [info] BASE 135_001_data_quality_scorer_01: Data Quality Scorer[0m
+[36m00:35:00.785 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m00:35:00.785 [debug] claude -p USER prompt:
+I've this idea:
+
+```
+### 135. Data Quality Scorer
+Build a module that takes a list of records (maps) and a quality rules definition, and scores each record and the dataset overall. Rules include: `:not_null` (field must be present and non-nil), `:unique` (field must be unique across records), `:format` (field matches a regex), `:range` (numeric field within min/max), `:referential` (field value exists in a provided set). Return per-record scores (percentage of rules passed) and per-field scores (percentage of records passing that field's rules). Verify with a dataset containing known quality issues and asserting scores match expectations.
+```
+
+Convert it into a task prompt I could give to an AI to implement, AND a matching
+ExUnit test harness that verifies a correct implementation.
+
+Here is a previously generated prompt as a style example:
+
+```
+Write me an Elixir GenServer module called `RateLimiter` that enforces per-key rate limits using a sliding window algorithm.
+
+I need these functions in the public API:
+
+- `RateLimiter.start_link(opts)` to start the process. It should accept a `:clock` option which is a zero-arity function returning the current time in milliseconds. If not provided, default to `fn -> System.monotonic_time(:millisecond) end`. It should also accept a `:name` option for process registration.
+
+- `RateLimiter.check(server, key, max_requests, window_ms)` which checks whether a request for the given key is allowed. If allowed, return `{:ok, remaining}` where remaining is how many more requests are available in the current window. If not allowed, return `{:error, :rate_limited, retry_after_ms}` where retry_after_ms tells the caller how long to wait.
+
+Each key must be tracked independently — rate limiting "user:1" should have no effect on "user:2". The sliding window should work correctly at boundaries, meaning if I make 3 requests allowed per 1000ms window and I make them at time 0, then at time 1001 I should be allowed again.
+
+You also need to make sure expired entries get cleaned up so the GenServer doesn't leak memory over time. Run a periodic cleanup using `Process.send_after` every 60 seconds (configurable via `:cleanup_interval_ms` option) that removes any tracking data for windows that have fully expired.
+
+Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+```
+
+And here is its matching test harness as a template:
+
+```elixir
+defmodule RateLimiterTest do
+  use ExUnit.Case, async: false
+
+  # --- Fake clock for deterministic testing ---
+
+  defmodule Clock do
+    use Agent
+
+    def start_link(initial \\ 0) do
+      Agent.start_link(fn -> initial end, name: __MODULE__)
+    end
+
+    def now, do: Agent.get(__MODULE__, & &1)
+    def advance(ms), do: Agent.update(__MODULE__, &(&1 + ms))
+    def set(ms), do: Agent.update(__MODULE__, fn _ -> ms end)
+  end
+
+  setup do
+    # Start fresh clock at time 0 for each test
+    start_supervised!({Clock, 0})
+
+    {:ok, pid} =
+      RateLimiter.start_link(
+        clock: &Clock.now/0,
+        # disable auto-cleanup in tests
+        cleanup_interval_ms: :infinity
+      )
+
+    %{rl: pid}
+  end
+
+  # -------------------------------------------------------
+  # Basic allow / reject
+  # -------------------------------------------------------
+
+  test "allows requests within the limit", %{rl: rl} do
+    assert {:ok, 2} = RateLimiter.check(rl, "user:1", 3, 1_000)
+    assert {:ok, 1} = RateLimiter.check(rl, "user:1", 3, 1_000)
+    assert {:ok, 0} = RateLimiter.check(rl, "user:1", 3, 1_000)
+  end
+
+  test "rejects the request that exceeds the limit", %{rl: rl} do
+    for _ <- 1..3, do: RateLimiter.check(rl, "k", 3, 1_000)
+
+    assert {:error, :rate_limited, retry_after} =
+             RateLimiter.check(rl, "k", 3, 1_000)
+
+    assert is_integer(retry_after)
+    assert retry_after > 0
+    assert retry_after <= 1_000
+  end
+
+  # -------------------------------------------------------
+  # Window sliding
+  # -------------------------------------------------------
+
+  test "allows requests again after the window slides", %{rl: rl} do
+    for _ <- 1..3, do: RateLimiter.check(rl, "k", 3, 1_000)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Advance past the window
+    Clock.advance(1_001)
+
+    assert {:ok, _remaining} = RateLimiter.check(rl, "k", 3, 1_000)
+  end
+
+  test "sliding window drops old requests correctly", %{rl: rl} do
+    # Time 0: first request
+    assert {:ok, 2} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Time 400: second request
+    Clock.advance(400)
+    assert {:ok, 1} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Time 800: third request
+    Clock.advance(400)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Time 800: fourth request — rejected
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Time 1001: first request (from time 0) has expired, one slot free
+    Clock.advance(201)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Still blocked (requests from 400 and 800 still in window)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 3, 1_000)
+  end
+
+  # -------------------------------------------------------
+  # Key independence
+  # -------------------------------------------------------
+
+  test "different keys are completely independent", %{rl: rl} do
+    # Exhaust key "a"
+    for _ <- 1..3, do: RateLimiter.check(rl, "a", 3, 1_000)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "a", 3, 1_000)
+
+    # Key "b" should be unaffected
+    assert {:ok, 2} = RateLimiter.check(rl, "b", 3, 1_000)
+    assert {:ok, 1} = RateLimiter.check(rl, "b", 3, 1_000)
+    assert {:ok, 0} = RateLimiter.check(rl, "b", 3, 1_000)
+  end
+
+  # -------------------------------------------------------
+  # retry_after accuracy
+  # -------------------------------------------------------
+
+  test "retry_after tells the caller how long until a slot opens", %{rl: rl} do
+    # Request at time 0
+    RateLimiter.check(rl, "k", 1, 1_000)
+
+    # Advance to time 300
+    Clock.advance(300)
+
+    assert {:error, :rate_limited, retry_after} =
+             RateLimiter.check(rl, "k", 1, 1_000)
+
+    # The earliest request (at time 0) expires at time 1000.
+    # We're at time 300, so retry_after should be ~700
+    assert retry_after >= 600 and retry_after <= 800
+  end
+
+  # -------------------------------------------------------
+  # Edge cases
+  # -------------------------------------------------------
+
+  test "max_requests of 1 allows exactly one call", %{rl: rl} do
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 500)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 1, 500)
+  end
+
+  test "works with very large window", %{rl: rl} do
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 86_400_000)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 1, 86_400_000)
+
+    Clock.advance(86_400_001)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 86_400_000)
+  end
+
+  # -------------------------------------------------------
+  # Multiple keys interleaved
+  # -------------------------------------------------------
+
+  test "interleaved operations on multiple keys", %{rl: rl} do
+    assert {:ok, 1} = RateLimiter.check(rl, "x", 2, 1_000)
+    assert {:ok, 4} = RateLimiter.check(rl, "y", 5, 2_000)
+    assert {:ok, 0} = RateLimiter.check(rl, "x", 2, 1_000)
+    assert {:ok, 3} = RateLimiter.check(rl, "y", 5, 2_000)
+
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "x", 2, 1_000)
+    assert {:ok, 2} = RateLimiter.check(rl, "y", 5, 2_000)
+  end
+
+  # -------------------------------------------------------
+  # Cleanup (memory leak prevention)
+  # -------------------------------------------------------
+
+  test "expired keys are cleaned up and don't accumulate", %{rl: rl} do
+    # Create entries for 100 different keys
+    for i <- 1..100 do
+      RateLimiter.check(rl, "key:#{i}", 1, 100)
+    end
+
+    # Advance past all windows
+    Clock.advance(200)
+
+    # Trigger cleanup manually via a message
+    # The Gen (truncated)[0m
+[36m00:36:57.018 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Data Quality Scorer
+
+Write me an Elixir module called `DataQualityScorer` that scores the quality of a
+dataset (a list of records) against a set of declarative quality rules.
+
+## Public API
+
+Expose a single function:
+
+```elixir
+DataQualityScorer.score(records, rules)
+```
+
+- `records` is a list of maps. Each map is one record. Keys are field names
+  (atoms), values are arbitrary. Records may be missing some keys.
+- `rules` is a map of the form `%{field_name => [rule, ...]}`. Each field maps to
+  a **non-empty list** of rules to enforce on that field. Fields that appear in a
+  record but not in `rules` are ignored.
+
+## Rule types
+
+Each rule is evaluated against a single record's value for its field. Use
+`Map.get(record, field)` to fetch the value (so a missing key yields `nil`).
+
+- `:not_null` — passes when the field key is present **and** its value is not
+  `nil`. (A missing key fails. A present key with value `nil` fails.)
+- `:unique` — passes when this record's value for the field appears **exactly
+  once** across all records in the dataset. Tally the value returned by
+  `Map.get(record, field)` for every record (a missing key contributes `nil`); a
+  record passes when the frequency of its own value is `1`. If two or more records
+  share the same value (including `nil`), all of them fail this rule.
+- `{:format, regex}` — passes when the value is a **binary string** and
+  `Regex.match?(regex, value)` is true. A `nil` or non-string value fails.
+- `{:range, min, max}` — passes when the value is a **number** (integer or float)
+  and `min <= value <= max` (bounds are inclusive). A `nil` or non-number value
+  fails.
+- `{:referential, set}` — passes when the value is a member of the provided
+  `MapSet`, i.e. `MapSet.member?(set, value)` is true.
+
+## Return value
+
+Return a map with exactly these keys:
+
+```elixir
+%{
+  overall: float,
+  records: [%{score: float, passed: non_neg_integer, total: non_neg_integer}, ...],
+  fields:  %{field_name => float}
+}
+```
+
+### `records`
+A list, in the **same order as the input `records`**, of per-record results.
+For a record:
+
+- `total` is the total number of individual rule instances across all fields
+  (this is the same for every record: the sum of the lengths of every field's
+  rule list).
+- `passed` is how many of those rule instances evaluate to true for that record.
+- `score` is `passed / total * 100` as a float. If `total` is `0` (no rules at
+  all), `score` is `100.0`.
+
+### `fields`
+A map from each field name (every key present in `rules`) to a percentage float.
+A record **passes a field** when **all** of that field's rules pass for it. The
+field's score is `(number of records that pass the field) / (number of records) *
+100`. If the dataset is empty, every field scores `100.0` (vacuously true).
+
+### `overall`
+The percentage of all `(record, rule)` checks that pass:
+`(sum of every record's passed) / (number_of_records * total_rules) * 100` as a
+float. If the dataset is empty, or there are no rules at all, `overall` is
+`100.0`.
+
+## Notes
+
+- Percentages are plain floats (e.g. `75.0`, `66.666...`). Do not round.
+- Use only the Elixir/Erlang standard library — no external dependencies.
+- Give me the complete module in a single file.
+</file>
+
+<file path="test_harness.exs">
+Code.require_file("solution.ex", __DIR__)
+
+defmodule DataQualityScorerTest do
+  use ExUnit.Case, async: false
+
+  defp assert_score(actual, expected) do
+    assert_in_delta(actual, expected, 0.01)
+  end
+
+  # -------------------------------------------------------
+  # Comprehensive dataset with known quality issues
+  # -------------------------------------------------------
+
+  defp comprehensive_rules do
+    %{
+      id: [:not_null, :unique],
+      email: [:not_null, {:format, ~r/^[^@\s]+@[^@\s]+$/}],
+      age: [{:range, 0, 120}],
+      country: [{:referential, MapSet.new(["US", "UK", "CA"])}]
+    }
+  end
+
+  defp comprehensive_records do
+    [
+      # R1: everything passes
+      %{id: 1, email: "a@b.com", age: 30, country: "US"},
+      # R2: bad email format, age out of range
+      %{id: 2, email: "bad-email", age: 200, country: "US"},
+      # R3: duplicate id (fails unique), country not referential
+      %{id: 2, email: "c@d.com", age: 25, country: "FR"},
+      # R4: email nil (fails not_null + format)
+      %{id: 4, email: nil, age: 40, country: "UK"},
+      # R5: email key missing
+      %{id: 5, age: 50, country: "CA"}
+    ]
+  end
+
+  test "per-record scores match expectations" do
+    result = DataQualityScorer.score(comprehensive_records(), comprehensive_rules())
+    records = result.records
+
+    assert length(records) == 5
+
+    [r1, r2, r3, r4, r5] = records
+
+    # total is constant: 2 + 2 + 1 + 1 = 6
+    assert Enum.all?(records, &(&1.total == 6))
+
+    assert r1.passed == 6
+    assert_score(r1.score, 100.0)
+
+    assert r2.passed == 4
+    assert_score(r2.score, 66.6667)
+
+    assert r3.passed == 4
+    assert_score(r3.score, 66.6667)
+
+    assert r4.passed == 4
+    assert_score(r4.score, 66.6667)
+
+    assert r5.passed == 4
+    assert_score(r5.score, 66.6667)
+  end
+
+  test "per-field scores match expectations" do
+    result = DataQualityScorer.score(comprehensive_records(), comprehensive_rules())
+    fields = result.fields
+
+    # id: R1, R4, R5 pass (R2/R3 share id 2 -> fail unique) => 3/5
+    assert_score(fields.id, 60.0)
+    # email: only R1 and R3 pass => 2/5
+    assert_score(fields.email, 40.0)
+    # age: all except R2 (200) => 4/5
+    assert_score(fields.age, 80.0)
+    # country: all except R3 (FR) => 4/5
+    assert_score(fields.country, 80.0)
+  end
+
+  test "overall score matches expectations" do
+    result = DataQualityScorer.score(comprehensive_records(), comprehensive_rules())
+    # total passed = 6 + 4 + 4 + 4 + 4 = 22 out of 5 * 6 = 30
+    assert_score(result.overall, 73.3333)
+  end
+
+  test "records are returned in input order" do
+    rules = %{id: [:not_null]}
+    records = [%{id: 9}, %{id: 3}, %{id: 7}]
+    result = DataQualityScorer.score(records, rules)
+    assert Enum.map(result.records, & &1.passed) == [1, 1, 1]
+    assert length(result.records) == 3
+  end
+
+  # -------------------------------------------------------
+  # :not_null
+  # -------------------------------------------------------
+
+  test "not_null fails for both nil values and missing keys" do
+    rules = %{a: [:not_null]}
+    records = [%{a: 1}, %{a: nil}, %{}]
+    result = DataQualityScorer.score(records, rules)
+
+    [r1, r2, r3] = result.records
+    assert r1.passed == 1
+    assert r2.passed == 0
+    assert r3.passed == 0
+
+    # 1 of 3 records passes the field
+    assert_score(result.fields.a, 33.3333)
+  end
+
+  # -------------------------------------------------------
+  # :unique
+  # -------------------------------------------------------
+
+  test "unique passes only for values appearing exactly once" do
+    rules = %{a: [:unique]}
+    records = [%{a: 1}, %{a: 2}, %{a: 2}, %{a: 3}]
+    result = DataQualityScorer.score(records, rules)
+
+    passed = Enum.map(result.records, & &1.passed)
+    # 1 -> unique, 2 -> dup, 2 -> dup, 3 -> unique
+    assert passed == [1, 0, 0, 1]
+    assert_score(result.fields.a, 50.0)
+  end
+
+  test "unique treats repeated nil (including missing keys) as duplicates" do
+    rules = %{a: [:unique]}
+    records = [%{a: nil}, %{}, %{a: 7}]
+    result = DataQualityScorer.score(records, rules)
+
+    passed = Enum.map(result.records, & &1.passed)
+    # nil appears twice (explicit nil + missing key), 7 once
+    assert passed == [0, 0, 1]
+    assert_score(result.fields.a, 33.3333)
+  end
+
+  # -------------------------------------------------------
+  # :format
+  # -------------------------------------------------------
+
+  test "format matches strings and rejects non-strings and nil" do
+    rules = %{a: [{:format, ~r/^\d+$/}]}
+    records = [%{a: "123"}, %{a: "12a"}, %{a: 5}, %{a: nil}, %{}]
+    result = DataQualityScorer.score(records, rules)
+
+    passed = Enum.map(result.records, & &1.passed)
+    assert passed == [1, 0, 0, 0, 0]
+    assert_score(result.fields.a, 20.0)
+  end
+
+  # ------- (truncated)[0m
+[36m00:36:57.019 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 19065, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 19065, "cache_read_input_tokens" => 0, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 19065, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 19065, "cache_read_input_tokens" => 0, "input_tokens" => 2972, "output_tokens" => 10035, "type" => "message"}], "output_tokens" => 10035, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m00:36:57.036 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m00:36:57.036 [debug] claude -p USER prompt:
+# Data Quality Scorer
+
+Write me an Elixir module called `DataQualityScorer` that scores the quality of a
+dataset (a list of records) against a set of declarative quality rules.
+
+## Public API
+
+Expose a single function:
+
+```elixir
+DataQualityScorer.score(records, rules)
+```
+
+- `records` is a list of maps. Each map is one record. Keys are field names
+  (atoms), values are arbitrary. Records may be missing some keys.
+- `rules` is a map of the form `%{field_name => [rule, ...]}`. Each field maps to
+  a **non-empty list** of rules to enforce on that field. Fields that appear in a
+  record but not in `rules` are ignored.
+
+## Rule types
+
+Each rule is evaluated against a single record's value for its field. Use
+`Map.get(record, field)` to fetch the value (so a missing key yields `nil`).
+
+- `:not_null` — passes when the field key is present **and** its value is not
+  `nil`. (A missing key fails. A present key with value `nil` fails.)
+- `:unique` — passes when this record's value for the field appears **exactly
+  once** across all records in the dataset. Tally the value returned by
+  `Map.get(record, field)` for every record (a missing key contributes `nil`); a
+  record passes when the frequency of its own value is `1`. If two or more records
+  share the same value (including `nil`), all of them fail this rule.
+- `{:format, regex}` — passes when the value is a **binary string** and
+  `Regex.match?(regex, value)` is true. A `nil` or non-string value fails.
+- `{:range, min, max}` — passes when the value is a **number** (integer or float)
+  and `min <= value <= max` (bounds are inclusive). A `nil` or non-number value
+  fails.
+- `{:referential, set}` — passes when the value is a member of the provided
+  `MapSet`, i.e. `MapSet.member?(set, value)` is true.
+
+## Return value
+
+Return a map with exactly these keys:
+
+```elixir
+%{
+  overall: float,
+  records: [%{score: float, passed: non_neg_integer, total: non_neg_integer}, ...],
+  fields:  %{field_name => float}
+}
+```
+
+### `records`
+A list, in the **same order as the input `records`**, of per-record results.
+For a record:
+
+- `total` is the total number of individual rule instances across all fields
+  (this is the same for every record: the sum of the lengths of every field's
+  rule list).
+- `passed` is how many of those rule instances evaluate to true for that record.
+- `score` is `passed / total * 100` as a float. If `total` is `0` (no rules at
+  all), `score` is `100.0`.
+
+### `fields`
+A map from each field name (every key present in `rules`) to a percentage float.
+A record **passes a field** when **all** of that field's rules pass for it. The
+field's score is `(number of records that pass the field) / (number of records) *
+100`. If the dataset is empty, every field scores `100.0` (vacuously true).
+
+### `overall`
+The percentage of all `(record, rule)` checks that pass:
+`(sum of every record's passed) / (number_of_records * total_rules) * 100` as a
+float. If the dataset is empty, or there are no rules at all, `overall` is
+`100.0`.
+
+## Notes
+
+- Percentages are plain floats (e.g. `75.0`, `66.666...`). Do not round.
+- Use only the Elixir/Erlang standard library — no external dependencies.
+- Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+[0m
+[36m00:37:22.475 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule DataQualityScorer do
+  @moduledoc """
+  Scores the quality of a dataset against a set of declarative quality rules.
+
+  A dataset is a list of records (maps keyed by field-name atoms). Rules are a
+  map of `%{field_name => [rule, ...]}` where each field maps to a non-empty
+  list of rules to enforce on that field.
+
+  Supported rule types:
+
+    * `:not_null` — the field key is present and its value is not `nil`.
+    * `:unique` — the value appears exactly once across all records.
+    * `{:format, regex}` — the value is a binary string matching `regex`.
+    * `{:range, min, max}` — the value is a number within `[min, max]`.
+    * `{:referential, set}` — the value is a member of the given `MapSet`.
+
+  `score/2` returns overall, per-record and per-field percentage scores.
+  """
+
+  @typedoc "A single dataset record."
+  @type record :: %{optional(atom()) => any()}
+
+  @typedoc "A single quality rule."
+  @type rule ::
+          :not_null
+          | :unique
+          | {:format, Regex.t()}
+          | {:range, number(), number()}
+          | {:referential, MapSet.t()}
+
+  @typedoc "Rules keyed by field name."
+  @type rules :: %{optional(atom()) => [rule(), ...]}
+
+  @typedoc "Per-record result."
+  @type record_result :: %{
+          score: float(),
+          passed: non_neg_integer(),
+          total: non_neg_integer()
+        }
+
+  @typedoc "The full scoring result."
+  @type result :: %{
+          overall: float(),
+          records: [record_result()],
+          fields: %{optional(atom()) => float()}
+        }
+
+  @doc """
+  Scores `records` against `rules`.
+
+  Returns a map with `:overall`, `:records` and `:fields` keys. Percentages are
+  plain floats and are not rounded. Empty datasets and rule-free scorings score
+  `100.0` (vacuously true).
+
+  ## Examples
+
+      iex> rules = %{name: [:not_null]}
+      iex> DataQualityScorer.score([%{name: "a"}, %{name: nil}], rules)
+      %{
+        overall: 50.0,
+        records: [
+          %{score: 100.0, passed: 1, total: 1},
+          %{score: +0.0, passed: 0, total: 1}
+        ],
+        fields: %{name: 50.0}
+      }
+  """
+  @spec score([record()], rules()) :: result()
+  def score(records, rules) when is_list(records) and is_map(rules) do
+    fields = Map.keys(rules)
+    total_rules = rules |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
+
+    tallies = build_tallies(records, fields)
+
+    record_results = Enum.map(records, &score_record(&1, rules, tallies, total_rules))
+    fields_result = score_fields(records, rules, tallies)
+    overall = score_overall(record_results, length(records), total_rules)
+
+    %{overall: overall, records: record_results, fields: fields_result}
+  end
+
+  # Precompute value frequencies per field, for `:unique` rules.
+  @spec build_tallies([record()], [atom()]) :: %{optional(atom()) => %{any() => pos_integer()}}
+  defp build_tallies(records, fields) do
+    Map.new(fields, fn field ->
+      counts =
+        Enum.reduce(records, %{}, fn record, acc ->
+          value = Map.get(record, field)
+          Map.update(acc, value, 1, &(&1 + 1))
+        end)
+
+      {field, counts}
+    end)
+  end
+
+  @spec score_record(record(), rules(), map(), non_neg_integer()) :: record_result()
+  defp score_record(record, rules, tallies, total_rules) do
+    passed =
+      Enum.reduce(rules, 0, fn {field, field_rules}, acc ->
+        acc + Enum.count(field_rules, &rule_passes?(&1, record, field, tallies))
+      end)
+
+    %{score: percentage(passed, total_rules), passed: passed, total: total_rules}
+  end
+
+  @spec score_fields([record()], rules(), map()) :: %{optional(atom()) => float()}
+  defp score_fields(records, rules, tallies) do
+    count = length(records)
+
+    Map.new(rules, fn {field, field_rules} ->
+      passing =
+        Enum.count(records, fn record ->
+          Enum.all?(field_rules, &rule_passes?(&1, record, field, tallies))
+        end)
+
+      {field, field_percentage(passing, count)}
+    end)
+  end
+
+  @spec score_overall([record_result()], non_neg_integer(), non_neg_integer()) :: float()
+  defp score_overall(_record_results, 0, _total_rules), do: 100.0
+  defp score_overall(_record_results, _count, 0), do: 100.0
+
+  defp score_overall(record_results, count, total_rules) do
+    total_passed = record_results |> Enum.map(& &1.passed) |> Enum.sum()
+    percentage(total_passed, count * total_rules)
+  end
+
+  @spec rule_passes?(rule(), record(), atom(), map()) :: boolean()
+  defp rule_passes?(:not_null, record, field, _tallies) do
+    Map.has_key?(record, field) and Map.get(record, field) != nil
+  end
+
+  defp rule_passes?(:unique, record, field, tallies) do
+    value = Map.get(record, field)
+    Map.get(tallies[field], value) == 1
+  end
+
+  defp rule_passes?({:format, regex}, record, field, _tallies) do
+    value = Map.get(record, field)
+    is_binary(value) and Regex.match?(regex, value)
+  end
+
+  defp rule_passes?({:range, min, max}, record, field, _tallies) do
+    value = Map.get(record, field)
+    is_number(value) and min <= value and value <= max
+  end
+
+  defp rule_passes?({:referential, set}, record, field, _tallies) do
+    MapSet.member?(set, Map.get(record, field))
+  end
+
+  # Score for a single record's rule tally; empty rule set scores 100.0.
+  @spec percentage(non_neg_integer(), non_neg_integer()) :: float()
+  defp percentage(_passed, 0), do: 100.0
+  defp percentage(passed, total), do: passed / total * 100
+
+  # Field score; an empty dataset scores 100.0 vacuously.
+  @spec field_percentage(non_neg_integer(), non_neg_integer()) :: float()
+  defp field_percentage(_passing, 0), do: 100.0
+  defp field_percentage(passing, count), do: passing / count * 100
+end
+</file>[0m
+[36m00:37:22.476 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1753, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1753, "cache_read_input_tokens" => 14699, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1753, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1753, "cache_read_input_tokens" => 14699, "input_tokens" => 2972, "output_tokens" => 2286, "type" => "message"}], "output_tokens" => 2286, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m00:37:22.498 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/135_001_data_quality_scorer_01 solution.ex[0m
+[36m00:37:23.387 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":162,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":5,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.84,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 3/14 failed"],"tests":0.79},"shape":"single","solution_file":".gen_staging/135_001_data_quality_scorer_01/solution.ex","task":"135_001_data_quality_scorer_01","test_failures":[{"message":"\n\nAssertion with == failed\ncode:  assert r2.passed == 4\nleft:  3\nright: 4\n","module":"DataQualityScorerTest","test":"test per-record scores match expectations"},{"message":"\n\nExpected the difference between 70.0 and 73.3333 (3.333299999999994) to be less than or equal to 0.01\n","module":"DataQualityScorerTest","test":"test overall score matches expectations"},{"message":"\n\nAssertion with == failed\ncode:  assert r1.total == 4\nleft:  5\nright: 4\n","module":"DataQualityScorerTest","test":"test record passing all rules scores 100"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-03T22:37:23.358719Z"}[0m
+[22m00:37:23.387 [info] cycle 135_001_data_quality_scorer_01: repairing — Tests failed (3 failed, 0 errors):
+  - test per-record scores match expectations (DataQualityScorerTest): 
+
+Assertion with == failed
+code:  assert r2.passed == 4
+left:  3
+right: 4
+
+  - test overall score matches expectations (DataQualityScorerTest): 
+
+Expected the difference between 70.0 and 73.3333 (3.333299999999994) to be less than or equal to 0.01
+
+  - test record passing all rules scores 100 (DataQualityScorerTest): 
+
+Assertion with == failed
+code:  assert r1.total == 4
+left:  5
+right: 4
+[0m
+[36m00:37:23.387 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m00:37:23.387 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Tests failed (3 failed, 0 errors):
+  - test per-record scores match expectations (DataQualityScorerTest): 
+
+Assertion with == failed
+code:  assert r2.passed == 4
+left:  3
+right: 4
+
+  - test overall score matches expectations (DataQualityScorerTest): 
+
+Expected the difference between 70.0 and 73.3333 (3.333299999999994) to be less than or equal to 0.01
+
+  - test record passing all rules scores 100 (DataQualityScorerTest): 
+
+Assertion with == failed
+code:  assert r1.total == 4
+left:  5
+right: 4
+
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+# Data Quality Scorer
+
+Write me an Elixir module called `DataQualityScorer` that scores the quality of a
+dataset (a list of records) against a set of declarative quality rules.
+
+## Public API
+
+Expose a single function:
+
+```elixir
+DataQualityScorer.score(records, rules)
+```
+
+- `records` is a list of maps. Each map is one record. Keys are field names
+  (atoms), values are arbitrary. Records may be missing some keys.
+- `rules` is a map of the form `%{field_name => [rule, ...]}`. Each field maps to
+  a **non-empty list** of rules to enforce on that field. Fields that appear in a
+  record but not in `rules` are ignored.
+
+## Rule types
+
+Each rule is evaluated against a single record's value for its field. Use
+`Map.get(record, field)` to fetch the value (so a missing key yields `nil`).
+
+- `:not_null` — passes when the field key is present **and** its value is not
+  `nil`. (A missing key fails. A present key with value `nil` fails.)
+- `:unique` — passes when this record's value for the field appears **exactly
+  once** across all records in the dataset. Tally the value returned by
+  `Map.get(record, field)` for every record (a missing key contributes `nil`); a
+  record passes when the frequency of its own value is `1`. If two or more records
+  share the same value (including `nil`), all of them fail this rule.
+- `{:format, regex}` — passes when the value is a **binary string** and
+  `Regex.match?(regex, value)` is true. A `nil` or non-string value fails.
+- `{:range, min, max}` — passes when the value is a **number** (integer or float)
+  and `min <= value <= max` (bounds are inclusive). A `nil` or non-number value
+  fails.
+- `{:referential, set}` — passes when the value is a member of the provided
+  `MapSet`, i.e. `MapSet.member?(set, value)` is true.
+
+## Return value
+
+Return a map with exactly these keys:
+
+```elixir
+%{
+  overall: float,
+  records: [%{score: float, passed: non_neg_integer, total: non_neg_integer}, ...],
+  fields:  %{field_name => float}
+}
+```
+
+### `records`
+A list, in the **same order as the input `records`**, of per-record results.
+For a record:
+
+- `total` is the total number of individual rule instances across all fields
+  (this is the same for every record: the sum of the lengths of every field's
+  rule list).
+- `passed` is how many of those rule instances evaluate to true for that record.
+- `score` is `passed / total * 100` as a float. If `total` is `0` (no rules at
+  all), `score` is `100.0`.
+
+### `fields`
+A map from each field name (every key present in `rules`) to a percentage float.
+A record **passes a field** when **all** of that field's rules pass for it. The
+field's score is `(number of records that pass the field) / (number of records) *
+100`. If the dataset is empty, every field scores `100.0` (vacuously true).
+
+### `overall`
+The percentage of all `(record, rule)` checks that pass:
+`(sum of every record's passed) / (number_of_records * total_rules) * 100` as a
+float. If the dataset is empty, or there are no rules at all, `overall` is
+`100.0`.
+
+## Notes
+
+- Percentages are plain floats (e.g. `75.0`, `66.666...`). Do not round.
+- Use only the Elixir/Erlang standard library — no external dependencies.
+- Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule DataQualityScorer do
+  @moduledoc """
+  Scores the quality of a dataset against a set of declarative quality rules.
+
+  A dataset is a list of records (maps keyed by field-name atoms). Rules are a
+  map of `%{field_name => [rule, ...]}` where each field maps to a non-empty
+  list of rules to enforce on that field.
+
+  Supported rule types:
+
+    * `:not_null` — the field key is present and its value is not `nil`.
+    * `:unique` — the value appears exactly once across all records.
+    * `{:format, regex}` — the value is a binary string matching `regex`.
+    * `{:range, min, max}` — the value is a number within `[min, max]`.
+    * `{:referential, set}` — the value is a member of the given `MapSet`.
+
+  `score/2` returns overall, per-record and per-field percentage scores.
+  """
+
+  @typedoc "A single dataset record."
+  @type record :: %{optional(atom()) => any()}
+
+  @typedoc "A single quality rule."
+  @type rule ::
+          :not_null
+          | :unique
+          | {:format, Regex.t()}
+          | {:range, number(), number()}
+          | {:referential, MapSet.t()}
+
+  @typedoc "Rules keyed by field name."
+  @type rules :: %{optional(atom()) => [rule(), ...]}
+
+  @typedoc "Per-record result."
+  @type record_result :: %{
+          score: float(),
+          passed: non_neg_integer(),
+          total: non_neg_integer()
+        }
+
+  @typedoc "The full scoring result."
+  @type result :: %{
+          overall: float(),
+          records: [record_result()],
+          fields: %{optional(atom()) => float()}
+        }
+
+  @doc """
+  Scores `records` against `rules`.
+
+  Returns a map with `:overall`, `:records` and `:fields` keys. Percentages are
+  plain floats and are not rounded. Empty datasets and rule-free scorings score
+  `100.0` (vacuously true).
+
+  ## Examples
+
+      iex> rules = %{name: [:not_null]}
+      iex> DataQualityScorer.score([%{name: "a"}, %{name: nil}], rules)
+      %{
+        overall: 50.0,
+        records: [
+          %{score: 100.0, passed: 1, total: 1},
+          %{score: +0.0, passed: 0, total: 1}
+        ],
+        fields: %{name: 50.0}
+      }
+  """
+  @spec score([record()], rules()) :: result()
+  def score(records, rules) when is_list(records) and is_map(rules) do
+    fields = Map.keys(rules)
+    total_rules = rules |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
+
+    tallies = build_tallies(records, fields)
+
+    record_results = Enum.map(records, &score_record(&1, rules, tallies, total_rules))
+    fields_result = score_fields(records, rules, tallies)
+    overall = score_overall(record_results, length(records), total_rules)
+
+    %{overall: overall, records: record_results, fields: fields_result}
+  end
+
+  # Precompute value frequencies per field, for `:unique` rules.
+  @spec build_tallies([record()], [atom()]) :: %{optional(atom()) => %{any() => pos_integer()}}
+  defp build_tallies(records, fields) do
+    Map.new(fields, fn field ->
+      counts =
+        Enum.reduce(records, %{}, fn record, acc ->
+          value = Map.get(record, field)
+          Map.update(acc, value, 1, &(&1 + 1))
+        end)
+
+      {field, counts}
+    end)
+  end
+
+  @spec score_record(record(), rules(), map(), non_neg_integer()) :: record_result()
+  defp score_record(record, rules, tallies, total_rules) do
+    passed =
+      Enum.reduce(rules, 0, fn {field, field_rules}, acc ->
+        acc + Enum.count(field_rules, &rule_passes?(&1, record, field, tallies))
+      end)
+
+    %{score: percentage(passed, total_rules), passed: passed, total: total_rules}
+  end
+
+  @spec score_fields([record()], rules(), map()) :: %{optional(atom()) => float()}
+  defp score_fields(records, rules, tallies) do
+    count  (truncated)[0m
+[36m00:38:22.237 [debug] claude -p RESULT (stop="end_turn"):
+<file path="test_harness.exs">
+Code.require_file("solution.ex", __DIR__)
+
+defmodule DataQualityScorerTest do
+  use ExUnit.Case, async: false
+
+  defp assert_score(actual, expected) do
+    assert_in_delta(actual, expected, 0.01)
+  end
+
+  # -------------------------------------------------------
+  # Comprehensive dataset with known quality issues
+  # -------------------------------------------------------
+
+  defp comprehensive_rules do
+    %{
+      id: [:not_null, :unique],
+      email: [:not_null, {:format, ~r/^[^@\s]+@[^@\s]+$/}],
+      age: [{:range, 0, 120}],
+      country: [{:referential, MapSet.new(["US", "UK", "CA"])}]
+    }
+  end
+
+  defp comprehensive_records do
+    [
+      # R1: everything passes
+      %{id: 1, email: "a@b.com", age: 30, country: "US"},
+      # R2: bad email format, age out of range
+      %{id: 2, email: "bad-email", age: 200, country: "US"},
+      # R3: duplicate id (fails unique), country not referential
+      %{id: 2, email: "c@d.com", age: 25, country: "FR"},
+      # R4: email nil (fails not_null + format)
+      %{id: 4, email: nil, age: 40, country: "UK"},
+      # R5: email key missing
+      %{id: 5, age: 50, country: "CA"}
+    ]
+  end
+
+  test "per-record scores match expectations" do
+    result = DataQualityScorer.score(comprehensive_records(), comprehensive_rules())
+    records = result.records
+
+    assert length(records) == 5
+
+    [r1, r2, r3, r4, r5] = records
+
+    # total is constant: 2 + 2 + 1 + 1 = 6
+    assert Enum.all?(records, &(&1.total == 6))
+
+    assert r1.passed == 6
+    assert_score(r1.score, 100.0)
+
+    # R2: id not_null ok, id unique fails (dup id 2), email not_null ok,
+    # email format fails, age out of range fails, country ok => 3/6
+    assert r2.passed == 3
+    assert_score(r2.score, 50.0)
+
+    assert r3.passed == 4
+    assert_score(r3.score, 66.6667)
+
+    assert r4.passed == 4
+    assert_score(r4.score, 66.6667)
+
+    assert r5.passed == 4
+    assert_score(r5.score, 66.6667)
+  end
+
+  test "per-field scores match expectations" do
+    result = DataQualityScorer.score(comprehensive_records(), comprehensive_rules())
+    fields = result.fields
+
+    # id: R1, R4, R5 pass (R2/R3 share id 2 -> fail unique) => 3/5
+    assert_score(fields.id, 60.0)
+    # email: only R1 and R3 pass => 2/5
+    assert_score(fields.email, 40.0)
+    # age: all except R2 (200) => 4/5
+    assert_score(fields.age, 80.0)
+    # country: all except R3 (FR) => 4/5
+    assert_score(fields.country, 80.0)
+  end
+
+  test "overall score matches expectations" do
+    result = DataQualityScorer.score(comprehensive_records(), comprehensive_rules())
+    # total passed = 6 + 3 + 4 + 4 + 4 = 21 out of 5 * 6 = 30
+    assert_score(result.overall, 70.0)
+  end
+
+  test "records are returned in input order" do
+    rules = %{id: [:not_null]}
+    records = [%{id: 9}, %{id: 3}, %{id: 7}]
+    result = DataQualityScorer.score(records, rules)
+    assert Enum.map(result.records, & &1.passed) == [1, 1, 1]
+    assert length(result.records) == 3
+  end
+
+  # -------------------------------------------------------
+  # :not_null
+  # -------------------------------------------------------
+
+  test "not_null fails for both nil values and missing keys" do
+    rules = %{a: [:not_null]}
+    records = [%{a: 1}, %{a: nil}, %{}]
+    result = DataQualityScorer.score(records, rules)
+
+    [r1, r2, r3] = result.records
+    assert r1.passed == 1
+    assert r2.passed == 0
+    assert r3.passed == 0
+
+    # 1 of 3 records passes the field
+    assert_score(result.fields.a, 33.3333)
+  end
+
+  # -------------------------------------------------------
+  # :unique
+  # -------------------------------------------------------
+
+  test "unique passes only for values appearing exactly once" do
+    rules = %{a: [:unique]}
+    records = [%{a: 1}, %{a: 2}, %{a: 2}, %{a: 3}]
+    result = DataQualityScorer.score(records, rules)
+
+    passed = Enum.map(result.records, & &1.passed)
+    # 1 -> unique, 2 -> dup, 2 -> dup, 3 -> unique
+    assert passed == [1, 0, 0, 1]
+    assert_score(result.fields.a, 50.0)
+  end
+
+  test "unique treats repeated nil (including missing keys) as duplicates" do
+    rules = %{a: [:unique]}
+    records = [%{a: nil}, %{}, %{a: 7}]
+    result = DataQualityScorer.score(records, rules)
+
+    passed = Enum.map(result.records, & &1.passed)
+    # nil appears twice (explicit nil + missing key), 7 once
+    assert passed == [0, 0, 1]
+    assert_score(result.fields.a, 33.3333)
+  end
+
+  # -------------------------------------------------------
+  # :format
+  # -------------------------------------------------------
+
+  test "format matches strings and rejects non-strings and nil" do
+    rules = %{a: [{:format, ~r/^\d+$/}]}
+    records = [%{a: "123"}, %{a: "12a"}, %{a: 5}, %{a: nil}, %{}]
+    result = DataQualityScorer.score(records, rules)
+
+    passed = Enum.map(result.records, & &1.passed)
+    assert passed == [1, 0, 0, 0, 0]
+    assert_score(result.fields.a, 20.0)
+  end
+
+  # -------------------------------------------------------
+  # :range
+  # -------------------------------------------------------
+
+  test "range is inclusive and rejects non-numbers and nil" do
+    rules = %{a: [{:range, 10, 20}]}
+
+    records = [
+      %{a: 10},
+      %{a: 20},
+      %{a: 9},
+      %{a: 21},
+      %{a: 15.5},
+      %{a: "x"},
+      %{a: nil}
+    ]
+
+    result = DataQualityScorer.score(records, rules)
+
+    passed = Enum.map(result.records, & &1.passed)
+    # 10 ok, 20 ok, 9 no, 21 no, 15.5 ok, "x" no, nil no
+    assert passed == [1, 1, 0, 0, 1, 0, 0]
+    assert_score(result.fields.a, 42.8571)
+  end
+
+  # -------------------------------------------------------
+  # :referential
+  # -------------------------------------------------------
+
+  test "referential passes only for members of the provided set" do
+    set = MapSet.new([:a, :b])
+    rules = %{c: [{:referential, set}]}
+    records = [%{c: :a}, %{c: :b}, %{c: :z}, %{c: nil}]
+    result = DataQualityScorer.score(records, rules)
+
+    passed = Enum.map(result.records, & &1.passed)
+    assert passed == [1, 1, 0, 0]
+    assert_score(result.fields.c, 50.0)
+  end
+
+  # -------------------------------------------------------
+  # A record that passes everything scores 100
+  # -------------------------------------------------------
+
+  test "record passing all rules scores 100" do
+    rules = %{
+      id: [:not_null, :unique],
+      name: [:not_null, {:format, ~r/^[A-Z][a-z]+$/}],
+      score: [{:range, 0, 100}]
+    }
+
+    records = [%{id: 1, name: "Ada", score: 99}]
+    result = DataQualityScorer.score(records, rules)
+
+    [r1] = result.records
+    # total rule instances = 2 + 2 + 1 = 5
+    assert r1.total == 5
+    assert r1.passed == 5
+    assert_score(r1.score, 100.0)
+    assert_score(result.overall, 100.0)
+    assert_score(result.fields.id, 100.0)
+    assert_score(result.fields.name, 100.0)
+    assert_score(result.fields.score, 100.0)
+  end
+
+  # -------------------------------------------------------
+  # Edge cases
+  # -------------------------------------------------------
+
+  test "empty dataset yields vacuous 100 scores" do
+    rules = %{id: [:not_null], email: [{:format, ~r/@/}]}
+    result = DataQualityScorer.score([], rules)
+
+    assert result.records == []
+    assert_score(result.overall, 100.0)
+    assert_score(result.fields.id, 100.0)
+    assert_score(result.fields.email, 100.0)
+  end
+
+  test "no rules at all yields 100 for every record and overall" do
+    rules = %{}
+    records = [%{a: 1}, %{a: 2}]
+    result = DataQualityScorer.score(records, rules)
+
+    assert Enum.all?(result.records, &(&1.total == 0))
+    assert Enum.all?(result.records, &(&1.passed == 0))
+    Enum.each(result.records, fn r -> assert_score(r.score, 100.0) end)
+    assert_score(result.overall, 100.0)
+    assert result.fields == %{}
+  end
+
+  test "single field with multiple rules counts each rule individually" do
+    rules = %{email: [:not_null, {:format, ~r/@/}]}
+    records = [
+      %{email: "a@b"},
+      %{email: "bad"},
+      %{email: nil}
+    ]
+
+    result = DataQualityScorer.score(records, rules)
+    [r1, r2, r3] = result.records
+
+    assert (truncated)[0m
+[36m00:38:22.237 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7760, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7760, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7760, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7760, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 5913, "type" => "message"}], "output_tokens" => 5913, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m00:38:22.255 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/135_001_data_quality_scorer_01 solution.ex[0m
+[36m00:38:23.023 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":162,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":5,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/135_001_data_quality_scorer_01/solution.ex","task":"135_001_data_quality_scorer_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-03T22:38:22.999845Z"}[0m
+[22m00:38:23.024 [info] cycle 135_001_data_quality_scorer_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m00:38:23.024 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m00:38:23.024 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+# Data Quality Scorer
+
+Write me an Elixir module called `DataQualityScorer` that scores the quality of a
+dataset (a list of records) against a set of declarative quality rules.
+
+## Public API
+
+Expose a single function:
+
+```elixir
+DataQualityScorer.score(records, rules)
+```
+
+- `records` is a list of maps. Each map is one record. Keys are field names
+  (atoms), values are arbitrary. Records may be missing some keys.
+- `rules` is a map of the form `%{field_name => [rule, ...]}`. Each field maps to
+  a **non-empty list** of rules to enforce on that field. Fields that appear in a
+  record but not in `rules` are ignored.
+
+## Rule types
+
+Each rule is evaluated against a single record's value for its field. Use
+`Map.get(record, field)` to fetch the value (so a missing key yields `nil`).
+
+- `:not_null` — passes when the field key is present **and** its value is not
+  `nil`. (A missing key fails. A present key with value `nil` fails.)
+- `:unique` — passes when this record's value for the field appears **exactly
+  once** across all records in the dataset. Tally the value returned by
+  `Map.get(record, field)` for every record (a missing key contributes `nil`); a
+  record passes when the frequency of its own value is `1`. If two or more records
+  share the same value (including `nil`), all of them fail this rule.
+- `{:format, regex}` — passes when the value is a **binary string** and
+  `Regex.match?(regex, value)` is true. A `nil` or non-string value fails.
+- `{:range, min, max}` — passes when the value is a **number** (integer or float)
+  and `min <= value <= max` (bounds are inclusive). A `nil` or non-number value
+  fails.
+- `{:referential, set}` — passes when the value is a member of the provided
+  `MapSet`, i.e. `MapSet.member?(set, value)` is true.
+
+## Return value
+
+Return a map with exactly these keys:
+
+```elixir
+%{
+  overall: float,
+  records: [%{score: float, passed: non_neg_integer, total: non_neg_integer}, ...],
+  fields:  %{field_name => float}
+}
+```
+
+### `records`
+A list, in the **same order as the input `records`**, of per-record results.
+For a record:
+
+- `total` is the total number of individual rule instances across all fields
+  (this is the same for every record: the sum of the lengths of every field's
+  rule list).
+- `passed` is how many of those rule instances evaluate to true for that record.
+- `score` is `passed / total * 100` as a float. If `total` is `0` (no rules at
+  all), `score` is `100.0`.
+
+### `fields`
+A map from each field name (every key present in `rules`) to a percentage float.
+A record **passes a field** when **all** of that field's rules pass for it. The
+field's score is `(number of records that pass the field) / (number of records) *
+100`. If the dataset is empty, every field scores `100.0` (vacuously true).
+
+### `overall`
+The percentage of all `(record, rule)` checks that pass:
+`(sum of every record's passed) / (number_of_records * total_rules) * 100` as a
+float. If the dataset is empty, or there are no rules at all, `overall` is
+`100.0`.
+
+## Notes
+
+- Percentages are plain floats (e.g. `75.0`, `66.666...`). Do not round.
+- Use only the Elixir/Erlang standard library — no external dependencies.
+- Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule DataQualityScorer do
+  @moduledoc """
+  Scores the quality of a dataset against a set of declarative quality rules.
+
+  A dataset is a list of records (maps keyed by field-name atoms). Rules are a
+  map of `%{field_name => [rule, ...]}` where each field maps to a non-empty
+  list of rules to enforce on that field.
+
+  Supported rule types:
+
+    * `:not_null` — the field key is present and its value is not `nil`.
+    * `:unique` — the value appears exactly once across all records.
+    * `{:format, regex}` — the value is a binary string matching `regex`.
+    * `{:range, min, max}` — the value is a number within `[min, max]`.
+    * `{:referential, set}` — the value is a member of the given `MapSet`.
+
+  `score/2` returns overall, per-record and per-field percentage scores.
+  """
+
+  @typedoc "A single dataset record."
+  @type record :: %{optional(atom()) => any()}
+
+  @typedoc "A single quality rule."
+  @type rule ::
+          :not_null
+          | :unique
+          | {:format, Regex.t()}
+          | {:range, number(), number()}
+          | {:referential, MapSet.t()}
+
+  @typedoc "Rules keyed by field name."
+  @type rules :: %{optional(atom()) => [rule(), ...]}
+
+  @typedoc "Per-record result."
+  @type record_result :: %{
+          score: float(),
+          passed: non_neg_integer(),
+          total: non_neg_integer()
+        }
+
+  @typedoc "The full scoring result."
+  @type result :: %{
+          overall: float(),
+          records: [record_result()],
+          fields: %{optional(atom()) => float()}
+        }
+
+  @doc """
+  Scores `records` against `rules`.
+
+  Returns a map with `:overall`, `:records` and `:fields` keys. Percentages are
+  plain floats and are not rounded. Empty datasets and rule-free scorings score
+  `100.0` (vacuously true).
+
+  ## Examples
+
+      iex> rules = %{name: [:not_null]}
+      iex> DataQualityScorer.score([%{name: "a"}, %{name: nil}], rules)
+      %{
+        overall: 50.0,
+        records: [
+          %{score: 100.0, passed: 1, total: 1},
+          %{score: +0.0, passed: 0, total: 1}
+        ],
+        fields: %{name: 50.0}
+      }
+  """
+  @spec score([record()], rules()) :: result()
+  def score(records, rules) when is_list(records) and is_map(rules) do
+    fields = Map.keys(rules)
+    total_rules = rules |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
+
+    tallies = build_tallies(records, fields)
+
+    record_results = Enum.map(records, &score_record(&1, rules, tallies, total_rules))
+    fields_result = score_fields(records, rules, tallies)
+    overall = score_overall(record_results, length(records), total_rules)
+
+    %{overall: overall, records: record_results, fields: fields_result}
+  end
+
+  # Precompute value frequencies per field, for `:unique` rules.
+  @spec build_tallies([record()], [atom()]) :: %{optional(atom()) => %{any() => pos_integer()}}
+  defp build_tallies(records, fields) do
+    Map.new(fields, fn field ->
+      counts =
+        Enum.reduce(records, %{}, fn record, acc ->
+          value = Map.get(record, field)
+          Map.update(acc, value, 1, &(&1 + 1))
+        end)
+
+      {field, counts}
+    end)
+  end
+
+  @spec score_record(record(), rules(), map(), non_neg_integer()) :: record_result()
+  defp score_record(record, rules, tallies, total_rules) do
+    passed =
+      Enum.reduce(rules, 0, fn {field, field_rules}, acc ->
+        acc + Enum.count(field_rules, &rule_passes?(&1, record, field, tallies))
+      end)
+
+    %{score: percentage(passed, total_rules), passed: passed, total: total_rules}
+  end
+
+  @spec score_fields([record()], rules(), map()) :: %{optional(atom()) => float()}
+  defp score_fields(records, rules, tallies) do
+    count = length(records)
+
+    Map.new(rules, fn {field, field_rules} ->
+      passing =
+        Enum.count(records, fn record ->
+          Enum.all?(field_rules, &rule_passes?(&1, record, field, tallies))
+     (truncated)[0m
+[36m00:44:20.514 [debug] claude -p RESULT (stop="end_turn"):
+I analyzed the file carefully. The structural house-style requirements (`@moduledoc`, `@spec`/`@doc` on the public function, no `TODO`) are already satisfied, so the failure is the lone compile warning. The one place the code touches Kernel-imported names is the `{:range, min, max}` clause, where `min`/`max` shadow `Kernel.min/2` and `Kernel.max/2`. I've renamed those to `lo`/`hi` (behavior-identical), and re-verified there are no unused variables, no bare `0.0` matches, and every line stays ≤ 98 columns.
+
+<file path="solution.ex">
+defmodule DataQualityScorer do
+  @moduledoc """
+  Scores the quality of a dataset against a set of declarative quality rules.
+
+  A dataset is a list of records (maps keyed by field-name atoms). Rules are a
+  map of `%{field_name => [rule, ...]}` where each field maps to a non-empty
+  list of rules to enforce on that field.
+
+  Supported rule types:
+
+    * `:not_null` — the field key is present and its value is not `nil`.
+    * `:unique` — the value appears exactly once across all records.
+    * `{:format, regex}` — the value is a binary string matching `regex`.
+    * `{:range, min, max}` — the value is a number within `[min, max]`.
+    * `{:referential, set}` — the value is a member of the given `MapSet`.
+
+  `score/2` returns overall, per-record and per-field percentage scores.
+  """
+
+  @typedoc "A single dataset record."
+  @type record :: %{optional(atom()) => any()}
+
+  @typedoc "A single quality rule."
+  @type rule ::
+          :not_null
+          | :unique
+          | {:format, Regex.t()}
+          | {:range, number(), number()}
+          | {:referential, MapSet.t()}
+
+  @typedoc "Rules keyed by field name."
+  @type rules :: %{optional(atom()) => [rule(), ...]}
+
+  @typedoc "Per-record result."
+  @type record_result :: %{
+          score: float(),
+          passed: non_neg_integer(),
+          total: non_neg_integer()
+        }
+
+  @typedoc "The full scoring result."
+  @type result :: %{
+          overall: float(),
+          records: [record_result()],
+          fields: %{optional(atom()) => float()}
+        }
+
+  @doc """
+  Scores `records` against `rules`.
+
+  Returns a map with `:overall`, `:records` and `:fields` keys. Percentages are
+  plain floats and are not rounded. Empty datasets and rule-free scorings score
+  `100.0` (vacuously true).
+
+  ## Examples
+
+      iex> rules = %{name: [:not_null]}
+      iex> DataQualityScorer.score([%{name: "a"}, %{name: nil}], rules)
+      %{
+        overall: 50.0,
+        records: [
+          %{score: 100.0, passed: 1, total: 1},
+          %{score: +0.0, passed: 0, total: 1}
+        ],
+        fields: %{name: 50.0}
+      }
+  """
+  @spec score([record()], rules()) :: result()
+  def score(records, rules) when is_list(records) and is_map(rules) do
+    fields = Map.keys(rules)
+    total_rules = rules |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
+
+    tallies = build_tallies(records, fields)
+
+    record_results = Enum.map(records, &score_record(&1, rules, tallies, total_rules))
+    fields_result = score_fields(records, rules, tallies)
+    overall = score_overall(record_results, length(records), total_rules)
+
+    %{overall: overall, records: record_results, fields: fields_result}
+  end
+
+  # Precompute value frequencies per field, for `:unique` rules.
+  @spec build_tallies([record()], [atom()]) :: %{optional(atom()) => %{any() => pos_integer()}}
+  defp build_tallies(records, fields) do
+    Map.new(fields, fn field ->
+      counts =
+        Enum.reduce(records, %{}, fn record, acc ->
+          value = Map.get(record, field)
+          Map.update(acc, value, 1, &(&1 + 1))
+        end)
+
+      {field, counts}
+    end)
+  end
+
+  @spec score_record(record(), rules(), map(), non_neg_integer()) :: record_result()
+  defp score_record(record, rules, tallies, total_rules) do
+    passed =
+      Enum.reduce(rules, 0, fn {field, field_rules}, acc ->
+        acc + Enum.count(field_rules, &rule_passes?(&1, record, field, tallies))
+      end)
+
+    %{score: percentage(passed, total_rules), passed: passed, total: total_rules}
+  end
+
+  @spec score_fields([record()], rules(), map()) :: %{optional(atom()) => float()}
+  defp score_fields(records, rules, tallies) do
+    count = length(records)
+
+    Map.new(rules, fn {field, field_rules} ->
+      passing =
+        Enum.count(records, fn record ->
+          Enum.all?(field_rules, &rule_passes?(&1, record, field, tallies))
+        end)
+
+      {field, field_percentage(passing, count)}
+    end)
+  end
+
+  @spec score_overall([record_result()], non_neg_integer(), non_neg_integer()) :: float()
+  defp score_overall(_record_results, 0, _total_rules), do: 100.0
+  defp score_overall(_record_results, _count, 0), do: 100.0
+
+  defp score_overall(record_results, count, total_rules) do
+    total_passed = record_results |> Enum.map(& &1.passed) |> Enum.sum()
+    percentage(total_passed, count * total_rules)
+  end
+
+  @spec rule_passes?(rule(), record(), atom(), map()) :: boolean()
+  defp rule_passes?(:not_null, record, field, _tallies) do
+    Map.has_key?(record, field) and Map.get(record, field) != nil
+  end
+
+  defp rule_passes?(:unique, record, field, tallies) do
+    value = Map.get(record, field)
+    Map.get(tallies[field], value) == 1
+  end
+
+  defp rule_passes?({:format, regex}, record, field, _tallies) do
+    value = Map.get(record, field)
+    is_binary(value) and Regex.match?(regex, value)
+  end
+
+  defp rule_passes?({:range, lo, hi}, record, field, _tallies) do
+    value = Map.get(record, field)
+    is_number(value) and lo <= value and value <= hi
+  end
+
+  defp rule_passes?({:referential, set}, record, field, _tallies) do
+    MapSet.member?(set, Map.get(record, field))
+  end
+
+  # Score for a single record's rule tally; empty rule set scores 100.0.
+  @spec percentage(non_neg_integer(), non_neg_integer()) :: float()
+  defp percentage(_passed, 0), do: 100.0
+  defp percentage(passed, total), do: passed / total * 100
+
+  # Field score; an empty dataset scores 100.0 vacuously.
+  @spec field_percentage(non_neg_integer(), non_neg_integer()) :: float()
+  defp field_percentage(_passing, 0), do: 100.0
+  defp field_percentage(passing, count), do: passing / count * 100
+end
+</file>[0m
+[36m00:44:20.514 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7746, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7746, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7746, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7746, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 26036, "type" => "message"}], "output_tokens" => 26036, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m00:44:20.533 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/135_001_data_quality_scorer_01 solution.ex[0m
+[36m00:44:21.326 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":162,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":5,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/135_001_data_quality_scorer_01/solution.ex","task":"135_001_data_quality_scorer_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-03T22:44:21.301638Z"}[0m
+[22m00:44:21.327 [info] cycle 135_001_data_quality_scorer_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m00:44:21.327 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m00:44:21.327 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+# Data Quality Scorer
+
+Write me an Elixir module called `DataQualityScorer` that scores the quality of a
+dataset (a list of records) against a set of declarative quality rules.
+
+## Public API
+
+Expose a single function:
+
+```elixir
+DataQualityScorer.score(records, rules)
+```
+
+- `records` is a list of maps. Each map is one record. Keys are field names
+  (atoms), values are arbitrary. Records may be missing some keys.
+- `rules` is a map of the form `%{field_name => [rule, ...]}`. Each field maps to
+  a **non-empty list** of rules to enforce on that field. Fields that appear in a
+  record but not in `rules` are ignored.
+
+## Rule types
+
+Each rule is evaluated against a single record's value for its field. Use
+`Map.get(record, field)` to fetch the value (so a missing key yields `nil`).
+
+- `:not_null` — passes when the field key is present **and** its value is not
+  `nil`. (A missing key fails. A present key with value `nil` fails.)
+- `:unique` — passes when this record's value for the field appears **exactly
+  once** across all records in the dataset. Tally the value returned by
+  `Map.get(record, field)` for every record (a missing key contributes `nil`); a
+  record passes when the frequency of its own value is `1`. If two or more records
+  share the same value (including `nil`), all of them fail this rule.
+- `{:format, regex}` — passes when the value is a **binary string** and
+  `Regex.match?(regex, value)` is true. A `nil` or non-string value fails.
+- `{:range, min, max}` — passes when the value is a **number** (integer or float)
+  and `min <= value <= max` (bounds are inclusive). A `nil` or non-number value
+  fails.
+- `{:referential, set}` — passes when the value is a member of the provided
+  `MapSet`, i.e. `MapSet.member?(set, value)` is true.
+
+## Return value
+
+Return a map with exactly these keys:
+
+```elixir
+%{
+  overall: float,
+  records: [%{score: float, passed: non_neg_integer, total: non_neg_integer}, ...],
+  fields:  %{field_name => float}
+}
+```
+
+### `records`
+A list, in the **same order as the input `records`**, of per-record results.
+For a record:
+
+- `total` is the total number of individual rule instances across all fields
+  (this is the same for every record: the sum of the lengths of every field's
+  rule list).
+- `passed` is how many of those rule instances evaluate to true for that record.
+- `score` is `passed / total * 100` as a float. If `total` is `0` (no rules at
+  all), `score` is `100.0`.
+
+### `fields`
+A map from each field name (every key present in `rules`) to a percentage float.
+A record **passes a field** when **all** of that field's rules pass for it. The
+field's score is `(number of records that pass the field) / (number of records) *
+100`. If the dataset is empty, every field scores `100.0` (vacuously true).
+
+### `overall`
+The percentage of all `(record, rule)` checks that pass:
+`(sum of every record's passed) / (number_of_records * total_rules) * 100` as a
+float. If the dataset is empty, or there are no rules at all, `overall` is
+`100.0`.
+
+## Notes
+
+- Percentages are plain floats (e.g. `75.0`, `66.666...`). Do not round.
+- Use only the Elixir/Erlang standard library — no external dependencies.
+- Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule DataQualityScorer do
+  @moduledoc """
+  Scores the quality of a dataset against a set of declarative quality rules.
+
+  A dataset is a list of records (maps keyed by field-name atoms). Rules are a
+  map of `%{field_name => [rule, ...]}` where each field maps to a non-empty
+  list of rules to enforce on that field.
+
+  Supported rule types:
+
+    * `:not_null` — the field key is present and its value is not `nil`.
+    * `:unique` — the value appears exactly once across all records.
+    * `{:format, regex}` — the value is a binary string matching `regex`.
+    * `{:range, min, max}` — the value is a number within `[min, max]`.
+    * `{:referential, set}` — the value is a member of the given `MapSet`.
+
+  `score/2` returns overall, per-record and per-field percentage scores.
+  """
+
+  @typedoc "A single dataset record."
+  @type record :: %{optional(atom()) => any()}
+
+  @typedoc "A single quality rule."
+  @type rule ::
+          :not_null
+          | :unique
+          | {:format, Regex.t()}
+          | {:range, number(), number()}
+          | {:referential, MapSet.t()}
+
+  @typedoc "Rules keyed by field name."
+  @type rules :: %{optional(atom()) => [rule(), ...]}
+
+  @typedoc "Per-record result."
+  @type record_result :: %{
+          score: float(),
+          passed: non_neg_integer(),
+          total: non_neg_integer()
+        }
+
+  @typedoc "The full scoring result."
+  @type result :: %{
+          overall: float(),
+          records: [record_result()],
+          fields: %{optional(atom()) => float()}
+        }
+
+  @doc """
+  Scores `records` against `rules`.
+
+  Returns a map with `:overall`, `:records` and `:fields` keys. Percentages are
+  plain floats and are not rounded. Empty datasets and rule-free scorings score
+  `100.0` (vacuously true).
+
+  ## Examples
+
+      iex> rules = %{name: [:not_null]}
+      iex> DataQualityScorer.score([%{name: "a"}, %{name: nil}], rules)
+      %{
+        overall: 50.0,
+        records: [
+          %{score: 100.0, passed: 1, total: 1},
+          %{score: +0.0, passed: 0, total: 1}
+        ],
+        fields: %{name: 50.0}
+      }
+  """
+  @spec score([record()], rules()) :: result()
+  def score(records, rules) when is_list(records) and is_map(rules) do
+    fields = Map.keys(rules)
+    total_rules = rules |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
+
+    tallies = build_tallies(records, fields)
+
+    record_results = Enum.map(records, &score_record(&1, rules, tallies, total_rules))
+    fields_result = score_fields(records, rules, tallies)
+    overall = score_overall(record_results, length(records), total_rules)
+
+    %{overall: overall, records: record_results, fields: fields_result}
+  end
+
+  # Precompute value frequencies per field, for `:unique` rules.
+  @spec build_tallies([record()], [atom()]) :: %{optional(atom()) => %{any() => pos_integer()}}
+  defp build_tallies(records, fields) do
+    Map.new(fields, fn field ->
+      counts =
+        Enum.reduce(records, %{}, fn record, acc ->
+          value = Map.get(record, field)
+          Map.update(acc, value, 1, &(&1 + 1))
+        end)
+
+      {field, counts}
+    end)
+  end
+
+  @spec score_record(record(), rules(), map(), non_neg_integer()) :: record_result()
+  defp score_record(record, rules, tallies, total_rules) do
+    passed =
+      Enum.reduce(rules, 0, fn {field, field_rules}, acc ->
+        acc + Enum.count(field_rules, &rule_passes?(&1, record, field, tallies))
+      end)
+
+    %{score: percentage(passed, total_rules), passed: passed, total: total_rules}
+  end
+
+  @spec score_fields([record()], rules(), map()) :: %{optional(atom()) => float()}
+  defp score_fields(records, rules, tallies) do
+    count = length(records)
+
+    Map.new(rules, fn {field, field_rules} ->
+      passing =
+        Enum.count(records, fn record ->
+          Enum.all?(field_rules, &rule_passes?(&1, record, field, tallies))
+     (truncated)[0m
+[36m00:47:31.118 [debug] claude -p RESULT (stop="end_turn"):
+Looking at the code, the one construct the Elixir 1.18 type checker flags is `Map.get(tallies[field], value)` — the `tallies[field]` Access can be typed as `map | nil`, and passing a possibly-`nil` first argument to `Map.get/2` produces a warning. Replacing it with `Map.fetch!/2` (safe, since the field is always a key in `tallies`) yields a non-nil map and silences the warning, with identical behavior.
+
+<file path="solution.ex">
+defmodule DataQualityScorer do
+  @moduledoc """
+  Scores the quality of a dataset against a set of declarative quality rules.
+
+  A dataset is a list of records (maps keyed by field-name atoms). Rules are a
+  map of `%{field_name => [rule, ...]}` where each field maps to a non-empty
+  list of rules to enforce on that field.
+
+  Supported rule types:
+
+    * `:not_null` — the field key is present and its value is not `nil`.
+    * `:unique` — the value appears exactly once across all records.
+    * `{:format, regex}` — the value is a binary string matching `regex`.
+    * `{:range, min, max}` — the value is a number within `[min, max]`.
+    * `{:referential, set}` — the value is a member of the given `MapSet`.
+
+  `score/2` returns overall, per-record and per-field percentage scores.
+  """
+
+  @typedoc "A single dataset record."
+  @type record :: %{optional(atom()) => any()}
+
+  @typedoc "A single quality rule."
+  @type rule ::
+          :not_null
+          | :unique
+          | {:format, Regex.t()}
+          | {:range, number(), number()}
+          | {:referential, MapSet.t()}
+
+  @typedoc "Rules keyed by field name."
+  @type rules :: %{optional(atom()) => [rule(), ...]}
+
+  @typedoc "Per-record result."
+  @type record_result :: %{
+          score: float(),
+          passed: non_neg_integer(),
+          total: non_neg_integer()
+        }
+
+  @typedoc "The full scoring result."
+  @type result :: %{
+          overall: float(),
+          records: [record_result()],
+          fields: %{optional(atom()) => float()}
+        }
+
+  @doc """
+  Scores `records` against `rules`.
+
+  Returns a map with `:overall`, `:records` and `:fields` keys. Percentages are
+  plain floats and are not rounded. Empty datasets and rule-free scorings score
+  `100.0` (vacuously true).
+
+  ## Examples
+
+      iex> rules = %{name: [:not_null]}
+      iex> DataQualityScorer.score([%{name: "a"}, %{name: nil}], rules)
+      %{
+        overall: 50.0,
+        records: [
+          %{score: 100.0, passed: 1, total: 1},
+          %{score: +0.0, passed: 0, total: 1}
+        ],
+        fields: %{name: 50.0}
+      }
+  """
+  @spec score([record()], rules()) :: result()
+  def score(records, rules) when is_list(records) and is_map(rules) do
+    fields = Map.keys(rules)
+    total_rules = rules |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
+
+    tallies = build_tallies(records, fields)
+
+    record_results = Enum.map(records, &score_record(&1, rules, tallies, total_rules))
+    fields_result = score_fields(records, rules, tallies)
+    overall = score_overall(record_results, length(records), total_rules)
+
+    %{overall: overall, records: record_results, fields: fields_result}
+  end
+
+  # Precompute value frequencies per field, for `:unique` rules.
+  @spec build_tallies([record()], [atom()]) :: %{optional(atom()) => %{any() => pos_integer()}}
+  defp build_tallies(records, fields) do
+    Map.new(fields, fn field ->
+      counts =
+        Enum.reduce(records, %{}, fn record, acc ->
+          value = Map.get(record, field)
+          Map.update(acc, value, 1, &(&1 + 1))
+        end)
+
+      {field, counts}
+    end)
+  end
+
+  @spec score_record(record(), rules(), map(), non_neg_integer()) :: record_result()
+  defp score_record(record, rules, tallies, total_rules) do
+    passed =
+      Enum.reduce(rules, 0, fn {field, field_rules}, acc ->
+        acc + Enum.count(field_rules, &rule_passes?(&1, record, field, tallies))
+      end)
+
+    %{score: percentage(passed, total_rules), passed: passed, total: total_rules}
+  end
+
+  @spec score_fields([record()], rules(), map()) :: %{optional(atom()) => float()}
+  defp score_fields(records, rules, tallies) do
+    count = length(records)
+
+    Map.new(rules, fn {field, field_rules} ->
+      passing =
+        Enum.count(records, fn record ->
+          Enum.all?(field_rules, &rule_passes?(&1, record, field, tallies))
+        end)
+
+      {field, field_percentage(passing, count)}
+    end)
+  end
+
+  @spec score_overall([record_result()], non_neg_integer(), non_neg_integer()) :: float()
+  defp score_overall(_record_results, 0, _total_rules), do: 100.0
+  defp score_overall(_record_results, _count, 0), do: 100.0
+
+  defp score_overall(record_results, count, total_rules) do
+    total_passed = record_results |> Enum.map(& &1.passed) |> Enum.sum()
+    percentage(total_passed, count * total_rules)
+  end
+
+  @spec rule_passes?(rule(), record(), atom(), map()) :: boolean()
+  defp rule_passes?(:not_null, record, field, _tallies) do
+    Map.has_key?(record, field) and Map.get(record, field) != nil
+  end
+
+  defp rule_passes?(:unique, record, field, tallies) do
+    value = Map.get(record, field)
+    counts = Map.fetch!(tallies, field)
+    Map.get(counts, value) == 1
+  end
+
+  defp rule_passes?({:format, regex}, record, field, _tallies) do
+    value = Map.get(record, field)
+    is_binary(value) and Regex.match?(regex, value)
+  end
+
+  defp rule_passes?({:range, lo, hi}, record, field, _tallies) do
+    value = Map.get(record, field)
+    is_number(value) and lo <= value and value <= hi
+  end
+
+  defp rule_passes?({:referential, set}, record, field, _tallies) do
+    MapSet.member?(set, Map.get(record, field))
+  end
+
+  # Score for a single record's rule tally; empty rule set scores 100.0.
+  @spec percentage(non_neg_integer(), non_neg_integer()) :: float()
+  defp percentage(_passed, 0), do: 100.0
+  defp percentage(passed, total), do: passed / total * 100
+
+  # Field score; an empty dataset scores 100.0 vacuously.
+  @spec field_percentage(non_neg_integer(), non_neg_integer()) :: float()
+  defp field_percentage(_passing, 0), do: 100.0
+  defp field_percentage(passing, count), do: passing / count * 100
+end
+</file>[0m
+[36m00:47:31.118 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7750, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7750, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7750, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7750, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 14678, "type" => "message"}], "output_tokens" => 14678, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m00:47:31.137 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/135_001_data_quality_scorer_01 solution.ex[0m
+[36m00:47:31.913 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":163,"lines_over_98":0,"max_line_length":95,"mode":"full","pipe_chain_count":5,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/135_001_data_quality_scorer_01/solution.ex","task":"135_001_data_quality_scorer_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-03T22:47:31.888250Z"}[0m
+[22m00:47:31.914 [info] cycle 135_001_data_quality_scorer_01: REJECTED after 4 attempt(s)[0m

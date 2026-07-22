@@ -1,0 +1,53 @@
+reverify: 0 tfim row(s) + 25 bugfix row(s) to re-run (ledger logs/reverify_rejects.jsonl; already done are skipped)
+
+  bugfix reject_confirmed  034_003_rule_driven_tolerant_reconciler_with_compiled_config  L232 s722: 1 -> 2
+  bugfix reject_confirmed  010_003_exclusive_lease_manager_with_ownership  L289 s1090: >= -> >
+  bugfix reject_confirmed  006_001_ttl_cache_with_lazy_expiration  L74 s325: < -> <=
+  bugfix reject_confirmed  005_001_pubsub_event_bus  L60 s248: 1 -> 2
+  bugfix reject_confirmed  079_003_scalable_bloom_filter  L26 s19: 2 -> 3
+  bugfix reject_confirmed  034_001_data_reconciliation_engine  L98 s306: 1 -> 2
+  bugfix reject_confirmed  023_002_in_flight_coalescing_idempotent_payments  L118 s524: {:error, _} -> {:ok, _}
+  bugfix reject_confirmed  625_001_mini_s3_like_object_storage  L363 s1543: > -> >=
+  bugfix reject_confirmed  134_002_nullable_unique_column_profiler  L168 s823: {:ok, _} -> {:error, _}
+  bugfix reject_confirmed  626_003_reset_aware_counter_time_series_db  L234 s978: 1 -> 2
+  bugfix reject_confirmed  077_001_interval_tree_for_overlapping_range_queries  L166 s393: >= -> >
+  bugfix reject_confirmed  003_003_lease_based_bucket  L68 s110: > -> >=
+  bugfix reject_confirmed  023_003_fingerprint_conflict_idempotent_payments  L147 s604: 1 -> 2
+  bugfix reject_confirmed  108_003_capacity_bounded_bimap_with_lru_eviction  L134 s748: 1 -> 2
+  bugfix reject_confirmed  031_002_jsonl_importer_with_schema_validation  L45 s73: {:ok, _} -> {:error, _}
+  bugfix reject_confirmed  016_002_cursor_based_list_pagination  L78 s346: false -> true
+  bugfix reject_confirmed  033_003_http_access_log_analyzer  L172 s653: > -> >=
+  bugfix reject_confirmed  106_003_recurring_watchdog_timer  L29 s80: >= -> >
+  bugfix reject_confirmed  089_002_stackable_promo_code_system  L94 s412: 0 -> 1
+  bugfix reject_confirmed  079_003_scalable_bloom_filter  L58 s126: 1 -> 2
+  bugfix reject_confirmed  134_001_schema_inference_from_csv  L74 s265: 1 -> 2
+  bugfix reject_confirmed  107_001_event_aggregator_with_flushing  L18 s15: 100 -> 101
+  bugfix reject_confirmed  105_002_leading_trailing_edge_debouncer  L80 s378: return :ok -> :error
+  bugfix reject_confirmed  032_001_json_to_ecto_bulk_ingestion_pipeline  L292 s1137: <= -> <
+  bugfix reject_confirmed  014_001_priority_queue_processor  L161 s644: false -> true
+
+=== REVERIFY REJECTS (48 row(s) in logs/reverify_rejects.jsonl) ===
+  bugfix  reject_confirmed  27
+  tfim    REJECT_UNSOUND    15
+  tfim    reject_confirmed  3
+  tfim    stale             3
+
+  UNSOUND rows (purge + re-run backfill to mint):
+    tfim  102_001_genserver_based_state_machine_with_persistence  get_state/2 returns :not_found for unknown entity
+    tfim  102_001_genserver_based_state_machine_with_persistence  get_state/2 reflects the current in-memory state
+    tfim  102_001_genserver_based_state_machine_with_persistence  full happy path: pending → confirmed → shipped → delivered
+    tfim  102_001_genserver_based_state_machine_with_persistence  cancellation from :pending
+    tfim  102_001_genserver_based_state_machine_with_persistence  cancellation from :confirmed
+    tfim  102_001_genserver_based_state_machine_with_persistence  invalid event returns :invalid_transition and does not change state
+    tfim  102_001_genserver_based_state_machine_with_persistence  transitioning a terminal state is invalid
+    tfim  102_001_genserver_based_state_machine_with_persistence  transition on unknown entity returns :not_found
+    tfim  102_001_genserver_based_state_machine_with_persistence  invalid transition does not write to DB
+    tfim  102_001_genserver_based_state_machine_with_persistence  history/2 records every transition in order
+    tfim  102_001_genserver_based_state_machine_with_persistence  history/2 for unknown entity returns empty list
+    tfim  102_001_genserver_based_state_machine_with_persistence  history/2 is scoped per entity
+    tfim  102_001_genserver_based_state_machine_with_persistence  state survives GenServer restart and is recovered from DB
+    tfim  102_001_genserver_based_state_machine_with_persistence  concurrent transitions on the same entity serialize without corruption
+    tfim  102_001_genserver_based_state_machine_with_persistence  concurrent transitions on *different* entities don't interfere
+
+  fim_rejected.jsonl (kept deliberately, not re-run):
+    012_001_event_sourced_aggregate  apply_event/2

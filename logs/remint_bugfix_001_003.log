@@ -1,0 +1,45 @@
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 1 needing top-up → next: 001_003_hierarchical_limiter_01
+  2. new bases:      0 (every tasks.md idea already has a tasks/ dir)
+=============================================
+
+
+Backfill: 1 seed(s) needing derivatives.
+[1/1] 001_003_hierarchical_limiter_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] check/3 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_call/3 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block cleanup keeps entries within the widest window ever seen for a key carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (11/11), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_001_003_hierarchical_limiter_11
+      tfim_001_003_hierarchical_limiter_11 (tfim) ... ACCEPTED (11 passed, mutant killed (isolation), 1 attempt(s))
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L131 s335: {:ok, _} -> {:error, _} killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_001_003_hierarchical_limiter_01
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L125 s301: 0 -> 1 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L84 s156: > -> >= not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L134 s349: {:ok, _} -> {:error, _} killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_001_003_hierarchical_limiter_02
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L126 s304: max -> min killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_001_003_hierarchical_limiter_03
+      bugfix_001_003_hierarchical_limiter_01 (bugfix) ... ACCEPTED (11 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_001_003_hierarchical_limiter_02 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_001_003_hierarchical_limiter_02 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_001_003_hierarchical_limiter_02 (bugfix) ... ACCEPTED (11 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_001_003_hierarchical_limiter_03 (bugfix) ... ACCEPTED (11 passed, mutant killed (semantic_killed), 1 attempt(s))
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 780 | mintable (rejected → accepted) pairs: 108 | minted: %{exists: 17, unverified: 89, minted: 2}
+
+Done.

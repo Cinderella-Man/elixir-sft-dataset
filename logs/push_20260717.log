@@ -1,0 +1,142 @@
+[pre-push] mix format --check-formatted && mix compile --warnings-as-errors && mix test
+     warning: a struct for GenTask.Config is expected on struct update:
+
+         %GenTask.Config{ctx.cfg | dry_run: true}
+
+     but got type:
+
+         dynamic()
+
+     where "ctx" was given the type:
+
+         # type: dynamic(%{..., cfg: term()})
+         # from: test/gen_task/force_test.exs:142:13
+         %GenTask.Config{...}
+
+     you must assign "ctx.cfg" to variable and pattern match on "%GenTask.Config{}"
+
+     type warning found at:
+     │
+ 142 │       cfg = %Config{ctx.cfg | dry_run: true}
+     │             ~
+     │
+     └─ test/gen_task/force_test.exs:142:13: GenTask.ForceTest."test wipe!/2 dry-run prints the plan and deletes nothing"/1
+
+     warning: a struct for GenTask.Config is expected on struct update:
+
+         %GenTask.Config{ctx.cfg | only_idea: nil}
+
+     but got type:
+
+         dynamic()
+
+     where "ctx" was given the type:
+
+         # type: dynamic(%{..., cfg: term()})
+         # from: test/gen_task/force_test.exs:159:13
+         %GenTask.Config{...}
+
+     you must assign "ctx.cfg" to variable and pattern match on "%GenTask.Config{}"
+
+     type warning found at:
+     │
+ 159 │       cfg = %Config{ctx.cfg | only_idea: nil}
+     │             ~
+     │
+     └─ test/gen_task/force_test.exs:159:13: GenTask.ForceTest."test wipe!/2 refuses to run without a single positional idea number"/1
+
+[pre-push] validate touched families: *001_001*,*001_002*,*001_003*,*001_004*,*002_001*,*002_002*,*002_003*,*002_004*,*003_001*,*003_002*,*003_004*,*004_001*,*004_002*,*004_003*,*004_004*,*005_001*,*005_002*,*005_003*,*006_001*,*006_002*
+ALL PERFECT ✓ (every task scores 1.0)
+ALL HARNESSES KILL THEIR MUTANT ✓
+[pre-push] format check on touched families
+total: 0 deviating, 0 errors — GATE (--check: exits 1 when anything deviates; --apply to rewrite)
+[pre-push] bugfix embed staleness check on touched families
+bugfix embeds: %{unchanged: 57} (report only)
+[pre-push] temp-path lint (parallel-eval collisions)
+temp-path lint: 81 shared-path harness(es), 0 violations ✓
+[pre-push] S6 freshness (blind verdicts must match current harnesses)
+screen freshness over 332 root(s): fresh=231, fresh_legacy=6, fresh_via_strengthen=17, stale=78
+  STALE      040_004_conflict_detecting_strict_config_merger_01 — screened against harness 23c8229a, disk has c6f0c139
+  STALE      074_002_collection_and_structural_assertion_helpers_01 — screened against harness dd5f49f8, disk has 23113e82
+  STALE      079_004_concurrent_bloom_filter_01 — screened against harness ae48ec39, disk has 96f61e8a
+  STALE      078_001_ring_buffer_01 — screened against harness 2f43c3a4, disk has 1fc76cef
+  STALE      073_002_savepoint_stack_nested_transaction_cleaner_01 — screened against harness ddb88054, disk has 4cc713eb
+  STALE      070_004_resumable_journaled_saga_01 — screened against harness 0533a04d, disk has f107daa4
+  STALE      042_002_failure_aware_write_through_cache_with_negative_caching_01 — screened against harness f7e62fbb, disk has 7012ee42
+  STALE      061_002_fail_fast_parallel_map_with_cancellation_01 — screened against harness 4a176b0e, disk has 0a86c4a7
+  STALE      074_004_numeric_tolerance_and_exception_assertion_helpers_01 — screened against harness c9d6175f, disk has fde9a0e8
+  STALE      109_001_task_dependency_resolver_and_executor_01 — screened against harness 1e0c9153, disk has 6f26b83a
+  STALE      061_001_parallel_map_with_concurrency_limit_01 — screened against harness 95c08d33, disk has 0443b280
+  STALE      025_001_long_polling_endpoint_01 — screened against harness c3822b05, disk has 756b026d
+  STALE      020_003_per_tenant_quota_enforced_upload_01 — screened against harness 9ada8a95, disk has 19009d14
+  STALE      096_001_input_sanitizer_module_01 — screened against harness c813d1fc, disk has de6b5d06
+  STALE      043_004_ordered_set_leaderboard_with_deterministic_tie_breaking_01 — screened against harness 797b46e6, disk has f18f78bd
+  STALE      022_002_role_scoped_nested_membership_endpoint_01 — screened against harness 4cd3b69c, disk has bfbc07af
+  STALE      102_002_optimistic_concurrency_persisted_state_machine_01 — screened against harness 235c1a51, disk has 99fa0f19
+  STALE      032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_01 — screened against harness 8eb85a07, disk has 2ab8a726
+  STALE      063_004_bounded_concurrency_concurrent_fetcher_01 — screened against harness 8ad4e6c5, disk has 72170cd0
+  STALE      110_003_sla_percentile_monitor_with_inverse_queries_01 — screened against harness ae14fbdd, disk has 06c4f703
+  STALE      101_003_weighted_sliding_sum_counter_01 — screened against harness 70914ef9, disk has 5e3c4f82
+  STALE      034_002_cardinality_classifying_multi_key_reconciler_01 — screened against harness f09baa0e, disk has cebaaae1
+  STALE      101_004_sliding_window_threshold_alerter_01 — screened against harness 2d3209b1, disk has 5500a28f
+  STALE      038_004_diagnostic_tree_validator_with_best_effort_repair_01 — screened against harness 61dba09c, disk has 7f5ec524
+  STALE      071_002_trait_composable_factory_01 — screened against harness db75c79e, disk has 44aebff6
+  STALE      015_002_rolling_window_failure_rate_monitor_01 — screened against harness e1872510, disk has bb80e751
+  STALE      064_001_work_stealing_task_queue_01 — screened against harness 9d81041c, disk has 461036e8
+  STALE      013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01 — screened against harness 873185d7, disk has 469db10f
+  STALE      042_001_ets_based_write_through_cache_layer_01 — screened against harness eefa325c, disk has 82fc4832
+  STALE      100_001_totp_time_based_one_time_password_implementation_01 — screened against harness 8b626fa5, disk has e6297dec
+  STALE      032_001_json_to_ecto_bulk_ingestion_pipeline_01 — screened against harness 598d6883, disk has 8afd525c
+  STALE      019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01 — screened against harness 20b436fe, disk has bcb3ac8e
+  STALE      072_001_test_helper_for_time_dependent_code_01 — screened against harness f8640bc4, disk has c9e8317a
+  STALE      109_003_fail_fast_task_runner_with_skip_propagation_01 — screened against harness 3fbd2881, disk has eff4a76d
+  STALE      063_003_fallback_chain_concurrent_fetcher_01 — screened against harness 260bc860, disk has cfd10381
+  STALE      097_003_severity_classified_password_audit_with_strict_mode_01 — screened against harness c9c79731, disk has 19f6dc5c
+  STALE      075_002_recursive_json_value_generators_with_bounded_depth_01 — screened against harness a2f23a43, disk has 493a43ad
+  STALE      080_002_weighted_critical_path_dag_scheduler_01 — screened against harness 4521baf4, disk has f0a06c80
+  STALE      007_002_weightedmovingaverage_01 — screened against harness af880999, disk has 749d94d0
+  STALE      100_002_provisioning_uri_driven_multi_algorithm_totp_verifier_01 — screened against harness 4f2973ce, disk has 6aef6d8e
+  STALE      019_003_bulk_upsert_with_conflict_resolution_policies_01 — screened against harness 0eff8d6b, disk has 7a6a1935
+  STALE      024_001_webhook_receiver_with_signature_verification_01 — screened against harness 9889bd52, disk has 63cf2be1
+  STALE      025_002_cursor_resumable_gap_free_long_poll_01 — screened against harness 872710cd, disk has f705a047
+  STALE      100_004_stateful_totp_vault_genserver_with_replay_protection_01 — screened against harness 39efe0ed, disk has 06575f0d
+  STALE      039_001_diff_generator_for_record_lists_01 — screened against harness d9cd82b6, disk has ce298ca6
+  STALE      078_004_concurrent_ring_buffer_sink_genserver_01 — screened against harness e0ac7aa8, disk has 596a2776
+  STALE      020_002_content_addressable_deduplicating_upload_01 — screened against harness d7477baf, disk has dac9db29
+  STALE      110_002_histogram_based_approximate_rolling_percentile_01 — screened against harness cade2677, disk has d1191287
+  STALE      079_003_scalable_bloom_filter_01 — screened against harness 3e85b610, disk has b57c9bd4
+  STALE      061_003_timeout_and_retry_parallel_map_01 — screened against harness f61cf69b, disk has 331721a1
+  STALE      071_001_factory_module_for_test_data_generation_01 — screened against harness 222856da, disk has 05a9d207
+  STALE      007_001_moving_average_calculator_01 — screened against harness 6a3ea328, disk has 3316b303
+  STALE      073_004_fk_dependency_ordered_deletion_cleaner_01 — screened against harness 8a89306c, disk has 12fb20b4
+  STALE      031_004_logfmt_record_validator_with_hand_written_parser_01 — screened against harness 4db273be, disk has 0aef7c11
+  STALE      031_003_csv_loader_with_type_coercion_and_enriched_schema_01 — screened against harness 8308b4d2, disk has 18b94ec9
+  STALE      005_004_filteredeventbus_01 — screened against harness 2591b922, disk has 98968201
+  STALE      131_002_lazy_streaming_ndjson_parser_01 — screened against harness b57b620e, disk has 256f1005
+  STALE      134_003_chunked_merge_based_schema_inference_01 — screened against harness d965fb3d, disk has c7718db0
+  STALE      041_004_weight_aware_cost_bounded_lru_cache_01 — screened against harness cb5265b2, disk has a192d548
+  STALE      071_003_bulk_list_factory_with_concurrent_insertion_01 — screened against harness ebdc7704, disk has ca9a7bba
+  STALE      037_001_data_anonymizer_01 — screened against harness 75a44b58, disk has 47034d14
+  STALE      032_004_multi_table_json_ingestion_with_type_discriminator_routing_01 — screened against harness 6ae9f7ef, disk has 959bd67f
+  STALE      015_004_monitor_with_maintenance_windows_and_pause_resume_01 — screened against harness e33495db, disk has bb27aea8
+  STALE      110_004_time_decay_weighted_rolling_percentile_01 — screened against harness 794fde32, disk has 7b1d8cf9
+  STALE      108_003_capacity_bounded_bimap_with_lru_eviction_01 — screened against harness 54b58a40, disk has 61347851
+  STALE      020_004_asynchronous_validation_pipeline_upload_01 — screened against harness 06c7b10e, disk has a03fafa1
+  STALE      072_004_scripted_sequence_clock_01 — screened against harness 6cdef402, disk has 4edaa810
+  STALE      076_002_compressed_radix_trie_with_path_compression_01 — screened against harness 391e4ae9, disk has 801edc5a
+  STALE      110_001_rolling_percentile_calculator_01 — screened against harness 6681ac52, disk has 3c068742
+  STALE      063_001_concurrent_data_fetcher_with_timeout_01 — screened against harness 1fbbff87, disk has 4a8d00d3
+  STALE      032_002_csv_to_ecto_batch_ingestion_with_changeset_validation_01 — screened against harness c318f944, disk has 65bbb64f
+  STALE      045_004_dependency_aware_feature_flag_store_01 — screened against harness 674f065d, disk has 5f304db3
+  STALE      045_003_versioned_feature_flag_store_with_rollback_01 — screened against harness 34599295, disk has f5ccf488
+  STALE      064_003_priority_aware_work_stealing_queue_01 — screened against harness dcbeabb1, disk has c046c269
+  STALE      100_003_counter_based_hotp_with_resynchronization_window_01 — screened against harness 0df163bd, disk has cf109b72
+  STALE      044_002_histogram_metrics_collector_01 — screened against harness ec4da8d7, disk has 3fdf9f92
+  STALE      037_002_path_addressed_nested_record_anonymizer_01 — screened against harness 597bd084, disk has 0438e426
+  STALE      015_003_async_check_monitor_with_timeouts_01 — screened against harness fcaaeee4, disk has f87900d6
+
+78 root(s) carry blind verdicts for an OLDER harness. Re-screen:
+  mix run scripts/screen_blind_solve.exs --only "<name>" --rescreen
+Never delete the old rows — append-only; the latest row wins.
+
+error: failed to push some refs to 'github.com:Cinderella-Man/elixir-sft-dataset.git'

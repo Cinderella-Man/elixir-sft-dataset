@@ -1,0 +1,420 @@
+13:57:06.821 [info] FIM 045_003_versioned_feature_flag_store_with_rollback_fim03 → 045_003_versioned_feature_flag_store_with_rollback_04: target enabled_for?/2
+13:57:06.821 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:57:06.821 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `enabled_for?/2`.
+
+Generate a prompt describing how to implement `enabled_for?/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `enabled_for?/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `enabled_for?/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `enabled_for?/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `FeatureFlags` that manages feature flags using ETS for fast reads, backed by a GenServer for writes, with **full change history and rollback** (an audit log).
+
+Every write records a new immutable version, so you can inspect how a flag evolved and revert it.
+
+I need these functions in the public API:
+
+- `FeatureFlags.start_link(opts)` to start the process. It should accept an optional `:table_name` for the primary ETS table (default `:feature_flags`), and an optional `:name` for process registration (pass `nil` to skip registration). You may create a second ETS table for history (e.g. named after `table_name`).
+- `FeatureFlags.enable(flag_name)` — sets the flag to `:on`.
+- `FeatureFlags.disable(flag_name)` — sets the flag to `:off`.
+- `FeatureFlags.enable_for_percentage(flag_name, percentage)` — sets `:percentage` mode with an integer 0–100.
+- `FeatureFlags.enabled?(flag_name)` — returns `true` only when the flag is `:on`. Unknown flags default to `false`.
+- `FeatureFlags.enabled_for?(flag_name, user_id)` — returns `true` if the flag is `:on`, or if it is in `:percentage` mode and `:erlang.phash2({flag_name, user_id}, 100) < percentage`. `:off` and unknown flags return `false`. The bucket must be deterministic per `{flag_name, user_id}` pair.
+- `FeatureFlags.version(flag_name)` — returns the current integer version. The first write produces version `1`; every subsequent write increments it. Unknown flags return `0`.
+- `FeatureFlags.history(flag_name)` — returns a list of `{version, state}` tuples in **ascending version order**, where `state` is `{:on}`, `{:off}`, or `{:percentage, n}`. Unknown flags return `[]`.
+- `FeatureFlags.rollback(flag_name)` — reverts the flag to its **immediately preceding** state. Rollback is append-only: it writes the previous state as a brand-new version (so the history grows). Returns `:ok` on success, `{:error, :no_previous_version}` if the flag has only one version, and `{:error, :unknown_flag}` if the flag was never set.
+
+Implementation requirements:
+- The primary ETS table should be of type `:set` with `read_concurrency: true`, owned by the GenServer, and named so any process can read directly (for `enabled?`, `enabled_for?`, `version`, `history`) without a GenServer round-trip.
+- All state-changing operations (`enable`, `disable`, `enable_for_percentage`, `rollback`) must go through the GenServer via `call` to serialise updates and keep version numbers consistent.
+- ETS tables must be created in `init/1`.
+
+Give me the complete module in a single file. Use only the OTP standard library, no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule FeatureFlags do
+  @moduledoc """
+  Feature flags with an append-only audit log and rollback.
+
+  Two ETS tables back the store:
+
+  - a `:set` table mapping `flag -> {flag, state, version}` for the current
+    state (read directly, no GenServer round-trip), and
+  - an `:ordered_set` table mapping `{flag, version} -> state` for the full
+    history.
+
+  Every write bumps the flag's version and appends to history. `rollback/1`
+  is itself a write: it appends the previous state as a new version.
+  """
+
+  use GenServer
+
+  @default_table :feature_flags
+  @default_name __MODULE__
+
+  @pt_server {__MODULE__, :server}
+  @pt_state {__MODULE__, :state_table}
+  @pt_hist {__MODULE__, :hist_table}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the feature-flag server.
+
+  Options:
+
+  - `:table_name` — name of the primary ETS table (default `#{@default_table}`).
+  - `:name` — process registration name (default `#{inspect(@default_name)}`);
+    pass `nil` to skip registration.
+
+  A second `:ordered_set` history table named `"<table_name>_history"` is also
+  created and owned by the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    table_name = Keyword.get(opts, :table_name, @default_table)
+    name = Keyword.get(opts, :name, @default_name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, %{table_name: table_name}, gen_opts)
+  end
+
+  @doc """
+  Turns `flag` fully on, recording a new version. Returns `:ok`.
+  """
+  @spec enable(atom()) :: :ok
+  def enable(flag), do: GenServer.call(server(), {:write, flag, {:on}})
+
+  @doc """
+  Turns `flag` fully off, recording a new version. Returns `:ok`.
+  """
+  @spec disable(atom()) :: :ok
+  def disable(flag), do: GenServer.call(server(), {:write, flag, {:off}})
+
+  @doc """
+  Puts `flag` into `:percentage` mode with `pct` (an integer 0–100),
+  recording a new version. Returns `:ok`.
+  """
+  @spec enable_for_percentage(atom(), 0..100) :: :ok
+  def enable_for_percentage(flag, pct)
+      when is_integer(pct) and pct >= 0 and pct <= 100 do
+    GenServer.call(server(), {:write, flag, {:percentage, pct}})
+  end
+
+  @doc """
+  Reverts `flag` to its immediately preceding state by appending that state as
+  a new version (history keeps growing).
+
+  Returns `:ok` on success, `{:error, :no_previous_version}` when the flag has
+  only one version, and `{:error, :unknown_flag}` when it was never set.
+  """
+  @spec rollback(atom()) :: :ok | {:error, :no_previous_version | :unknown_flag}
+  def rollback(flag), do: GenServer.call(server(), {:rollback, flag})
+
+  @doc """
+  Returns `true` only when `flag`'s current state is `:on`. Unknown flags and
+  flags in any other mode return `false`.
+  """
+  @spec enabled?(atom()) :: boolean()
+  def enabled?(flag) do
+    case current_state(flag) do
+      {:on} -> true
+      _ -> false
+    end
+  end
+
+  @doc """
+  Returns `true` when `flag` is `:on`, or when it is in `:percentage` mode and
+  `:erlang.phash2({flag, user_id}, 100) < percentage`. The bucket is
+  deterministic per `{flag, user_id}` pair. `:off` and unknown flags return
+  `false`.
+  """
+  @spec enabled_for?(atom(), term()) :: boolean()
+  def enabled_for?(flag, user_id) do
+    case current_state(flag) do
+      {:on} -> true
+      {:off} -> false
+      {:percentage, pct} -> :erlang.phash2({flag, user_id}, 100) < pct
+      nil -> false
+    end
+  end
+
+  @doc """
+  Returns the current integer version of `flag`. The first write yields `1` and
+  every subsequent write increments it. Unknown flags return `0`.
+  """
+  @spec version(atom()) :: non_neg_integer()
+  def version(flag) do
+    case :ets.lookup(state_table(), flag) do
+      [{^flag, _state, v}] -> v
+      [] -> 0
+    end
+  end
+
+  @doc """
+  Returns `flag`'s history as a list of `{version, state}` tuples in ascending
+  version order, where `state` is `{:on}`, `{:off}`, or `{:percentage, n}`.
+  Unknown flags return `[]`.
+  """
+  @spec history(atom()) :: [{pos_integer(), tuple()}]
+  def history(flag) do
+    hist_table()
+    |> :ets.match_object({{flag, :_}, :_})
+    |> Enum.map(fn {{^flag, v}, state} -> {v, state} end)
+    |> Enum.sort_ (truncated)
+13:57:39.733 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `enabled_for?/2` function. Given a `flag` and a `user_id`,
+it returns `true` if the flag's current state is `:on`, or if the flag is in
+`:percentage` mode and the user falls inside the rollout bucket — that is, when
+`:erlang.phash2({flag, user_id}, 100) < pct`, where `pct` is the flag's
+configured percentage. The bucketing must be deterministic per `{flag, user_id}`
+pair, so the same flag/user always resolves the same way. If the flag is `:off`,
+or if it was never set (unknown), it returns `false`. Read the current state via
+the `current_state/1` helper, which returns `{:on}`, `{:off}`, `{:percentage, n}`,
+or `nil` for unknown flags.
+
+```elixir
+defmodule FeatureFlags do
+  @moduledoc """
+  Feature flags with an append-only audit log and rollback.
+
+  Two ETS tables back the store:
+
+  - a `:set` table mapping `flag -> {flag, state, version}` for the current
+    state (read directly, no GenServer round-trip), and
+  - an `:ordered_set` table mapping `{flag, version} -> state` for the full
+    history.
+
+  Every write bumps the flag's version and appends to history. `rollback/1`
+  is itself a write: it appends the previous state as a new version.
+  """
+
+  use GenServer
+
+  @default_table :feature_flags
+  @default_name __MODULE__
+
+  @pt_server {__MODULE__, :server}
+  @pt_state {__MODULE__, :state_table}
+  @pt_hist {__MODULE__, :hist_table}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the feature-flag server.
+
+  Options:
+
+  - `:table_name` — name of the primary ETS table (default `#{@default_table}`).
+  - `:name` — process registration name (default `#{inspect(@default_name)}`);
+    pass `nil` to skip registration.
+
+  A second `:ordered_set` history table named `"<table_name>_history"` is also
+  created and owned by the process.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    table_name = Keyword.get(opts, :table_name, @default_table)
+    name = Keyword.get(opts, :name, @default_name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, %{table_name: table_name}, gen_opts)
+  end
+
+  @doc """
+  Turns `flag` fully on, recording a new version. Returns `:ok`.
+  """
+  @spec enable(atom()) :: :ok
+  def enable(flag), do: GenServer.call(server(), {:write, flag, {:on}})
+
+  @doc """
+  Turns `flag` fully off, recording a new version. Returns `:ok`.
+  """
+  @spec disable(atom()) :: :ok
+  def disable(flag), do: GenServer.call(server(), {:write, flag, {:off}})
+
+  @doc """
+  Puts `flag` into `:percentage` mode with `pct` (an integer 0–100),
+  recording a new version. Returns `:ok`.
+  """
+  @spec enable_for_percentage(atom(), 0..100) :: :ok
+  def enable_for_percentage(flag, pct)
+      when is_integer(pct) and pct >= 0 and pct <= 100 do
+    GenServer.call(server(), {:write, flag, {:percentage, pct}})
+  end
+
+  @doc """
+  Reverts `flag` to its immediately preceding state by appending that state as
+  a new version (history keeps growing).
+
+  Returns `:ok` on success, `{:error, :no_previous_version}` when the flag has
+  only one version, and `{:error, :unknown_flag}` when it was never set.
+  """
+  @spec rollback(atom()) :: :ok | {:error, :no_previous_version | :unknown_flag}
+  def rollback(flag), do: GenServer.call(server(), {:rollback, flag})
+
+  @doc """
+  Returns `true` only when `flag`'s current state is `:on`. Unknown flags and
+  flags in any other mode return `false`.
+  """
+  @spec enabled?(atom()) :: boolean()
+  def enabled?(flag) do
+    case current_state(flag) do
+      {:on} -> true
+      _ -> false
+    end
+  end
+
+  @doc """
+  Returns `true` when `flag` is `:on`, or when it is in `:percentage` mode and
+  `:erlang.phash2({flag, user_id}, 100) < percentage`. The bucket is
+  deterministic per `{flag, user_id}` pair. `:off` and unknown flags return
+  `false`.
+  """
+  @spec enabled_for?(atom(), term()) :: boolean()
+  def enabled_for?(flag, user_id) do
+    # TODO
+  end
+
+  @doc """
+  Returns the current integer version of `flag`. The first write yields `1` and
+  every subsequent write increments it. Unknown flags return `0`.
+  """
+  @spec version(atom()) :: non_neg_integer()
+  def version(flag) do
+    case :ets.lookup(state_table(), flag) do
+      [{^flag, _state, v}] -> v
+      [] -> 0
+    end
+  end
+
+  @doc """
+  Returns `flag`'s history as a list of `{version, state}` tuples in ascending
+  version order, where `state` is `{:on}`, `{:off}`, or `{:percentage, n}`.
+  Unknown flags return `[]`.
+  """
+  @spec history(atom()) :: [{pos_integer(), tuple()}]
+  def history(flag) do
+    hist_table()
+    |> :ets.match_object({{flag, :_}, :_})
+    |> Enum.map(fn {{^flag, v}, state} -> {v, state} end)
+    |> Enum.sort_by(fn {v, _state} -> v end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private read helpers
+  # ---------------------------------------------------------------------------
+
+  defp server, do: :persistent_term.get(@pt_server)
+  defp state_table, do: :persistent_term.get(@pt_state, @default_table)
+  defp hist_table, do: :persistent_term.get(@pt_hist)
+
+  defp current_state(flag) do
+    case :ets.lookup(state_table(), flag) do
+      [{^flag, state, _v}] -> state
+      [] -> nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(%{table_name: table_name}) do
+    state_table =
+      :ets.new(table_name, [:set, :named_table, :public, read_concurrency: true])
+
+    hist_name = String.to_atom("#{table_name}_history")
+
+    hist_table =
+      :ets.new(hist_name, [:ordered_set, :named_table, :public, read_concurrency: true])
+
+    :persistent_term.put(@pt_server, self())
+    :persistent_term.put(@pt_state, state_table)
+    :persistent_term.put(@pt_hist, hist_table)
+
+    {:ok, %{state_table: state_table, hist_table: hist_table}}
+  end
+
+  @impl true
+  def handle_call({:write, flag, new_state}, _from, state) do
+    write_version(state, flag, new_state)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:rollback, flag}, _from, state) do
+    reply =
+      case :ets.lookup(state.state_table, flag) do
+        [] ->
+          {:error, :unknown_flag}
+
+        [{^flag, _cur, v}] when v < 2 ->
+          {:error, :no_previous_version}
+
+        [{^flag, _cur, v}] ->
+          [{{^flag, _pv}, prev_state}] = :ets.lookup(state.hist_table, {flag, v - 1})
+          write_version(state, flag, prev_state)
+          :ok
+      end
+
+    {:reply, reply, state}
+  end
+
+  defp write_version(state, flag, new_state) do
+    v =
+      case :ets.lookup(state.state_table, flag) do
+        [{^flag, _s, cur_v}] -> cur_v
+        [] -> 0
+      end
+
+    new_v = v + 1
+    :ets.insert(state.state_table, {flag, new_state, new_v})
+    :ets.insert(state.hist_table, {{flag, new_v}, new_state})
+    new_v
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+def enabled_for?(flag, user_id) do
+  case current_state(flag) do
+    {:on} -> true
+    {:off} -> false
+    {:percentage, pct} -> :erlang.phash2({flag, user_id}, 100) < pct
+    nil -> false
+  end
+end
+</file>
+13:57:39.733 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4498, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4498, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4498, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4498, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3151, "type" => "message"}], "output_tokens" => 3151, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:57:39.752 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_045_003_versioned_feature_flag_store_with_rollback_04/045_003_versioned_feature_flag_store_with_rollback_04 solution.ex
+13:57:40.387 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":8,"lines_over_98":0,"max_line_length":68,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"045_003_versioned_feature_flag_store_with_rollback_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_045_003_versioned_feature_flag_store_with_rollback_04/045_003_versioned_feature_flag_store_with_rollback_04/solution.ex","task":"045_003_versioned_feature_flag_store_with_rollback_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T11:57:40.365258Z"}
+13:57:40.388 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_045_003_versioned_feature_flag_store_with_rollback_04/045_003_versioned_feature_flag_store_with_rollback_04 .gen_staging/fim_045_003_versioned_feature_flag_store_with_rollback_04/mutant.ex
+13:57:41.026 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":34,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"045_003_versioned_feature_flag_store_with_rollback_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.79,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 3/11 failed"],"tests":0.73},"shape":"fim","solution_file":".gen_staging/fim_045_003_versioned_feature_flag_store_with_rollback_04/mutant.ex","task":"045_003_versioned_feature_flag_store_with_rollback_04","test_failures":[{"message":"MUTATION","module":"FeatureFlagsTest","test":"test unknown flag defaults"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test percentage flag is not globally enabled but deterministic per user"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test rollback chains correctly through multiple versions"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T11:57:41.003841Z"}
+13:57:41.026 [debug] fim mutation gate: killed
+13:57:41.027 [info] promoted 045_003_versioned_feature_flag_store_with_rollback_04 -> tasks/045_003_versioned_feature_flag_store_with_rollback_04

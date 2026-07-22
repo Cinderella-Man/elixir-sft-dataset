@@ -1,0 +1,1372 @@
+14:05:56.787 [info] VARIATION 626_004_sharded_concurrent_time_series_db_01: Sharded Concurrent Time Series DB
+14:05:56.788 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+14:05:56.788 [debug] claude -p USER prompt:
+Write me an Elixir module called `ShardedTSDB` that implements a time-series storage engine whose data is **horizontally sharded across several worker processes**. A single coordinator GenServer owns a fixed set of shard GenServers; each series lives on exactly one shard, writes route to the owning shard, and reads fan out across all shards and merge.
+
+## Architecture
+
+- Starting the engine starts one coordinator process plus `:shards` independent worker (shard) GenServers. `start_link/1` returns the coordinator; all public functions take the coordinator as their `server` argument.
+- A series is identified by `{metric_name, sorted_labels}` where `sorted_labels = Enum.sort(Map.to_list(labels))`, so label ordering never creates duplicate series.
+- The shard index that owns a series is `:erlang.phash2({metric_name, sorted_labels}, shard_count)`, a 0-based integer in `0..(shard_count - 1)`.
+- Each shard stores its own series independently using the layout: series key → `%{chunk_start => sorted data points}`, with `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms`, and points within a chunk kept sorted by timestamp.
+
+## Public API
+
+- `ShardedTSDB.start_link(opts)` accepting:
+  - `:shards` — the number of shard worker processes to start (default `4`).
+  - `:chunk_duration_ms` — chunk width in milliseconds (default `60_000`).
+  - `:clock` — a zero-arity function returning the current time in milliseconds. Default to `fn -> System.monotonic_time(:millisecond) end`.
+  - `:name` — optional registration name for the coordinator.
+  - `:retention_ms` — how long to keep chunks before cleanup (default `3_600_000`).
+  - `:cleanup_interval_ms` — how often the coordinator triggers cleanup across all shards via `Process.send_after` (default `60_000`). Accept `:infinity` to disable.
+
+- `ShardedTSDB.insert(server, metric_name, labels, timestamp, value)` — routes the point to the owning shard and returns `:ok`.
+
+- `ShardedTSDB.query(server, metric_name, label_matchers, {start_ts, end_ts})` — fans out to all shards and merges results. `label_matchers` is a map; a series matches if it contains **all** the specified key-value pairs (it may have more). `%{}` matches all series with that metric name. Returns a list of `{labels, points}` tuples, where `points` is the `{timestamp, value}` list for that series sorted ascending by timestamp and filtered to `start_ts <= timestamp <= end_ts`. A matched series with no point in range is omitted entirely; when nothing matches, the result is `[]`. The order of series in the merged list is unspecified.
+
+- `ShardedTSDB.query_agg(server, metric_name, label_matchers, {start_ts, end_ts}, aggregation, step_ms)` where:
+  - `aggregation` is one of `:sum`, `:avg`, `:max`.
+  - `step_ms` is the window width. The range `[start_ts, end_ts)` is divided into non-overlapping windows `[start_ts, start_ts + step_ms)`, `[start_ts + step_ms, start_ts + 2*step_ms)`, etc.
+  - For each matched series and each window, take the points whose timestamps fall in `[window_start, window_start + step_ms)` and compute:
+    - `:sum` — the sum of values; omit the window if it has no points.
+    - `:avg` — the arithmetic mean of values; omit the window if it has no points.
+    - `:max` — the maximum value; omit the window if it has no points.
+  - Returns a list of `{labels, agg_points}` tuples, where `agg_points` is a list of `{window_start, aggregated_value}` tuples sorted by window start. A matched series whose windows are all omitted is left out of the result.
+
+## Introspection helpers
+
+- `ShardedTSDB.shard_count(server)` — returns the configured number of shards.
+- `ShardedTSDB.shard_of(server, metric_name, labels)` — returns the 0-based shard index that owns the given series, i.e. `:erlang.phash2({metric_name, Enum.sort(Map.to_list(labels))}, shard_count)`.
+- `ShardedTSDB.series_count(server)` — returns the total number of distinct series stored across all shards.
+- `ShardedTSDB.cleanup(server)` — synchronously runs cleanup across all shards and returns `:ok`. Cleanup removes any chunk whose `chunk_start + chunk_duration_ms` is less than or equal to `now - retention_ms` (where `now` comes from `:clock`), and drops any series left with zero chunks.
+
+## Cleanup
+
+In addition to the `cleanup/1` function, the coordinator schedules cleanup periodically with `Process.send_after` based on `:cleanup_interval_ms` and applies the same rule across all shards.
+
+## Constraints
+
+- Use only OTP standard library — no external dependencies.
+- Give me the complete module in a single file.
+- No ETS — all storage lives in the shard processes' GenServer state.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+14:08:10.365 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule ShardedTSDB do
+  @moduledoc """
+  A horizontally sharded time-series storage engine.
+
+  Starting the engine (`start_link/1`) spins up one coordinator `GenServer`
+  that owns a fixed set of shard `GenServer` workers. Each series lives on
+  exactly one shard, chosen by hashing its identity. Writes route to the
+  owning shard; reads fan out across every shard and are merged by the
+  coordinator.
+
+  A series is identified by `{metric_name, sorted_labels}` where
+  `sorted_labels = Enum.sort(Map.to_list(labels))`, so label ordering never
+  produces duplicate series. The owning shard index is
+  `:erlang.phash2({metric_name, sorted_labels}, shard_count)`.
+
+  All storage lives in the shard processes' `GenServer` state (no ETS). Each
+  shard keeps a map of `series_key => %{chunk_start => sorted_points}` where
+  `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms` and
+  points within a chunk are sorted ascending by timestamp.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type labels :: %{optional(term()) => term()}
+  @type point :: {integer(), number()}
+  @type series_result :: {labels(), [point()]}
+
+  # ── Public API ────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the coordinator and its shard workers.
+
+  Options:
+
+    * `:shards` — number of shard workers (default `4`).
+    * `:chunk_duration_ms` — chunk width in ms (default `60_000`).
+    * `:clock` — zero-arity fn returning current time in ms
+      (default `fn -> System.monotonic_time(:millisecond) end`).
+    * `:name` — optional registration name for the coordinator.
+    * `:retention_ms` — how long to keep chunks (default `3_600_000`).
+    * `:cleanup_interval_ms` — periodic cleanup interval, or `:infinity`
+      to disable (default `60_000`).
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    name = Keyword.get(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Inserts a single `{timestamp, value}` point into the series identified by
+  `metric_name` and `labels`, routing it to the owning shard.
+  """
+  @spec insert(server(), term(), labels(), integer(), number()) :: :ok
+  def insert(server, metric_name, labels, timestamp, value) do
+    GenServer.call(server, {:insert, metric_name, labels, timestamp, value})
+  end
+
+  @doc """
+  Fans out across all shards and returns the matching series.
+
+  `label_matchers` is a map; a series matches when it contains all of the
+  given key-value pairs (it may contain more). `%{}` matches every series
+  with the metric name. Each result is `{labels, points}` where `points` is
+  the list of `{timestamp, value}` in `start_ts..end_ts` inclusive, sorted
+  ascending. Series with no in-range point are omitted.
+  """
+  @spec query(server(), term(), labels(), {integer(), integer()}) ::
+          [series_result()]
+  def query(server, metric_name, label_matchers, {start_ts, end_ts}) do
+    GenServer.call(server, {:query, metric_name, label_matchers, {start_ts, end_ts}})
+  end
+
+  @doc """
+  Like `query/4`, but aggregates each matched series into fixed windows.
+
+  The range `[start_ts, end_ts)` is split into non-overlapping windows of
+  width `step_ms`. For each window, the points whose timestamps fall in
+  `[window_start, window_start + step_ms)` are reduced with `aggregation`
+  (`:sum`, `:avg` or `:max`); empty windows are omitted. Each result is
+  `{labels, agg_points}` with `agg_points` a list of
+  `{window_start, aggregated_value}` sorted by window start. Series whose
+  windows are all empty are dropped.
+  """
+  @spec query_agg(
+          server(),
+          term(),
+          labels(),
+          {integer(), integer()},
+          :sum | :avg | :max,
+          pos_integer()
+        ) :: [series_result()]
+  def query_agg(server, metric_name, label_matchers, {start_ts, end_ts}, aggregation, step_ms) do
+    msg = {:query_agg, metric_name, label_matchers, {start_ts, end_ts}, aggregation, step_ms}
+    GenServer.call(server, msg)
+  end
+
+  @doc """
+  Returns the configured number of shards.
+  """
+  @spec shard_count(server()) :: non_neg_integer()
+  def shard_count(server) do
+    GenServer.call(server, :shard_count)
+  end
+
+  @doc """
+  Returns the 0-based shard index that owns the given series.
+  """
+  @spec shard_of(server(), term(), labels()) :: non_neg_integer()
+  def shard_of(server, metric_name, labels) do
+    GenServer.call(server, {:shard_of, metric_name, labels})
+  end
+
+  @doc """
+  Returns the total number of distinct series stored across all shards.
+  """
+  @spec series_count(server()) :: non_neg_integer()
+  def series_count(server) do
+    GenServer.call(server, :series_count)
+  end
+
+  @doc """
+  Synchronously runs cleanup across all shards and returns `:ok`.
+
+  Removes any chunk whose `chunk_start + chunk_duration_ms` is less than or
+  equal to `now - retention_ms` (with `now` from `:clock`) and drops any
+  series left with zero chunks.
+  """
+  @spec cleanup(server()) :: :ok
+  def cleanup(server) do
+    GenServer.call(server, :cleanup)
+  end
+
+  # ── Coordinator callbacks ─────────────────────────────────────────────
+
+  @impl true
+  def init(opts) do
+    count = Keyword.get(opts, :shards, 4)
+    chunk = Keyword.get(opts, :chunk_duration_ms, 60_000)
+    clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
+    retention = Keyword.get(opts, :retention_ms, 3_600_000)
+    interval = Keyword.get(opts, :cleanup_interval_ms, 60_000)
+
+    shards =
+      for _ <- 1..count do
+        {:ok, pid} = ShardedTSDB.Shard.start_link(chunk)
+        pid
+      end
+
+    state = %{
+      shards: List.to_tuple(shards),
+      shard_count: count,
+      chunk_duration_ms: chunk,
+      clock: clock,
+      retention_ms: retention,
+      cleanup_interval_ms: interval
+    }
+
+    schedule_cleanup(state)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:insert, metric, labels, ts, value}, _from, state) do
+    key = series_key(metric, labels)
+    idx = :erlang.phash2(key, state.shard_count)
+    pid = elem(state.shards, idx)
+    :ok = GenServer.call(pid, {:insert, key, ts, value})
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:query, metric, matchers, range}, _from, state) do
+    results =
+      state.shards
+      |> Tuple.to_list()
+      |> Enum.flat_map(fn pid -> GenServer.call(pid, {:query, metric, matchers, range}) end)
+
+    {:reply, results, state}
+  end
+
+  def handle_call({:query_agg, metric, matchers, range, agg, step}, _from, state) do
+    msg = {:query_agg, metric, matchers, range, agg, step}
+
+    results =
+      state.shards
+      |> Tuple.to_list()
+      |> Enum.flat_map(fn pid -> GenServer.call(pid, msg) end)
+
+    {:reply, results, state}
+  end
+
+  def handle_call(:shard_count, _from, state) do
+    {:reply, state.shard_count, state}
+  end
+
+  def handle_call({:shard_of, metric, labels}, _from, state) do
+    idx = :erlang.phash2(series_key(metric, labels), state.shard_count)
+    {:reply, idx, state}
+  end
+
+  def handle_call(:series_count, _from, state) do
+    total =
+      state.shards
+      |> Tuple.to_list()
+      |> Enum.reduce(0, fn pid, acc -> acc + GenServer.call(pid, :series_count) end)
+
+    {:reply, total, state}
+  end
+
+  def handle_call(:cleanup, _from, state) do
+    do_cleanup(state)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_info(:cleanup_tick, state) do
+    do_cleanup(state)
+    schedule_cleanup(state)
+    {:noreply, state}
+  end
+
+  def handle_info(_msg, state) do
+    {:noreply, state}
+  end
+
+  # ── Coordinator helpers ───────────────────────────────────────────────
+
+  defp series_key(metric, labels) do
+    {metric, Enum.sort(Map.to_list(labels))}
+  end
+
+  defp  (truncated)
+14:08:10.365 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5649, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5649, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5649, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5649, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 11339, "type" => "message"}], "output_tokens" => 11339, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:08:10.397 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01 solution.ex
+14:08:11.125 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":355,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-11T12:08:11.102919Z"}
+14:08:11.126 [info] cycle 626_004_sharded_concurrent_time_series_db_01: repairing — The files graded green but fall short of the house style / harness standard: only 17 test(s) — the harness needs at least 25 (max of 3 and the 25 public function(s)). Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+14:08:11.126 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+14:08:11.126 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: only 17 test(s) — the harness needs at least 25 (max of 3 and the 25 public function(s)). Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ShardedTSDB` that implements a time-series storage engine whose data is **horizontally sharded across several worker processes**. A single coordinator GenServer owns a fixed set of shard GenServers; each series lives on exactly one shard, writes route to the owning shard, and reads fan out across all shards and merge.
+
+## Architecture
+
+- Starting the engine starts one coordinator process plus `:shards` independent worker (shard) GenServers. `start_link/1` returns the coordinator; all public functions take the coordinator as their `server` argument.
+- A series is identified by `{metric_name, sorted_labels}` where `sorted_labels = Enum.sort(Map.to_list(labels))`, so label ordering never creates duplicate series.
+- The shard index that owns a series is `:erlang.phash2({metric_name, sorted_labels}, shard_count)`, a 0-based integer in `0..(shard_count - 1)`.
+- Each shard stores its own series independently using the layout: series key → `%{chunk_start => sorted data points}`, with `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms`, and points within a chunk kept sorted by timestamp.
+
+## Public API
+
+- `ShardedTSDB.start_link(opts)` accepting:
+  - `:shards` — the number of shard worker processes to start (default `4`).
+  - `:chunk_duration_ms` — chunk width in milliseconds (default `60_000`).
+  - `:clock` — a zero-arity function returning the current time in milliseconds. Default to `fn -> System.monotonic_time(:millisecond) end`.
+  - `:name` — optional registration name for the coordinator.
+  - `:retention_ms` — how long to keep chunks before cleanup (default `3_600_000`).
+  - `:cleanup_interval_ms` — how often the coordinator triggers cleanup across all shards via `Process.send_after` (default `60_000`). Accept `:infinity` to disable.
+
+- `ShardedTSDB.insert(server, metric_name, labels, timestamp, value)` — routes the point to the owning shard and returns `:ok`.
+
+- `ShardedTSDB.query(server, metric_name, label_matchers, {start_ts, end_ts})` — fans out to all shards and merges results. `label_matchers` is a map; a series matches if it contains **all** the specified key-value pairs (it may have more). `%{}` matches all series with that metric name. Returns a list of `{labels, points}` tuples, where `points` is the `{timestamp, value}` list for that series sorted ascending by timestamp and filtered to `start_ts <= timestamp <= end_ts`. A matched series with no point in range is omitted entirely; when nothing matches, the result is `[]`. The order of series in the merged list is unspecified.
+
+- `ShardedTSDB.query_agg(server, metric_name, label_matchers, {start_ts, end_ts}, aggregation, step_ms)` where:
+  - `aggregation` is one of `:sum`, `:avg`, `:max`.
+  - `step_ms` is the window width. The range `[start_ts, end_ts)` is divided into non-overlapping windows `[start_ts, start_ts + step_ms)`, `[start_ts + step_ms, start_ts + 2*step_ms)`, etc.
+  - For each matched series and each window, take the points whose timestamps fall in `[window_start, window_start + step_ms)` and compute:
+    - `:sum` — the sum of values; omit the window if it has no points.
+    - `:avg` — the arithmetic mean of values; omit the window if it has no points.
+    - `:max` — the maximum value; omit the window if it has no points.
+  - Returns a list of `{labels, agg_points}` tuples, where `agg_points` is a list of `{window_start, aggregated_value}` tuples sorted by window start. A matched series whose windows are all omitted is left out of the result.
+
+## Introspection helpers
+
+- `ShardedTSDB.shard_count(server)` — returns the configured number of shards.
+- `ShardedTSDB.shard_of(server, metric_name, labels)` — returns the 0-based shard index that owns the given series, i.e. `:erlang.phash2({metric_name, Enum.sort(Map.to_list(labels))}, shard_count)`.
+- `ShardedTSDB.series_count(server)` — returns the total number of distinct series stored across all shards.
+- `ShardedTSDB.cleanup(server)` — synchronously runs cleanup across all shards and returns `:ok`. Cleanup removes any chunk whose `chunk_start + chunk_duration_ms` is less than or equal to `now - retention_ms` (where `now` comes from `:clock`), and drops any series left with zero chunks.
+
+## Cleanup
+
+In addition to the `cleanup/1` function, the coordinator schedules cleanup periodically with `Process.send_after` based on `:cleanup_interval_ms` and applies the same rule across all shards.
+
+## Constraints
+
+- Use only OTP standard library — no external dependencies.
+- Give me the complete module in a single file.
+- No ETS — all storage lives in the shard processes' GenServer state.
+
+----- solution.ex -----
+defmodule ShardedTSDB do
+  @moduledoc """
+  A horizontally sharded time-series storage engine.
+
+  Starting the engine (`start_link/1`) spins up one coordinator `GenServer`
+  that owns a fixed set of shard `GenServer` workers. Each series lives on
+  exactly one shard, chosen by hashing its identity. Writes route to the
+  owning shard; reads fan out across every shard and are merged by the
+  coordinator.
+
+  A series is identified by `{metric_name, sorted_labels}` where
+  `sorted_labels = Enum.sort(Map.to_list(labels))`, so label ordering never
+  produces duplicate series. The owning shard index is
+  `:erlang.phash2({metric_name, sorted_labels}, shard_count)`.
+
+  All storage lives in the shard processes' `GenServer` state (no ETS). Each
+  shard keeps a map of `series_key => %{chunk_start => sorted_points}` where
+  `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms` and
+  points within a chunk are sorted ascending by timestamp.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type labels :: %{optional(term()) => term()}
+  @type point :: {integer(), number()}
+  @type series_result :: {labels(), [point()]}
+
+  # ── Public API ────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the coordinator and its shard workers.
+
+  Options:
+
+    * `:shards` — number of shard workers (default `4`).
+    * `:chunk_duration_ms` — chunk width in ms (default `60_000`).
+    * `:clock` — zero-arity fn returning current time in ms
+      (default `fn -> System.monotonic_time(:millisecond) end`).
+    * `:name` — optional registration name for the coordinator.
+    * `:retention_ms` — how long to keep chunks (default `3_600_000`).
+    * `:cleanup_interval_ms` — periodic cleanup interval, or `:infinity`
+      to disable (default `60_000`).
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    name = Keyword.get(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__ (truncated)
+14:09:39.517 [debug] claude -p RESULT (stop="end_turn"):
+I'll add tests to reach the required count while keeping all existing tests and verifying observable behavior. The solution is correct, so I only change the harness.
+
+<file path="test_harness.exs">
+defmodule ShardedTSDBTest do
+  use ExUnit.Case, async: false
+
+  defmodule Clock do
+    use Agent
+
+    def start_link(initial \\ 0) do
+      Agent.start_link(fn -> initial end, name: __MODULE__)
+    end
+
+    def now, do: Agent.get(__MODULE__, & &1)
+    def set(ms), do: Agent.update(__MODULE__, fn _ -> ms end)
+  end
+
+  setup do
+    start_supervised!({Clock, 0})
+
+    {:ok, pid} =
+      ShardedTSDB.start_link(
+        shards: 4,
+        clock: &Clock.now/0,
+        chunk_duration_ms: 1_000,
+        retention_ms: 10_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    %{db: pid}
+  end
+
+  # -------------------------------------------------------
+  # Basic insert / query
+  # -------------------------------------------------------
+
+  test "insert returns :ok and query retrieves the point", %{db: db} do
+    assert :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 100, 0.5)
+
+    result = ShardedTSDB.query(db, "cpu", %{"host" => "a"}, {0, 200})
+    assert [{%{"host" => "a"}, [{100, 0.5}]}] = result
+  end
+
+  test "points in one series are returned sorted by timestamp", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 300, 0.3)
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 100, 0.1)
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 200, 0.2)
+
+    [{_labels, points}] = ShardedTSDB.query(db, "cpu", %{"host" => "a"}, {0, 500})
+    assert points == [{100, 0.1}, {200, 0.2}, {300, 0.3}]
+  end
+
+  test "query fans out and merges across many series", %{db: db} do
+    for h <- ["a", "b", "c", "d", "e", "f"] do
+      :ok = ShardedTSDB.insert(db, "cpu", %{"host" => h}, 100, 1)
+    end
+
+    result = ShardedTSDB.query(db, "cpu", %{}, {0, 200})
+    hosts = result |> Enum.map(fn {labels, _} -> labels["host"] end) |> Enum.sort()
+    assert hosts == ["a", "b", "c", "d", "e", "f"]
+  end
+
+  test "query filters by inclusive time range", %{db: db} do
+    for ts <- [100, 200, 300, 400, 500] do
+      :ok = ShardedTSDB.insert(db, "m", %{}, ts, ts * 1.0)
+    end
+
+    [{_labels, points}] = ShardedTSDB.query(db, "m", %{}, {200, 400})
+    assert Enum.map(points, &elem(&1, 0)) == [200, 300, 400]
+  end
+
+  test "query includes points exactly at both range endpoints", %{db: db} do
+    for ts <- [100, 200, 300] do
+      :ok = ShardedTSDB.insert(db, "m", %{}, ts, ts)
+    end
+
+    [{_labels, points}] = ShardedTSDB.query(db, "m", %{}, {100, 300})
+    assert points == [{100, 100}, {200, 200}, {300, 300}]
+  end
+
+  test "query omits series with no point in range and unknown metric", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{"a" => "1"}, 100, 1)
+    assert [] = ShardedTSDB.query(db, "m", %{"a" => "1"}, {500, 600})
+    assert [] = ShardedTSDB.query(db, "other", %{}, {0, 1000})
+  end
+
+  test "query merges points spanning multiple chunks sorted by timestamp", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{}, 1500, 2)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 500, 1)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 900, 3)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 2400, 4)
+
+    [{_labels, points}] = ShardedTSDB.query(db, "m", %{}, {0, 5000})
+    assert points == [{500, 1}, {900, 3}, {1500, 2}, {2400, 4}]
+  end
+
+  # -------------------------------------------------------
+  # Label matching
+  # -------------------------------------------------------
+
+  test "label matchers select series containing all specified labels", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "GET", "status" => "200"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "POST", "status" => "200"}, 100, 2)
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "GET", "status" => "500"}, 100, 3)
+
+    result = ShardedTSDB.query(db, "http", %{"status" => "200"}, {0, 200})
+    assert length(result) == 2
+  end
+
+  test "label matchers requiring an unmatched value return nothing", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "GET"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "PUT"}, 100, 2)
+
+    assert [] = ShardedTSDB.query(db, "http", %{"method" => "DELETE"}, {0, 200})
+  end
+
+  test "label order does not create duplicate series", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{"a" => "1", "b" => "2"}, 100, 10)
+    :ok = ShardedTSDB.insert(db, "m", %{"b" => "2", "a" => "1"}, 200, 20)
+
+    result = ShardedTSDB.query(db, "m", %{"a" => "1", "b" => "2"}, {0, 300})
+    assert length(result) == 1
+    [{_labels, points}] = result
+    assert points == [{100, 10}, {200, 20}]
+  end
+
+  test "same labels under different metrics are distinct series", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "mem", %{"host" => "a"}, 100, 2)
+
+    assert ShardedTSDB.series_count(db) == 2
+    assert [{_, [{100, 1}]}] = ShardedTSDB.query(db, "cpu", %{"host" => "a"}, {0, 200})
+    assert [{_, [{100, 2}]}] = ShardedTSDB.query(db, "mem", %{"host" => "a"}, {0, 200})
+  end
+
+  # -------------------------------------------------------
+  # Sharding introspection
+  # -------------------------------------------------------
+
+  test "shard_count returns the configured number of shards", %{db: db} do
+    assert ShardedTSDB.shard_count(db) == 4
+  end
+
+  test "default options start four shards", %{_ignore: _} = _ctx do
+    {:ok, db} = ShardedTSDB.start_link([])
+    assert ShardedTSDB.shard_count(db) == 4
+  end
+
+  test "coordinator can be registered under a name", %{_ignore: _} = _ctx do
+    {:ok, _pid} = ShardedTSDB.start_link(name: :named_tsdb, shards: 3)
+    assert ShardedTSDB.shard_count(:named_tsdb) == 3
+    assert :ok = ShardedTSDB.insert(:named_tsdb, "m", %{}, 100, 1)
+    assert [{_, [{100, 1}]}] = ShardedTSDB.query(:named_tsdb, "m", %{}, {0, 200})
+  end
+
+  test "shard_of returns the documented phash2-based index", %{db: db} do
+    expected = :erlang.phash2({"cpu", Enum.sort(Map.to_list(%{"host" => "a"}))}, 4)
+    assert ShardedTSDB.shard_of(db, "cpu", %{"host" => "a"}) == expected
+    assert ShardedTSDB.shard_of(db, "cpu", %{"host" => "a"}) in 0..3
+  end
+
+  test "shard_of is independent of label map ordering", %{db: db} do
+    a = ShardedTSDB.shard_of(db, "m", %{"a" => "1", "b" => "2"})
+    b = ShardedTSDB.shard_of(db, "m", %{"b" => "2", "a" => "1"})
+    assert a == b
+  end
+
+  test "every shard_of index falls within the shard range", %{db: db} do
+    for i <- 1..50 do
+      idx = ShardedTSDB.shard_of(db, "cpu", %{"host" => "host-#{i}"})
+      assert idx in 0..3
+    end
+  end
+
+  test "series_count is zero before any insert", %{db: db} do
+    assert ShardedTSDB.series_count(db) == 0
+  end
+
+  test "series_count reports distinct series across all shards", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "b"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "mem", %{"host" => "a"}, 100, 1)
+    # Re-inserting into an existing series must not increase the count.
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 200, 2)
+
+    assert ShardedTSDB.series_count(db) == 3
+  end
+
+  # -------------------------------------------------------
+  # Aggregation
+  # -------------------------------------------------------
+
+  test "query_agg :sum computes the sum per window", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{}, 100, 10)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 200, 20)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 300, 30)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 1100, 5)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 1500, 15)
+
+    [{_labels, agg}] = ShardedTSDB.query_agg(db, "m", %{}, {0, 2000}, :sum, 1_000)
+    assert agg == [{0, 60}, {1000, 20}]
+  end
+
+  test "query_agg :avg computes the mean per window", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{}, 100, 10)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 200, 20)
+    :ok = ShardedTSDB.insert(db, "m", %{} (truncated)
+14:09:39.517 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 14616, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 14616, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 14616, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 14616, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 8684, "type" => "message"}], "output_tokens" => 8684, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:09:39.552 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01 solution.ex
+14:09:40.343 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":355,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.95,"reasons":["tests: 2/31 failed"],"tests":0.94},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01","test_failures":[{"message":"no function clause matching in ShardedTSDBTest.\"test default options start four shards\"/1","module":"ShardedTSDBTest","test":"test default options start four shards"},{"message":"no function clause matching in ShardedTSDBTest.\"test coordinator can be registered under a name\"/1","module":"ShardedTSDBTest","test":"test coordinator can be registered under a name"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":29,"tests_ran":true,"tests_skipped":0,"tests_total":31,"timestamp":"2026-07-11T12:09:40.319452Z"}
+14:09:40.344 [info] cycle 626_004_sharded_concurrent_time_series_db_01: repairing — Tests failed (2 failed, 0 errors):
+  - test default options start four shards (ShardedTSDBTest): no function clause matching in ShardedTSDBTest."test default options start four shards"/1
+  - test coordinator can be registered under a name (ShardedTSDBTest): no function clause matching in ShardedTSDBTest."test coordinator can be registered under a name"/1
+14:09:40.344 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+14:09:40.344 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Tests failed (2 failed, 0 errors):
+  - test default options start four shards (ShardedTSDBTest): no function clause matching in ShardedTSDBTest."test default options start four shards"/1
+  - test coordinator can be registered under a name (ShardedTSDBTest): no function clause matching in ShardedTSDBTest."test coordinator can be registered under a name"/1
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ShardedTSDB` that implements a time-series storage engine whose data is **horizontally sharded across several worker processes**. A single coordinator GenServer owns a fixed set of shard GenServers; each series lives on exactly one shard, writes route to the owning shard, and reads fan out across all shards and merge.
+
+## Architecture
+
+- Starting the engine starts one coordinator process plus `:shards` independent worker (shard) GenServers. `start_link/1` returns the coordinator; all public functions take the coordinator as their `server` argument.
+- A series is identified by `{metric_name, sorted_labels}` where `sorted_labels = Enum.sort(Map.to_list(labels))`, so label ordering never creates duplicate series.
+- The shard index that owns a series is `:erlang.phash2({metric_name, sorted_labels}, shard_count)`, a 0-based integer in `0..(shard_count - 1)`.
+- Each shard stores its own series independently using the layout: series key → `%{chunk_start => sorted data points}`, with `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms`, and points within a chunk kept sorted by timestamp.
+
+## Public API
+
+- `ShardedTSDB.start_link(opts)` accepting:
+  - `:shards` — the number of shard worker processes to start (default `4`).
+  - `:chunk_duration_ms` — chunk width in milliseconds (default `60_000`).
+  - `:clock` — a zero-arity function returning the current time in milliseconds. Default to `fn -> System.monotonic_time(:millisecond) end`.
+  - `:name` — optional registration name for the coordinator.
+  - `:retention_ms` — how long to keep chunks before cleanup (default `3_600_000`).
+  - `:cleanup_interval_ms` — how often the coordinator triggers cleanup across all shards via `Process.send_after` (default `60_000`). Accept `:infinity` to disable.
+
+- `ShardedTSDB.insert(server, metric_name, labels, timestamp, value)` — routes the point to the owning shard and returns `:ok`.
+
+- `ShardedTSDB.query(server, metric_name, label_matchers, {start_ts, end_ts})` — fans out to all shards and merges results. `label_matchers` is a map; a series matches if it contains **all** the specified key-value pairs (it may have more). `%{}` matches all series with that metric name. Returns a list of `{labels, points}` tuples, where `points` is the `{timestamp, value}` list for that series sorted ascending by timestamp and filtered to `start_ts <= timestamp <= end_ts`. A matched series with no point in range is omitted entirely; when nothing matches, the result is `[]`. The order of series in the merged list is unspecified.
+
+- `ShardedTSDB.query_agg(server, metric_name, label_matchers, {start_ts, end_ts}, aggregation, step_ms)` where:
+  - `aggregation` is one of `:sum`, `:avg`, `:max`.
+  - `step_ms` is the window width. The range `[start_ts, end_ts)` is divided into non-overlapping windows `[start_ts, start_ts + step_ms)`, `[start_ts + step_ms, start_ts + 2*step_ms)`, etc.
+  - For each matched series and each window, take the points whose timestamps fall in `[window_start, window_start + step_ms)` and compute:
+    - `:sum` — the sum of values; omit the window if it has no points.
+    - `:avg` — the arithmetic mean of values; omit the window if it has no points.
+    - `:max` — the maximum value; omit the window if it has no points.
+  - Returns a list of `{labels, agg_points}` tuples, where `agg_points` is a list of `{window_start, aggregated_value}` tuples sorted by window start. A matched series whose windows are all omitted is left out of the result.
+
+## Introspection helpers
+
+- `ShardedTSDB.shard_count(server)` — returns the configured number of shards.
+- `ShardedTSDB.shard_of(server, metric_name, labels)` — returns the 0-based shard index that owns the given series, i.e. `:erlang.phash2({metric_name, Enum.sort(Map.to_list(labels))}, shard_count)`.
+- `ShardedTSDB.series_count(server)` — returns the total number of distinct series stored across all shards.
+- `ShardedTSDB.cleanup(server)` — synchronously runs cleanup across all shards and returns `:ok`. Cleanup removes any chunk whose `chunk_start + chunk_duration_ms` is less than or equal to `now - retention_ms` (where `now` comes from `:clock`), and drops any series left with zero chunks.
+
+## Cleanup
+
+In addition to the `cleanup/1` function, the coordinator schedules cleanup periodically with `Process.send_after` based on `:cleanup_interval_ms` and applies the same rule across all shards.
+
+## Constraints
+
+- Use only OTP standard library — no external dependencies.
+- Give me the complete module in a single file.
+- No ETS — all storage lives in the shard processes' GenServer state.
+
+----- solution.ex -----
+defmodule ShardedTSDB do
+  @moduledoc """
+  A horizontally sharded time-series storage engine.
+
+  Starting the engine (`start_link/1`) spins up one coordinator `GenServer`
+  that owns a fixed set of shard `GenServer` workers. Each series lives on
+  exactly one shard, chosen by hashing its identity. Writes route to the
+  owning shard; reads fan out across every shard and are merged by the
+  coordinator.
+
+  A series is identified by `{metric_name, sorted_labels}` where
+  `sorted_labels = Enum.sort(Map.to_list(labels))`, so label ordering never
+  produces duplicate series. The owning shard index is
+  `:erlang.phash2({metric_name, sorted_labels}, shard_count)`.
+
+  All storage lives in the shard processes' `GenServer` state (no ETS). Each
+  shard keeps a map of `series_key => %{chunk_start => sorted_points}` where
+  `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms` and
+  points within a chunk are sorted ascending by timestamp.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type labels :: %{optional(term()) => term()}
+  @type point :: {integer(), number()}
+  @type series_result :: {labels(), [point()]}
+
+  # ── Public API ────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the coordinator and its shard workers.
+
+  Options:
+
+    * `:shards` — number of shard workers (default `4`).
+    * `:chunk_duration_ms` — chunk width in ms (default `60_000`).
+    * `:clock` — zero-arity fn returning current time in ms
+      (default `fn -> System.monotonic_time(:millisecond) end`).
+    * `:name` — optional registration name for the coordinator.
+    * `:retention_ms` — how long to keep chunks (default `3_600_000`).
+    * `:cleanup_interval_ms` — periodic cleanup interval, or `:infinity`
+      to disable (default `60_000`).
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    name = Keyword.get(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Inserts a single `{timestamp, value}` point into the series identi (truncated)
+14:10:39.973 [debug] claude -p RESULT (stop="end_turn"):
+The failing tests pattern-match the context as `%{_ignore: _} = _ctx`, but `setup` returns `%{db: pid}` — there's no `_ignore` key, so the clause never matches. Fixing those two test signatures resolves it.
+
+<file path="test_harness.exs">
+defmodule ShardedTSDBTest do
+  use ExUnit.Case, async: false
+
+  defmodule Clock do
+    use Agent
+
+    def start_link(initial \\ 0) do
+      Agent.start_link(fn -> initial end, name: __MODULE__)
+    end
+
+    def now, do: Agent.get(__MODULE__, & &1)
+    def set(ms), do: Agent.update(__MODULE__, fn _ -> ms end)
+  end
+
+  setup do
+    start_supervised!({Clock, 0})
+
+    {:ok, pid} =
+      ShardedTSDB.start_link(
+        shards: 4,
+        clock: &Clock.now/0,
+        chunk_duration_ms: 1_000,
+        retention_ms: 10_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    %{db: pid}
+  end
+
+  # -------------------------------------------------------
+  # Basic insert / query
+  # -------------------------------------------------------
+
+  test "insert returns :ok and query retrieves the point", %{db: db} do
+    assert :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 100, 0.5)
+
+    result = ShardedTSDB.query(db, "cpu", %{"host" => "a"}, {0, 200})
+    assert [{%{"host" => "a"}, [{100, 0.5}]}] = result
+  end
+
+  test "points in one series are returned sorted by timestamp", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 300, 0.3)
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 100, 0.1)
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 200, 0.2)
+
+    [{_labels, points}] = ShardedTSDB.query(db, "cpu", %{"host" => "a"}, {0, 500})
+    assert points == [{100, 0.1}, {200, 0.2}, {300, 0.3}]
+  end
+
+  test "query fans out and merges across many series", %{db: db} do
+    for h <- ["a", "b", "c", "d", "e", "f"] do
+      :ok = ShardedTSDB.insert(db, "cpu", %{"host" => h}, 100, 1)
+    end
+
+    result = ShardedTSDB.query(db, "cpu", %{}, {0, 200})
+    hosts = result |> Enum.map(fn {labels, _} -> labels["host"] end) |> Enum.sort()
+    assert hosts == ["a", "b", "c", "d", "e", "f"]
+  end
+
+  test "query filters by inclusive time range", %{db: db} do
+    for ts <- [100, 200, 300, 400, 500] do
+      :ok = ShardedTSDB.insert(db, "m", %{}, ts, ts * 1.0)
+    end
+
+    [{_labels, points}] = ShardedTSDB.query(db, "m", %{}, {200, 400})
+    assert Enum.map(points, &elem(&1, 0)) == [200, 300, 400]
+  end
+
+  test "query includes points exactly at both range endpoints", %{db: db} do
+    for ts <- [100, 200, 300] do
+      :ok = ShardedTSDB.insert(db, "m", %{}, ts, ts)
+    end
+
+    [{_labels, points}] = ShardedTSDB.query(db, "m", %{}, {100, 300})
+    assert points == [{100, 100}, {200, 200}, {300, 300}]
+  end
+
+  test "query omits series with no point in range and unknown metric", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{"a" => "1"}, 100, 1)
+    assert [] = ShardedTSDB.query(db, "m", %{"a" => "1"}, {500, 600})
+    assert [] = ShardedTSDB.query(db, "other", %{}, {0, 1000})
+  end
+
+  test "query merges points spanning multiple chunks sorted by timestamp", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{}, 1500, 2)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 500, 1)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 900, 3)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 2400, 4)
+
+    [{_labels, points}] = ShardedTSDB.query(db, "m", %{}, {0, 5000})
+    assert points == [{500, 1}, {900, 3}, {1500, 2}, {2400, 4}]
+  end
+
+  # -------------------------------------------------------
+  # Label matching
+  # -------------------------------------------------------
+
+  test "label matchers select series containing all specified labels", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "GET", "status" => "200"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "POST", "status" => "200"}, 100, 2)
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "GET", "status" => "500"}, 100, 3)
+
+    result = ShardedTSDB.query(db, "http", %{"status" => "200"}, {0, 200})
+    assert length(result) == 2
+  end
+
+  test "label matchers requiring an unmatched value return nothing", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "GET"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "PUT"}, 100, 2)
+
+    assert [] = ShardedTSDB.query(db, "http", %{"method" => "DELETE"}, {0, 200})
+  end
+
+  test "label order does not create duplicate series", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{"a" => "1", "b" => "2"}, 100, 10)
+    :ok = ShardedTSDB.insert(db, "m", %{"b" => "2", "a" => "1"}, 200, 20)
+
+    result = ShardedTSDB.query(db, "m", %{"a" => "1", "b" => "2"}, {0, 300})
+    assert length(result) == 1
+    [{_labels, points}] = result
+    assert points == [{100, 10}, {200, 20}]
+  end
+
+  test "same labels under different metrics are distinct series", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "mem", %{"host" => "a"}, 100, 2)
+
+    assert ShardedTSDB.series_count(db) == 2
+    assert [{_, [{100, 1}]}] = ShardedTSDB.query(db, "cpu", %{"host" => "a"}, {0, 200})
+    assert [{_, [{100, 2}]}] = ShardedTSDB.query(db, "mem", %{"host" => "a"}, {0, 200})
+  end
+
+  # -------------------------------------------------------
+  # Sharding introspection
+  # -------------------------------------------------------
+
+  test "shard_count returns the configured number of shards", %{db: db} do
+    assert ShardedTSDB.shard_count(db) == 4
+  end
+
+  test "default options start four shards", _ctx do
+    {:ok, db} = ShardedTSDB.start_link([])
+    assert ShardedTSDB.shard_count(db) == 4
+  end
+
+  test "coordinator can be registered under a name", _ctx do
+    {:ok, _pid} = ShardedTSDB.start_link(name: :named_tsdb, shards: 3)
+    assert ShardedTSDB.shard_count(:named_tsdb) == 3
+    assert :ok = ShardedTSDB.insert(:named_tsdb, "m", %{}, 100, 1)
+    assert [{_, [{100, 1}]}] = ShardedTSDB.query(:named_tsdb, "m", %{}, {0, 200})
+  end
+
+  test "shard_of returns the documented phash2-based index", %{db: db} do
+    expected = :erlang.phash2({"cpu", Enum.sort(Map.to_list(%{"host" => "a"}))}, 4)
+    assert ShardedTSDB.shard_of(db, "cpu", %{"host" => "a"}) == expected
+    assert ShardedTSDB.shard_of(db, "cpu", %{"host" => "a"}) in 0..3
+  end
+
+  test "shard_of is independent of label map ordering", %{db: db} do
+    a = ShardedTSDB.shard_of(db, "m", %{"a" => "1", "b" => "2"})
+    b = ShardedTSDB.shard_of(db, "m", %{"b" => "2", "a" => "1"})
+    assert a == b
+  end
+
+  test "every shard_of index falls within the shard range", %{db: db} do
+    for i <- 1..50 do
+      idx = ShardedTSDB.shard_of(db, "cpu", %{"host" => "host-#{i}"})
+      assert idx in 0..3
+    end
+  end
+
+  test "series_count is zero before any insert", %{db: db} do
+    assert ShardedTSDB.series_count(db) == 0
+  end
+
+  test "series_count reports distinct series across all shards", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "b"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "mem", %{"host" => "a"}, 100, 1)
+    # Re-inserting into an existing series must not increase the count.
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 200, 2)
+
+    assert ShardedTSDB.series_count(db) == 3
+  end
+
+  # -------------------------------------------------------
+  # Aggregation
+  # -------------------------------------------------------
+
+  test "query_agg :sum computes the sum per window", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{}, 100, 10)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 200, 20)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 300, 30)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 1100, 5)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 1500, 15)
+
+    [{_labels, agg}] = ShardedTSDB.query_agg(db, "m", %{}, {0, 2000}, :sum, 1_000)
+    assert agg == [{0, 60}, {1000, 20}]
+  end
+
+  test "query_agg :avg computes the mean per window", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{}, 100, 10)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 200, 20)
+    :ok = ShardedTSDB.insert(d (truncated)
+14:10:39.974 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 16878, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 16878, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 16878, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 16878, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 6490, "type" => "message"}], "output_tokens" => 6490, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:10:40.010 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01 solution.ex
+14:10:40.797 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":355,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":31,"tests_ran":true,"tests_skipped":0,"tests_total":31,"timestamp":"2026-07-11T12:10:40.769566Z"}
+14:10:40.809 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:10:41.583 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":285,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 31/31 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test insert returns :ok and query retrieves the point"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test points in one series are returned sorted by timestamp"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query fans out and merges across many series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query filters by inclusive time range"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query includes points exactly at both range endpoints"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query omits series with no point in range and unknown metric"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query merges points spanning multiple chunks sorted by timestamp"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label matchers select series containing all specified labels"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label matchers requiring an unmatched value return nothing"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label order does not create duplicate series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test same labels under different metrics are distinct series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test shard_count returns the configured number of shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test default options start four shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test coordinator can be registered under a name"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test shard_of returns the documented phash2-based index"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test shard_of is independent of label map ordering"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test every shard_of index falls within the shard range"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test series_count is zero before any insert"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test series_count reports distinct series across all shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :sum computes the sum per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :avg computes the mean per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :avg produces a mean per window across windows"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :max returns the maximum per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :max reports the maximum per window across windows"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg treats the end of the range as exclusive"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg on an unknown metric returns an empty list"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg omits empty windows and returns per-series results"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup removes expired chunks across shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup applies the boundary rule at exactly the cutoff"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup does not touch chunks that are still within retention"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup drops series left with no chunks and updates series_count"}],"tests_errors":0,"tests_excluded":0,"tests_failed":31,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":31,"timestamp":"2026-07-11T12:10:41.559141Z"}
+14:10:41.590 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:10:42.354 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 24/31 failed"],"tests":0.23},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test insert returns :ok and query retrieves the point"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test points in one series are returned sorted by timestamp"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query fans out and merges across many series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query filters by inclusive time range"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query includes points exactly at both range endpoints"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query omits series with no point in range and unknown metric"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query merges points spanning multiple chunks sorted by timestamp"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label matchers select series containing all specified labels"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label matchers requiring an unmatched value return nothing"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label order does not create duplicate series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test same labels under different metrics are distinct series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test coordinator can be registered under a name"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test series_count reports distinct series across all shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :sum computes the sum per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :avg computes the mean per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :avg produces a mean per window across windows"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :max returns the maximum per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :max reports the maximum per window across windows"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg treats the end of the range as exclusive"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg omits empty windows and returns per-series results"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup removes expired chunks across shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup applies the boundary rule at exactly the cutoff"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup does not touch chunks that are still within retention"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup drops series left with no chunks and updates series_count"}],"tests_errors":0,"tests_excluded":0,"tests_failed":24,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":31,"timestamp":"2026-07-11T12:10:42.331655Z"}
+14:10:42.362 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:10:43.134 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 16/31 failed"],"tests":0.48},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test insert returns :ok and query retrieves the point"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test points in one series are returned sorted by timestamp"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query fans out and merges across many series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query filters by inclusive time range"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query includes points exactly at both range endpoints"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query omits series with no point in range and unknown metric"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query merges points spanning multiple chunks sorted by timestamp"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label matchers select series containing all specified labels"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label matchers requiring an unmatched value return nothing"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label order does not create duplicate series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test same labels under different metrics are distinct series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test coordinator can be registered under a name"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup removes expired chunks across shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup applies the boundary rule at exactly the cutoff"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup does not touch chunks that are still within retention"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup drops series left with no chunks and updates series_count"}],"tests_errors":0,"tests_excluded":0,"tests_failed":16,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":31,"timestamp":"2026-07-11T12:10:43.111685Z"}
+14:10:43.142 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:10:43.901 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":293,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.3,"mode":"full","overall":0.0,"reasons":["compilation: 7 warning(s) → hard fail (overall 0.0)","tests: 8/31 failed"],"tests":0.74},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :sum computes the sum per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :avg computes the mean per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :avg produces a mean per window across windows"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :max returns the maximum per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :max reports the maximum per window across windows"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg treats the end of the range as exclusive"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg on an unknown metric returns an empty list"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg omits empty windows and returns per-series results"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":31,"timestamp":"2026-07-11T12:10:43.875428Z"}
+14:10:43.909 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:10:44.692 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 3/31 failed"],"tests":0.9},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test shard_count returns the configured number of shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test default options start four shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test coordinator can be registered under a name"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":28,"tests_ran":true,"tests_skipped":0,"tests_total":31,"timestamp":"2026-07-11T12:10:44.666895Z"}
+14:10:44.701 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:10:45.481 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 3/31 failed"],"tests":0.9},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test shard_of returns the documented phash2-based index"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test shard_of is independent of label map ordering"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test every shard_of index falls within the shard range"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":28,"tests_ran":true,"tests_skipped":0,"tests_total":31,"timestamp":"2026-07-11T12:10:45.457146Z"}
+14:10:45.490 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:10:46.264 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 5/31 failed"],"tests":0.84},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test same labels under different metrics are distinct series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test series_count is zero before any insert"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test series_count reports distinct series across all shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup does not touch chunks that are still within retention"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup drops series left with no chunks and updates series_count"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":26,"tests_ran":true,"tests_skipped":0,"tests_total":31,"timestamp":"2026-07-11T12:10:46.239881Z"}
+14:10:46.273 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:10:47.046 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 4/31 failed"],"tests":0.87},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup removes expired chunks across shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup applies the boundary rule at exactly the cutoff"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup does not touch chunks that are still within retention"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup drops series left with no chunks and updates series_count"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":27,"tests_ran":true,"tests_skipped":0,"tests_total":31,"timestamp":"2026-07-11T12:10:47.023056Z"}
+14:10:47.054 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:10:47.872 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":272,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 31/31 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test insert returns :ok and query retrieves the point"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test points in one series are returned sorted by timestamp"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query fans out and merges across many series"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query filters by inclusive time range"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query includes points exactly at both range endpoints"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query omits series with no point in range and unknown metric"},{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query merges points spanning multiple chunks sorted by timestamp"},{"message":"{:EXIT, #PID<0.241.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test label matchers select series containing all specified labels"},{"message":"{:EXIT, #PID<0.245.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test label matchers requiring an unmatched value return nothing"},{"message":"{:EXIT, #PID<0.249.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test label order does not create duplicate series"},{"message":"{:EXIT, #PID<0.253.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test same labels under different metrics are distinct series"},{"message":"{:EXIT, #PID<0.257.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test shard_count returns the configured number of shards"},{"message":"{:EXIT, #PID<0.261.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test default options start four shards"},{"message":"{:EXIT, #PID<0.265.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [fi (truncated)
+14:10:47.878 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:10:48.669 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":235,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":12,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":44,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 44 warning(s) → hard fail (overall 0.0)","tests: 31/31 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test insert returns :ok and query retrieves the point"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test points in one series are returned sorted by timestamp"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query fans out and merges across many series"},{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query filters by inclusive time range"},{"message":"{:EXIT, #PID<0.245.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query includes points exactly at both range endpoints"},{"message":"{:EXIT, #PID<0.253.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query omits series with no point in range and unknown metric"},{"message":"{:EXIT, #PID<0.261.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query merges points spanning multiple chunks sorted by timestamp"},{"message":"{:EXIT, #PID<0.269.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test label matchers select series containing all specified labels"},{"message":"{:EXIT, #PID<0.277.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test label matchers requiring an unmatched value return nothing"},{"message":"{:EXIT, #PID<0.285.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test label order does not create duplicate series"},{"message":"{:EXIT, #PID<0.293.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test same labels under different metrics are distinct series"},{"message":"{:EXIT, #PID<0.301.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 114, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test shard_count returns the configured number of shards"},{"message":"{:EXIT, #PID<0.309.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 114, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test default options start four shards"},{"message":"{:EXIT, #PID<0.322.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedT (truncated)
+14:10:48.675 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:10:49.443 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":292,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":31,"tests_ran":true,"tests_skipped":0,"tests_total":31,"timestamp":"2026-07-11T12:10:49.420193Z"}
+14:10:49.443 [debug] base mutation gate (per-fn): handle_info/2 survived
+14:10:49.444 [info] cycle 626_004_sharded_concurrent_time_series_db_01: repairing — Mutation gate failed: the raise-mutant of `handle_info/2` still passes the tests — that public function is not exercised by test_harness.exs. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+14:10:49.444 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+14:10:49.444 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Mutation gate failed: the raise-mutant of `handle_info/2` still passes the tests — that public function is not exercised by test_harness.exs. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ShardedTSDB` that implements a time-series storage engine whose data is **horizontally sharded across several worker processes**. A single coordinator GenServer owns a fixed set of shard GenServers; each series lives on exactly one shard, writes route to the owning shard, and reads fan out across all shards and merge.
+
+## Architecture
+
+- Starting the engine starts one coordinator process plus `:shards` independent worker (shard) GenServers. `start_link/1` returns the coordinator; all public functions take the coordinator as their `server` argument.
+- A series is identified by `{metric_name, sorted_labels}` where `sorted_labels = Enum.sort(Map.to_list(labels))`, so label ordering never creates duplicate series.
+- The shard index that owns a series is `:erlang.phash2({metric_name, sorted_labels}, shard_count)`, a 0-based integer in `0..(shard_count - 1)`.
+- Each shard stores its own series independently using the layout: series key → `%{chunk_start => sorted data points}`, with `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms`, and points within a chunk kept sorted by timestamp.
+
+## Public API
+
+- `ShardedTSDB.start_link(opts)` accepting:
+  - `:shards` — the number of shard worker processes to start (default `4`).
+  - `:chunk_duration_ms` — chunk width in milliseconds (default `60_000`).
+  - `:clock` — a zero-arity function returning the current time in milliseconds. Default to `fn -> System.monotonic_time(:millisecond) end`.
+  - `:name` — optional registration name for the coordinator.
+  - `:retention_ms` — how long to keep chunks before cleanup (default `3_600_000`).
+  - `:cleanup_interval_ms` — how often the coordinator triggers cleanup across all shards via `Process.send_after` (default `60_000`). Accept `:infinity` to disable.
+
+- `ShardedTSDB.insert(server, metric_name, labels, timestamp, value)` — routes the point to the owning shard and returns `:ok`.
+
+- `ShardedTSDB.query(server, metric_name, label_matchers, {start_ts, end_ts})` — fans out to all shards and merges results. `label_matchers` is a map; a series matches if it contains **all** the specified key-value pairs (it may have more). `%{}` matches all series with that metric name. Returns a list of `{labels, points}` tuples, where `points` is the `{timestamp, value}` list for that series sorted ascending by timestamp and filtered to `start_ts <= timestamp <= end_ts`. A matched series with no point in range is omitted entirely; when nothing matches, the result is `[]`. The order of series in the merged list is unspecified.
+
+- `ShardedTSDB.query_agg(server, metric_name, label_matchers, {start_ts, end_ts}, aggregation, step_ms)` where:
+  - `aggregation` is one of `:sum`, `:avg`, `:max`.
+  - `step_ms` is the window width. The range `[start_ts, end_ts)` is divided into non-overlapping windows `[start_ts, start_ts + step_ms)`, `[start_ts + step_ms, start_ts + 2*step_ms)`, etc.
+  - For each matched series and each window, take the points whose timestamps fall in `[window_start, window_start + step_ms)` and compute:
+    - `:sum` — the sum of values; omit the window if it has no points.
+    - `:avg` — the arithmetic mean of values; omit the window if it has no points.
+    - `:max` — the maximum value; omit the window if it has no points.
+  - Returns a list of `{labels, agg_points}` tuples, where `agg_points` is a list of `{window_start, aggregated_value}` tuples sorted by window start. A matched series whose windows are all omitted is left out of the result.
+
+## Introspection helpers
+
+- `ShardedTSDB.shard_count(server)` — returns the configured number of shards.
+- `ShardedTSDB.shard_of(server, metric_name, labels)` — returns the 0-based shard index that owns the given series, i.e. `:erlang.phash2({metric_name, Enum.sort(Map.to_list(labels))}, shard_count)`.
+- `ShardedTSDB.series_count(server)` — returns the total number of distinct series stored across all shards.
+- `ShardedTSDB.cleanup(server)` — synchronously runs cleanup across all shards and returns `:ok`. Cleanup removes any chunk whose `chunk_start + chunk_duration_ms` is less than or equal to `now - retention_ms` (where `now` comes from `:clock`), and drops any series left with zero chunks.
+
+## Cleanup
+
+In addition to the `cleanup/1` function, the coordinator schedules cleanup periodically with `Process.send_after` based on `:cleanup_interval_ms` and applies the same rule across all shards.
+
+## Constraints
+
+- Use only OTP standard library — no external dependencies.
+- Give me the complete module in a single file.
+- No ETS — all storage lives in the shard processes' GenServer state.
+
+----- solution.ex -----
+defmodule ShardedTSDB do
+  @moduledoc """
+  A horizontally sharded time-series storage engine.
+
+  Starting the engine (`start_link/1`) spins up one coordinator `GenServer`
+  that owns a fixed set of shard `GenServer` workers. Each series lives on
+  exactly one shard, chosen by hashing its identity. Writes route to the
+  owning shard; reads fan out across every shard and are merged by the
+  coordinator.
+
+  A series is identified by `{metric_name, sorted_labels}` where
+  `sorted_labels = Enum.sort(Map.to_list(labels))`, so label ordering never
+  produces duplicate series. The owning shard index is
+  `:erlang.phash2({metric_name, sorted_labels}, shard_count)`.
+
+  All storage lives in the shard processes' `GenServer` state (no ETS). Each
+  shard keeps a map of `series_key => %{chunk_start => sorted_points}` where
+  `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms` and
+  points within a chunk are sorted ascending by timestamp.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type labels :: %{optional(term()) => term()}
+  @type point :: {integer(), number()}
+  @type series_result :: {labels(), [point()]}
+
+  # ── Public API ────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the coordinator and its shard workers.
+
+  Options:
+
+    * `:shards` — number of shard workers (default `4`).
+    * `:chunk_duration_ms` — chunk width in ms (default `60_000`).
+    * `:clock` — zero-arity fn returning current time in ms
+      (default `fn -> System.monotonic_time(:millisecond) end`).
+    * `:name` — optional registration name for the coordinator.
+    * `:retention_ms` — how long to keep chunks (default `3_600_000`).
+    * `:cleanup_interval_ms` — periodic cleanup interval, or `:infinity`
+      to disable (default `60_000`).
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    name = Keyword.get(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Inserts a single `{timestamp, value}` point into the series identified by
+  `metric_name` and `labels`, routing it to the o (truncated)
+14:12:23.874 [debug] claude -p RESULT (stop="end_turn"):
+The failure is a mutation-gate issue: `handle_info/2` on the coordinator is never exercised by any test (all tests use `cleanup_interval_ms: :infinity`, so the `:cleanup_tick` message never fires). I'll add a test that directly delivers a `:cleanup_tick` message and asserts the periodic-cleanup behavior actually happens — so gutting `handle_info/2` (raise-mutant) makes the coordinator crash and the test fail.
+
+Only `test_harness.exs` needs changing.
+
+<file path="test_harness.exs">
+defmodule ShardedTSDBTest do
+  use ExUnit.Case, async: false
+
+  defmodule Clock do
+    use Agent
+
+    def start_link(initial \\ 0) do
+      Agent.start_link(fn -> initial end, name: __MODULE__)
+    end
+
+    def now, do: Agent.get(__MODULE__, & &1)
+    def set(ms), do: Agent.update(__MODULE__, fn _ -> ms end)
+  end
+
+  setup do
+    start_supervised!({Clock, 0})
+
+    {:ok, pid} =
+      ShardedTSDB.start_link(
+        shards: 4,
+        clock: &Clock.now/0,
+        chunk_duration_ms: 1_000,
+        retention_ms: 10_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    %{db: pid}
+  end
+
+  # -------------------------------------------------------
+  # Basic insert / query
+  # -------------------------------------------------------
+
+  test "insert returns :ok and query retrieves the point", %{db: db} do
+    assert :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 100, 0.5)
+
+    result = ShardedTSDB.query(db, "cpu", %{"host" => "a"}, {0, 200})
+    assert [{%{"host" => "a"}, [{100, 0.5}]}] = result
+  end
+
+  test "points in one series are returned sorted by timestamp", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 300, 0.3)
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 100, 0.1)
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 200, 0.2)
+
+    [{_labels, points}] = ShardedTSDB.query(db, "cpu", %{"host" => "a"}, {0, 500})
+    assert points == [{100, 0.1}, {200, 0.2}, {300, 0.3}]
+  end
+
+  test "query fans out and merges across many series", %{db: db} do
+    for h <- ["a", "b", "c", "d", "e", "f"] do
+      :ok = ShardedTSDB.insert(db, "cpu", %{"host" => h}, 100, 1)
+    end
+
+    result = ShardedTSDB.query(db, "cpu", %{}, {0, 200})
+    hosts = result |> Enum.map(fn {labels, _} -> labels["host"] end) |> Enum.sort()
+    assert hosts == ["a", "b", "c", "d", "e", "f"]
+  end
+
+  test "query filters by inclusive time range", %{db: db} do
+    for ts <- [100, 200, 300, 400, 500] do
+      :ok = ShardedTSDB.insert(db, "m", %{}, ts, ts * 1.0)
+    end
+
+    [{_labels, points}] = ShardedTSDB.query(db, "m", %{}, {200, 400})
+    assert Enum.map(points, &elem(&1, 0)) == [200, 300, 400]
+  end
+
+  test "query includes points exactly at both range endpoints", %{db: db} do
+    for ts <- [100, 200, 300] do
+      :ok = ShardedTSDB.insert(db, "m", %{}, ts, ts)
+    end
+
+    [{_labels, points}] = ShardedTSDB.query(db, "m", %{}, {100, 300})
+    assert points == [{100, 100}, {200, 200}, {300, 300}]
+  end
+
+  test "query omits series with no point in range and unknown metric", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{"a" => "1"}, 100, 1)
+    assert [] = ShardedTSDB.query(db, "m", %{"a" => "1"}, {500, 600})
+    assert [] = ShardedTSDB.query(db, "other", %{}, {0, 1000})
+  end
+
+  test "query merges points spanning multiple chunks sorted by timestamp", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{}, 1500, 2)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 500, 1)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 900, 3)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 2400, 4)
+
+    [{_labels, points}] = ShardedTSDB.query(db, "m", %{}, {0, 5000})
+    assert points == [{500, 1}, {900, 3}, {1500, 2}, {2400, 4}]
+  end
+
+  # -------------------------------------------------------
+  # Label matching
+  # -------------------------------------------------------
+
+  test "label matchers select series containing all specified labels", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "GET", "status" => "200"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "POST", "status" => "200"}, 100, 2)
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "GET", "status" => "500"}, 100, 3)
+
+    result = ShardedTSDB.query(db, "http", %{"status" => "200"}, {0, 200})
+    assert length(result) == 2
+  end
+
+  test "label matchers requiring an unmatched value return nothing", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "GET"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "http", %{"method" => "PUT"}, 100, 2)
+
+    assert [] = ShardedTSDB.query(db, "http", %{"method" => "DELETE"}, {0, 200})
+  end
+
+  test "label order does not create duplicate series", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{"a" => "1", "b" => "2"}, 100, 10)
+    :ok = ShardedTSDB.insert(db, "m", %{"b" => "2", "a" => "1"}, 200, 20)
+
+    result = ShardedTSDB.query(db, "m", %{"a" => "1", "b" => "2"}, {0, 300})
+    assert length(result) == 1
+    [{_labels, points}] = result
+    assert points == [{100, 10}, {200, 20}]
+  end
+
+  test "same labels under different metrics are distinct series", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "mem", %{"host" => "a"}, 100, 2)
+
+    assert ShardedTSDB.series_count(db) == 2
+    assert [{_, [{100, 1}]}] = ShardedTSDB.query(db, "cpu", %{"host" => "a"}, {0, 200})
+    assert [{_, [{100, 2}]}] = ShardedTSDB.query(db, "mem", %{"host" => "a"}, {0, 200})
+  end
+
+  # -------------------------------------------------------
+  # Sharding introspection
+  # -------------------------------------------------------
+
+  test "shard_count returns the configured number of shards", %{db: db} do
+    assert ShardedTSDB.shard_count(db) == 4
+  end
+
+  test "default options start four shards", _ctx do
+    {:ok, db} = ShardedTSDB.start_link([])
+    assert ShardedTSDB.shard_count(db) == 4
+  end
+
+  test "coordinator can be registered under a name", _ctx do
+    {:ok, _pid} = ShardedTSDB.start_link(name: :named_tsdb, shards: 3)
+    assert ShardedTSDB.shard_count(:named_tsdb) == 3
+    assert :ok = ShardedTSDB.insert(:named_tsdb, "m", %{}, 100, 1)
+    assert [{_, [{100, 1}]}] = ShardedTSDB.query(:named_tsdb, "m", %{}, {0, 200})
+  end
+
+  test "shard_of returns the documented phash2-based index", %{db: db} do
+    expected = :erlang.phash2({"cpu", Enum.sort(Map.to_list(%{"host" => "a"}))}, 4)
+    assert ShardedTSDB.shard_of(db, "cpu", %{"host" => "a"}) == expected
+    assert ShardedTSDB.shard_of(db, "cpu", %{"host" => "a"}) in 0..3
+  end
+
+  test "shard_of is independent of label map ordering", %{db: db} do
+    a = ShardedTSDB.shard_of(db, "m", %{"a" => "1", "b" => "2"})
+    b = ShardedTSDB.shard_of(db, "m", %{"b" => "2", "a" => "1"})
+    assert a == b
+  end
+
+  test "every shard_of index falls within the shard range", %{db: db} do
+    for i <- 1..50 do
+      idx = ShardedTSDB.shard_of(db, "cpu", %{"host" => "host-#{i}"})
+      assert idx in 0..3
+    end
+  end
+
+  test "series_count is zero before any insert", %{db: db} do
+    assert ShardedTSDB.series_count(db) == 0
+  end
+
+  test "series_count reports distinct series across all shards", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "b"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "mem", %{"host" => "a"}, 100, 1)
+    # Re-inserting into an existing series must not increase the count.
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => "a"}, 200, 2)
+
+    assert ShardedTSDB.series_count(db) == 3
+  end
+
+  # -------------------------------------------------------
+  # Aggregation
+  # -------------------------------------------------------
+
+  test "query_agg :sum computes the sum per window", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "m", %{}, 100, 10)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 200, 20)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 300, 30)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 1100, 5)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 1500, 15)
+
+    [{_labels, agg}] = ShardedTSDB.query_agg(db, "m", %{}, {0, 2000}, :sum, 1_000)
+  (truncated)
+14:12:23.874 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 16830, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 16830, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 16830, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 16830, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 9289, "type" => "message"}], "output_tokens" => 9289, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:12:23.910 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01 solution.ex
+14:12:24.760 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":355,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":34,"tests_ran":true,"tests_skipped":0,"tests_total":34,"timestamp":"2026-07-11T12:12:24.735330Z"}
+14:12:24.773 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:12:25.576 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":285,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 34/34 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test insert returns :ok and query retrieves the point"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test points in one series are returned sorted by timestamp"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query fans out and merges across many series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query filters by inclusive time range"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query includes points exactly at both range endpoints"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query omits series with no point in range and unknown metric"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query merges points spanning multiple chunks sorted by timestamp"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label matchers select series containing all specified labels"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label matchers requiring an unmatched value return nothing"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label order does not create duplicate series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test same labels under different metrics are distinct series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test shard_count returns the configured number of shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test default options start four shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test coordinator can be registered under a name"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test shard_of returns the documented phash2-based index"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test shard_of is independent of label map ordering"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test every shard_of index falls within the shard range"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test series_count is zero before any insert"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test series_count reports distinct series across all shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :sum computes the sum per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :avg computes the mean per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :avg produces a mean per window across windows"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :max returns the maximum per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :max reports the maximum per window across windows"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg treats the end of the range as exclusive"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg on an unknown metric returns an empty list"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg omits empty windows and returns per-series results"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup removes expired chunks across shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup applies the boundary rule at exactly the cutoff"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup does not touch chunks that are still within retention"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup drops series left with no chunks and updates series_count"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test periodic :cleanup_tick message runs cleanup across shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test the coordinator survives and keeps serving after a tick"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test an automatic tick fires and cleans when an interval is configured"}],"tests_errors":0,"tests_excluded":0,"tests_failed":34,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":34,"timestamp":"2026-07-11T12:12:25.547594Z"}
+14:12:25.584 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:12:26.362 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 27/34 failed"],"tests":0.21},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test insert returns :ok and query retrieves the point"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test points in one series are returned sorted by timestamp"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query fans out and merges across many series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query filters by inclusive time range"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query includes points exactly at both range endpoints"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query omits series with no point in range and unknown metric"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query merges points spanning multiple chunks sorted by timestamp"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label matchers select series containing all specified labels"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label matchers requiring an unmatched value return nothing"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label order does not create duplicate series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test same labels under different metrics are distinct series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test coordinator can be registered under a name"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test series_count reports distinct series across all shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :sum computes the sum per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :avg computes the mean per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :avg produces a mean per window across windows"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :max returns the maximum per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :max reports the maximum per window across windows"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg treats the end of the range as exclusive"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg omits empty windows and returns per-series results"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup removes expired chunks across shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup applies the boundary rule at exactly the cutoff"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup does not touch chunks that are still within retention"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup drops series left with no chunks and updates series_count"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test periodic :cleanup_tick message runs cleanup across shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test the coordinator survives and keeps serving after a tick"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test an automatic tick fires and cleans when an interval is configured"}],"tests_errors":0,"tests_excluded":0,"tests_failed":27,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":34,"timestamp":"2026-07-11T12:12:26.337975Z"}
+14:12:26.371 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:12:27.145 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 19/34 failed"],"tests":0.44},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test insert returns :ok and query retrieves the point"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test points in one series are returned sorted by timestamp"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query fans out and merges across many series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query filters by inclusive time range"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query includes points exactly at both range endpoints"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query omits series with no point in range and unknown metric"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query merges points spanning multiple chunks sorted by timestamp"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label matchers select series containing all specified labels"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label matchers requiring an unmatched value return nothing"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test label order does not create duplicate series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test same labels under different metrics are distinct series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test coordinator can be registered under a name"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup removes expired chunks across shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup applies the boundary rule at exactly the cutoff"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup does not touch chunks that are still within retention"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup drops series left with no chunks and updates series_count"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test periodic :cleanup_tick message runs cleanup across shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test the coordinator survives and keeps serving after a tick"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test an automatic tick fires and cleans when an interval is configured"}],"tests_errors":0,"tests_excluded":0,"tests_failed":19,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":34,"timestamp":"2026-07-11T12:12:27.122491Z"}
+14:12:27.153 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:12:27.970 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":293,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.3,"mode":"full","overall":0.0,"reasons":["compilation: 7 warning(s) → hard fail (overall 0.0)","tests: 8/34 failed"],"tests":0.76},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :sum computes the sum per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :avg computes the mean per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :avg produces a mean per window across windows"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :max returns the maximum per window"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg :max reports the maximum per window across windows"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg treats the end of the range as exclusive"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg on an unknown metric returns an empty list"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test query_agg omits empty windows and returns per-series results"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":26,"tests_ran":true,"tests_skipped":0,"tests_total":34,"timestamp":"2026-07-11T12:12:27.944598Z"}
+14:12:27.978 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:12:28.806 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 4/34 failed"],"tests":0.88},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test shard_count returns the configured number of shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test default options start four shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test coordinator can be registered under a name"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test the coordinator survives and keeps serving after a tick"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":30,"tests_ran":true,"tests_skipped":0,"tests_total":34,"timestamp":"2026-07-11T12:12:28.782418Z"}
+14:12:28.815 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:12:29.593 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 3/34 failed"],"tests":0.91},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test shard_of returns the documented phash2-based index"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test shard_of is independent of label map ordering"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test every shard_of index falls within the shard range"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":31,"tests_ran":true,"tests_skipped":0,"tests_total":34,"timestamp":"2026-07-11T12:12:29.569277Z"}
+14:12:29.601 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:12:30.406 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 7/34 failed"],"tests":0.79},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test same labels under different metrics are distinct series"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test series_count is zero before any insert"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test series_count reports distinct series across all shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup does not touch chunks that are still within retention"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup drops series left with no chunks and updates series_count"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test periodic :cleanup_tick message runs cleanup across shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test the coordinator survives and keeps serving after a tick"}],"tests_errors":0,"tests_excluded":0,"tests_failed":7,"tests_passed":27,"tests_ran":true,"tests_skipped":0,"tests_total":34,"timestamp":"2026-07-11T12:12:30.381486Z"}
+14:12:30.414 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:12:31.228 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 4/34 failed"],"tests":0.88},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup removes expired chunks across shards"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup applies the boundary rule at exactly the cutoff"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup does not touch chunks that are still within retention"},{"message":"MUTATION","module":"ShardedTSDBTest","test":"test cleanup drops series left with no chunks and updates series_count"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":30,"tests_ran":true,"tests_skipped":0,"tests_total":34,"timestamp":"2026-07-11T12:12:31.205104Z"}
+14:12:31.236 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:12:32.062 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":272,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 34/34 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test insert returns :ok and query retrieves the point"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test points in one series are returned sorted by timestamp"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query fans out and merges across many series"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query filters by inclusive time range"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query includes points exactly at both range endpoints"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query omits series with no point in range and unknown metric"},{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query merges points spanning multiple chunks sorted by timestamp"},{"message":"{:EXIT, #PID<0.241.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test label matchers select series containing all specified labels"},{"message":"{:EXIT, #PID<0.245.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test label matchers requiring an unmatched value return nothing"},{"message":"{:EXIT, #PID<0.249.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test label order does not create duplicate series"},{"message":"{:EXIT, #PID<0.253.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test same labels under different metrics are distinct series"},{"message":"{:EXIT, #PID<0.257.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test shard_count returns the configured number of shards"},{"message":"{:EXIT, #PID<0.261.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test default options start four shards"},{"message":"{:EXIT, #PID<0.265.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :init, 1, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [fi (truncated)
+14:12:32.068 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:12:32.880 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":235,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":12,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":44,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 44 warning(s) → hard fail (overall 0.0)","tests: 34/34 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test insert returns :ok and query retrieves the point"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test points in one series are returned sorted by timestamp"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query fans out and merges across many series"},{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query filters by inclusive time range"},{"message":"{:EXIT, #PID<0.245.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query includes points exactly at both range endpoints"},{"message":"{:EXIT, #PID<0.253.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query omits series with no point in range and unknown metric"},{"message":"{:EXIT, #PID<0.261.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query merges points spanning multiple chunks sorted by timestamp"},{"message":"{:EXIT, #PID<0.269.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test label matchers select series containing all specified labels"},{"message":"{:EXIT, #PID<0.277.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test label matchers requiring an unmatched value return nothing"},{"message":"{:EXIT, #PID<0.285.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test label order does not create duplicate series"},{"message":"{:EXIT, #PID<0.293.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test same labels under different metrics are distinct series"},{"message":"{:EXIT, #PID<0.301.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 114, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test shard_count returns the configured number of shards"},{"message":"{:EXIT, #PID<0.309.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_call, 3, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 114, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test default options start four shards"},{"message":"{:EXIT, #PID<0.322.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedT (truncated)
+14:12:32.887 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01_mut solution.ex
+14:12:33.709 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":292,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 3/34 failed"],"tests":0.91},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.470.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_info, 2, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 152, error_info: %{module: Exception}]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test periodic :cleanup_tick message runs cleanup across shards"},{"message":"{:EXIT, #PID<0.478.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_info, 2, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 152, error_info: %{module: Exception}]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test the coordinator survives and keeps serving after a tick"},{"message":"{:EXIT, #PID<0.486.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB, :handle_info, 2, [file: ~c\".gen_staging/626_004_sharded_concurrent_time_series_db_01_mut/solution.ex\", line: 152, error_info: %{module: Exception}]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test an automatic tick fires and cleans when an interval is configured"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":31,"tests_ran":true,"tests_skipped":0,"tests_total":34,"timestamp":"2026-07-11T12:12:33.685847Z"}
+14:12:33.709 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/626_004_sharded_concurrent_time_series_db_01 solution.ex (seed 383370567)
+14:12:34.507 [debug] grade JSON: {"analysis":{"defp_count":10,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":355,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":18,"public_fn_count":25,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/626_004_sharded_concurrent_time_series_db_01/solution.ex","task":"626_004_sharded_concurrent_time_series_db_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":34,"tests_ran":true,"tests_skipped":0,"tests_total":34,"timestamp":"2026-07-11T12:12:34.484062Z"}
+14:12:34.511 [info] cycle 626_004_sharded_concurrent_time_series_db_01: ACCEPTED on attempt 3
+14:12:34.512 [info] promoted 626_004_sharded_concurrent_time_series_db_01 -> tasks/626_004_sharded_concurrent_time_series_db_01

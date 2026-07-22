@@ -1,0 +1,439 @@
+18:11:52.359 [info] FIM 071_004_validation_aware_factory_with_compensating_rollback_fim02 → 071_004_validation_aware_factory_with_compensating_rollback_03: target insert/2
+18:11:52.359 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+18:11:52.359 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `insert/2`.
+
+Generate a prompt describing how to implement `insert/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `insert/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `insert/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `insert/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Factory` that generates test data similarly to
+ExMachina, but simpler and self-contained — with **validation and compensating
+rollback** so persistence has explicit success/failure semantics.
+
+I need these functions in the public API:
+
+- `Factory.build(factory_name)` / `build(factory_name, overrides)` — returns a
+  struct for the named factory (merging a keyword list of field overrides). As a
+  side effect, building a factory that has associations still creates the
+  associated records (so their ids can be assigned).
+- `Factory.insert(factory_name)` / `insert(factory_name, overrides)` — builds the
+  struct, **validates** its required fields, and:
+  - on success, persists it via `MyApp.Repo.insert!` and returns
+    `{:ok, persisted_struct}`;
+  - on failure, returns `{:error, {:missing_fields, list_of_field_atoms}}` **and
+    rolls back (deletes via `MyApp.Repo.delete!`) any association records that were
+    auto-created while building the invalid parent**, so a failed insert leaves the
+    repo unchanged.
+- `Factory.insert!(factory_name)` / `insert!(factory_name, overrides)` — same as
+  `insert`, but returns the persisted struct on success and raises `ArgumentError`
+  on validation failure.
+- `Factory.valid?(factory_name, overrides \\ [])` — returns a boolean indicating
+  whether the built struct passes validation (it must not leave stray association
+  rows behind).
+- `Factory.sequence(name, formatter_fn)` — returns the next value for a named
+  sequence via `formatter_fn.(n)` with `n` a monotonically increasing integer
+  starting at 1, one independent counter per `name`, unique across the whole test
+  run even under concurrent (`async: true`) access, backed by a named `Agent`.
+
+Declare, per factory, which fields are **required** (must be non-`nil` for the
+struct to be valid). At minimum define factories for `:user` (fields `name`,
+`email`; both required) and `:post` (fields `title`, `body`, `user_id`; all
+required). The `:post` factory must automatically insert a `:user` to populate
+`user_id`, unless `user_id` is supplied as an override — and if a `:post` insert
+fails validation, the auto-created user must be rolled back.
+
+Use only the Elixir standard library and assume `Repo` is available as
+`MyApp.Repo` (providing `insert!/1` and `delete!/1`). Deliver everything in a
+single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Factory do
+  @moduledoc """
+  A lightweight, self-contained test-data factory with **validation and
+  compensating rollback**.
+
+  `insert/2` validates required fields; on failure it returns an error tuple and
+  deletes any association records auto-created while building the invalid parent,
+  leaving the repo unchanged.
+
+  ## Usage
+
+      {:ok, user}   = Factory.insert(:user)
+      {:error, err} = Factory.insert(:user, name: nil)
+      user          = Factory.insert!(:user)     # raises on failure
+      Factory.valid?(:post)                       # => true
+  """
+
+  @compile {:no_warn_undefined, MyApp.Repo}
+
+  @agent __MODULE__.SequenceAgent
+
+  @typedoc "The name of a declared factory."
+  @type factory_name :: atom()
+
+  @typedoc "A keyword list of field overrides applied to a built struct."
+  @type overrides :: keyword()
+
+  # -------------------------------------------------------------------------
+  # Agent lifecycle + sequences
+  # -------------------------------------------------------------------------
+
+  @doc "Starts the named Agent backing all sequence counters."
+  @spec start() :: Agent.on_start()
+  def start do
+    Agent.start_link(fn -> %{} end, name: @agent)
+  end
+
+  @doc "Returns the next value for the named sequence."
+  @spec sequence(atom(), (pos_integer() -> value)) :: value when value: term()
+  def sequence(name, formatter_fn) when is_function(formatter_fn, 1) do
+    ensure_agent_started()
+
+    n =
+      Agent.get_and_update(@agent, fn counters ->
+        next = Map.get(counters, name, 0) + 1
+        {next, Map.put(counters, name, next)}
+      end)
+
+    formatter_fn.(n)
+  end
+
+  # -------------------------------------------------------------------------
+  # build
+  # -------------------------------------------------------------------------
+
+  @doc "Builds a struct for `name` (resolving/creating any associations)."
+  @spec build(factory_name()) :: struct()
+  def build(name), do: build(name, [])
+
+  @doc "Builds a struct for `name`, merging `overrides`."
+  @spec build(factory_name(), overrides()) :: struct()
+  def build(name, overrides) do
+    {struct, _assocs} = build_with_assocs(name, overrides)
+    struct
+  end
+
+  # -------------------------------------------------------------------------
+  # insert / insert! with validation + compensation
+  # -------------------------------------------------------------------------
+
+  @doc "Builds, validates and inserts `name`; see `insert/2`."
+  @spec insert(factory_name()) ::
+          {:ok, struct()} | {:error, {:missing_fields, [atom()]}}
+  def insert(name), do: insert(name, [])
+
+  @doc """
+  Builds and validates `name`; on success persists and returns `{:ok, struct}`,
+  otherwise rolls back auto-created associations and returns
+  `{:error, {:missing_fields, fields}}`.
+  """
+  @spec insert(factory_name(), overrides()) ::
+          {:ok, struct()} | {:error, {:missing_fields, [atom()]}}
+  def insert(name, overrides) do
+    {struct, assocs} = build_with_assocs(name, overrides)
+
+    case validate(name, struct) do
+      :ok ->
+        {:ok, MyApp.Repo.insert!(struct)}
+
+      {:error, missing} ->
+        Enum.each(assocs, &MyApp.Repo.delete!/1)
+        {:error, {:missing_fields, missing}}
+    end
+  end
+
+  @doc "Like `insert/2` but returns the struct on success and raises otherwise."
+  @spec insert!(factory_name()) :: struct()
+  def insert!(name), do: insert!(name, [])
+
+  @doc "Like `insert/2` but returns the struct on success and raises otherwise."
+  @spec insert!(factory_name(), overrides()) :: struct()
+  def insert!(name, overrides) do
+    case insert(name, overrides) do
+      {:ok, struct} ->
+        struct
+
+      {:error, reason} ->
+        raise ArgumentError,
+              "insert!/2 failed for #{inspect(name)}: #{inspect(reason)}"
+    end
+  end
+
+  @doc """
+  Returns whether a built `name` (with `overrides`) is valid. Any association
+  rows created during the check are rolled back so no stray rows remain.
+  """
+  @spec valid?(factory_name()) :: boolean()
+  @spec valid?(factory_name(), overrides()) :: boolean()
+  def valid?(name, overrides \\ []) do
+    {struct, assocs} = build_with_assocs(name, overrides)
+    Enum.each(assocs, &MyApp.Repo.delete!/1)
+    validate(name, struct) == :ok
+  end
+
+  # -------------------------------------------------------------------------
+  # Internal helpers
+  # -------------------------------------------------------------------------
+
+  # Build the struct and return {struct, [persisted association structs]} so the
+  # caller can compensate (delete) them if validation fails.
+  defp build_with_assocs(name, overrides) do
+    name
+    |> f (truncated)
+18:12:25.505 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private/public `insert/2` function. It receives a factory `name`
+and a keyword list of `overrides`. First build the struct together with any
+association records that were auto-created during building by calling
+`build_with_assocs(name, overrides)`, which returns `{struct, assocs}` (where
+`assocs` is the list of persisted association structs collected for possible
+rollback). Then validate the built struct with `validate(name, struct)`:
+
+- If validation returns `:ok`, persist the struct with `MyApp.Repo.insert!/1` and
+  return `{:ok, persisted_struct}`.
+- If validation returns `{:error, missing}`, compensate by deleting every
+  auto-created association (call `MyApp.Repo.delete!/1` on each element of
+  `assocs`) so the repo is left unchanged, then return
+  `{:error, {:missing_fields, missing}}`.
+
+```elixir
+defmodule Factory do
+  @moduledoc """
+  A lightweight, self-contained test-data factory with **validation and
+  compensating rollback**.
+
+  `insert/2` validates required fields; on failure it returns an error tuple and
+  deletes any association records auto-created while building the invalid parent,
+  leaving the repo unchanged.
+
+  ## Usage
+
+      {:ok, user}   = Factory.insert(:user)
+      {:error, err} = Factory.insert(:user, name: nil)
+      user          = Factory.insert!(:user)     # raises on failure
+      Factory.valid?(:post)                       # => true
+  """
+
+  @compile {:no_warn_undefined, MyApp.Repo}
+
+  @agent __MODULE__.SequenceAgent
+
+  @typedoc "The name of a declared factory."
+  @type factory_name :: atom()
+
+  @typedoc "A keyword list of field overrides applied to a built struct."
+  @type overrides :: keyword()
+
+  # -------------------------------------------------------------------------
+  # Agent lifecycle + sequences
+  # -------------------------------------------------------------------------
+
+  @doc "Starts the named Agent backing all sequence counters."
+  @spec start() :: Agent.on_start()
+  def start do
+    Agent.start_link(fn -> %{} end, name: @agent)
+  end
+
+  @doc "Returns the next value for the named sequence."
+  @spec sequence(atom(), (pos_integer() -> value)) :: value when value: term()
+  def sequence(name, formatter_fn) when is_function(formatter_fn, 1) do
+    ensure_agent_started()
+
+    n =
+      Agent.get_and_update(@agent, fn counters ->
+        next = Map.get(counters, name, 0) + 1
+        {next, Map.put(counters, name, next)}
+      end)
+
+    formatter_fn.(n)
+  end
+
+  # -------------------------------------------------------------------------
+  # build
+  # -------------------------------------------------------------------------
+
+  @doc "Builds a struct for `name` (resolving/creating any associations)."
+  @spec build(factory_name()) :: struct()
+  def build(name), do: build(name, [])
+
+  @doc "Builds a struct for `name`, merging `overrides`."
+  @spec build(factory_name(), overrides()) :: struct()
+  def build(name, overrides) do
+    {struct, _assocs} = build_with_assocs(name, overrides)
+    struct
+  end
+
+  # -------------------------------------------------------------------------
+  # insert / insert! with validation + compensation
+  # -------------------------------------------------------------------------
+
+  @doc "Builds, validates and inserts `name`; see `insert/2`."
+  @spec insert(factory_name()) ::
+          {:ok, struct()} | {:error, {:missing_fields, [atom()]}}
+  def insert(name), do: insert(name, [])
+
+  @doc """
+  Builds and validates `name`; on success persists and returns `{:ok, struct}`,
+  otherwise rolls back auto-created associations and returns
+  `{:error, {:missing_fields, fields}}`.
+  """
+  @spec insert(factory_name(), overrides()) ::
+          {:ok, struct()} | {:error, {:missing_fields, [atom()]}}
+  def insert(name, overrides) do
+    # TODO
+  end
+
+  @doc "Like `insert/2` but returns the struct on success and raises otherwise."
+  @spec insert!(factory_name()) :: struct()
+  def insert!(name), do: insert!(name, [])
+
+  @doc "Like `insert/2` but returns the struct on success and raises otherwise."
+  @spec insert!(factory_name(), overrides()) :: struct()
+  def insert!(name, overrides) do
+    case insert(name, overrides) do
+      {:ok, struct} ->
+        struct
+
+      {:error, reason} ->
+        raise ArgumentError,
+              "insert!/2 failed for #{inspect(name)}: #{inspect(reason)}"
+    end
+  end
+
+  @doc """
+  Returns whether a built `name` (with `overrides`) is valid. Any association
+  rows created during the check are rolled back so no stray rows remain.
+  """
+  @spec valid?(factory_name()) :: boolean()
+  @spec valid?(factory_name(), overrides()) :: boolean()
+  def valid?(name, overrides \\ []) do
+    {struct, assocs} = build_with_assocs(name, overrides)
+    Enum.each(assocs, &MyApp.Repo.delete!/1)
+    validate(name, struct) == :ok
+  end
+
+  # -------------------------------------------------------------------------
+  # Internal helpers
+  # -------------------------------------------------------------------------
+
+  # Build the struct and return {struct, [persisted association structs]} so the
+  # caller can compensate (delete) them if validation fails.
+  defp build_with_assocs(name, overrides) do
+    name
+    |> factory()
+    |> merge_overrides(overrides)
+    |> resolve_assocs()
+  end
+
+  defp merge_overrides(base, []), do: base
+  defp merge_overrides(base, overrides), do: struct(base, overrides)
+
+  # Fields tagged `{:__assoc__, fun}` are resolved by calling `fun` (which
+  # persists and returns the association struct); the field is set to its id and
+  # the persisted struct is collected for possible rollback. Overriding such a
+  # field with a plain value replaces the tag, so no association is created.
+  defp resolve_assocs(%mod{} = s) do
+    {fields, assocs} =
+      s
+      |> Map.from_struct()
+      |> Enum.map_reduce([], fn
+        {key, {:__assoc__, fun}}, acc ->
+          assoc = fun.()
+          {{key, assoc.id}, [assoc | acc]}
+
+        pair, acc ->
+          {pair, acc}
+      end)
+
+    {struct(mod, fields), assocs}
+  end
+
+  defp validate(name, struct) do
+    missing = for field <- required(name), is_nil(Map.get(struct, field)), do: field
+    if missing == [], do: :ok, else: {:error, missing}
+  end
+
+  defp ensure_agent_started do
+    case Process.whereis(@agent) do
+      nil -> Agent.start_link(fn -> %{} end, name: @agent)
+      _pid -> :ok
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Required-field declarations
+  # -------------------------------------------------------------------------
+
+  defp required(:user), do: [:name, :email]
+  defp required(:post), do: [:title, :body, :user_id]
+
+  # -------------------------------------------------------------------------
+  # Factory definitions
+  # -------------------------------------------------------------------------
+
+  defp factory(:user) do
+    struct!(MyApp.User,
+      name: sequence(:user_name, &"User #{&1}"),
+      email: sequence(:user_email, &"user-#{&1}@example.com")
+    )
+  end
+
+  defp factory(:post) do
+    struct!(MyApp.Post,
+      title: sequence(:post_title, &"Post title #{&1}"),
+      body: sequence(:post_body, &"Post body #{&1}. Lorem ipsum dolor sit amet."),
+      user_id: {:__assoc__, fn -> insert!(:user) end}
+    )
+  end
+
+  defp factory(name) do
+    raise ArgumentError, "No factory defined for #{inspect(name)}."
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  def insert(name, overrides) do
+    {struct, assocs} = build_with_assocs(name, overrides)
+
+    case validate(name, struct) do
+      :ok ->
+        {:ok, MyApp.Repo.insert!(struct)}
+
+      {:error, missing} ->
+        Enum.each(assocs, &MyApp.Repo.delete!/1)
+        {:error, {:missing_fields, missing}}
+    end
+  end
+</file>
+18:12:25.505 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4241, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4241, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4241, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4241, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3115, "type" => "message"}], "output_tokens" => 3115, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+18:12:25.525 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_071_004_validation_aware_factory_with_compensating_rollback_03/071_004_validation_aware_factory_with_compensating_rollback_03 solution.ex
+18:12:26.232 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":12,"lines_over_98":0,"max_line_length":57,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"071_004_validation_aware_factory_with_compensating_rollback_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_071_004_validation_aware_factory_with_compensating_rollback_03/071_004_validation_aware_factory_with_compensating_rollback_03/solution.ex","task":"071_004_validation_aware_factory_with_compensating_rollback_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-04T16:12:26.209595Z"}
+18:12:26.232 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_071_004_validation_aware_factory_with_compensating_rollback_03/071_004_validation_aware_factory_with_compensating_rollback_03 .gen_staging/fim_071_004_validation_aware_factory_with_compensating_rollback_03/mutant.ex
+18:12:26.924 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":30,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"parent":"071_004_validation_aware_factory_with_compensating_rollback_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.6,"mode":"fim","overall":0.43,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 12/16 failed"],"tests":0.25},"shape":"fim","solution_file":".gen_staging/fim_071_004_validation_aware_factory_with_compensating_rollback_03/mutant.ex","task":"071_004_validation_aware_factory_with_compensating_rollback_03","test_failures":[{"message":"MUTATION","module":"FactoryTest","test":"test insert/1 returns {:ok, struct} with an id on success"},{"message":"MUTATION","module":"FactoryTest","test":"test insert/2 persists override values on success"},{"message":"MUTATION","module":"FactoryTest","test":"test insert/1 actually adds a record on success"},{"message":"MUTATION","module":"FactoryTest","test":"test insert with a nil required field returns a missing_fields error"},{"message":"MUTATION","module":"FactoryTest","test":"test failed insert does not add any record"},{"message":"MUTATION","module":"FactoryTest","test":"test reports every missing required field"},{"message":"MUTATION","module":"FactoryTest","test":"test insert(:post) success inserts both user and post"},{"message":"MUTATION","module":"FactoryTest","test":"test failed insert(:post) rolls back the auto-created user"},{"message":"MUTATION","module":"FactoryTest","test":"test user_id override on a failing post leaves no stray rows"},{"message":"MUTATION","module":"FactoryTest","test":"test insert!/1 returns the struct on success"},{"message":"\n\nExpected exception ArgumentError but got RuntimeError (MUTATION)\n","module":"FactoryTest","test":"test insert!/2 raises on validation failure"},{"message":"MUTATION","module":"FactoryTest","test":"test valid? on a post does not leave stray association rows"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":4,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-04T16:12:26.900698Z"}
+18:12:26.924 [debug] fim mutation gate: killed
+18:12:26.925 [info] promoted 071_004_validation_aware_factory_with_compensating_rollback_03 -> tasks/071_004_validation_aware_factory_with_compensating_rollback_03

@@ -1,0 +1,74 @@
+closing gaps in 9 family(ies), sequential, ledger logs/close_gaps.jsonl
+
+[1/9] 011_002_priority_worker_pool_with_starvation_prevention_01 ... warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/gaps_854460_3913.ex:63: PriorityWorkerPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/gaps_854460_5897.ex:63: PriorityWorkerPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+rejected — blind solver fails ADDED test(s) — either the added test pins more than the prompt states (the gap finding may be wrong) or the solver slipped on documented behavior (rule 10 — hand-check before retrying). Failing: a stale low task moves up exactly one level and then outranks a fresh normal task; a stale normal task is promoted to high and outranks a fresh high task; with no options the pool has 3 workers and holds at most 10 queued tasks
+[2/9] 015_001_heartbeat_monitor_01 ... applied
+[3/9] 031_001_csv_importer_with_validation_and_error_report_01 ... applied
+[4/9] 034_003_rule_driven_tolerant_reconciler_with_compiled_config_01 ... applied
+[5/9] 043_001_ets_based_leaderboard_01 ... applied
+[6/9] 079_002_counting_bloom_filter_01 ... applied
+[7/9] 092_004_bayesian_weighted_rating_ranking_01 ... applied
+[8/9] 100_004_stateful_totp_vault_genserver_with_replay_protection_01 ... warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/gaps_854460_19074.ex:130: TOTPVault.match_step/4
+  /tmp/gaps_854460_19074.ex:97: TOTPVault.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+rejected — blind solve did not COMPILE (solver defect) — retry the family
+[9/9] 105_003_max_wait_debouncer_with_flush_and_cancel_01 ... applied
+
+=== CLOSE-GAPS LEDGER (11 row(s)) === %{"applied" => 8, "rejected" => 3}
+  021_002_media_type_content_negotiation_with_quality_values_01: 0.89 → 0.94 (+5 test(s) for 2 gap(s))
+  015_001_heartbeat_monitor_01: 0.9 → 0.9 (+3 test(s) for 1 gap(s))
+  031_001_csv_importer_with_validation_and_error_report_01: 0.77 → 0.77 (+1 test(s) for 1 gap(s))
+  034_003_rule_driven_tolerant_reconciler_with_compiled_config_01: 0.91 → 0.91 (+7 test(s) for 2 gap(s))
+  043_001_ets_based_leaderboard_01: 0.8 → 0.87 (+5 test(s) for 1 gap(s))
+  079_002_counting_bloom_filter_01: 0.63 → 0.7 (+3 test(s) for 1 gap(s))
+  092_004_bayesian_weighted_rating_ranking_01: 0.94 → 0.94 (+2 test(s) for 2 gap(s))
+  105_003_max_wait_debouncer_with_flush_and_cancel_01: 0.83 → 0.83 (+2 test(s) for 2 gap(s))
+closing gaps in 2 family(ies), sequential, ledger logs/close_gaps.jsonl
+
+[1/2] 011_002_priority_worker_pool_with_starvation_prevention_01 ... warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/gaps_954643_9666.ex:63: PriorityWorkerPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/gaps_954643_11650.ex:63: PriorityWorkerPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+applied
+[2/2] 100_004_stateful_totp_vault_genserver_with_replay_protection_01 ... warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/gaps_954643_16834.ex:130: TOTPVault.match_step/4
+  /tmp/gaps_954643_16834.ex:97: TOTPVault.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+rejected — blind solve did not COMPILE (solver defect) — retry the family
+
+=== CLOSE-GAPS LEDGER (13 row(s)) === %{"applied" => 9, "rejected" => 4}
+  021_002_media_type_content_negotiation_with_quality_values_01: 0.89 → 0.94 (+5 test(s) for 2 gap(s))
+  015_001_heartbeat_monitor_01: 0.9 → 0.9 (+3 test(s) for 1 gap(s))
+  031_001_csv_importer_with_validation_and_error_report_01: 0.77 → 0.77 (+1 test(s) for 1 gap(s))
+  034_003_rule_driven_tolerant_reconciler_with_compiled_config_01: 0.91 → 0.91 (+7 test(s) for 2 gap(s))
+  043_001_ets_based_leaderboard_01: 0.8 → 0.87 (+5 test(s) for 1 gap(s))
+  079_002_counting_bloom_filter_01: 0.63 → 0.7 (+3 test(s) for 1 gap(s))
+  092_004_bayesian_weighted_rating_ranking_01: 0.94 → 0.94 (+2 test(s) for 2 gap(s))
+  105_003_max_wait_debouncer_with_flush_and_cancel_01: 0.83 → 0.83 (+2 test(s) for 2 gap(s))
+  011_002_priority_worker_pool_with_starvation_prevention_01: 0.79 → 0.96 (+3 test(s) for 2 gap(s))

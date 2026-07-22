@@ -1,0 +1,234 @@
+defmodule WorkflowTest do
+  use ExUnit.Case, async: false
+
+  # Convenience builders for records that satisfy the guards.
+  defp submittable_draft do
+    Workflow.new(%{items: [:widget], approved_by: nil, note: "hello"})
+  end
+
+  defp approvable_submitted do
+    {:ok, rec} = Workflow.transition(submittable_draft(), :submit)
+    %{rec | approved_by: "manager"}
+  end
+
+  # -------------------------------------------------------
+  # Construction
+  # -------------------------------------------------------
+
+  test "new/0 starts in :draft" do
+    assert %{state: :draft} = Workflow.new()
+  end
+
+  test "new/1 merges attrs and forces :draft" do
+    rec = Workflow.new(%{items: [1, 2], approved_by: "x", state: :completed})
+    assert rec.state == :draft
+    assert rec.items == [1, 2]
+    assert rec.approved_by == "x"
+  end
+
+  test "states/0 lists all seven states" do
+    states = Workflow.states()
+
+    for s <- [:draft, :submitted, :approved, :in_progress, :completed, :rejected, :cancelled] do
+      assert s in states, "expected #{inspect(s)} in #{inspect(states)}"
+    end
+
+    assert length(Enum.uniq(states)) == 7
+  end
+
+  # -------------------------------------------------------
+  # Happy path walk
+  # -------------------------------------------------------
+
+  test "walks the full happy path draft -> completed" do
+    rec = submittable_draft()
+
+    assert {:ok, rec} = Workflow.transition(rec, :submit)
+    assert rec.state == :submitted
+
+    rec = %{rec | approved_by: "manager"}
+    assert {:ok, rec} = Workflow.transition(rec, :approve)
+    assert rec.state == :approved
+
+    assert {:ok, rec} = Workflow.transition(rec, :start)
+    assert rec.state == :in_progress
+
+    assert {:ok, rec} = Workflow.transition(rec, :complete)
+    assert rec.state == :completed
+  end
+
+  test "reject side branch: submitted -> rejected" do
+    rec = approvable_submitted()
+    assert {:ok, rec} = Workflow.transition(rec, :reject)
+    assert rec.state == :rejected
+  end
+
+  test "cancel side branch: in_progress -> cancelled" do
+    rec = approvable_submitted()
+    {:ok, rec} = Workflow.transition(rec, :approve)
+    {:ok, rec} = Workflow.transition(rec, :start)
+    assert rec.state == :in_progress
+
+    assert {:ok, rec} = Workflow.transition(rec, :cancel)
+    assert rec.state == :cancelled
+  end
+
+  # -------------------------------------------------------
+  # Field preservation
+  # -------------------------------------------------------
+
+  test "transition preserves unrelated fields" do
+    rec = Workflow.new(%{items: [:a], meta: %{customer: "acme"}, tag: 42})
+    {:ok, rec} = Workflow.transition(rec, :submit)
+    assert rec.meta == %{customer: "acme"}
+    assert rec.tag == 42
+    assert rec.items == [:a]
+  end
+
+  # -------------------------------------------------------
+  # Invalid transitions
+  # -------------------------------------------------------
+
+  test "invalid event from draft returns invalid_transition" do
+    rec = submittable_draft()
+
+    assert {:error, :invalid_transition, :draft, :approve} =
+             Workflow.transition(rec, :approve)
+
+    assert {:error, :invalid_transition, :draft, :complete} =
+             Workflow.transition(rec, :complete)
+
+    assert {:error, :invalid_transition, :draft, :cancel} =
+             Workflow.transition(rec, :cancel)
+  end
+
+  test "unknown event is an invalid transition" do
+    rec = submittable_draft()
+
+    assert {:error, :invalid_transition, :draft, :teleport} =
+             Workflow.transition(rec, :teleport)
+  end
+
+  test "wrong-stage valid event still returns invalid_transition" do
+    rec = approvable_submitted()
+    # :start is only valid from :approved, not :submitted
+    assert {:error, :invalid_transition, :submitted, :start} =
+             Workflow.transition(rec, :start)
+
+    # :submit only valid from :draft
+    assert {:error, :invalid_transition, :submitted, :submit} =
+             Workflow.transition(rec, :submit)
+  end
+
+  test "terminal states reject every event" do
+    # completed
+    completed = %{Workflow.new(%{}) | state: :completed}
+
+    for event <- [:submit, :approve, :reject, :start, :complete, :cancel] do
+      assert {:error, :invalid_transition, :completed, ^event} =
+               Workflow.transition(completed, event)
+    end
+
+    # rejected
+    rejected = %{Workflow.new(%{}) | state: :rejected}
+
+    assert {:error, :invalid_transition, :rejected, :approve} =
+             Workflow.transition(rejected, :approve)
+
+    # cancelled
+    cancelled = %{Workflow.new(%{}) | state: :cancelled}
+
+    assert {:error, :invalid_transition, :cancelled, :start} =
+             Workflow.transition(cancelled, :start)
+  end
+
+  # -------------------------------------------------------
+  # Guards
+  # -------------------------------------------------------
+
+  test "submit guard fails on empty items" do
+    rec = Workflow.new(%{items: []})
+
+    assert {:error, :guard_failed, :draft, :submit} =
+             Workflow.transition(rec, :submit)
+  end
+
+  test "submit guard fails on missing items" do
+    rec = Workflow.new(%{})
+
+    assert {:error, :guard_failed, :draft, :submit} =
+             Workflow.transition(rec, :submit)
+  end
+
+  test "submit guard fails on non-list items" do
+    rec = Workflow.new(%{items: "not a list"})
+
+    assert {:error, :guard_failed, :draft, :submit} =
+             Workflow.transition(rec, :submit)
+  end
+
+  test "submit guard passes on non-empty items" do
+    rec = Workflow.new(%{items: [:only_one]})
+    assert {:ok, %{state: :submitted}} = Workflow.transition(rec, :submit)
+  end
+
+  test "approve guard fails when approved_by is nil/missing/blank" do
+    base = approvable_submitted()
+
+    assert {:error, :guard_failed, :submitted, :approve} =
+             Workflow.transition(%{base | approved_by: nil}, :approve)
+
+    assert {:error, :guard_failed, :submitted, :approve} =
+             Workflow.transition(%{base | approved_by: ""}, :approve)
+
+    assert {:error, :guard_failed, :submitted, :approve} =
+             Workflow.transition(%{base | approved_by: 123}, :approve)
+
+    assert {:error, :guard_failed, :submitted, :approve} =
+             Workflow.transition(Map.delete(base, :approved_by), :approve)
+  end
+
+  test "approve guard passes with a non-empty approver string" do
+    rec = approvable_submitted()
+    assert {:ok, %{state: :approved}} = Workflow.transition(rec, :approve)
+  end
+
+  test "guard failure leaves the record unchanged" do
+    rec = Workflow.new(%{items: []})
+
+    assert {:error, :guard_failed, :draft, :submit} =
+             Workflow.transition(rec, :submit)
+
+    # calling again yields the same result — no mutation happened
+    assert {:error, :guard_failed, :draft, :submit} =
+             Workflow.transition(rec, :submit)
+  end
+
+  # -------------------------------------------------------
+  # can?/2
+  # -------------------------------------------------------
+
+  test "can?/2 reflects valid edges and guards" do
+    draft_ok = submittable_draft()
+    draft_bad = Workflow.new(%{items: []})
+
+    assert Workflow.can?(draft_ok, :submit) == true
+    assert Workflow.can?(draft_bad, :submit) == false
+    assert Workflow.can?(draft_ok, :approve) == false
+
+    submitted = approvable_submitted()
+    assert Workflow.can?(submitted, :approve) == true
+    assert Workflow.can?(submitted, :reject) == true
+    assert Workflow.can?(%{submitted | approved_by: nil}, :approve) == false
+
+    completed = %{Workflow.new(%{}) | state: :completed}
+    assert Workflow.can?(completed, :complete) == false
+  end
+
+  test "can? does not mutate or transition the record" do
+    rec = submittable_draft()
+    assert Workflow.can?(rec, :submit) == true
+    # record is still in draft
+    assert rec.state == :draft
+  end
+end

@@ -1,0 +1,242 @@
+defmodule TOTPVault do
+  @moduledoc """
+  A `GenServer` that manages per-account TOTP (RFC 6238) secrets and validates
+  codes with replay protection.
+
+  A single server process owns every account's base32 secret together with the
+  highest 30-second time step that has already been "spent". Once a code for a
+  given step is consumed, that same code — and any code for an earlier step —
+  can never be accepted again. Because the server handles one message at a time,
+  concurrent submissions of the same valid code resolve deterministically:
+  exactly one `consume/4` returns `:ok`, all others return `{:error, :replayed}`.
+
+  The implementation relies only on the OTP standard library. Base32
+  (RFC 4648, unpadded) is implemented in this module and HMAC-SHA1 is computed
+  with `:crypto.mac/4`.
+  """
+
+  use GenServer
+
+  import Bitwise, only: [band: 2]
+
+  @alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+  @step_seconds 30
+  @digits 6
+  @modulo 1_000_000
+  @secret_bytes 20
+
+  @type server :: GenServer.server()
+  @type account_id :: term()
+  @type secret :: String.t()
+
+  @typep account :: %{secret: secret(), last: non_neg_integer() | nil}
+  @typep state :: %{optional(account_id()) => account()}
+
+  ## Public API
+
+  @doc """
+  Starts the vault server.
+
+  Accepts the standard `:name` option for registering the process. Returns
+  `{:ok, pid}` on success.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {gen_opts, _rest} = Keyword.split(opts, [:name])
+    GenServer.start_link(__MODULE__, %{}, gen_opts)
+  end
+
+  @doc """
+  Generates and stores a fresh secret for `account_id`.
+
+  Returns `{:ok, secret}` with the base32 secret string. If the account is
+  already registered, returns `{:error, :already_registered}` and leaves the
+  stored secret unchanged.
+  """
+  @spec register(server(), account_id()) ::
+          {:ok, secret()} | {:error, :already_registered}
+  def register(server, account_id) do
+    GenServer.call(server, {:register, account_id})
+  end
+
+  @doc """
+  Returns `{:ok, secret}` for a registered account, or `{:error, :not_found}`.
+  """
+  @spec secret(server(), account_id()) :: {:ok, secret()} | {:error, :not_found}
+  def secret(server, account_id) do
+    GenServer.call(server, {:secret, account_id})
+  end
+
+  @doc """
+  Returns `{:ok, code}` — the 6-digit code for the account at the given time —
+  or `{:error, :not_found}`.
+
+  Options:
+
+    * `:time` — UNIX seconds (default: current system time)
+
+  This function is read-only and never consumes anything.
+  """
+  @spec current_code(server(), account_id(), keyword()) ::
+          {:ok, String.t()} | {:error, :not_found}
+  def current_code(server, account_id, opts \\ []) do
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    GenServer.call(server, {:current_code, account_id, time})
+  end
+
+  @doc """
+  Validates `code` and, on success, spends it for `account_id`.
+
+  Options:
+
+    * `:time` — UNIX seconds (default: current system time)
+    * `:window` — 30-second steps accepted in each direction (default: `1`)
+
+  With `base = div(time, 30)`, the steps `base - window .. base + window`
+  (only those `>= 0`) are considered. Returns:
+
+    * `{:error, :not_found}` if the account is not registered
+    * `{:error, :invalid}` if `code` matches no step in the window
+    * `{:error, :replayed}` if the matched step is `<= last`
+    * `:ok` otherwise, recording the matched step as the new highest step
+
+  `code` may be given as a string or an integer.
+  """
+  @spec consume(server(), account_id(), String.t() | integer(), keyword()) ::
+          :ok | {:error, :not_found | :invalid | :replayed}
+  def consume(server, account_id, code, opts \\ []) do
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+    GenServer.call(server, {:consume, account_id, normalize_code(code), time, window})
+  end
+
+  ## GenServer callbacks
+
+  @impl true
+  @spec init(state()) :: {:ok, state()}
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:register, account_id}, _from, state) do
+    case Map.fetch(state, account_id) do
+      {:ok, _account} ->
+        {:reply, {:error, :already_registered}, state}
+
+      :error ->
+        secret = generate_secret()
+        account = %{secret: secret, last: nil}
+        {:reply, {:ok, secret}, Map.put(state, account_id, account)}
+    end
+  end
+
+  def handle_call({:secret, account_id}, _from, state) do
+    case Map.fetch(state, account_id) do
+      {:ok, %{secret: secret}} -> {:reply, {:ok, secret}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:current_code, account_id, time}, _from, state) do
+    case Map.fetch(state, account_id) do
+      {:ok, %{secret: secret}} ->
+        code = hotp(secret, div(time, @step_seconds))
+        {:reply, {:ok, code}, state}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:consume, account_id, code, time, window}, _from, state) do
+    case Map.fetch(state, account_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, %{secret: secret, last: last} = account} ->
+        base = div(time, @step_seconds)
+        matched = match_step(secret, code, base, window)
+
+        cond do
+          is_nil(matched) ->
+            {:reply, {:error, :invalid}, state}
+
+          not is_nil(last) and matched <= last ->
+            {:reply, {:error, :replayed}, state}
+
+          true ->
+            updated = Map.put(state, account_id, %{account | last: matched})
+            {:reply, :ok, updated}
+        end
+    end
+  end
+
+  ## Internal helpers
+
+  @spec generate_secret() :: secret()
+  defp generate_secret do
+    @secret_bytes
+    |> :crypto.strong_rand_bytes()
+    |> base32_encode()
+  end
+
+  @spec normalize_code(String.t() | integer()) :: String.t()
+  defp normalize_code(code) when is_integer(code) do
+    code
+    |> Integer.to_string()
+    |> String.pad_leading(@digits, "0")
+  end
+
+  defp normalize_code(code) when is_binary(code), do: code
+
+  @spec match_step(secret(), String.t(), non_neg_integer(), non_neg_integer()) ::
+          non_neg_integer() | nil
+  defp match_step(secret, code, base, window) do
+    lo = max(base - window, 0)
+    hi = base + window
+    Enum.find(lo..hi, fn step -> hotp(secret, step) == code end)
+  end
+
+  @spec hotp(secret(), non_neg_integer()) :: String.t()
+  defp hotp(secret, step) do
+    key = base32_decode(secret)
+    hash = :crypto.mac(:hmac, :sha, key, <<step::big-unsigned-integer-size(64)>>)
+    offset = band(:binary.at(hash, byte_size(hash) - 1), 0x0F)
+    <<_::binary-size(offset), slice::big-unsigned-integer-size(32), _::binary>> = hash
+
+    slice
+    |> band(0x7FFFFFFF)
+    |> rem(@modulo)
+    |> Integer.to_string()
+    |> String.pad_leading(@digits, "0")
+  end
+
+  @spec base32_encode(binary()) :: String.t()
+  defp base32_encode(binary), do: encode_bits(binary, <<>>)
+
+  @spec encode_bits(bitstring(), binary()) :: binary()
+  defp encode_bits(<<index::5, rest::bitstring>>, acc) do
+    encode_bits(rest, <<acc::binary, :binary.at(@alphabet, index)>>)
+  end
+
+  defp encode_bits(<<>>, acc), do: acc
+
+  defp encode_bits(rest, acc) do
+    pad = 5 - bit_size(rest)
+    <<index::5>> = <<rest::bitstring, 0::size(pad)>>
+    <<acc::binary, :binary.at(@alphabet, index)>>
+  end
+
+  @spec base32_decode(String.t()) :: binary()
+  defp base32_decode(string) do
+    bits = for <<char <- string>>, into: <<>>, do: <<decode_char(char)::5>>
+    take = div(bit_size(bits), 8) * 8
+    <<bytes::bitstring-size(take), _rest::bitstring>> = bits
+    bytes
+  end
+
+  @spec decode_char(byte()) :: non_neg_integer()
+  defp decode_char(char) do
+    {index, 1} = :binary.match(@alphabet, <<char>>)
+    index
+  end
+end

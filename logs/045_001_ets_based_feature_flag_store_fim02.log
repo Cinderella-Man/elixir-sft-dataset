@@ -1,0 +1,405 @@
+13:46:26.375 [info] FIM 045_001_ets_based_feature_flag_store_fim02 → 045_001_ets_based_feature_flag_store_03: target lookup/1
+13:46:26.375 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:46:26.375 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `lookup/1`.
+
+Generate a prompt describing how to implement `lookup/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `lookup/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `lookup/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `lookup/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `FeatureFlags` that manages feature flags using ETS for fast reads, backed by a GenServer for writes.
+
+I need these functions in the public API:
+
+- `FeatureFlags.start_link(opts)` to start the process. It should accept an optional `:table_name` for the ETS table (default `:feature_flags`), and an optional `:name` for process registration.
+- `FeatureFlags.enable(flag_name)` — sets the flag to `:on` for everyone.
+- `FeatureFlags.disable(flag_name)` — sets the flag to `:off` for everyone.
+- `FeatureFlags.enable_for_percentage(flag_name, percentage)` — sets the flag to `:percentage` mode with a value between `0` and `100` (integers). Calling with `0` is equivalent to `:off`, and `100` is equivalent to `:on`.
+- `FeatureFlags.enabled?(flag_name)` — returns `true` if the flag is `:on`, `false` otherwise (`:off` or `:percentage` flags return `false` here). Unknown flags default to `false`.
+- `FeatureFlags.enabled_for?(flag_name, user_id)` — returns `true` if the flag is `:on`, or if the flag is in `:percentage` mode and the user falls within the enabled bucket. The bucket must be **deterministic**: the same `{flag_name, user_id}` pair must always produce the same result across calls. Use `:erlang.phash2({flag_name, user_id}, 100)` to compute a 0–99 hash and compare it against the percentage threshold. If the flag is `:off`, always return `false`. Unknown flags default to `false`.
+
+Implementation requirements:
+- ETS table should be of type `:set`, with `read_concurrency: true`, owned by the GenServer, and named so any process can read directly without going through the GenServer process for `enabled?` and `enabled_for?` reads.
+- All writes (`enable`, `disable`, `enable_for_percentage`) must go through the GenServer via `call` to serialise updates.
+- The ETS table must be created in `init/1` and the table name should be accessible via a module attribute or passed through the GenServer state.
+
+Give me the complete module in a single file. Use only the OTP standard library, no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule FeatureFlags do
+  @moduledoc """
+  Manages feature flags using ETS for fast, concurrent reads and a GenServer
+  for serialised writes.
+
+  ## Flag states
+
+  Each flag can be in one of three states:
+
+  - `{:on}` — enabled for everyone.
+  - `{:off}` — disabled for everyone.
+  - `{:percentage, n}` — enabled for the `n`% of users whose
+    `:erlang.phash2({flag_name, user_id}, 100)` hash falls below `n`.
+
+  ## Usage
+
+      {:ok, _pid} = FeatureFlags.start_link([])
+
+      FeatureFlags.enable(:dark_mode)
+      FeatureFlags.enabled?(:dark_mode)            #=> true
+      FeatureFlags.enabled_for?(:dark_mode, "u1")  #=> true
+
+      FeatureFlags.enable_for_percentage(:beta, 30)
+      FeatureFlags.enabled?(:beta)                 #=> false  (not globally on)
+      FeatureFlags.enabled_for?(:beta, "u1")       #=> deterministic true/false
+
+      FeatureFlags.disable(:dark_mode)
+      FeatureFlags.enabled?(:dark_mode)            #=> false
+  """
+
+  use GenServer
+
+  @default_table :feature_flags
+  @default_name __MODULE__
+
+  @pt_server {__MODULE__, :server}
+  @pt_table  {__MODULE__, :table_name}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the `FeatureFlags` GenServer and creates the backing ETS table.
+
+  ## Options
+
+  - `:table_name` – atom used as the ETS table name (default: `:feature_flags`).
+  - `:name`       – name used to register the GenServer process
+                    (default: `FeatureFlags`). Pass `nil` to skip registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    table_name = Keyword.get(opts, :table_name, @default_table)
+    name       = Keyword.get(opts, :name, @default_name)
+
+    # Only forward the :name option when a non-nil name is requested;
+    # passing `name: nil` to GenServer.start_link/3 is not valid.
+    gen_opts = if name, do: [name: name], else: []
+
+    GenServer.start_link(__MODULE__, %{table_name: table_name}, gen_opts)
+  end
+
+  @doc "Enables `flag_name` for **all** users (`:on` state)."
+  @spec enable(atom()) :: :ok
+  def enable(flag_name) do
+    GenServer.call(server(), {:set, flag_name, {:on}})
+  end
+
+  @doc "Disables `flag_name` for **all** users (`:off` state)."
+  @spec disable(atom()) :: :ok
+  def disable(flag_name) do
+    GenServer.call(server(), {:set, flag_name, {:off}})
+  end
+
+  @doc """
+  Enables `flag_name` for `percentage`% of users (0–100).
+
+  The bucket assignment is deterministic per `{flag_name, user_id}` pair.
+  Passing `0` is equivalent to `disable/1`; passing `100` is equivalent
+  to `enable/1`.
+  """
+  @spec enable_for_percentage(atom(), 0..100) :: :ok
+  def enable_for_percentage(flag_name, percentage)
+      when is_integer(percentage) and percentage >= 0 and percentage <= 100 do
+    GenServer.call(server(), {:set, flag_name, {:percentage, percentage}})
+  end
+
+  @doc """
+  Returns `true` only when `flag_name` is in the `:on` state.
+
+  Reads directly from ETS — no GenServer round-trip.
+  Unknown flags return `false`.
+  """
+  @spec enabled?(atom()) :: boolean()
+  def enabled?(flag_name) do
+    case lookup(flag_name) do
+      {:on} -> true
+      _     -> false
+    end
+  end
+
+  @doc """
+  Returns `true` when:
+
+  - the flag is `:on`, **or**
+  - the flag is in `:percentage` mode and
+    `phash2({flag_name, user_id}, 100) < percentage`.
+
+  Reads directly from ETS — no GenServer round-trip.
+  Unknown flags return `false`.
+  """
+  @spec enabled_for?(atom(), term()) :: boolean()
+  def enabled_for?(flag_name, user_id) do
+    case lookup(flag_name) do
+      {:on}              -> true
+      {:off}             -> false
+      {:percentage, pct} -> :erlang.phash2({flag_name, user_id}, 100) < pct
+      nil                -> false
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Returns the GenServer pid stored at startup — works whether the server
+  # was registered by name or started anonymously.
+  defp server, do: :persistent_term.get(@pt_server)
+
+  # Reads the flag value directly from ETS in the calling process.
+  defp lookup(flag_name) do
+    table = :persistent_term.get(@pt_table, @default_table)
+
+    case :ets.lookup(table, flag_name) do
+      [{^flag_name, value}] -> value
+      []                    -> nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(%{table_name: table_name}) do
+    table =
+      :ets.new(table_name, [
+        :set,
+        :named_table,
+        :public,
+        read_concurrency: true
+      ])
+
+    # Publish both the pid  (truncated)
+13:46:53.820 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in `lookup/1`
+
+Implement the private `lookup/1` function. It performs a direct ETS read of a
+single flag's value from the calling process — no GenServer round-trip — so it
+backs both `enabled?/1` and `enabled_for?/2`.
+
+It should fetch the ETS table name from `:persistent_term` using the `@pt_table`
+key, falling back to `@default_table` if the key is not present. Then it should
+look up `flag_name` in that table with `:ets.lookup/2`. When a matching record
+`{^flag_name, value}` exists, return the stored `value` (one of `{:on}`,
+`{:off}`, or `{:percentage, n}`). When the lookup returns an empty list (unknown
+flag), return `nil`.
+
+```elixir
+defmodule FeatureFlags do
+  @moduledoc """
+  Manages feature flags using ETS for fast, concurrent reads and a GenServer
+  for serialised writes.
+
+  ## Flag states
+
+  Each flag can be in one of three states:
+
+  - `{:on}` — enabled for everyone.
+  - `{:off}` — disabled for everyone.
+  - `{:percentage, n}` — enabled for the `n`% of users whose
+    `:erlang.phash2({flag_name, user_id}, 100)` hash falls below `n`.
+
+  ## Usage
+
+      {:ok, _pid} = FeatureFlags.start_link([])
+
+      FeatureFlags.enable(:dark_mode)
+      FeatureFlags.enabled?(:dark_mode)            #=> true
+      FeatureFlags.enabled_for?(:dark_mode, "u1")  #=> true
+
+      FeatureFlags.enable_for_percentage(:beta, 30)
+      FeatureFlags.enabled?(:beta)                 #=> false  (not globally on)
+      FeatureFlags.enabled_for?(:beta, "u1")       #=> deterministic true/false
+
+      FeatureFlags.disable(:dark_mode)
+      FeatureFlags.enabled?(:dark_mode)            #=> false
+  """
+
+  use GenServer
+
+  @default_table :feature_flags
+  @default_name __MODULE__
+
+  @pt_server {__MODULE__, :server}
+  @pt_table  {__MODULE__, :table_name}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the `FeatureFlags` GenServer and creates the backing ETS table.
+
+  ## Options
+
+  - `:table_name` – atom used as the ETS table name (default: `:feature_flags`).
+  - `:name`       – name used to register the GenServer process
+                    (default: `FeatureFlags`). Pass `nil` to skip registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    table_name = Keyword.get(opts, :table_name, @default_table)
+    name       = Keyword.get(opts, :name, @default_name)
+
+    # Only forward the :name option when a non-nil name is requested;
+    # passing `name: nil` to GenServer.start_link/3 is not valid.
+    gen_opts = if name, do: [name: name], else: []
+
+    GenServer.start_link(__MODULE__, %{table_name: table_name}, gen_opts)
+  end
+
+  @doc "Enables `flag_name` for **all** users (`:on` state)."
+  @spec enable(atom()) :: :ok
+  def enable(flag_name) do
+    GenServer.call(server(), {:set, flag_name, {:on}})
+  end
+
+  @doc "Disables `flag_name` for **all** users (`:off` state)."
+  @spec disable(atom()) :: :ok
+  def disable(flag_name) do
+    GenServer.call(server(), {:set, flag_name, {:off}})
+  end
+
+  @doc """
+  Enables `flag_name` for `percentage`% of users (0–100).
+
+  The bucket assignment is deterministic per `{flag_name, user_id}` pair.
+  Passing `0` is equivalent to `disable/1`; passing `100` is equivalent
+  to `enable/1`.
+  """
+  @spec enable_for_percentage(atom(), 0..100) :: :ok
+  def enable_for_percentage(flag_name, percentage)
+      when is_integer(percentage) and percentage >= 0 and percentage <= 100 do
+    GenServer.call(server(), {:set, flag_name, {:percentage, percentage}})
+  end
+
+  @doc """
+  Returns `true` only when `flag_name` is in the `:on` state.
+
+  Reads directly from ETS — no GenServer round-trip.
+  Unknown flags return `false`.
+  """
+  @spec enabled?(atom()) :: boolean()
+  def enabled?(flag_name) do
+    case lookup(flag_name) do
+      {:on} -> true
+      _     -> false
+    end
+  end
+
+  @doc """
+  Returns `true` when:
+
+  - the flag is `:on`, **or**
+  - the flag is in `:percentage` mode and
+    `phash2({flag_name, user_id}, 100) < percentage`.
+
+  Reads directly from ETS — no GenServer round-trip.
+  Unknown flags return `false`.
+  """
+  @spec enabled_for?(atom(), term()) :: boolean()
+  def enabled_for?(flag_name, user_id) do
+    case lookup(flag_name) do
+      {:on}              -> true
+      {:off}             -> false
+      {:percentage, pct} -> :erlang.phash2({flag_name, user_id}, 100) < pct
+      nil                -> false
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Returns the GenServer pid stored at startup — works whether the server
+  # was registered by name or started anonymously.
+  defp server, do: :persistent_term.get(@pt_server)
+
+  # Reads the flag value directly from ETS in the calling process.
+  defp lookup(flag_name) do
+    # TODO
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(%{table_name: table_name}) do
+    table =
+      :ets.new(table_name, [
+        :set,
+        :named_table,
+        :public,
+        read_concurrency: true
+      ])
+
+    # Publish both the pid and the table name so the public functions can
+    # reach them without a GenServer call, regardless of registration name.
+    :persistent_term.put(@pt_server, self())
+    :persistent_term.put(@pt_table, table)
+
+    {:ok, %{table: table}}
+  end
+
+  @impl GenServer
+  def handle_call({:set, flag_name, value}, _from, %{table: table} = state) do
+    :ets.insert(table, {flag_name, value})
+    {:reply, :ok, state}
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  # Reads the flag value directly from ETS in the calling process.
+  defp lookup(flag_name) do
+    table = :persistent_term.get(@pt_table, @default_table)
+
+    case :ets.lookup(table, flag_name) do
+      [{^flag_name, value}] -> value
+      []                    -> nil
+    end
+  end
+</file>
+13:46:53.820 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3700, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3700, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3700, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3700, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2557, "type" => "message"}], "output_tokens" => 2557, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:46:53.840 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_045_001_ets_based_feature_flag_store_03/045_001_ets_based_feature_flag_store_03 solution.ex
+13:46:54.478 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":9,"lines_over_98":0,"max_line_length":66,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"045_001_ets_based_feature_flag_store_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_045_001_ets_based_feature_flag_store_03/045_001_ets_based_feature_flag_store_03/solution.ex","task":"045_001_ets_based_feature_flag_store_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T11:46:54.453565Z"}
+13:46:54.479 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_045_001_ets_based_feature_flag_store_03/045_001_ets_based_feature_flag_store_03 .gen_staging/fim_045_001_ets_based_feature_flag_store_03/mutant.ex
+13:46:55.115 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":25,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"parent":"045_001_ets_based_feature_flag_store_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.3,"mode":"fim","overall":0.23,"reasons":["compilation: 7 warning(s) → -0.7 pts","tests: 15/15 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_045_001_ets_based_feature_flag_store_03/mutant.ex","task":"045_001_ets_based_feature_flag_store_03","test_failures":[{"message":"MUTATION","module":"FeatureFlagsTest","test":"test unknown flag defaults to false"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test enable sets the flag on for everyone"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test disable sets the flag off for everyone"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test enabled_for? returns true when flag is :on"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test enabled_for? returns false when flag is :off"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test enabled? returns false for percentage flags"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test 0% lets nobody through"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test 100% lets everyone through"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test 50% rollout enables roughly half of users"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test percentage rollout is deterministic — same user always gets same result"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test phash2 bucketing is consistent with expected formula"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test flag transitions from :on → :percentage → :off correctly"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test updating percentage takes effect immediately"},{"message":"MUTATION","module":"FeatureFlagsTest","test":"test flags are independent of each other"},{"message":"{:EXIT, #PID<0.236.0>}: {%RuntimeError{message: \"MUTATION\"}, [{FeatureFlags, :lookup, 1, [file: ~c\"/tmp/evalfim_739625_2631.ex\", line: 133, error_info: %{module: Exception}]}, {FeatureFlags, :enabled?, 1, [file: ~c\"/tmp/evalfim_739625_2631.ex\", line: 97]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"FeatureFlagsTest","test":"test concurrent reads return consistent results"}],"tests_errors":0,"tests_excluded":0,"tests_failed":15,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T11:46:55.092491Z"}
+13:46:55.116 [debug] fim mutation gate: killed
+13:46:55.117 [info] promoted 045_001_ets_based_feature_flag_store_03 -> tasks/045_001_ets_based_feature_flag_store_03

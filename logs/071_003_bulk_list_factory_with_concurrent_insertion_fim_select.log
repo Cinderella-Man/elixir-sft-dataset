@@ -1,0 +1,220 @@
+18:09:24.080 [info] FIM candidate-select for 071_003_bulk_list_factory_with_concurrent_insertion_01 (up to 3)
+18:09:24.080 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+18:09:24.080 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Factory` that generates test data similarly to
+ExMachina, but simpler and self-contained — with first-class support for
+**bulk (list) generation** and **params extraction**.
+
+I need these functions in the public API:
+
+- `Factory.build(factory_name)` / `build(factory_name, overrides)` — returns a
+  struct for the named factory (merging a keyword list of field overrides),
+  without touching the database.
+- `Factory.insert(factory_name)` / `insert(factory_name, overrides)` — builds the
+  struct and persists it via `MyApp.Repo.insert!`, returning the persisted struct.
+- `Factory.build_list(count, factory_name)` /
+  `build_list(count, factory_name, overrides)` — returns a list of `count` built
+  structs. Each element must be built independently, so sequence-driven fields
+  (like default emails) stay unique across the list. A `count` of `0` returns `[]`.
+- `Factory.insert_list(count, factory_name)` /
+  `insert_list(count, factory_name, overrides)` — persists `count` structs and
+  returns the list of persisted structs. Insertion must run **concurrently** (one
+  `Task` per record) while keeping every generated sequence value and every
+  assigned id unique. A `count` of `0` returns `[]`.
+- `Factory.params_for(factory_name)` /
+  `params_for(factory_name, overrides)` — returns a plain `map` of the factory's
+  fields (not a struct) with the `:id` key removed, suitable for feeding into a
+  request/changeset. Associations are still resolved to their persisted ids.
+- `Factory.sequence(name, formatter_fn)` — returns the next value for a named
+  sequence by calling `formatter_fn.(n)` where `n` is a monotonically increasing
+  integer starting at 1. Each `name` has its own independent counter, and
+  sequences must remain unique across the whole test run even under concurrent
+  (`async: true`) access, backed by a named `Agent`.
+
+At minimum define factories for `:user` (fields `name`, `email`) and `:post`
+(fields `title`, `body`, `user_id`). The `:post` factory must automatically call
+`Factory.insert(:user)` to populate `user_id`, unless `user_id` is supplied as an
+override.
+
+Use only the Elixir standard library and assume `Repo` is available as
+`MyApp.Repo`. Deliver everything in a single file.
+
+=== MODULE ===
+```elixir
+defmodule Factory do
+  @moduledoc """
+  A lightweight, self-contained test-data factory with **bulk generation**.
+
+  Adds `build_list/2,3`, `insert_list/2,3` (concurrent), and `params_for/1,2`
+  on top of the usual `build`, `insert`, and `sequence` API.
+
+  ## Usage
+
+      Factory.build_list(3, :user)
+      Factory.insert_list(100, :user)          # concurrent inserts
+      Factory.params_for(:user, name: "Ada")   # plain map, no :id
+  """
+
+  @compile {:no_warn_undefined, MyApp.Repo}
+
+  @agent __MODULE__.SequenceAgent
+
+  @typedoc "The name identifying a factory definition."
+  @type factory_name :: atom()
+
+  @typedoc "A keyword list of field overrides applied to a built struct."
+  @type overrides :: keyword()
+
+  # -------------------------------------------------------------------------
+  # Agent lifecycle + sequences
+  # -------------------------------------------------------------------------
+
+  @doc "Starts the named Agent backing all sequence counters."
+  @spec start() :: Agent.on_start()
+  def start do
+    Agent.start_link(fn -> %{} end, name: @agent)
+  end
+
+  @doc "Returns the next value for the named sequence."
+  @spec sequence(term(), (pos_integer() -> value)) :: value when value: term()
+  def sequence(name, formatter_fn) when is_function(formatter_fn, 1) do
+    ensure_agent_started()
+
+    n =
+      Agent.get_and_update(@agent, fn counters ->
+        next = Map.get(counters, name, 0) + 1
+        {next, Map.put(counters, name, next)}
+      end)
+
+    formatter_fn.(n)
+  end
+
+  # -------------------------------------------------------------------------
+  # Singular build / insert
+  # -------------------------------------------------------------------------
+
+  @doc "Builds a struct for `name` without touching the database."
+  @spec build(factory_name()) :: struct()
+  def build(name), do: build(name, [])
+
+  @doc "Builds a struct for `name`, merging `overrides`."
+  @spec build(factory_name(), overrides()) :: struct()
+  def build(name, overrides) do
+    name
+    |> factory()
+    |> merge_overrides(overrides)
+    |> resolve_thunks()
+  end
+
+  @doc "Builds and persists a struct for `name`."
+  @spec insert(factory_name()) :: struct()
+  def insert(name), do: insert(name, [])
+
+  @doc "Builds with `overrides`, then persists via `MyApp.Repo`."
+  @spec insert(factory_name(), overrides()) :: struct()
+  def insert(name, overrides) do
+    name
+    |> build(overrides)
+    |> MyApp.Repo.insert!()
+  end
+
+  # -------------------------------------------------------------------------
+  # Bulk build / insert
+  # -------------------------------------------------------------------------
+
+  @doc "Builds a list of `count` structs for `name`."
+  @spec build_list(non_neg_integer(), factory_name()) :: [struct()]
+  def build_list(count, name), do: build_list(count, name, [])
+
+  @doc "Builds a list of `count` structs for `name`, each with `overrides`."
+  @spec build_list(non_neg_integer(), factory_name(), overrides()) :: [struct()]
+  def build_list(count, name, overrides) when is_integer(count) and count >= 0 do
+    Enum.map(1..count//1, fn _ -> build(name, overrides) end)
+  end
+
+  @doc "Persists `count` structs for `name` concurrently."
+  @spec insert_list(non_neg_integer(), factory_name()) :: [struct()]
+  def insert_list(count, name), do: insert_list(count, name, [])
+
+  @doc "Persists `count` structs for `name` concurrently, each with `overrides`."
+  @spec insert_list(non_neg_integer(), factory_name(), overrides()) :: [struct()]
+  def insert_list(count, name, overrides) when is_integer(count) and count >= 0 do
+    1..count//1
+    |> Enum.map(fn _ -> Task.async(fn -> insert(name, overrides) end) end)
+    |> Task.await_many()
+  end
+
+  # -------------------------------------------------------------------------
+  # params_for
+  # -------------------------------------------------------------------------
+
+  @doc "Returns a plain map of `name`'s fields (no struct, no `:id`)."
+  @spec params_for(factory_name()) :: map()
+  def params_for(name), do: params_for(name, [])
+
+  @doc "Returns a plain map of `name`'s fields with `overrides`, minus `:id`."
+  @spec params_for(factory_name(), overrides()) :: map()
+  def params_for(name, overrides) do
+    name
+    |> build(overrides)
+    |> Map.from_struct()
+    |> Map.delete(:id)
+  end
+
+  # -------------------------------------------------------------------------
+  # Internal helpers
+  # -------------------------------------------------------------------------
+
+  @spec merge_overrides(struct(), overrides()) :: struct()
+  defp merge_overrides(base, []), do: base
+  defp merge_overrides(base, overrides), do: struct(base, overrides)
+
+  @spec resolve_thunks(struct()) :: struct()
+  defp resolve_thunks(%mod{} = s) do
+    resolved =
+      s
+      |> Map.from_struct()
+      |> Enum.map(fn
+        {key, fun} when is_function(fun, 0) -> {key, fun.()}
+        pair -> pair
+      end)
+
+    struct(mod, resolved)
+  end
+
+  @spec ensure_agent_started() :: :ok
+  defp ensure_agent_started do
+    case Process.whereis(@agent) do
+      nil ->
+        Agent.start_link(fn -> %{} end, name: @agent)
+        :ok
+
+      _pid ->
+        :ok
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Factory definitions
+  # --------------------------------------------------------------- (truncated)
+18:09:34.884 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+resolve_thunks/1
+sequence/2
+insert_list/3
+</file>
+18:09:34.884 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3741, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3741, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3741, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3741, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 495, "type" => "message"}], "output_tokens" => 495, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

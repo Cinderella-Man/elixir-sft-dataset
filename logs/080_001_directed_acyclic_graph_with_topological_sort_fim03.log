@@ -1,0 +1,466 @@
+[22m03:23:33.359 [info] FIM 080_001_directed_acyclic_graph_with_topological_sort_fim03 → 080_001_directed_acyclic_graph_with_topological_sort_04: target add_edge/3[0m
+[36m03:23:33.359 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m03:23:33.359 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `add_edge/3`.
+
+Generate a prompt describing how to implement `add_edge/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `add_edge/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `add_edge/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `add_edge/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `DAG` that implements a Directed Acyclic Graph with topological sorting. It should be a pure data structure (no GenServer), where each function takes and returns a DAG struct.
+
+I need these functions in the public API:
+- `DAG.new()` — returns an empty DAG struct
+- `DAG.add_vertex(dag, vertex)` — adds a vertex to the graph; if it already exists, return the dag unchanged. Vertices can be any term.
+- `DAG.add_edge(dag, from, to)` — adds a directed edge from `from` to `to`. Both vertices must already exist. If the edge would create a cycle, return `{:error, :cycle}`. On success, return `{:ok, new_dag}`.
+- `DAG.topological_sort(dag)` — returns `{:ok, ordering}` where `ordering` is a list of all vertices in a valid topological order (every vertex appears before all of its dependents). If the graph is empty, return `{:ok, []}`.
+- `DAG.predecessors(dag, vertex)` — returns the list of vertices that have a direct edge pointing **to** the given vertex (i.e. its direct dependencies).
+- `DAG.successors(dag, vertex)` — returns the list of vertices that the given vertex has a direct edge pointing **to** (i.e. what directly depends on it).
+
+Cycle detection must happen eagerly in `add_edge/3` — do not defer it to sort time. Use DFS-based cycle detection. For topological sort, use Kahn's algorithm (BFS-based, iterating over in-degrees).
+
+Give me the complete module in a single file. Use only the Elixir/Erlang standard library, no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule DAG do
+  @moduledoc """
+  A Directed Acyclic Graph (DAG) implemented as a pure data structure.
+
+  Internally the struct holds:
+    - `vertices`  – a `MapSet` of all vertices (any term).
+    - `out_edges` – a `Map` of `vertex => MapSet of successors`   (forward adjacency).
+    - `in_edges`  – a `Map` of `vertex => MapSet of predecessors` (reverse adjacency).
+
+  ## Invariants
+    * Every key / value that appears in `out_edges` or `in_edges` is also in `vertices`.
+    * The graph is acyclic at all times; `add_edge/3` rejects edges that would form a cycle.
+  """
+
+  @enforce_keys [:vertices, :out_edges, :in_edges]
+  defstruct [:vertices, :out_edges, :in_edges]
+
+  @type vertex :: term()
+  @type t :: %__MODULE__{
+          vertices: MapSet.t(),
+          out_edges: %{vertex() => MapSet.t()},
+          in_edges: %{vertex() => MapSet.t()}
+        }
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc "Returns an empty DAG."
+  @spec new() :: t()
+  def new do
+    %__MODULE__{
+      vertices: MapSet.new(),
+      out_edges: %{},
+      in_edges: %{}
+    }
+  end
+
+  @doc """
+  Adds `vertex` to the DAG.
+  If the vertex already exists the DAG is returned unchanged.
+  Vertices may be any Elixir term.
+  """
+  @spec add_vertex(t(), vertex()) :: t()
+  def add_vertex(%__MODULE__{} = dag, vertex) do
+    if MapSet.member?(dag.vertices, vertex) do
+      dag
+    else
+      %{
+        dag
+        | vertices: MapSet.put(dag.vertices, vertex),
+          out_edges: Map.put_new(dag.out_edges, vertex, MapSet.new()),
+          in_edges: Map.put_new(dag.in_edges, vertex, MapSet.new())
+      }
+    end
+  end
+
+  @doc """
+  Adds a directed edge from `from` to `to`.
+
+  Both vertices must already exist in the DAG.
+
+  Returns `{:ok, new_dag}` on success, or `{:error, :cycle}` if the edge
+  would introduce a cycle.  Cycle detection is performed eagerly via DFS
+  before the edge is committed.
+  """
+  @spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle}
+  def add_edge(%__MODULE__{} = dag, from, to) do
+    with :ok <- require_vertex(dag, from),
+         :ok <- require_vertex(dag, to),
+         :ok <- check_no_cycle(dag, from, to) do
+      new_dag = %{
+        dag
+        | out_edges: Map.update!(dag.out_edges, from, &MapSet.put(&1, to)),
+          in_edges: Map.update!(dag.in_edges, to, &MapSet.put(&1, from))
+      }
+
+      {:ok, new_dag}
+    end
+  end
+
+  @doc """
+  Returns all vertices that have a direct edge *pointing to* `vertex`
+  (i.e. the direct predecessors / dependencies of `vertex`).
+  """
+  @spec predecessors(t(), vertex()) :: [vertex()]
+  def predecessors(%__MODULE__{} = dag, vertex) do
+    dag.in_edges
+    |> Map.get(vertex, MapSet.new())
+    |> MapSet.to_list()
+  end
+
+  @doc """
+  Returns all vertices that `vertex` has a direct edge *pointing to*
+  (i.e. what directly depends on `vertex`).
+  """
+  @spec successors(t(), vertex()) :: [vertex()]
+  def successors(%__MODULE__{} = dag, vertex) do
+    dag.out_edges
+    |> Map.get(vertex, MapSet.new())
+    |> MapSet.to_list()
+  end
+
+  @doc """
+  Returns `{:ok, ordering}` where `ordering` is a list of every vertex in a
+  valid topological order — each vertex appears before all of its successors.
+
+  Uses **Kahn's algorithm** (BFS over in-degrees).
+
+  Returns `{:ok, []}` for an empty graph.  Because `add_edge/3` guarantees the
+  graph is always acyclic, this function will always succeed.
+  """
+  @spec topological_sort(t()) :: {:ok, [vertex()]}
+  def topological_sort(%__MODULE__{} = dag) do
+    # Build in-degree map: vertex => number of incoming edges
+    in_degree =
+      Map.new(dag.vertices, fn v ->
+        {v, MapSet.size(Map.fetch!(dag.in_edges, v))}
+      end)
+
+    # Seed the queue with all vertices that have no incoming edges.
+    # Sort for determinism when multiple zero-in-degree vertices exist.
+    initial_queue =
+      in_degree
+      |> Enum.filter(fn {_v, deg} -> deg == 0 end)
+      |> Enum.map(fn {v, _} -> v end)
+      |> Enum.sort()
+
+    {order, _in_degree} = kahn(initial_queue, in_degree, dag.out_edges, [])
+
+    {:ok, order}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Kahn's BFS loop.
+  # `queue`     – list of vertices with in-degree 0 (process head first)
+  # `in_degree` – current in-degree map (mutable across iterations)
+  # `out_edges` – adjacency (unchanged)
+  # `acc`       – reversed result list
+  defp kahn([], in_degree, _out_edges, acc), do: {Enum.reverse(acc), in_degree}
+
+  defp kahn([v | rest], in_degree, out_edges, acc) do
+    # Decrement in-degree for every successor of v
+    {new_in_degree, newly_zero} =
+      out_edges
+      |> Map.fetch!(v)
+      |> Enum.reduce({in_degree, []}, fn succ, {deg_map, zeros} ->
+        new_deg = Map.fetch!(deg_map, succ) - 1
+        updated = Map.put(deg_map, succ, new_deg)
+
+        if new_deg == 0 do
+          {updated, [succ | zeros]}
+        else
+          {updated, zeros}
+        end
+      end)
+
+    # Append newly-zero vertices in sorted order for determinism
+    new_queue = rest ++ Enum.sort(newly_zero)
+
+    kahn(new_queue, new_in_degree, out_edges, [v | acc])
+  end
+
+  # Returns :ok if `vertex` is in the DAG, otherwise {:error, :vertex_not_found}.
+  defp require_vertex(dag, ve (truncated)[0m
+[36m03:24:12.539 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Task: Implement `add_edge/3`
+
+Implement the public `add_edge/3` function for the `DAG` module below.
+
+`add_edge(dag, from, to)` adds a directed edge from vertex `from` to vertex `to`.
+It must enforce the following rules, in order:
+
+1. Both `from` and `to` must already exist in the DAG. Validate each one with the
+   private `require_vertex/2` helper (which returns `:ok` or `{:error, :vertex_not_found}`).
+2. Adding the edge must not create a cycle. Check this eagerly with the private
+   `check_no_cycle/3` helper (which returns `:ok` or `{:error, :cycle}`) before the
+   edge is committed.
+3. If all checks pass, commit the edge by adding `to` to `from`'s successor set in
+   `out_edges` and adding `from` to `to`'s predecessor set in `in_edges` (use
+   `Map.update!/3` together with `MapSet.put/2` for both maps), and return
+   `{:ok, new_dag}`.
+
+Use a `with` chain so that the first failing check short-circuits and its error
+tuple (`{:error, :vertex_not_found}` or `{:error, :cycle}`) is returned unchanged.
+
+```elixir
+defmodule DAG do
+  @moduledoc """
+  A Directed Acyclic Graph (DAG) implemented as a pure data structure.
+
+  Internally the struct holds:
+    - `vertices`  – a `MapSet` of all vertices (any term).
+    - `out_edges` – a `Map` of `vertex => MapSet of successors`   (forward adjacency).
+    - `in_edges`  – a `Map` of `vertex => MapSet of predecessors` (reverse adjacency).
+
+  ## Invariants
+    * Every key / value that appears in `out_edges` or `in_edges` is also in `vertices`.
+    * The graph is acyclic at all times; `add_edge/3` rejects edges that would form a cycle.
+  """
+
+  @enforce_keys [:vertices, :out_edges, :in_edges]
+  defstruct [:vertices, :out_edges, :in_edges]
+
+  @type vertex :: term()
+  @type t :: %__MODULE__{
+          vertices: MapSet.t(),
+          out_edges: %{vertex() => MapSet.t()},
+          in_edges: %{vertex() => MapSet.t()}
+        }
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc "Returns an empty DAG."
+  @spec new() :: t()
+  def new do
+    %__MODULE__{
+      vertices: MapSet.new(),
+      out_edges: %{},
+      in_edges: %{}
+    }
+  end
+
+  @doc """
+  Adds `vertex` to the DAG.
+  If the vertex already exists the DAG is returned unchanged.
+  Vertices may be any Elixir term.
+  """
+  @spec add_vertex(t(), vertex()) :: t()
+  def add_vertex(%__MODULE__{} = dag, vertex) do
+    if MapSet.member?(dag.vertices, vertex) do
+      dag
+    else
+      %{
+        dag
+        | vertices: MapSet.put(dag.vertices, vertex),
+          out_edges: Map.put_new(dag.out_edges, vertex, MapSet.new()),
+          in_edges: Map.put_new(dag.in_edges, vertex, MapSet.new())
+      }
+    end
+  end
+
+  @doc """
+  Adds a directed edge from `from` to `to`.
+
+  Both vertices must already exist in the DAG.
+
+  Returns `{:ok, new_dag}` on success, or `{:error, :cycle}` if the edge
+  would introduce a cycle.  Cycle detection is performed eagerly via DFS
+  before the edge is committed.
+  """
+  @spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle}
+  def add_edge(%__MODULE__{} = dag, from, to) do
+    # TODO
+  end
+
+  @doc """
+  Returns all vertices that have a direct edge *pointing to* `vertex`
+  (i.e. the direct predecessors / dependencies of `vertex`).
+  """
+  @spec predecessors(t(), vertex()) :: [vertex()]
+  def predecessors(%__MODULE__{} = dag, vertex) do
+    dag.in_edges
+    |> Map.get(vertex, MapSet.new())
+    |> MapSet.to_list()
+  end
+
+  @doc """
+  Returns all vertices that `vertex` has a direct edge *pointing to*
+  (i.e. what directly depends on `vertex`).
+  """
+  @spec successors(t(), vertex()) :: [vertex()]
+  def successors(%__MODULE__{} = dag, vertex) do
+    dag.out_edges
+    |> Map.get(vertex, MapSet.new())
+    |> MapSet.to_list()
+  end
+
+  @doc """
+  Returns `{:ok, ordering}` where `ordering` is a list of every vertex in a
+  valid topological order — each vertex appears before all of its successors.
+
+  Uses **Kahn's algorithm** (BFS over in-degrees).
+
+  Returns `{:ok, []}` for an empty graph.  Because `add_edge/3` guarantees the
+  graph is always acyclic, this function will always succeed.
+  """
+  @spec topological_sort(t()) :: {:ok, [vertex()]}
+  def topological_sort(%__MODULE__{} = dag) do
+    # Build in-degree map: vertex => number of incoming edges
+    in_degree =
+      Map.new(dag.vertices, fn v ->
+        {v, MapSet.size(Map.fetch!(dag.in_edges, v))}
+      end)
+
+    # Seed the queue with all vertices that have no incoming edges.
+    # Sort for determinism when multiple zero-in-degree vertices exist.
+    initial_queue =
+      in_degree
+      |> Enum.filter(fn {_v, deg} -> deg == 0 end)
+      |> Enum.map(fn {v, _} -> v end)
+      |> Enum.sort()
+
+    {order, _in_degree} = kahn(initial_queue, in_degree, dag.out_edges, [])
+
+    {:ok, order}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Kahn's BFS loop.
+  # `queue`     – list of vertices with in-degree 0 (process head first)
+  # `in_degree` – current in-degree map (mutable across iterations)
+  # `out_edges` – adjacency (unchanged)
+  # `acc`       – reversed result list
+  defp kahn([], in_degree, _out_edges, acc), do: {Enum.reverse(acc), in_degree}
+
+  defp kahn([v | rest], in_degree, out_edges, acc) do
+    # Decrement in-degree for every successor of v
+    {new_in_degree, newly_zero} =
+      out_edges
+      |> Map.fetch!(v)
+      |> Enum.reduce({in_degree, []}, fn succ, {deg_map, zeros} ->
+        new_deg = Map.fetch!(deg_map, succ) - 1
+        updated = Map.put(deg_map, succ, new_deg)
+
+        if new_deg == 0 do
+          {updated, [succ | zeros]}
+        else
+          {updated, zeros}
+        end
+      end)
+
+    # Append newly-zero vertices in sorted order for determinism
+    new_queue = rest ++ Enum.sort(newly_zero)
+
+    kahn(new_queue, new_in_degree, out_edges, [v | acc])
+  end
+
+  # Returns :ok if `vertex` is in the DAG, otherwise {:error, :vertex_not_found}.
+  defp require_vertex(dag, vertex) do
+    if MapSet.member?(dag.vertices, vertex) do
+      :ok
+    else
+      {:error, :vertex_not_found}
+    end
+  end
+
+  @doc false
+  # Eagerly checks whether adding the edge from→to would create a cycle.
+  #
+  # A cycle exists iff `from` is already reachable *from* `to` via the current
+  # out-edges (because after insertion there would be a path to→...→from→to).
+  # We also handle the self-loop case (from == to) explicitly.
+  #
+  # Uses iterative DFS with an explicit stack to avoid blowing the call stack
+  # on deep graphs.
+  defp check_no_cycle(_dag, from, from), do: {:error, :cycle}
+
+  defp check_no_cycle(dag, from, to) do
+    # DFS from `to` following out_edges; if we ever reach `from`, it's a cycle.
+    if dfs_reaches?(dag.out_edges, to, from) do
+      {:error, :cycle}
+    else
+      :ok
+    end
+  end
+
+  # Iterative DFS: returns true if `target` is reachable from `start`.
+  defp dfs_reaches?(out_edges, start, target) do
+    do_dfs([start], MapSet.new(), out_edges, target)
+  end
+
+  defp do_dfs([], _visited, _out_edges, _target), do: false
+
+  defp do_dfs([node | stack], visited, out_edges, target) do
+    cond do
+      node == target ->
+        true
+
+      MapSet.member?(visited, node) ->
+        do_dfs(stack, visited, out_edges, target)
+
+      true ->
+        neighbors =
+          out_edges
+          |> Map.get(node, MapSet.new())
+          |> MapSet.to_list()
+
+        do_dfs(neighbors ++ stack, MapSet.put(visited, node), out_edges, target)
+    end
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  @spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle}
+  def add_edge(%__MODULE__{} = dag, from, to) do
+    with :ok <- require_vertex(dag, from),
+         :ok <- require_vertex(dag, to),
+         :ok <- check_no_cycle(dag, from, to) do
+      new_dag = %{
+        dag
+        | out_edges: Map.update!(dag.out_edges, from, &Ma (truncated)[0m
+[36m03:24:12.539 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4394, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4394, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4394, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4394, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 3665, "type" => "message"}], "output_tokens" => 3665, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m03:24:12.557 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_080_001_directed_acyclic_graph_with_topological_sort_04/080_001_directed_acyclic_graph_with_topological_sort_04 solution.ex[0m
+[36m03:24:13.205 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":14,"lines_over_98":0,"max_line_length":75,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"080_001_directed_acyclic_graph_with_topological_sort_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_080_001_directed_acyclic_graph_with_topological_sort_04/080_001_directed_acyclic_graph_with_topological_sort_04/solution.ex","task":"080_001_directed_acyclic_graph_with_topological_sort_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:24:13.184260Z"}[0m
+[36m03:24:13.206 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_080_001_directed_acyclic_graph_with_topological_sort_04/080_001_directed_acyclic_graph_with_topological_sort_04 .gen_staging/fim_080_001_directed_acyclic_graph_with_topological_sort_04/mutant.ex[0m
+[36m03:24:13.829 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":72,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"parent":"080_001_directed_acyclic_graph_with_topological_sort_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.3,"mode":"fim","overall":0.33,"reasons":["compilation: 7 warning(s) → -0.7 pts","tests: 12/14 failed"],"tests":0.14},"shape":"fim","solution_file":".gen_staging/fim_080_001_directed_acyclic_graph_with_topological_sort_04/mutant.ex","task":"080_001_directed_acyclic_graph_with_topological_sort_04","test_failures":[{"message":"MUTATION","module":"DAGTest","test":"test add_edge/3 returns {:ok, dag} on success"},{"message":"MUTATION","module":"DAGTest","test":"test direct cycle (a -> b -> a) is rejected"},{"message":"MUTATION","module":"DAGTest","test":"test self-loop (a -> a) is rejected"},{"message":"MUTATION","module":"DAGTest","test":"test indirect cycle (a -> b -> c -> a) is rejected"},{"message":"MUTATION","module":"DAGTest","test":"test non-cycle-forming edges are all accepted"},{"message":"MUTATION","module":"DAGTest","test":"test topological sort of a linear chain"},{"message":"MUTATION","module":"DAGTest","test":"test topological sort is valid for a diamond graph"},{"message":"MUTATION","module":"DAGTest","test":"test topological sort includes isolated vertices"},{"message":"MUTATION","module":"DAGTest","test":"test topological sort is valid for a known dependency graph"},{"message":"MUTATION","module":"DAGTest","test":"test successors/2 returns direct outgoing neighbours"},{"message":"MUTATION","module":"DAGTest","test":"test predecessors/2 returns direct incoming neighbours"},{"message":"MUTATION","module":"DAGTest","test":"test predecessors and successors are consistent with each other"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T01:24:13.810470Z"}[0m
+[36m03:24:13.829 [debug] fim mutation gate: killed[0m
+[22m03:24:13.831 [info] promoted 080_001_directed_acyclic_graph_with_topological_sort_04 -> tasks/080_001_directed_acyclic_graph_with_topological_sort_04[0m

@@ -1,0 +1,202 @@
+[22m03:26:54.137 [info] FIM candidate-select for 080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01 (up to 3)[0m
+[36m03:26:54.137 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m03:26:54.137 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `MutableDAG` that implements a Directed Acyclic Graph supporting **mutation** (edge and vertex removal), **cycle diagnostics** (reporting the actual offending cycle path), and **parallel-execution layers**. It should be a pure data structure (no GenServer), where each function takes and returns a `MutableDAG` struct (or a result tuple).
+
+I need these functions in the public API:
+- `MutableDAG.new()` — returns an empty DAG.
+- `MutableDAG.add_vertex(dag, vertex)` — adds a vertex; if it already exists, return the dag unchanged. Vertices can be any term.
+- `MutableDAG.add_edge(dag, from, to)` — adds a directed edge. Both vertices must exist. If the edge would create a cycle, return `{:error, {:cycle, path}}` where `path` is the list of vertices forming the cycle, **starting and ending with `from`** (e.g. adding `c -> a` when `a -> b -> c` already exists returns `{:error, {:cycle, [c, a, b, c]}}`). A self-loop `add_edge(dag, a, a)` returns `{:error, {:cycle, [a, a]}}`. On success return `{:ok, new_dag}`. Detection must be eager (DFS path search).
+- `MutableDAG.remove_edge(dag, from, to)` — removes the directed edge if present; if the edge or either vertex is absent, return the dag unchanged.
+- `MutableDAG.remove_vertex(dag, vertex)` — removes the vertex and every edge incident to it (both incoming and outgoing); if absent, return the dag unchanged.
+- `MutableDAG.topological_sort(dag)` — returns `{:ok, ordering}`, a flat list of all vertices in a valid topological order. `{:ok, []}` for an empty graph.
+- `MutableDAG.topological_layers(dag)` — returns `{:ok, layers}` where `layers` is a list of lists. Layer 0 contains every vertex with no predecessors; each subsequent layer contains the vertices whose predecessors have all appeared in earlier layers. This groups vertices into "waves" that could execute in parallel. Sort the vertices **within each layer** by term ordering for determinism. `{:ok, []}` for an empty graph.
+- `MutableDAG.predecessors(dag, vertex)` / `MutableDAG.successors(dag, vertex)` — direct incoming / outgoing neighbours.
+
+Give me the complete module in a single file. Use only the Elixir/Erlang standard library, no external dependencies.
+
+=== MODULE ===
+```elixir
+defmodule MutableDAG do
+  @moduledoc """
+  A mutable Directed Acyclic Graph.
+
+  Beyond building and sorting, this variant supports:
+    * edge and vertex **removal**;
+    * **cycle diagnostics** — a rejected edge reports the actual offending
+      cycle path (starting and ending with the `from` vertex);
+    * **parallel-execution layers** — `topological_layers/1` groups vertices
+      into dependency "waves" that could run concurrently.
+
+  Internally the struct holds:
+    * `vertices`  – a `MapSet` of all vertices (any term).
+    * `out_edges` – `%{vertex => MapSet of successors}` (forward adjacency).
+    * `in_edges`  – `%{vertex => MapSet of predecessors}` (reverse adjacency).
+  """
+
+  defstruct vertices: MapSet.new(), out_edges: %{}, in_edges: %{}
+
+  @type vertex :: term()
+  @type t :: %__MODULE__{
+          vertices: MapSet.t(),
+          out_edges: %{vertex() => MapSet.t()},
+          in_edges: %{vertex() => MapSet.t()}
+        }
+
+  # ---------------------------------------------------------------------------
+  # Construction / mutation
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns a new, empty `MutableDAG`.
+  """
+  @spec new() :: t()
+  def new, do: %__MODULE__{}
+
+  @doc """
+  Adds `vertex` to `dag`.
+
+  Vertices can be any term. If the vertex already exists the `dag` is
+  returned unchanged.
+  """
+  @spec add_vertex(t(), vertex()) :: t()
+  def add_vertex(%__MODULE__{} = dag, vertex) do
+    if MapSet.member?(dag.vertices, vertex) do
+      dag
+    else
+      %{
+        dag
+        | vertices: MapSet.put(dag.vertices, vertex),
+          out_edges: Map.put_new(dag.out_edges, vertex, MapSet.new()),
+          in_edges: Map.put_new(dag.in_edges, vertex, MapSet.new())
+      }
+    end
+  end
+
+  @doc """
+  Adds a directed edge `from -> to`.
+
+  Both vertices must already exist, otherwise `{:error, :vertex_not_found}`
+  is returned. When the edge would introduce a cycle, returns
+  `{:error, {:cycle, path}}` where `path` lists the vertices of the cycle,
+  starting and ending with `from`. On success returns `{:ok, new_dag}`.
+  """
+  @spec add_edge(t(), vertex(), vertex()) ::
+          {:ok, t()} | {:error, {:cycle, [vertex()]}} | {:error, :vertex_not_found}
+  def add_edge(%__MODULE__{} = dag, from, to) do
+    with :ok <- require_vertex(dag, from),
+         :ok <- require_vertex(dag, to) do
+      cond do
+        from == to ->
+          {:error, {:cycle, [from, from]}}
+
+        true ->
+          # Adding from->to closes a cycle iff `from` is already reachable
+          # from `to`. reach_path returns [to, ..., from] when such a path
+          # exists; prefixing `from` yields the full loop [from, to, ..., from].
+          case reach_path(dag.out_edges, to, from) do
+            nil ->
+              new_dag = %{
+                dag
+                | out_edges: Map.update!(dag.out_edges, from, &MapSet.put(&1, to)),
+                  in_edges: Map.update!(dag.in_edges, to, &MapSet.put(&1, from))
+              }
+
+              {:ok, new_dag}
+
+            path ->
+              {:error, {:cycle, [from | path]}}
+          end
+      end
+    end
+  end
+
+  @doc """
+  Removes the directed edge `from -> to` if present.
+
+  If the edge or either vertex is absent, `dag` is returned unchanged.
+  """
+  @spec remove_edge(t(), vertex(), vertex()) :: t()
+  def remove_edge(%__MODULE__{} = dag, from, to) do
+    if MapSet.member?(dag.vertices, from) and MapSet.member?(dag.vertices, to) do
+      %{
+        dag
+        | out_edges: Map.update(dag.out_edges, from, MapSet.new(), &MapSet.delete(&1, to)),
+          in_edges: Map.update(dag.in_edges, to, MapSet.new(), &MapSet.delete(&1, from))
+      }
+    else
+      dag
+    end
+  end
+
+  @doc """
+  Removes `vertex` and every edge incident to it (incoming and outgoing).
+
+  If the vertex is absent, `dag` is returned unchanged.
+  """
+  @spec remove_vertex(t(), vertex()) :: t()
+  def remove_vertex(%__MODULE__{} = dag, vertex) do
+    if MapSet.member?(dag.vertices, vertex) do
+      successors = Map.get(dag.out_edges, vertex, MapSet.new())
+      predecessors = Map.get(dag.in_edges, vertex, MapSet.new())
+
+      in_edges =
+        Enum.reduce(successors, dag.in_edges, fn s, acc ->
+          Map.update(acc, s, MapSet.new(), &MapSet.delete(&1, vertex))
+        end)
+
+      out_edges =
+        Enum.reduce(predecessors, dag.out_edges, fn p, acc ->
+          Map.update(acc, p, MapSet.new(), &MapSet.delete(&1, vertex))
+        end)
+
+      %{
+        dag
+        | vertices: MapSet.delete(dag.vertices, vertex),
+          out_edges: Map.delete(out_edges, vertex),
+          in_edges: Map.delete(in_edges, vertex)
+      }
+    else
+      dag
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Queries
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Returns the direct predecessors (incoming neighbours) of `vertex`.
+  """
+  @spec predecessors(t(), vertex()) :: [vertex()]
+  def predecessors(%__MODULE__{} = dag, vertex) do
+    dag.in_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list()
+  end
+
+  @doc """
+  Returns the direct successors (outgoing neighbours) of `vertex`.
+  """
+  @spec successors(t(), vertex()) :: [vertex()]
+  def successors(%__MODULE__{} = dag, vertex) do
+    dag.out (truncated)[0m
+[36m03:27:02.006 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+do_reach/5
+build_layers/3
+add_edge/3
+</file>[0m
+[36m03:27:02.006 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4900, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4900, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4900, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4900, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 214, "type" => "message"}], "output_tokens" => 214, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m

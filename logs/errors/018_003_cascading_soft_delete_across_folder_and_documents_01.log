@@ -1,0 +1,1588 @@
+04:09:51.860 [info] VARIATION 018_003_cascading_soft_delete_across_folder_and_documents_01: Cascading Soft Delete Across Folder And Documents
+04:09:51.860 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+04:09:51.860 [debug] claude -p USER prompt:
+Build me an Elixir Phoenix JSON API for a two-level `Folder` → `Document` hierarchy with **cascading soft delete**. Soft-deleting a folder must cascade to the documents it contains, and restoring the folder must bring back *exactly* the documents that were removed by that cascade — nothing more. The project should be a standard Mix project using Phoenix and Ecto with PostgreSQL.
+
+## Schemas
+
+Create both schemas inside a context module called `SoftCrud.Documents`.
+
+### `Folder` (`folders` table)
+
+- `name` — string, required, non-empty
+- `deleted_at` — utc_datetime, nullable, defaults to nil
+- `inserted_at` / `updated_at` — standard Phoenix timestamps
+
+### `Document` (`documents` table)
+
+- `title` — string, required, non-empty
+- `content` — string, required
+- `folder_id` — required; references a `Folder`. Every document belongs to exactly one folder.
+- `deleted_at` — utc_datetime, nullable, defaults to nil
+- `cascaded` — boolean, required, **defaults to `false`**. This flag records *how* a document came to be soft-deleted: `true` means it was removed as a side effect of its folder being soft-deleted; `false` means it was either never deleted or was deleted directly (on its own). The flag is what lets a folder restore know which documents to bring back.
+- `inserted_at` / `updated_at` — standard Phoenix timestamps
+
+The migration should create both tables. Add an index on `deleted_at` for both tables, and an index on `documents.folder_id`.
+
+## Context: `SoftCrud.Documents`
+
+### Folder functions
+
+- `create_folder(attrs)` — Creates a folder. Returns `{:ok, folder}` or `{:error, changeset}`. Validate that `name` is present and non-empty.
+- `list_folders(opts \\ [])` — Returns folders. By default excludes folders whose `deleted_at` is not nil. With `include_deleted: true`, returns all folders.
+- `get_folder(id, opts \\ [])` — Returns `{:ok, folder}` or `{:error, :not_found}`. By default a soft-deleted folder returns `{:error, :not_found}`; with `include_deleted: true` it is returned even when soft-deleted.
+- `soft_delete_folder(folder)` — Sets the folder's `deleted_at` to the current UTC time **and cascades**: every document in that folder that is currently *not* soft-deleted (`deleted_at` is nil) is soft-deleted too — its `deleted_at` is set to the same time and its `cascaded` flag is set to `true`. Documents that were already soft-deleted are left untouched. The whole operation is atomic. Returns `{:ok, folder}`. If the folder is already soft-deleted, this is a no-op that returns the folder as-is (still `{:ok, folder}`).
+- `restore_folder(folder)` — Sets the folder's `deleted_at` back to nil **and cascade-restores**: every document in that folder whose `cascaded` flag is `true` is restored — its `deleted_at` is set back to nil and its `cascaded` flag is reset to `false`. Documents whose `cascaded` flag is `false` are left untouched (a document deleted on its own before the cascade stays deleted). The whole operation is atomic. Returns `{:ok, folder}`. If the folder is not soft-deleted, this is a no-op that returns the folder as-is (still `{:ok, folder}`).
+
+### Document functions
+
+- `create_document(attrs)` — Creates a document. Returns `{:ok, document}` or `{:error, changeset}`. Validate that `title` is present and non-empty, `content` is present, and `folder_id` is present. New documents start with `deleted_at: nil` and `cascaded: false`.
+- `list_documents(opts \\ [])` — Returns documents. By default excludes documents whose `deleted_at` is not nil. With `include_deleted: true`, returns all documents.
+- `get_document(id, opts \\ [])` — Returns `{:ok, document}` or `{:error, :not_found}`. By default a soft-deleted document returns `{:error, :not_found}`; with `include_deleted: true` it is returned even when soft-deleted.
+- `soft_delete_document(document)` — Directly soft-deletes a single document: sets `deleted_at` to the current UTC time and sets `cascaded` to `false` (a direct deletion, not a cascade). Returns `{:ok, document}`. If already soft-deleted, this is a no-op returning the document as-is (still `{:ok, document}`).
+- `restore_document(document)` — Directly restores a single document: sets `deleted_at` back to nil and `cascaded` to `false`. Returns `{:ok, document}`. If the document is not soft-deleted, this is a no-op returning the document as-is (still `{:ok, document}`).
+
+## Router & Controllers
+
+Set up a JSON API under the `/api` scope.
+
+### Folders
+
+- `GET    /api/folders`             — Lists folders. Supports `?include_deleted=true`.
+- `POST   /api/folders`             — Creates a folder. Body: `{"folder": {"name": "..."}}`. On success returns **201** with the folder JSON.
+- `GET    /api/folders/:id`         — Shows a folder. Supports `?include_deleted=true`. 404 for a soft-deleted folder unless `include_deleted=true`.
+- `DELETE /api/folders/:id`         — Soft-deletes the folder (cascading to its documents). Returns 200 with the updated folder JSON. Returns 404 if the folder does not exist or is already soft-deleted.
+- `POST   /api/folders/:id/restore` — Restores a soft-deleted folder (cascade-restoring its cascade-deleted documents). Returns 200 with the folder JSON. If the folder is not soft-deleted, returns 200 as a no-op with the folder as-is. Returns 404 if the folder does not exist.
+
+### Documents
+
+- `GET    /api/documents`             — Lists documents. Supports `?include_deleted=true`.
+- `POST   /api/documents`             — Creates a document. Body: `{"document": {"title": "...", "content": "...", "folder_id": 1}}`. On success returns **201** with the document JSON.
+- `GET    /api/documents/:id`         — Shows a document. Supports `?include_deleted=true`. 404 for a soft-deleted document unless `include_deleted=true`.
+- `DELETE /api/documents/:id`         — Directly soft-deletes the document. Returns 200 with the updated document JSON. Returns 404 if the document does not exist or is already soft-deleted.
+- `POST   /api/documents/:id/restore` — Directly restores a soft-deleted document. Returns 200 with the document JSON. If the document is not soft-deleted, returns 200 as a no-op with the document as-is. Returns 404 if the document does not exist.
+
+### JSON shapes
+
+Folder:
+
+```json
+{
+  "data": {
+    "id": 1,
+    "name": "...",
+    "deleted_at": null,
+    "inserted_at": "...",
+    "updated_at": "..."
+  }
+}
+```
+
+Document:
+
+```json
+{
+  "data": {
+    "id": 1,
+    "title": "...",
+    "content": "...",
+    "folder_id": 1,
+    "deleted_at": null,
+    "cascaded": false,
+    "inserted_at": "...",
+    "updated_at": "..."
+  }
+}
+```
+
+For list endpoints, wrap the array in `{"data": [...]}`.
+
+Validation errors return 422 with `{"errors": {...}}` containing field-level details. Not-found responses return 404 with `{"errors": {"detail": "Not found"}}`.
+
+## Project structure
+
+Use the app name `soft_crud` with module prefix `SoftCrud`. Organize the code as:
+
+- `lib/soft_crud/documents.ex` — context module
+- `lib/soft_crud/documents/folder.ex` — Folder schema + changeset
+- `lib/soft_crud/documents/document.ex` — Document schema + changeset
+- `lib/soft_crud_web/router.ex` — routes
+- `lib/soft_crud_web/controllers/folder_controller.ex` — folder controller
+- `lib/soft_crud_web/controllers/document_controller.ex` — document controller
+- `lib/soft_crud_web/controllers/folder_json.ex` — folder JSON rendering
+- `lib/soft_crud_web/controllers/document_json.ex` — document JSON rendering
+- `lib/soft_crud_web/controllers/fallback_controller.ex` — handles `{:error, ...}` tuples
+- `priv/repo/migrations/..._create_documents.exs` — migration
+
+## Additional interface contract
+
+- Use exactly these module names: router `SoftCrudWeb.Router`, context `SoftCrud.Documents` (with `create_folder/1`, `create_document/1`, `soft_delete_folder/1`, `restore_folder/1`, `soft_delete_document/1`, `restore_document/1` all returning `{:ok, _}` on success), repo `SoftCrud.Repo`. The repo itself is provided (already configured and started) by the test environment — do (truncated)
+04:14:09.867 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule SoftCrud.Documents.Folder do
+  @moduledoc """
+  Ecto schema and changeset for a `folders` record.
+
+  A folder groups documents and can be soft-deleted. Soft deletion is recorded
+  by setting `deleted_at` to a UTC timestamp; a `nil` value means the folder is
+  live.
+  """
+
+  use Ecto.Schema
+
+  import Ecto.Changeset
+
+  alias SoftCrud.Documents.Document
+
+  @type t :: %__MODULE__{}
+
+  schema "folders" do
+    field :name, :string
+    field :deleted_at, :utc_datetime
+
+    has_many :documents, Document
+
+    timestamps()
+  end
+
+  @doc """
+  Builds a changeset for creating or updating a folder.
+
+  Requires a present, non-empty `name`.
+  """
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
+  def changeset(folder, attrs) do
+    folder
+    |> cast(attrs, [:name, :deleted_at])
+    |> validate_required([:name])
+    |> validate_length(:name, min: 1)
+  end
+end
+
+defmodule SoftCrud.Documents.Document do
+  @moduledoc """
+  Ecto schema and changeset for a `documents` record.
+
+  Every document belongs to exactly one folder. The `cascaded` flag records how
+  a document came to be soft-deleted: `true` means it was removed as a side
+  effect of its folder being soft-deleted, `false` means it was never deleted or
+  was deleted directly on its own.
+  """
+
+  use Ecto.Schema
+
+  import Ecto.Changeset
+
+  alias SoftCrud.Documents.Folder
+
+  @type t :: %__MODULE__{}
+
+  schema "documents" do
+    field :title, :string
+    field :content, :string
+    field :deleted_at, :utc_datetime
+    field :cascaded, :boolean, default: false
+
+    belongs_to :folder, Folder
+
+    timestamps()
+  end
+
+  @doc """
+  Builds a changeset for creating or updating a document.
+
+  Requires a present, non-empty `title`, a present `content`, and a present
+  `folder_id`.
+  """
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
+  def changeset(document, attrs) do
+    document
+    |> cast(attrs, [:title, :content, :folder_id, :deleted_at, :cascaded])
+    |> validate_required([:title, :content, :folder_id])
+    |> validate_length(:title, min: 1)
+    |> foreign_key_constraint(:folder_id)
+  end
+end
+
+defmodule SoftCrud.Documents do
+  @moduledoc """
+  The Documents context: a two-level `Folder` -> `Document` hierarchy with
+  cascading soft delete.
+
+  Soft-deleting a folder cascades to the documents it contains, marking each
+  cascade-deleted document with `cascaded: true`. Restoring the folder brings
+  back exactly the documents that were removed by that cascade (those with
+  `cascaded: true`) and nothing more.
+  """
+
+  import Ecto.Query, warn: false
+
+  alias SoftCrud.Repo
+  alias SoftCrud.Documents.{Folder, Document}
+
+  @doc """
+  Creates a folder from `attrs`.
+
+  Returns `{:ok, folder}` or `{:error, changeset}`.
+  """
+  @spec create_folder(map()) :: {:ok, Folder.t()} | {:error, Ecto.Changeset.t()}
+  def create_folder(attrs) do
+    %Folder{}
+    |> Folder.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Lists folders.
+
+  By default excludes soft-deleted folders. Pass `include_deleted: true` to
+  include them.
+  """
+  @spec list_folders(keyword()) :: [Folder.t()]
+  def list_folders(opts \\ []) do
+    Folder
+    |> maybe_exclude_deleted(opts)
+    |> Repo.all()
+  end
+
+  @doc """
+  Fetches a folder by `id`.
+
+  Returns `{:ok, folder}` or `{:error, :not_found}`. By default a soft-deleted
+  folder is treated as not found; pass `include_deleted: true` to return it.
+  """
+  @spec get_folder(term(), keyword()) :: {:ok, Folder.t()} | {:error, :not_found}
+  def get_folder(id, opts \\ []) do
+    Folder
+    |> maybe_exclude_deleted(opts)
+    |> Repo.get(id)
+    |> case do
+      nil -> {:error, :not_found}
+      %Folder{} = folder -> {:ok, folder}
+    end
+  end
+
+  @doc """
+  Soft-deletes `folder` and cascades to its live documents.
+
+  Sets the folder's `deleted_at` to the current UTC time and soft-deletes every
+  document in the folder that is not already soft-deleted, marking each with
+  `cascaded: true`. The operation is atomic. A no-op if already soft-deleted.
+  """
+  @spec soft_delete_folder(Folder.t()) :: {:ok, Folder.t()}
+  def soft_delete_folder(%Folder{deleted_at: nil} = folder) do
+    now = current_time()
+
+    Repo.transaction(fn ->
+      {:ok, updated} =
+        folder
+        |> Ecto.Changeset.change(deleted_at: now)
+        |> Repo.update()
+
+      from(d in Document,
+        where: d.folder_id == ^folder.id and is_nil(d.deleted_at)
+      )
+      |> Repo.update_all(set: [deleted_at: now, cascaded: true, updated_at: now])
+
+      updated
+    end)
+  end
+
+  def soft_delete_folder(%Folder{} = folder), do: {:ok, folder}
+
+  @doc """
+  Restores `folder` and cascade-restores its cascade-deleted documents.
+
+  Sets the folder's `deleted_at` back to nil and restores every document in the
+  folder whose `cascaded` flag is `true`, resetting that flag to `false`.
+  Documents deleted on their own are left untouched. Atomic. No-op if the folder
+  is not soft-deleted.
+  """
+  @spec restore_folder(Folder.t()) :: {:ok, Folder.t()}
+  def restore_folder(%Folder{deleted_at: nil} = folder), do: {:ok, folder}
+
+  def restore_folder(%Folder{} = folder) do
+    now = current_time()
+
+    Repo.transaction(fn ->
+      {:ok, updated} =
+        folder
+        |> Ecto.Changeset.change(deleted_at: nil)
+        |> Repo.update()
+
+      from(d in Document,
+        where: d.folder_id == ^folder.id and d.cascaded == true
+      )
+      |> Repo.update_all(set: [deleted_at: nil, cascaded: false, updated_at: now])
+
+      updated
+    end)
+  end
+
+  @doc """
+  Creates a document from `attrs`.
+
+  Returns `{:ok, document}` or `{:error, changeset}`. New documents start with
+  `deleted_at: nil` and `cascaded: false`.
+  """
+  @spec create_document(map()) :: {:ok, Document.t()} | {:error, Ecto.Changeset.t()}
+  def create_document(attrs) do
+    %Document{}
+    |> Document.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Lists documents.
+
+  By default excludes soft-deleted documents. Pass `include_deleted: true` to
+  include them.
+  """
+  @spec list_documents(keyword()) :: [Document.t()]
+  def list_documents(opts \\ []) do
+    Document
+    |> maybe_exclude_deleted(opts)
+    |> Repo.all()
+  end
+
+  @doc """
+  Fetches a document by `id`.
+
+  Returns `{:ok, document}` or `{:error, :not_found}`. By default a soft-deleted
+  document is treated as not found; pass `include_deleted: true` to return it.
+  """
+  @spec get_document(term(), keyword()) ::
+          {:ok, Document.t()} | {:error, :not_found}
+  def get_document(id, opts \\ []) do
+    Document
+    |> maybe_exclude_deleted(opts)
+    |> Repo.get(id)
+    |> case do
+      nil -> {:error, :not_found}
+      %Document{} = document -> {:ok, document}
+    end
+  end
+
+  @doc """
+  Directly soft-deletes a single `document`.
+
+  Sets `deleted_at` to the current UTC time and `cascaded` to `false` (a direct
+  deletion, not a cascade). No-op if already soft-deleted.
+  """
+  @spec soft_delete_document(Document.t()) :: {:ok, Document.t()}
+  def soft_delete_document(%Document{deleted_at: nil} = document) do
+    document
+    |> Ecto.Changeset.change(deleted_at: current_time(), cascaded: false)
+    |> Repo.update()
+  end
+
+  def soft_delete_document(%Document{} = document), do: {:ok, document}
+
+  @doc """
+  Directly restores a single `document`.
+
+  Sets `deleted_at` back to nil and `cascaded` to `false`. No-op if the document
+  is not soft-deleted.
+  """
+  @spec restore_document(Document.t()) :: {:ok, Document.t()}
+  def restore_document(%Document{deleted_at: nil} = document), do: {:ok, document}
+
+  def restore_document(%Document{} = document) do
+    document
+    |> Ecto.Changeset.change(deleted_at: nil, cascaded: false)
+    |> Repo.update()
+  end
+
+  @spec maybe_exclude_deleted(Ecto.Queryable.t(), keyword()) :: Ecto.Query.t()
+  defp maybe_exclude_deleted(query, opts) do
+    if Keyword.get(opts, :include_deleted, false) do
+      from(q in query)
+    else
+      from(q in query, where: is_nil(q.deleted_at))
+    end
+  end
+
+  @spec current_time() :: DateTime.t()
+  defp current_time do
+    DateTime.utc_now() |> DateTime.truncate(:second)
+  end
+end
+
+defmodule  (truncated)
+04:14:09.867 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7262, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7262, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7262, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7262, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 22836, "type" => "message"}], "output_tokens" => 22836, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+04:14:09.903 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/018_003_cascading_soft_delete_across_folder_and_documents_01 solution.ex
+04:14:11.358 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":629,"lines_over_98":0,"max_line_length":84,"mode":"full","pipe_chain_count":40,"public_fn_count":35,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":14,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 14 warning(s) → hard fail (overall 0.0)","tests: 29/29 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/018_003_cascading_soft_delete_across_folder_and_documents_01/solution.ex","task":"018_003_cascading_soft_delete_across_folder_and_documents_01","test_failures":[{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders creates a folder with valid attrs"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders returns 422 when name is missing"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders returns 422 when name is empty"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/folders excludes soft-deleted folders by default"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/folders/:id returns 404 for a soft-deleted folder by default"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/folders/:id returns a soft-deleted folder when include_deleted=true"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents creates a document with valid attrs"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents returns 422 when title is missing"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents returns 422 when content is missing"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents returns 422 when folder_id is missing"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents excludes soft-deleted documents by default"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents returns all documents when include_deleted=true"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents/:id returns 404 for a soft-deleted document by default"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents/:id returns a soft-deleted document when include_deleted=true"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/documents/:id (direct) soft-deletes and marks cascaded=false"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/documents/:id (direct) returns 404 for a non-existent document"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/documents/:id (direct) returns 404 when already soft-deleted"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents/:id/restore (direct) restores a soft-deleted document"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents/:id/restore (direct) restoring a non-deleted document is a no-op 200"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents/:id/restore (direct) returns 404 for a non-existent document"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) soft-deletes the folder and returns it with deleted_at set"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) cascade soft-deletes the folder's documents with cascaded=true"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) does not affect documents in other folders"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) returns 404 when the folder is already soft-deleted"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) restores the folder and its cascade-deleted documents"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) does not restore documents that were deleted on their own before the cascade"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) restoring a non-deleted folder is a no-op 200"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) returns 404 for a non-existent folder"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test full cascade lifecycle create folder+doc → cascade delete → invisible → cascade restore → visible"}],"tests_errors":0,"tests_excluded":0,"tests_failed":29,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-12T02:14:11.331839Z"}
+04:14:11.359 [info] cycle 018_003_cascading_soft_delete_across_folder_and_documents_01: repairing — Tests failed (29 failed, 0 errors):
+  - test POST /api/folders creates a folder with valid attrs (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders returns 422 when name is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders returns 422 when name is empty (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/folders excludes soft-deleted folders by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/folders/:id returns 404 for a soft-deleted folder by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/folders/:id returns a soft-deleted folder when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents creates a document with valid attrs (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents returns 422 when title is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents returns 422 when content is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents returns 422 when folder_id is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents excludes soft-deleted documents by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents returns all documents when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents/:id returns 404 for a soft-deleted document by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents/:id returns a soft-deleted document when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/documents/:id (direct) soft-deletes and marks cascaded=false (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/documents/:id (direct) returns 404 for a non-existent document (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/documents/:id (direct) returns 404 when already soft-deleted (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents/:id/restore (direct) restores a soft-deleted document (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents/:id/restore (direct) restoring a non-deleted document is a no-op 200 (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents/:id/restore (direct) returns 404 for a non-existent document (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) soft-deletes the folder and returns it with deleted_at set (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) cascade soft-deletes the folder's documents with cascaded=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) does not affect documents in other folders (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) returns 404 when the folder is already soft-deleted (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) restores the folder and its cascade-deleted documents (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) does not restore documents that were deleted on their own before the cascade (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) restoring a non-deleted folder is a no-op 200 (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) returns 404 for a non-existent folder (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test full cascade lifecycle create folder+doc → cascade delete → invisible → cascade restore → visible (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+04:14:11.359 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+04:14:11.360 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Tests failed (29 failed, 0 errors):
+  - test POST /api/folders creates a folder with valid attrs (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders returns 422 when name is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders returns 422 when name is empty (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/folders excludes soft-deleted folders by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/folders/:id returns 404 for a soft-deleted folder by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/folders/:id returns a soft-deleted folder when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents creates a document with valid attrs (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents returns 422 when title is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents returns 422 when content is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents returns 422 when folder_id is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents excludes soft-deleted documents by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents returns all documents when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents/:id returns 404 for a soft-deleted document by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents/:id returns a soft-deleted document when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/documents/:id (direct) soft-deletes and marks cascaded=false (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/documents/:id (direct) returns 404 for a non-existent document (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/documents/:id (direct) returns 404 when already soft-deleted (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents/:id/restore (direct) restores a soft-deleted document (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents/:id/restore (direct) restoring a non-deleted document is a no-op 200 (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents/:id/restore (direct) returns 404 for a non-existent document (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) soft-deletes the folder and returns it with deleted_at set (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) cascade soft-deletes the folder's documents with cascaded=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) does not affect documents in other folders (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) returns 404 when the folder is already soft-deleted (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) restores the folder and its cascade-deleted documents (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) does not restore documents that were deleted on their own before the cascade (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) restoring a non-deleted folder is a no-op 200 (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) returns 404 for a non-existent folder (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test full cascade lifecycle create folder+doc → cascade delete → invisible → cascade restore → visible (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Build me an Elixir Phoenix JSON API for a two-level `Folder` → `Document` hierarchy with **cascading soft delete**. Soft-deleting a folder must cascade to the documents it contains, and restoring the folder must bring back *exactly* the documents that were removed by that cascade — nothing more. The project should be a standard Mix project using Phoenix and Ecto with PostgreSQL.
+
+## Schemas
+
+Create both schemas inside a context module called `SoftCrud.Documents`.
+
+### `Folder` (`folders` table)
+
+- `name` — string, required, non-empty
+- `deleted_at` — utc_datetime, nullable, defaults to nil
+- `inserted_at` / `updated_at` — standard Phoenix timestamps
+
+### `Document` (`documents` table)
+
+- `title` — string, required, non-empty
+- `content` — string, required
+- `folder_id` — required; references a `Folder`. Every document belongs to exactly one folder.
+- `deleted_at` — utc_datetime, nullable, defaults to nil
+- `cascaded` — boolean, required, **defaults to `fals (truncated)
+04:15:56.554 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule SoftCrud.Repo do
+  @moduledoc """
+  Ecto repository for the SoftCrud application.
+
+  Backed by PostgreSQL. In the test environment the repo is configured with the
+  SQL Sandbox pool so each test runs inside its own transaction.
+  """
+
+  use Ecto.Repo,
+    otp_app: :soft_crud,
+    adapter: Ecto.Adapters.Postgres
+end
+
+defmodule SoftCrud.Documents.Folder do
+  @moduledoc """
+  Ecto schema and changeset for a `folders` record.
+
+  A folder groups documents and can be soft-deleted. Soft deletion is recorded
+  by setting `deleted_at` to a UTC timestamp; a `nil` value means the folder is
+  live.
+  """
+
+  use Ecto.Schema
+
+  import Ecto.Changeset
+
+  alias SoftCrud.Documents.Document
+
+  @type t :: %__MODULE__{}
+
+  schema "folders" do
+    field(:name, :string)
+    field(:deleted_at, :utc_datetime)
+
+    has_many(:documents, Document)
+
+    timestamps()
+  end
+
+  @doc """
+  Builds a changeset for creating or updating a folder.
+
+  Requires a present, non-empty `name`.
+  """
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
+  def changeset(folder, attrs) do
+    folder
+    |> cast(attrs, [:name, :deleted_at])
+    |> validate_required([:name])
+    |> validate_length(:name, min: 1)
+  end
+end
+
+defmodule SoftCrud.Documents.Document do
+  @moduledoc """
+  Ecto schema and changeset for a `documents` record.
+
+  Every document belongs to exactly one folder. The `cascaded` flag records how
+  a document came to be soft-deleted: `true` means it was removed as a side
+  effect of its folder being soft-deleted, `false` means it was never deleted or
+  was deleted directly on its own.
+  """
+
+  use Ecto.Schema
+
+  import Ecto.Changeset
+
+  alias SoftCrud.Documents.Folder
+
+  @type t :: %__MODULE__{}
+
+  schema "documents" do
+    field(:title, :string)
+    field(:content, :string)
+    field(:deleted_at, :utc_datetime)
+    field(:cascaded, :boolean, default: false)
+
+    belongs_to(:folder, Folder)
+
+    timestamps()
+  end
+
+  @doc """
+  Builds a changeset for creating or updating a document.
+
+  Requires a present, non-empty `title`, a present `content`, and a present
+  `folder_id`.
+  """
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
+  def changeset(document, attrs) do
+    document
+    |> cast(attrs, [:title, :content, :folder_id, :deleted_at, :cascaded])
+    |> validate_required([:title, :content, :folder_id])
+    |> validate_length(:title, min: 1)
+    |> foreign_key_constraint(:folder_id)
+  end
+end
+
+defmodule SoftCrud.Documents do
+  @moduledoc """
+  The Documents context: a two-level `Folder` -> `Document` hierarchy with
+  cascading soft delete.
+
+  Soft-deleting a folder cascades to the documents it contains, marking each
+  cascade-deleted document with `cascaded: true`. Restoring the folder brings
+  back exactly the documents that were removed by that cascade (those with
+  `cascaded: true`) and nothing more.
+  """
+
+  import Ecto.Query, warn: false
+
+  alias SoftCrud.Repo
+  alias SoftCrud.Documents.{Folder, Document}
+
+  @doc """
+  Creates a folder from `attrs`.
+
+  Returns `{:ok, folder}` or `{:error, changeset}`.
+  """
+  @spec create_folder(map()) :: {:ok, Folder.t()} | {:error, Ecto.Changeset.t()}
+  def create_folder(attrs) do
+    %Folder{}
+    |> Folder.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Lists folders.
+
+  By default excludes soft-deleted folders. Pass `include_deleted: true` to
+  include them.
+  """
+  @spec list_folders(keyword()) :: [Folder.t()]
+  def list_folders(opts \\ []) do
+    Folder
+    |> maybe_exclude_deleted(opts)
+    |> Repo.all()
+  end
+
+  @doc """
+  Fetches a folder by `id`.
+
+  Returns `{:ok, folder}` or `{:error, :not_found}`. By default a soft-deleted
+  folder is treated as not found; pass `include_deleted: true` to return it.
+  """
+  @spec get_folder(term(), keyword()) :: {:ok, Folder.t()} | {:error, :not_found}
+  def get_folder(id, opts \\ []) do
+    Folder
+    |> maybe_exclude_deleted(opts)
+    |> Repo.get(id)
+    |> case do
+      nil -> {:error, :not_found}
+      %Folder{} = folder -> {:ok, folder}
+    end
+  end
+
+  @doc """
+  Soft-deletes `folder` and cascades to its live documents.
+
+  Sets the folder's `deleted_at` to the current UTC time and soft-deletes every
+  document in the folder that is not already soft-deleted, marking each with
+  `cascaded: true`. The operation is atomic. A no-op if already soft-deleted.
+  """
+  @spec soft_delete_folder(Folder.t()) :: {:ok, Folder.t()}
+  def soft_delete_folder(%Folder{deleted_at: nil} = folder) do
+    now = current_time()
+
+    Repo.transaction(fn ->
+      {:ok, updated} =
+        folder
+        |> Ecto.Changeset.change(deleted_at: now)
+        |> Repo.update()
+
+      from(d in Document,
+        where: d.folder_id == ^folder.id and is_nil(d.deleted_at)
+      )
+      |> Repo.update_all(set: [deleted_at: now, cascaded: true, updated_at: now])
+
+      updated
+    end)
+  end
+
+  def soft_delete_folder(%Folder{} = folder), do: {:ok, folder}
+
+  @doc """
+  Restores `folder` and cascade-restores its cascade-deleted documents.
+
+  Sets the folder's `deleted_at` back to nil and restores every document in the
+  folder whose `cascaded` flag is `true`, resetting that flag to `false`.
+  Documents deleted on their own are left untouched. Atomic. No-op if the folder
+  is not soft-deleted.
+  """
+  @spec restore_folder(Folder.t()) :: {:ok, Folder.t()}
+  def restore_folder(%Folder{deleted_at: nil} = folder), do: {:ok, folder}
+
+  def restore_folder(%Folder{} = folder) do
+    now = current_time()
+
+    Repo.transaction(fn ->
+      {:ok, updated} =
+        folder
+        |> Ecto.Changeset.change(deleted_at: nil)
+        |> Repo.update()
+
+      from(d in Document,
+        where: d.folder_id == ^folder.id and d.cascaded == true
+      )
+      |> Repo.update_all(set: [deleted_at: nil, cascaded: false, updated_at: now])
+
+      updated
+    end)
+  end
+
+  @doc """
+  Creates a document from `attrs`.
+
+  Returns `{:ok, document}` or `{:error, changeset}`. New documents start with
+  `deleted_at: nil` and `cascaded: false`.
+  """
+  @spec create_document(map()) :: {:ok, Document.t()} | {:error, Ecto.Changeset.t()}
+  def create_document(attrs) do
+    %Document{}
+    |> Document.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Lists documents.
+
+  By default excludes soft-deleted documents. Pass `include_deleted: true` to
+  include them.
+  """
+  @spec list_documents(keyword()) :: [Document.t()]
+  def list_documents(opts \\ []) do
+    Document
+    |> maybe_exclude_deleted(opts)
+    |> Repo.all()
+  end
+
+  @doc """
+  Fetches a document by `id`.
+
+  Returns `{:ok, document}` or `{:error, :not_found}`. By default a soft-deleted
+  document is treated as not found; pass `include_deleted: true` to return it.
+  """
+  @spec get_document(term(), keyword()) ::
+          {:ok, Document.t()} | {:error, :not_found}
+  def get_document(id, opts \\ []) do
+    Document
+    |> maybe_exclude_deleted(opts)
+    |> Repo.get(id)
+    |> case do
+      nil -> {:error, :not_found}
+      %Document{} = document -> {:ok, document}
+    end
+  end
+
+  @doc """
+  Directly soft-deletes a single `document`.
+
+  Sets `deleted_at` to the current UTC time and `cascaded` to `false` (a direct
+  deletion, not a cascade). No-op if already soft-deleted.
+  """
+  @spec soft_delete_document(Document.t()) :: {:ok, Document.t()}
+  def soft_delete_document(%Document{deleted_at: nil} = document) do
+    document
+    |> Ecto.Changeset.change(deleted_at: current_time(), cascaded: false)
+    |> Repo.update()
+  end
+
+  def soft_delete_document(%Document{} = document), do: {:ok, document}
+
+  @doc """
+  Directly restores a single `document`.
+
+  Sets `deleted_at` back to nil and `cascaded` to `false`. No-op if the document
+  is not soft-deleted.
+  """
+  @spec restore_document(Document.t()) :: {:ok, Document.t()}
+  def restore_document(%Document{deleted_at: nil} = document), do: {:ok, document}
+
+  def restore_document(%Document{} = document) do
+    document
+    |> Ecto.Changeset.change(deleted_at: nil, cascaded: false)
+    |> Repo.update()
+  end
+
+  @spec maybe_exclude_deleted(Ecto.Queryable.t(), keyword()) :: Ecto.Query.t (truncated)
+04:15:56.554 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 23631, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 23631, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 23631, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 23631, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 10485, "type" => "message"}], "output_tokens" => 10485, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+04:15:56.591 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/018_003_cascading_soft_delete_across_folder_and_documents_01 solution.ex
+04:15:57.761 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":642,"lines_over_98":0,"max_line_length":84,"mode":"full","pipe_chain_count":40,"public_fn_count":35,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.3,"reasons":["tests: 29/29 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/018_003_cascading_soft_delete_across_folder_and_documents_01/solution.ex","task":"018_003_cascading_soft_delete_across_folder_and_documents_01","test_failures":[{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders creates a folder with valid attrs"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders returns 422 when name is missing"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders returns 422 when name is empty"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/folders excludes soft-deleted folders by default"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/folders/:id returns 404 for a soft-deleted folder by default"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/folders/:id returns a soft-deleted folder when include_deleted=true"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents creates a document with valid attrs"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents returns 422 when title is missing"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents returns 422 when content is missing"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents returns 422 when folder_id is missing"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents excludes soft-deleted documents by default"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents returns all documents when include_deleted=true"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents/:id returns 404 for a soft-deleted document by default"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents/:id returns a soft-deleted document when include_deleted=true"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/documents/:id (direct) soft-deletes and marks cascaded=false"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/documents/:id (direct) returns 404 for a non-existent document"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/documents/:id (direct) returns 404 when already soft-deleted"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents/:id/restore (direct) restores a soft-deleted document"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents/:id/restore (direct) restoring a non-deleted document is a no-op 200"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents/:id/restore (direct) returns 404 for a non-existent document"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) soft-deletes the folder and returns it with deleted_at set"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) cascade soft-deletes the folder's documents with cascaded=true"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) does not affect documents in other folders"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) returns 404 when the folder is already soft-deleted"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) restores the folder and its cascade-deleted documents"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) does not restore documents that were deleted on their own before the cascade"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) restoring a non-deleted folder is a no-op 200"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) returns 404 for a non-existent folder"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test full cascade lifecycle create folder+doc → cascade delete → invisible → cascade restore → visible"}],"tests_errors":0,"tests_excluded":0,"tests_failed":29,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-12T02:15:57.732577Z"}
+04:15:57.762 [info] cycle 018_003_cascading_soft_delete_across_folder_and_documents_01: repairing — Tests failed (29 failed, 0 errors):
+  - test POST /api/folders creates a folder with valid attrs (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/folders returns 422 when name is missing (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/folders returns 422 when name is empty (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/folders excludes soft-deleted folders by default (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/folders/:id returns 404 for a soft-deleted folder by default (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/folders/:id returns a soft-deleted folder when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents creates a document with valid attrs (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents returns 422 when title is missing (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents returns 422 when content is missing (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents returns 422 when folder_id is missing (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/documents excludes soft-deleted documents by default (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/documents returns all documents when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/documents/:id returns 404 for a soft-deleted document by default (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/documents/:id returns a soft-deleted document when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/documents/:id (direct) soft-deletes and marks cascaded=false (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/documents/:id (direct) returns 404 for a non-existent document (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/documents/:id (direct) returns 404 when already soft-deleted (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents/:id/restore (direct) restores a soft-deleted document (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents/:id/restore (direct) restoring a non-deleted document is a no-op 200 (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents/:id/restore (direct) returns 404 for a non-existent document (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/folders/:id (cascade) soft-deletes the folder and returns it with deleted_at set (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/folders/:id (cascade) cascade soft-deletes the folder's documents with cascaded=true (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/folders/:id (cascade) does not affect documents in other folders (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/folders/:id (cascade) returns 404 when the folder is already soft-deleted (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/folders/:id/restore (cascade) restores the folder and its cascade-deleted documents (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/folders/:id/restore (cascade) does not restore documents that were deleted on their own before the cascade (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/folders/:id/restore (cascade) restoring a non-deleted folder is a no-op 200 (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/folders/:id/restore (cascade) returns 404 for a non-existent folder (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test full cascade lifecycle create folder+doc → cascade delete → invisible → cascade restore → visible (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+04:15:57.762 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+04:15:57.762 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Tests failed (29 failed, 0 errors):
+  - test POST /api/folders creates a folder with valid attrs (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/folders returns 422 when name is missing (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/folders returns 422 when name is empty (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/folders excludes soft-deleted folders by default (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/folders/:id returns 404 for a soft-deleted folder by default (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/folders/:id returns a soft-deleted folder when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents creates a document with valid attrs (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents returns 422 when title is missing (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents returns 422 when content is missing (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents returns 422 when folder_id is missing (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/documents excludes soft-deleted documents by default (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/documents returns all documents when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/documents/:id returns 404 for a soft-deleted document by default (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test GET /api/documents/:id returns a soft-deleted document when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/documents/:id (direct) soft-deletes and marks cascaded=false (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/documents/:id (direct) returns 404 for a non-existent document (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/documents/:id (direct) returns 404 when already soft-deleted (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents/:id/restore (direct) restores a soft-deleted document (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents/:id/restore (direct) restoring a non-deleted document is a no-op 200 (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/documents/:id/restore (direct) returns 404 for a non-existent document (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/folders/:id (cascade) soft-deletes the folder and returns it with deleted_at set (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/folders/:id (cascade) cascade soft-deletes the folder's documents with cascaded=true (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/folders/:id (cascade) does not affect documents in other folders (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test DELETE /api/folders/:id (cascade) returns 404 when the folder is already soft-deleted (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/folders/:id/restore (cascade) restores the folder and its cascade-deleted documents (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/folders/:id/restore (cascade) does not restore documents that were deleted on their own before the cascade (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/folders/:id/restore (cascade) restoring a non-deleted folder is a no-op 200 (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test POST /api/folders/:id/restore (cascade) returns 404 for a non-existent folder (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+  - test full cascade lifecycle create folder+doc → cascade delete → invisible → cascade restore → visible (SoftCrudWeb.CascadeSoftDeleteTest): could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Build me an Elixir Phoenix JSON API for a two-level `Folder` → `Document` hierarchy with **cascading soft delete**. Soft-deleting a folder must cascade to the documents it contains, and restoring the folder must bring back *exactly* the documents that were removed by that cascade — nothing more. The project should be a standard Mix project using Phoenix and Ecto with PostgreSQL.
+
+## Schemas
+
+Create both schemas inside a context module called `SoftCrud.Documents`.
+
+### `Folder` (`folders` table)
+
+- `name` — string, required, non-empty
+- `deleted_at` — utc_datetime, nullable, defaults to nil
+- `inserted_at` / `updated_at` — standard Phoenix timestamps
+
+### `Document` (`documents` table)
+
+- `title` — string, required, non-empty
+- `content` — string, required
+- `folder_id` — required; references a `Folder`. Every document belongs to exactly one folder.
+- `deleted_at` — utc_datetime, nullable, defaults to nil
+- `cascaded` — boolean, required, **defaults to `false`**. This flag records *how* a document came to be soft-deleted: `true` means it was removed as a side effect of its folder being soft-deleted; `false` means it was either n (truncated)
+04:17:09.614 [debug] claude -p RESULT (stop="end_turn"):
+The error is `could not lookup Ecto repo SoftCrud.Repo because it was not started`. The prompt explicitly says the repo is provided and started by the test environment and I must **not** define the repo module. My `solution.ex` redefines `SoftCrud.Repo` with `otp_app: :soft_crud`, which shadows the test-provided (already-started) repo with an unstarted one. Removing that module definition fixes it.
+
+<file path="solution.ex">
+defmodule SoftCrud.Documents.Folder do
+  @moduledoc """
+  Ecto schema and changeset for a `folders` record.
+
+  A folder groups documents and can be soft-deleted. Soft deletion is recorded
+  by setting `deleted_at` to a UTC timestamp; a `nil` value means the folder is
+  live.
+  """
+
+  use Ecto.Schema
+
+  import Ecto.Changeset
+
+  alias SoftCrud.Documents.Document
+
+  @type t :: %__MODULE__{}
+
+  schema "folders" do
+    field(:name, :string)
+    field(:deleted_at, :utc_datetime)
+
+    has_many(:documents, Document)
+
+    timestamps()
+  end
+
+  @doc """
+  Builds a changeset for creating or updating a folder.
+
+  Requires a present, non-empty `name`.
+  """
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
+  def changeset(folder, attrs) do
+    folder
+    |> cast(attrs, [:name, :deleted_at])
+    |> validate_required([:name])
+    |> validate_length(:name, min: 1)
+  end
+end
+
+defmodule SoftCrud.Documents.Document do
+  @moduledoc """
+  Ecto schema and changeset for a `documents` record.
+
+  Every document belongs to exactly one folder. The `cascaded` flag records how
+  a document came to be soft-deleted: `true` means it was removed as a side
+  effect of its folder being soft-deleted, `false` means it was never deleted or
+  was deleted directly on its own.
+  """
+
+  use Ecto.Schema
+
+  import Ecto.Changeset
+
+  alias SoftCrud.Documents.Folder
+
+  @type t :: %__MODULE__{}
+
+  schema "documents" do
+    field(:title, :string)
+    field(:content, :string)
+    field(:deleted_at, :utc_datetime)
+    field(:cascaded, :boolean, default: false)
+
+    belongs_to(:folder, Folder)
+
+    timestamps()
+  end
+
+  @doc """
+  Builds a changeset for creating or updating a document.
+
+  Requires a present, non-empty `title`, a present `content`, and a present
+  `folder_id`.
+  """
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
+  def changeset(document, attrs) do
+    document
+    |> cast(attrs, [:title, :content, :folder_id, :deleted_at, :cascaded])
+    |> validate_required([:title, :content, :folder_id])
+    |> validate_length(:title, min: 1)
+    |> foreign_key_constraint(:folder_id)
+  end
+end
+
+defmodule SoftCrud.Documents do
+  @moduledoc """
+  The Documents context: a two-level `Folder` -> `Document` hierarchy with
+  cascading soft delete.
+
+  Soft-deleting a folder cascades to the documents it contains, marking each
+  cascade-deleted document with `cascaded: true`. Restoring the folder brings
+  back exactly the documents that were removed by that cascade (those with
+  `cascaded: true`) and nothing more.
+  """
+
+  import Ecto.Query, warn: false
+
+  alias SoftCrud.Repo
+  alias SoftCrud.Documents.{Folder, Document}
+
+  @doc """
+  Creates a folder from `attrs`.
+
+  Returns `{:ok, folder}` or `{:error, changeset}`.
+  """
+  @spec create_folder(map()) :: {:ok, Folder.t()} | {:error, Ecto.Changeset.t()}
+  def create_folder(attrs) do
+    %Folder{}
+    |> Folder.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Lists folders.
+
+  By default excludes soft-deleted folders. Pass `include_deleted: true` to
+  include them.
+  """
+  @spec list_folders(keyword()) :: [Folder.t()]
+  def list_folders(opts \\ []) do
+    Folder
+    |> maybe_exclude_deleted(opts)
+    |> Repo.all()
+  end
+
+  @doc """
+  Fetches a folder by `id`.
+
+  Returns `{:ok, folder}` or `{:error, :not_found}`. By default a soft-deleted
+  folder is treated as not found; pass `include_deleted: true` to return it.
+  """
+  @spec get_folder(term(), keyword()) :: {:ok, Folder.t()} | {:error, :not_found}
+  def get_folder(id, opts \\ []) do
+    Folder
+    |> maybe_exclude_deleted(opts)
+    |> Repo.get(id)
+    |> case do
+      nil -> {:error, :not_found}
+      %Folder{} = folder -> {:ok, folder}
+    end
+  end
+
+  @doc """
+  Soft-deletes `folder` and cascades to its live documents.
+
+  Sets the folder's `deleted_at` to the current UTC time and soft-deletes every
+  document in the folder that is not already soft-deleted, marking each with
+  `cascaded: true`. The operation is atomic. A no-op if already soft-deleted.
+  """
+  @spec soft_delete_folder(Folder.t()) :: {:ok, Folder.t()}
+  def soft_delete_folder(%Folder{deleted_at: nil} = folder) do
+    now = current_time()
+
+    Repo.transaction(fn ->
+      {:ok, updated} =
+        folder
+        |> Ecto.Changeset.change(deleted_at: now)
+        |> Repo.update()
+
+      from(d in Document,
+        where: d.folder_id == ^folder.id and is_nil(d.deleted_at)
+      )
+      |> Repo.update_all(set: [deleted_at: now, cascaded: true, updated_at: now])
+
+      updated
+    end)
+  end
+
+  def soft_delete_folder(%Folder{} = folder), do: {:ok, folder}
+
+  @doc """
+  Restores `folder` and cascade-restores its cascade-deleted documents.
+
+  Sets the folder's `deleted_at` back to nil and restores every document in the
+  folder whose `cascaded` flag is `true`, resetting that flag to `false`.
+  Documents deleted on their own are left untouched. Atomic. No-op if the folder
+  is not soft-deleted.
+  """
+  @spec restore_folder(Folder.t()) :: {:ok, Folder.t()}
+  def restore_folder(%Folder{deleted_at: nil} = folder), do: {:ok, folder}
+
+  def restore_folder(%Folder{} = folder) do
+    now = current_time()
+
+    Repo.transaction(fn ->
+      {:ok, updated} =
+        folder
+        |> Ecto.Changeset.change(deleted_at: nil)
+        |> Repo.update()
+
+      from(d in Document,
+        where: d.folder_id == ^folder.id and d.cascaded == true
+      )
+      |> Repo.update_all(set: [deleted_at: nil, cascaded: false, updated_at: now])
+
+      updated
+    end)
+  end
+
+  @doc """
+  Creates a document from `attrs`.
+
+  Returns `{:ok, document}` or `{:error, changeset}`. New documents start with
+  `deleted_at: nil` and `cascaded: false`.
+  """
+  @spec create_document(map()) :: {:ok, Document.t()} | {:error, Ecto.Changeset.t()}
+  def create_document(attrs) do
+    %Document{}
+    |> Document.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Lists documents.
+
+  By default excludes soft-deleted documents. Pass `include_deleted: true` to
+  include them.
+  """
+  @spec list_documents(keyword()) :: [Document.t()]
+  def list_documents(opts \\ []) do
+    Document
+    |> maybe_exclude_deleted(opts)
+    |> Repo.all()
+  end
+
+  @doc """
+  Fetches a document by `id`.
+
+  Returns `{:ok, document}` or `{:error, :not_found}`. By default a soft-deleted
+  document is treated as not found; pass `include_deleted: true` to return it.
+  """
+  @spec get_document(term(), keyword()) ::
+          {:ok, Document.t()} | {:error, :not_found}
+  def get_document(id, opts \\ []) do
+    Document
+    |> maybe_exclude_deleted(opts)
+    |> Repo.get(id)
+    |> case do
+      nil -> {:error, :not_found}
+      %Document{} = document -> {:ok, document}
+    end
+  end
+
+  @doc """
+  Directly soft-deletes a single `document`.
+
+  Sets `deleted_at` to the current UTC time and `cascaded` to `false` (a direct
+  deletion, not a cascade). No-op if already soft-deleted.
+  """
+  @spec soft_delete_document(Document.t()) :: {:ok, Document.t()}
+  def soft_delete_document(%Document{deleted_at: nil} = document) do
+    document
+    |> Ecto.Changeset.change(deleted_at: current_time(), cascaded: false)
+    |> Repo.update()
+  end
+
+  def soft_delete_document(%Document{} = document), do: {:ok, document}
+
+  @doc """
+  Directly restores a single `document`.
+
+  Sets `deleted_at` back to nil and `cascaded` to `false`. No-op if the document
+  is not soft-deleted.
+  """
+  @spec restore_document(Document.t()) :: {:ok, Document.t()}
+  def restore_document(%Document{deleted_at: nil} = document), do: {:ok, document}
+
+  def restore_document(%Document{} = document) do
+    document
+    |> Ecto.Changeset.change(deleted_at: nil, cascaded: false)
+    |> Repo.update()
+  end
+
+  (truncated)
+04:17:09.615 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 23429, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 23429, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 23429, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 23429, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 8103, "type" => "message"}], "output_tokens" => 8103, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+04:17:09.648 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/018_003_cascading_soft_delete_across_folder_and_documents_01 solution.ex
+04:17:11.102 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":629,"lines_over_98":0,"max_line_length":84,"mode":"full","pipe_chain_count":40,"public_fn_count":35,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":14,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 14 warning(s) → hard fail (overall 0.0)","tests: 29/29 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/018_003_cascading_soft_delete_across_folder_and_documents_01/solution.ex","task":"018_003_cascading_soft_delete_across_folder_and_documents_01","test_failures":[{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders creates a folder with valid attrs"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders returns 422 when name is missing"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders returns 422 when name is empty"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/folders excludes soft-deleted folders by default"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/folders/:id returns 404 for a soft-deleted folder by default"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/folders/:id returns a soft-deleted folder when include_deleted=true"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents creates a document with valid attrs"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents returns 422 when title is missing"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents returns 422 when content is missing"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents returns 422 when folder_id is missing"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents excludes soft-deleted documents by default"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents returns all documents when include_deleted=true"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents/:id returns 404 for a soft-deleted document by default"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents/:id returns a soft-deleted document when include_deleted=true"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/documents/:id (direct) soft-deletes and marks cascaded=false"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/documents/:id (direct) returns 404 for a non-existent document"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/documents/:id (direct) returns 404 when already soft-deleted"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents/:id/restore (direct) restores a soft-deleted document"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents/:id/restore (direct) restoring a non-deleted document is a no-op 200"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents/:id/restore (direct) returns 404 for a non-existent document"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) soft-deletes the folder and returns it with deleted_at set"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) cascade soft-deletes the folder's documents with cascaded=true"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) does not affect documents in other folders"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) returns 404 when the folder is already soft-deleted"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) restores the folder and its cascade-deleted documents"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) does not restore documents that were deleted on their own before the cascade"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) restoring a non-deleted folder is a no-op 200"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) returns 404 for a non-existent folder"},{"message":"function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test full cascade lifecycle create folder+doc → cascade delete → invisible → cascade restore → visible"}],"tests_errors":0,"tests_excluded":0,"tests_failed":29,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-12T02:17:11.074275Z"}
+04:17:11.103 [info] cycle 018_003_cascading_soft_delete_across_folder_and_documents_01: repairing — Tests failed (29 failed, 0 errors):
+  - test POST /api/folders creates a folder with valid attrs (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders returns 422 when name is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders returns 422 when name is empty (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/folders excludes soft-deleted folders by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/folders/:id returns 404 for a soft-deleted folder by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/folders/:id returns a soft-deleted folder when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents creates a document with valid attrs (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents returns 422 when title is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents returns 422 when content is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents returns 422 when folder_id is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents excludes soft-deleted documents by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents returns all documents when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents/:id returns 404 for a soft-deleted document by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents/:id returns a soft-deleted document when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/documents/:id (direct) soft-deletes and marks cascaded=false (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/documents/:id (direct) returns 404 for a non-existent document (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/documents/:id (direct) returns 404 when already soft-deleted (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents/:id/restore (direct) restores a soft-deleted document (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents/:id/restore (direct) restoring a non-deleted document is a no-op 200 (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents/:id/restore (direct) returns 404 for a non-existent document (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) soft-deletes the folder and returns it with deleted_at set (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) cascade soft-deletes the folder's documents with cascaded=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) does not affect documents in other folders (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) returns 404 when the folder is already soft-deleted (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) restores the folder and its cascade-deleted documents (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) does not restore documents that were deleted on their own before the cascade (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) restoring a non-deleted folder is a no-op 200 (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) returns 404 for a non-existent folder (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test full cascade lifecycle create folder+doc → cascade delete → invisible → cascade restore → visible (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+04:17:11.103 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+04:17:11.103 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Tests failed (29 failed, 0 errors):
+  - test POST /api/folders creates a folder with valid attrs (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders returns 422 when name is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders returns 422 when name is empty (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/folders excludes soft-deleted folders by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/folders/:id returns 404 for a soft-deleted folder by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/folders/:id returns a soft-deleted folder when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents creates a document with valid attrs (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents returns 422 when title is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents returns 422 when content is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents returns 422 when folder_id is missing (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents excludes soft-deleted documents by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents returns all documents when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents/:id returns 404 for a soft-deleted document by default (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test GET /api/documents/:id returns a soft-deleted document when include_deleted=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/documents/:id (direct) soft-deletes and marks cascaded=false (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/documents/:id (direct) returns 404 for a non-existent document (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/documents/:id (direct) returns 404 when already soft-deleted (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents/:id/restore (direct) restores a soft-deleted document (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents/:id/restore (direct) restoring a non-deleted document is a no-op 200 (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/documents/:id/restore (direct) returns 404 for a non-existent document (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) soft-deletes the folder and returns it with deleted_at set (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) cascade soft-deletes the folder's documents with cascaded=true (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) does not affect documents in other folders (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test DELETE /api/folders/:id (cascade) returns 404 when the folder is already soft-deleted (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) restores the folder and its cascade-deleted documents (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) does not restore documents that were deleted on their own before the cascade (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) restoring a non-deleted folder is a no-op 200 (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test POST /api/folders/:id/restore (cascade) returns 404 for a non-existent folder (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+  - test full cascade lifecycle create folder+doc → cascade delete → invisible → cascade restore → visible (SoftCrudWeb.CascadeSoftDeleteTest): function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Build me an Elixir Phoenix JSON API for a two-level `Folder` → `Document` hierarchy with **cascading soft delete**. Soft-deleting a folder must cascade to the documents it contains, and restoring the folder must bring back *exactly* the documents that were removed by that cascade — nothing more. The project should be a standard Mix project using Phoenix and Ecto with PostgreSQL.
+
+## Schemas
+
+Create both schemas inside a context module called `SoftCrud.Documents`.
+
+### `Folder` (`folders` table)
+
+- `name` — string, required, non-empty
+- `deleted_at` — utc_datetime, nullable, defaults to nil
+- `inserted_at` / `updated_at` — standard Phoenix timestamps
+
+### `Document` (`documents` table)
+
+- `title` — string, required, non-empty
+- `content` — string, required
+- `folder_id` — required; references a `Folder`. Every document belongs to exactly one folder.
+- `deleted_at` — utc_datetime, nullable, defaults to nil
+- `cascaded` — boolean, required, **defaults to `fals (truncated)
+04:18:48.297 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule SoftCrud.Repo do
+  @moduledoc """
+  The Ecto repository for the `SoftCrud` application.
+
+  Backed by PostgreSQL. The repository is defined here so the test environment
+  can start it, run the migration against it, and check out sandbox connections
+  keyed on `SoftCrud.Repo`.
+  """
+
+  use Ecto.Repo,
+    otp_app: :soft_crud,
+    adapter: Ecto.Adapters.Postgres
+end
+
+defmodule SoftCrud.Documents.Folder do
+  @moduledoc """
+  Ecto schema and changeset for a `folders` record.
+
+  A folder groups documents and can be soft-deleted. Soft deletion is recorded
+  by setting `deleted_at` to a UTC timestamp; a `nil` value means the folder is
+  live.
+  """
+
+  use Ecto.Schema
+
+  import Ecto.Changeset
+
+  alias SoftCrud.Documents.Document
+
+  @type t :: %__MODULE__{}
+
+  schema "folders" do
+    field(:name, :string)
+    field(:deleted_at, :utc_datetime)
+
+    has_many(:documents, Document)
+
+    timestamps()
+  end
+
+  @doc """
+  Builds a changeset for creating or updating a folder.
+
+  Requires a present, non-empty `name`.
+  """
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
+  def changeset(folder, attrs) do
+    folder
+    |> cast(attrs, [:name, :deleted_at])
+    |> validate_required([:name])
+    |> validate_length(:name, min: 1)
+  end
+end
+
+defmodule SoftCrud.Documents.Document do
+  @moduledoc """
+  Ecto schema and changeset for a `documents` record.
+
+  Every document belongs to exactly one folder. The `cascaded` flag records how
+  a document came to be soft-deleted: `true` means it was removed as a side
+  effect of its folder being soft-deleted, `false` means it was never deleted or
+  was deleted directly on its own.
+  """
+
+  use Ecto.Schema
+
+  import Ecto.Changeset
+
+  alias SoftCrud.Documents.Folder
+
+  @type t :: %__MODULE__{}
+
+  schema "documents" do
+    field(:title, :string)
+    field(:content, :string)
+    field(:deleted_at, :utc_datetime)
+    field(:cascaded, :boolean, default: false)
+
+    belongs_to(:folder, Folder)
+
+    timestamps()
+  end
+
+  @doc """
+  Builds a changeset for creating or updating a document.
+
+  Requires a present, non-empty `title`, a present `content`, and a present
+  `folder_id`.
+  """
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
+  def changeset(document, attrs) do
+    document
+    |> cast(attrs, [:title, :content, :folder_id, :deleted_at, :cascaded])
+    |> validate_required([:title, :content, :folder_id])
+    |> validate_length(:title, min: 1)
+    |> foreign_key_constraint(:folder_id)
+  end
+end
+
+defmodule SoftCrud.Documents do
+  @moduledoc """
+  The Documents context: a two-level `Folder` -> `Document` hierarchy with
+  cascading soft delete.
+
+  Soft-deleting a folder cascades to the documents it contains, marking each
+  cascade-deleted document with `cascaded: true`. Restoring the folder brings
+  back exactly the documents that were removed by that cascade (those with
+  `cascaded: true`) and nothing more.
+  """
+
+  import Ecto.Query, warn: false
+
+  alias SoftCrud.Repo
+  alias SoftCrud.Documents.{Folder, Document}
+
+  @doc """
+  Creates a folder from `attrs`.
+
+  Returns `{:ok, folder}` or `{:error, changeset}`.
+  """
+  @spec create_folder(map()) :: {:ok, Folder.t()} | {:error, Ecto.Changeset.t()}
+  def create_folder(attrs) do
+    %Folder{}
+    |> Folder.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Lists folders.
+
+  By default excludes soft-deleted folders. Pass `include_deleted: true` to
+  include them.
+  """
+  @spec list_folders(keyword()) :: [Folder.t()]
+  def list_folders(opts \\ []) do
+    Folder
+    |> maybe_exclude_deleted(opts)
+    |> Repo.all()
+  end
+
+  @doc """
+  Fetches a folder by `id`.
+
+  Returns `{:ok, folder}` or `{:error, :not_found}`. By default a soft-deleted
+  folder is treated as not found; pass `include_deleted: true` to return it.
+  """
+  @spec get_folder(term(), keyword()) :: {:ok, Folder.t()} | {:error, :not_found}
+  def get_folder(id, opts \\ []) do
+    Folder
+    |> maybe_exclude_deleted(opts)
+    |> Repo.get(id)
+    |> case do
+      nil -> {:error, :not_found}
+      %Folder{} = folder -> {:ok, folder}
+    end
+  end
+
+  @doc """
+  Soft-deletes `folder` and cascades to its live documents.
+
+  Sets the folder's `deleted_at` to the current UTC time and soft-deletes every
+  document in the folder that is not already soft-deleted, marking each with
+  `cascaded: true`. The operation is atomic. A no-op if already soft-deleted.
+  """
+  @spec soft_delete_folder(Folder.t()) :: {:ok, Folder.t()}
+  def soft_delete_folder(%Folder{deleted_at: nil} = folder) do
+    now = current_time()
+
+    Repo.transaction(fn ->
+      {:ok, updated} =
+        folder
+        |> Ecto.Changeset.change(deleted_at: now)
+        |> Repo.update()
+
+      from(d in Document,
+        where: d.folder_id == ^folder.id and is_nil(d.deleted_at)
+      )
+      |> Repo.update_all(set: [deleted_at: now, cascaded: true, updated_at: now])
+
+      updated
+    end)
+  end
+
+  def soft_delete_folder(%Folder{} = folder), do: {:ok, folder}
+
+  @doc """
+  Restores `folder` and cascade-restores its cascade-deleted documents.
+
+  Sets the folder's `deleted_at` back to nil and restores every document in the
+  folder whose `cascaded` flag is `true`, resetting that flag to `false`.
+  Documents deleted on their own are left untouched. Atomic. No-op if the folder
+  is not soft-deleted.
+  """
+  @spec restore_folder(Folder.t()) :: {:ok, Folder.t()}
+  def restore_folder(%Folder{deleted_at: nil} = folder), do: {:ok, folder}
+
+  def restore_folder(%Folder{} = folder) do
+    now = current_time()
+
+    Repo.transaction(fn ->
+      {:ok, updated} =
+        folder
+        |> Ecto.Changeset.change(deleted_at: nil)
+        |> Repo.update()
+
+      from(d in Document,
+        where: d.folder_id == ^folder.id and d.cascaded == true
+      )
+      |> Repo.update_all(set: [deleted_at: nil, cascaded: false, updated_at: now])
+
+      updated
+    end)
+  end
+
+  @doc """
+  Creates a document from `attrs`.
+
+  Returns `{:ok, document}` or `{:error, changeset}`. New documents start with
+  `deleted_at: nil` and `cascaded: false`.
+  """
+  @spec create_document(map()) :: {:ok, Document.t()} | {:error, Ecto.Changeset.t()}
+  def create_document(attrs) do
+    %Document{}
+    |> Document.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Lists documents.
+
+  By default excludes soft-deleted documents. Pass `include_deleted: true` to
+  include them.
+  """
+  @spec list_documents(keyword()) :: [Document.t()]
+  def list_documents(opts \\ []) do
+    Document
+    |> maybe_exclude_deleted(opts)
+    |> Repo.all()
+  end
+
+  @doc """
+  Fetches a document by `id`.
+
+  Returns `{:ok, document}` or `{:error, :not_found}`. By default a soft-deleted
+  document is treated as not found; pass `include_deleted: true` to return it.
+  """
+  @spec get_document(term(), keyword()) ::
+          {:ok, Document.t()} | {:error, :not_found}
+  def get_document(id, opts \\ []) do
+    Document
+    |> maybe_exclude_deleted(opts)
+    |> Repo.get(id)
+    |> case do
+      nil -> {:error, :not_found}
+      %Document{} = document -> {:ok, document}
+    end
+  end
+
+  @doc """
+  Directly soft-deletes a single `document`.
+
+  Sets `deleted_at` to the current UTC time and `cascaded` to `false` (a direct
+  deletion, not a cascade). No-op if already soft-deleted.
+  """
+  @spec soft_delete_document(Document.t()) :: {:ok, Document.t()}
+  def soft_delete_document(%Document{deleted_at: nil} = document) do
+    document
+    |> Ecto.Changeset.change(deleted_at: current_time(), cascaded: false)
+    |> Repo.update()
+  end
+
+  def soft_delete_document(%Document{} = document), do: {:ok, document}
+
+  @doc """
+  Directly restores a single `document`.
+
+  Sets `deleted_at` back to nil and `cascaded` to `false`. No-op if the document
+  is not soft-deleted.
+  """
+  @spec restore_document(Document.t()) :: {:ok, Document.t()}
+  def restore_document(%Document{deleted_at: nil} = document), do: {:ok, document}
+
+  def restore_document(%Document{} = document) do
+    document
+    |> Ecto.Changeset.change(deleted_at: nil, cascaded: false)
+    |> Repo.update()
+  end
+
+  @spec maybe_exclude_delete (truncated)
+04:18:48.298 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 38495, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 38495, "input_tokens" => 2, "output_tokens" => 9970, "type" => "message"}], "output_tokens" => 9970, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+04:18:48.332 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/018_003_cascading_soft_delete_across_folder_and_documents_01 solution.ex
+04:18:49.498 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":643,"lines_over_98":0,"max_line_length":84,"mode":"full","pipe_chain_count":40,"public_fn_count":35,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.3,"reasons":["tests: 29/29 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/018_003_cascading_soft_delete_across_folder_and_documents_01/solution.ex","task":"018_003_cascading_soft_delete_across_folder_and_documents_01","test_failures":[{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders creates a folder with valid attrs"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders returns 422 when name is missing"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders returns 422 when name is empty"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/folders excludes soft-deleted folders by default"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/folders/:id returns 404 for a soft-deleted folder by default"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/folders/:id returns a soft-deleted folder when include_deleted=true"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents creates a document with valid attrs"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents returns 422 when title is missing"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents returns 422 when content is missing"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents returns 422 when folder_id is missing"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents excludes soft-deleted documents by default"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents returns all documents when include_deleted=true"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents/:id returns 404 for a soft-deleted document by default"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test GET /api/documents/:id returns a soft-deleted document when include_deleted=true"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/documents/:id (direct) soft-deletes and marks cascaded=false"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/documents/:id (direct) returns 404 for a non-existent document"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/documents/:id (direct) returns 404 when already soft-deleted"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents/:id/restore (direct) restores a soft-deleted document"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents/:id/restore (direct) restoring a non-deleted document is a no-op 200"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/documents/:id/restore (direct) returns 404 for a non-existent document"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) soft-deletes the folder and returns it with deleted_at set"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) cascade soft-deletes the folder's documents with cascaded=true"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) does not affect documents in other folders"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test DELETE /api/folders/:id (cascade) returns 404 when the folder is already soft-deleted"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) restores the folder and its cascade-deleted documents"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) does not restore documents that were deleted on their own before the cascade"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) restoring a non-deleted folder is a no-op 200"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test POST /api/folders/:id/restore (cascade) returns 404 for a non-existent folder"},{"message":"could not lookup Ecto repo SoftCrud.Repo because it was not started or it does not exist","module":"SoftCrudWeb.CascadeSoftDeleteTest","test":"test full cascade lifecycle create folder+doc → cascade delete → invisible → cascade restore → visible"}],"tests_errors":0,"tests_excluded":0,"tests_failed":29,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-12T02:18:49.471790Z"}
+04:18:49.499 [info] cycle 018_003_cascading_soft_delete_across_folder_and_documents_01: REJECTED after 4 attempt(s)

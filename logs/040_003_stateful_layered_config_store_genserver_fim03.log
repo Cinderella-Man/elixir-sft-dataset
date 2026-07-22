@@ -1,0 +1,444 @@
+09:44:05.195 [info] FIM 040_003_stateful_layered_config_store_genserver_fim03 → 040_003_stateful_layered_config_store_genserver_04: target resolve_opts/1
+09:44:05.195 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+09:44:05.195 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `resolve_opts/1`.
+
+Generate a prompt describing how to implement `resolve_opts/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `resolve_opts/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `resolve_opts/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `resolve_opts/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `ConfigStore` implemented as a **GenServer** that
+holds a base configuration plus a dynamic, ordered set of named override layers and
+computes the deep-merged effective configuration on demand.
+
+Public API:
+- `ConfigStore.start_link(opts)` — starts the server. Supported opts:
+  - `:base` — the base config map (default `%{}`).
+  - `:name` — optional GenServer name.
+  - `:list_strategy` — `:replace` (default) or `:append`, global list merge strategy.
+  - `:list_strategies` — a map of `key_path => :replace | :append` (paths as lists or
+    tuples of atoms) overriding the global strategy per path.
+  - `:locked` — a list of key-path tuples/lists that override layers must not change.
+- `ConfigStore.put_layer(server, layer_name, config_map)` — adds a named override
+  layer, or replaces an existing one **in place** (keeping its precedence position).
+  Returns `:ok`.
+- `ConfigStore.drop_layer(server, layer_name)` — removes a layer. Returns `:ok`.
+- `ConfigStore.layers(server)` — returns the list of layer names in precedence order
+  (lowest precedence first).
+- `ConfigStore.get_config(server)` — returns the deep-merged effective config: the
+  base with every layer applied in order, later layers winning.
+- `ConfigStore.get(server, key_path)` — returns the effective value at a key-path
+  (list of atoms), or `nil` if absent.
+
+Merge rules match a standard deep config merge:
+- Nested maps are deep-merged, not replaced wholesale.
+- Scalars from higher-precedence layers replace lower ones.
+- Lists follow the `:list_strategy` / `:list_strategies` options (`:append`
+  concatenates onto the accumulated list).
+- Locked key-paths keep the base value and cannot be changed by any layer.
+
+Layers apply in insertion order: the first `put_layer` is lowest precedence; a later
+`put_layer` with the same name updates the existing layer without changing its spot.
+
+Give me the complete module in a single file. Use only the Elixir standard library.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule ConfigStore do
+  @moduledoc """
+  A GenServer that holds a base configuration plus a dynamic, ordered set of named
+  override layers and computes the deep-merged effective configuration on demand.
+
+  Layers apply in insertion order (lowest precedence first). Merge semantics match a
+  standard deep config merge: nested maps recurse, scalars from higher layers win,
+  lists follow `:list_strategy` / `:list_strategies`, and `:locked` paths keep the
+  base value.
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the config store.
+
+  Supported options: `:base`, `:name`, `:list_strategy`, `:list_strategies` and
+  `:locked`. See the module documentation for their meaning.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {base, opts1} = Keyword.pop(opts, :base, %{})
+    {name, opts2} = Keyword.pop(opts1, :name)
+
+    resolved = resolve_opts(opts2)
+    state = %{base: base, layers: [], opts: resolved}
+
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, state, gen_opts)
+  end
+
+  @doc """
+  Adds a named override layer, or replaces an existing one in place, keeping its
+  precedence position. Returns `:ok`.
+  """
+  @spec put_layer(GenServer.server(), term(), map()) :: :ok
+  def put_layer(server, layer_name, config_map) when is_map(config_map) do
+    GenServer.call(server, {:put_layer, layer_name, config_map})
+  end
+
+  @doc """
+  Removes the layer named `layer_name`. Returns `:ok`.
+  """
+  @spec drop_layer(GenServer.server(), term()) :: :ok
+  def drop_layer(server, layer_name) do
+    GenServer.call(server, {:drop_layer, layer_name})
+  end
+
+  @doc """
+  Returns the list of layer names in precedence order (lowest precedence first).
+  """
+  @spec layers(GenServer.server()) :: [term()]
+  def layers(server), do: GenServer.call(server, :layers)
+
+  @doc """
+  Returns the deep-merged effective config: the base with every layer applied in
+  order, later layers winning.
+  """
+  @spec get_config(GenServer.server()) :: map()
+  def get_config(server), do: GenServer.call(server, :get_config)
+
+  @doc """
+  Returns the effective value at `key_path` (a list of atoms), or `nil` if absent.
+  """
+  @spec get(GenServer.server(), [atom()]) :: term()
+  def get(server, key_path) when is_list(key_path) do
+    GenServer.call(server, {:get, key_path})
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:put_layer, name, map}, _from, state) do
+    layers =
+      if List.keymember?(state.layers, name, 0) do
+        List.keyreplace(state.layers, name, 0, {name, map})
+      else
+        state.layers ++ [{name, map}]
+      end
+
+    {:reply, :ok, %{state | layers: layers}}
+  end
+
+  def handle_call({:drop_layer, name}, _from, state) do
+    {:reply, :ok, %{state | layers: List.keydelete(state.layers, name, 0)}}
+  end
+
+  def handle_call(:layers, _from, state) do
+    {:reply, Enum.map(state.layers, fn {name, _map} -> name end), state}
+  end
+
+  def handle_call(:get_config, _from, state) do
+    {:reply, compute(state), state}
+  end
+
+  def handle_call({:get, key_path}, _from, state) do
+    {:reply, fetch_path(compute(state), key_path), state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Merge engine
+  # ---------------------------------------------------------------------------
+
+  defp compute(%{base: base, layers: layers, opts: opts}) do
+    Enum.reduce(layers, base, fn {_name, map}, acc -> do_merge(acc, map, [], opts) end)
+  end
+
+  defp do_merge(base, over, path, opts) when is_map(base) and is_map(over) do
+    keys = Enum.uniq(Map.keys(base) ++ Map.keys(over))
+
+    Map.new(keys, fn k ->
+      kpath = path ++ [k]
+
+      value =
+        cond do
+          not Map.has_key?(over, k) -> Map.fetch!(base, k)
+          not Map.has_key?(base, k) -> Map.fetch!(over, k)
+          locked?(kpath, opts) -> Map.fetch!(base, k)
+          true -> merge_value(Map.fetch!(base, k), Map.fetch!(over, k), kpath, opts)
+        end
+
+      {k, value}
+    end)
+  end
+
+  defp merge_value(bv, ov, kpath, opts) do
+    cond do
+      is_map(bv) and is_map(ov) ->
+        do_merge(bv, ov, kpath, opts)
+
+      is_list(bv) and is_list(ov) ->
+        case list_strategy_for(kpath, opts) do
+          :replace -> ov
+          :append -> bv ++ ov
+        end
+
+      true ->
+        ov
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Options + helpers
+  # ---------------------------------------------------------------------------
+
+  defp resolve_opts(opts) do
+    global = Keyword.get(o (truncated)
+09:44:37.555 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `resolve_opts/1` function.
+
+It receives the remaining `opts` keyword list (after `:base` and `:name` have already
+been popped off in `start_link/1`) and must build the normalized options map that the
+merge engine relies on. Specifically it should:
+
+- Read the global list-merge strategy from `:list_strategy`, defaulting to `:replace`.
+- Read the per-path strategy overrides from `:list_strategies`, defaulting to an empty
+  map, and produce a new map whose keys are the normalized key-paths (each key path run
+  through `normalise_path/1`, so tuples become lists) mapped to their strategy.
+- Read the locked key-paths from `:locked`, defaulting to an empty list, and normalize
+  each entry with `normalise_path/1`.
+- Return a map with exactly these keys: `:global_list_strategy` (the global strategy),
+  `:per_key_strategies` (the normalized per-path map), and `:locked_paths` (the list of
+  normalized locked paths).
+
+```elixir
+defmodule ConfigStore do
+  @moduledoc """
+  A GenServer that holds a base configuration plus a dynamic, ordered set of named
+  override layers and computes the deep-merged effective configuration on demand.
+
+  Layers apply in insertion order (lowest precedence first). Merge semantics match a
+  standard deep config merge: nested maps recurse, scalars from higher layers win,
+  lists follow `:list_strategy` / `:list_strategies`, and `:locked` paths keep the
+  base value.
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the config store.
+
+  Supported options: `:base`, `:name`, `:list_strategy`, `:list_strategies` and
+  `:locked`. See the module documentation for their meaning.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {base, opts1} = Keyword.pop(opts, :base, %{})
+    {name, opts2} = Keyword.pop(opts1, :name)
+
+    resolved = resolve_opts(opts2)
+    state = %{base: base, layers: [], opts: resolved}
+
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, state, gen_opts)
+  end
+
+  @doc """
+  Adds a named override layer, or replaces an existing one in place, keeping its
+  precedence position. Returns `:ok`.
+  """
+  @spec put_layer(GenServer.server(), term(), map()) :: :ok
+  def put_layer(server, layer_name, config_map) when is_map(config_map) do
+    GenServer.call(server, {:put_layer, layer_name, config_map})
+  end
+
+  @doc """
+  Removes the layer named `layer_name`. Returns `:ok`.
+  """
+  @spec drop_layer(GenServer.server(), term()) :: :ok
+  def drop_layer(server, layer_name) do
+    GenServer.call(server, {:drop_layer, layer_name})
+  end
+
+  @doc """
+  Returns the list of layer names in precedence order (lowest precedence first).
+  """
+  @spec layers(GenServer.server()) :: [term()]
+  def layers(server), do: GenServer.call(server, :layers)
+
+  @doc """
+  Returns the deep-merged effective config: the base with every layer applied in
+  order, later layers winning.
+  """
+  @spec get_config(GenServer.server()) :: map()
+  def get_config(server), do: GenServer.call(server, :get_config)
+
+  @doc """
+  Returns the effective value at `key_path` (a list of atoms), or `nil` if absent.
+  """
+  @spec get(GenServer.server(), [atom()]) :: term()
+  def get(server, key_path) when is_list(key_path) do
+    GenServer.call(server, {:get, key_path})
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:put_layer, name, map}, _from, state) do
+    layers =
+      if List.keymember?(state.layers, name, 0) do
+        List.keyreplace(state.layers, name, 0, {name, map})
+      else
+        state.layers ++ [{name, map}]
+      end
+
+    {:reply, :ok, %{state | layers: layers}}
+  end
+
+  def handle_call({:drop_layer, name}, _from, state) do
+    {:reply, :ok, %{state | layers: List.keydelete(state.layers, name, 0)}}
+  end
+
+  def handle_call(:layers, _from, state) do
+    {:reply, Enum.map(state.layers, fn {name, _map} -> name end), state}
+  end
+
+  def handle_call(:get_config, _from, state) do
+    {:reply, compute(state), state}
+  end
+
+  def handle_call({:get, key_path}, _from, state) do
+    {:reply, fetch_path(compute(state), key_path), state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Merge engine
+  # ---------------------------------------------------------------------------
+
+  defp compute(%{base: base, layers: layers, opts: opts}) do
+    Enum.reduce(layers, base, fn {_name, map}, acc -> do_merge(acc, map, [], opts) end)
+  end
+
+  defp do_merge(base, over, path, opts) when is_map(base) and is_map(over) do
+    keys = Enum.uniq(Map.keys(base) ++ Map.keys(over))
+
+    Map.new(keys, fn k ->
+      kpath = path ++ [k]
+
+      value =
+        cond do
+          not Map.has_key?(over, k) -> Map.fetch!(base, k)
+          not Map.has_key?(base, k) -> Map.fetch!(over, k)
+          locked?(kpath, opts) -> Map.fetch!(base, k)
+          true -> merge_value(Map.fetch!(base, k), Map.fetch!(over, k), kpath, opts)
+        end
+
+      {k, value}
+    end)
+  end
+
+  defp merge_value(bv, ov, kpath, opts) do
+    cond do
+      is_map(bv) and is_map(ov) ->
+        do_merge(bv, ov, kpath, opts)
+
+      is_list(bv) and is_list(ov) ->
+        case list_strategy_for(kpath, opts) do
+          :replace -> ov
+          :append -> bv ++ ov
+        end
+
+      true ->
+        ov
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Options + helpers
+  # ---------------------------------------------------------------------------
+
+  defp resolve_opts(opts) do
+    # TODO
+  end
+
+  defp normalise_path(path) when is_list(path), do: path
+  defp normalise_path(path) when is_tuple(path), do: Tuple.to_list(path)
+
+  defp locked?(kpath, %{locked_paths: locked}), do: kpath in locked
+
+  defp list_strategy_for(kpath, %{per_key_strategies: per_key, global_list_strategy: global}) do
+    Map.get(per_key, kpath, global)
+  end
+
+  defp fetch_path(map, []), do: map
+
+  defp fetch_path(map, [k | rest]) when is_map(map) do
+    case Map.fetch(map, k) do
+      {:ok, v} -> fetch_path(v, rest)
+      :error -> nil
+    end
+  end
+
+  defp fetch_path(_map, _path), do: nil
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp resolve_opts(opts) do
+    global = Keyword.get(opts, :list_strategy, :replace)
+
+    per_key =
+      opts
+      |> Keyword.get(:list_strategies, %{})
+      |> Map.new(fn {path, strat} -> {normalise_path(path), strat} end)
+
+    locked = Enum.map(Keyword.get(opts, :locked, []), &normalise_path/1)
+
+    %{global_list_strategy: global, per_key_strategies: per_key, locked_paths: locked}
+  end
+</file>
+09:44:37.555 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3927, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3927, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3927, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3927, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2995, "type" => "message"}], "output_tokens" => 2995, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+09:44:37.574 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_040_003_stateful_layered_config_store_genserver_04/040_003_stateful_layered_config_store_genserver_04 solution.ex
+09:44:38.211 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":12,"lines_over_98":0,"max_line_length":86,"mode":"fim","pipe_chain_count":2,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"040_003_stateful_layered_config_store_genserver_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_040_003_stateful_layered_config_store_genserver_04/040_003_stateful_layered_config_store_genserver_04/solution.ex","task":"040_003_stateful_layered_config_store_genserver_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T07:44:38.187315Z"}
+09:44:38.212 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_040_003_stateful_layered_config_store_genserver_04/040_003_stateful_layered_config_store_genserver_04 .gen_staging/fim_040_003_stateful_layered_config_store_genserver_04/mutant.ex
+09:44:38.865 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":26,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"parent":"040_003_stateful_layered_config_store_genserver_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.7,"mode":"fim","overall":0.27,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 11/11 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_040_003_stateful_layered_config_store_genserver_04/mutant.ex","task":"040_003_stateful_layered_config_store_genserver_04","test_failures":[{"message":"MUTATION","module":"ConfigStoreTest","test":"test base-only config is returned when no layers added"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test put_layer overrides scalars from the base"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test nested maps are deep-merged across base and layers"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test later layer wins over earlier layer"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test replacing a layer keeps its precedence position"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test drop_layer removes a layer"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test get/2 fetches by key-path and returns nil when absent"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test append list strategy concatenates base and layer lists"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test per-key list strategy overrides the global strategy"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test locked key-path cannot be changed by any layer"},{"message":"MUTATION","module":"ConfigStoreTest","test":"test named server can be addressed by its registered name"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T07:44:38.842898Z"}
+09:44:38.865 [debug] fim mutation gate: killed
+09:44:38.867 [info] promoted 040_003_stateful_layered_config_store_genserver_04 -> tasks/040_003_stateful_layered_config_store_genserver_04

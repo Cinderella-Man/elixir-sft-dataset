@@ -1,0 +1,2208 @@
+=== dedoc full backfill 2026-07-18T15:37:59+02:00
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 317 needing top-up → next: 001_001_rate_limiter_01, 001_002_fixed_window_counter_01, 001_003_hierarchical_limiter_01, …
+  2. new bases:      skipped (GEN_ONLY=backfill)
+=============================================
+
+
+Backfill: 317 seed(s) needing derivatives.
+[  1/317] 001_001_rate_limiter_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] check/4 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_call/3 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_001_001_rate_limiter
+      dedoc_001_001_rate_limiter (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[  2/317] 001_002_fixed_window_counter_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] check/4 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_call/3 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_001_002_fixed_window_counter
+      dedoc_001_002_fixed_window_counter (dedoc) ... ACCEPTED (12 passed, inherited coverage, 1 attempt(s))
+[  3/317] 001_003_hierarchical_limiter_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_001_003_hierarchical_limiter
+      dedoc_001_003_hierarchical_limiter (dedoc) ... ACCEPTED (12 passed, inherited coverage, 1 attempt(s))
+[  4/317] 001_004_penalty_escalation_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] check/5 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_call/3 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_001_004_penalty_escalation
+      dedoc_001_004_penalty_escalation (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[  5/317] 002_001_circuit_breaker_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] call/2 gutted to raise ... killed
+      mutant [3/6] state/1 gutted to raise ... killed
+      mutant [4/6] reset/1 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_002_001_circuit_breaker
+      dedoc_002_001_circuit_breaker (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[  6/317] 002_002_rolling_window_error_rate_cb_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] call/2 gutted to raise ... killed
+      mutant [3/6] state/1 gutted to raise ... killed
+      mutant [4/6] reset/1 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_002_002_rolling_window_error_rate_cb
+      dedoc_002_002_rolling_window_error_rate_cb (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[  7/317] 002_003_progressive_recovery_cb_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] call/2 gutted to raise ... killed
+      mutant [3/6] state/1 gutted to raise ... killed
+      mutant [4/6] reset/1 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_002_003_progressive_recovery_cb
+      dedoc_002_003_progressive_recovery_cb (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[  8/317] 002_004_leaky_bucket_failure_cb_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] call/2 gutted to raise ... killed
+      mutant [3/7] state/1 gutted to raise ... killed
+      mutant [4/7] reset/1 gutted to raise ... killed
+      mutant [5/7] bucket_level/1 gutted to raise ... killed
+      mutant [6/7] init/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_002_004_leaky_bucket_failure_cb
+      dedoc_002_004_leaky_bucket_failure_cb (dedoc) ... ACCEPTED (24 passed, inherited coverage, 1 attempt(s))
+[  9/317] 003_001_leaky_bucket_token_dispenser_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] acquire/5 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_call/3 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_003_001_leaky_bucket_token_dispenser
+      dedoc_003_001_leaky_bucket_token_dispenser (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[ 10/317] 003_002_gcra_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] acquire/5 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_call/3 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_003_002_gcra
+      dedoc_003_002_gcra (dedoc) ... ACCEPTED (13 passed, inherited coverage, 1 attempt(s))
+[ 11/317] 003_003_lease_based_bucket_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_003_003_lease_based_bucket
+      dedoc_003_003_lease_based_bucket (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[ 12/317] 003_004_shared_pool_bucket_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] acquire/5 gutted to raise ... killed
+      mutant [3/7] global_level/1 gutted to raise ... killed
+      mutant [4/7] key_level/4 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_003_004_shared_pool_bucket
+      dedoc_003_004_shared_pool_bucket (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[ 13/317] 004_002_intervalscheduler_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] register/4 gutted to raise ... killed
+      mutant [3/8] unregister/2 gutted to raise ... killed
+      mutant [4/8] jobs/1 gutted to raise ... killed
+      mutant [5/8] next_run/2 gutted to raise ... killed
+      mutant [6/8] init/1 gutted to raise ... killed
+      mutant [7/8] handle_call/3 gutted to raise ... killed
+      mutant [8/8] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_004_002_intervalscheduler
+      dedoc_004_002_intervalscheduler (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[ 14/317] 004_003_retryscheduler_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] schedule/5 gutted to raise ... killed
+      mutant [3/8] cancel/2 gutted to raise ... killed
+      mutant [4/8] status/2 gutted to raise ... killed
+      mutant [5/8] jobs/1 gutted to raise ... killed
+      mutant [6/8] init/1 gutted to raise ... killed
+      mutant [7/8] handle_call/3 gutted to raise ... killed
+      mutant [8/8] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_004_003_retryscheduler
+      dedoc_004_003_retryscheduler (dedoc) ... ACCEPTED (27 passed, inherited coverage, 1 attempt(s))
+[ 15/317] 004_004_calendarscheduler_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] register/4 gutted to raise ... killed
+      mutant [3/8] unregister/2 gutted to raise ... killed
+      mutant [4/8] jobs/1 gutted to raise ... killed
+      mutant [5/8] next_run/2 gutted to raise ... killed
+      mutant [6/8] init/1 gutted to raise ... killed
+      mutant [7/8] handle_call/3 gutted to raise ... killed
+      mutant [8/8] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_004_004_calendarscheduler
+      dedoc_004_004_calendarscheduler (dedoc) ... ACCEPTED (24 passed, inherited coverage, 1 attempt(s))
+[ 16/317] 005_001_pubsub_event_bus_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] subscribe/3 gutted to raise ... killed
+      mutant [3/7] unsubscribe/3 gutted to raise ... killed
+      mutant [4/7] publish/3 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_005_001_pubsub_event_bus
+      dedoc_005_001_pubsub_event_bus (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[ 17/317] 005_002_priorityeventbus_01 (backfill) ...
+      mutant [1/10] start_link/1 gutted to raise ... killed
+      mutant [2/10] subscribe/4 gutted to raise ... killed
+      mutant [3/10] unsubscribe/3 gutted to raise ... killed
+      mutant [4/10] publish/3 gutted to raise ... killed
+      mutant [5/10] subscribers/2 gutted to raise ... killed
+      mutant [6/10] ack/1 gutted to raise ... killed
+      mutant [7/10] cancel/1 gutted to raise ... killed
+      mutant [8/10] init/1 gutted to raise ... killed
+      mutant [9/10] handle_call/3 gutted to raise ... killed
+      mutant [10/10] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_005_002_priorityeventbus
+      dedoc_005_002_priorityeventbus (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[ 18/317] 005_003_replayeventbus_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] subscribe/4 gutted to raise ... killed
+      mutant [3/9] unsubscribe/3 gutted to raise ... killed
+      mutant [4/9] publish/3 gutted to raise ... killed
+      mutant [5/9] history/2 gutted to raise ... killed
+      mutant [6/9] set_history_size/3 gutted to raise ... killed
+      mutant [7/9] init/1 gutted to raise ... killed
+      mutant [8/9] handle_call/3 gutted to raise ... killed
+      mutant [9/9] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_005_003_replayeventbus
+      dedoc_005_003_replayeventbus (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[ 19/317] 005_004_filteredeventbus_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_005_004_filteredeventbus
+      dedoc_005_004_filteredeventbus (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[ 20/317] 006_001_ttl_cache_with_lazy_expiration_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] put/4 gutted to raise ... killed
+      mutant [3/7] get/2 gutted to raise ... killed
+      mutant [4/7] delete/2 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_006_001_ttl_cache_with_lazy_expiration
+      dedoc_006_001_ttl_cache_with_lazy_expiration (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[ 21/317] 006_002_lrucache_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] put/3 gutted to raise ... killed
+      mutant [3/8] get/2 gutted to raise ... killed
+      mutant [4/8] delete/2 gutted to raise ... killed
+      mutant [5/8] size/1 gutted to raise ... killed
+      mutant [6/8] keys_by_recency/1 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_006_002_lrucache
+      dedoc_006_002_lrucache (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[ 22/317] 006_003_refreshaheadcache_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] put/5 gutted to raise ... killed
+      mutant [3/8] get/2 gutted to raise ... killed
+      mutant [4/8] delete/2 gutted to raise ... killed
+      mutant [5/8] stats/1 gutted to raise ... killed
+      mutant [6/8] init/1 gutted to raise ... killed
+      mutant [7/8] handle_call/3 gutted to raise ... killed
+      mutant [8/8] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_006_003_refreshaheadcache
+      dedoc_006_003_refreshaheadcache (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[ 23/317] 006_004_swrcache_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] put/6 gutted to raise ... killed
+      mutant [3/8] get/2 gutted to raise ... killed
+      mutant [4/8] delete/2 gutted to raise ... killed
+      mutant [5/8] stats/1 gutted to raise ... killed
+      mutant [6/8] init/1 gutted to raise ... killed
+      mutant [7/8] handle_call/3 gutted to raise ... killed
+      mutant [8/8] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_006_004_swrcache
+      dedoc_006_004_swrcache (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[ 24/317] 007_001_moving_average_calculator_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] push/3 gutted to raise ... killed
+      mutant [3/5] get/4 gutted to raise ... killed
+      mutant [4/5] init/1 gutted to raise ... killed
+      mutant [5/5] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_007_001_moving_average_calculator
+      dedoc_007_001_moving_average_calculator (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[ 25/317] 007_002_weightedmovingaverage_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_007_002_weightedmovingaverage
+      dedoc_007_002_weightedmovingaverage (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[ 26/317] 007_003_streamingpercentile_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] push/4 gutted to raise ... killed
+      mutant [3/7] percentile/3 gutted to raise ... killed
+      mutant [4/7] percentiles/3 gutted to raise ... killed
+      mutant [5/7] window/2 gutted to raise ... killed
+      mutant [6/7] init/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_007_003_streamingpercentile
+      dedoc_007_003_streamingpercentile (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[ 27/317] 007_004_cusumanomaly_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] push/3 gutted to raise ... killed
+      mutant [3/6] check/2 gutted to raise ... killed
+      mutant [4/6] reset/2 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_007_004_cusumanomaly
+      dedoc_007_004_cusumanomaly (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[ 28/317] 008_001_distributed_counter_with_crdt_style_merge_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] increment/3 gutted to raise ... killed
+      mutant [3/8] decrement/3 gutted to raise ... killed
+      mutant [4/8] value/1 gutted to raise ... killed
+      mutant [5/8] merge/2 gutted to raise ... killed
+      mutant [6/8] state/1 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_008_001_distributed_counter_with_crdt_style_merge
+      dedoc_008_001_distributed_counter_with_crdt_style_merge (dedoc) ... ACCEPTED (28 passed, inherited coverage, 1 attempt(s))
+[ 29/317] 008_002_lww_element_set_crdt_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] add/3 gutted to raise ... killed
+      mutant [3/9] remove/3 gutted to raise ... killed
+      mutant [4/9] member?/2 gutted to raise ... killed
+      mutant [5/9] members/1 gutted to raise ... killed
+      mutant [6/9] merge/2 gutted to raise ... killed
+      mutant [7/9] state/1 gutted to raise ... killed
+      mutant [8/9] init/1 gutted to raise ... killed
+      mutant [9/9] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_008_002_lww_element_set_crdt
+      dedoc_008_002_lww_element_set_crdt (dedoc) ... ACCEPTED (32 passed, inherited coverage, 1 attempt(s))
+[ 30/317] 008_003_two_phase_set_crdt_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] add/2 gutted to raise ... killed
+      mutant [3/9] remove/2 gutted to raise ... killed
+      mutant [4/9] member?/2 gutted to raise ... killed
+      mutant [5/9] members/1 gutted to raise ... killed
+      mutant [6/9] merge/2 gutted to raise ... killed
+      mutant [7/9] state/1 gutted to raise ... killed
+      mutant [8/9] init/1 gutted to raise ... killed
+      mutant [9/9] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_008_003_two_phase_set_crdt
+      dedoc_008_003_two_phase_set_crdt (dedoc) ... ACCEPTED (31 passed, inherited coverage, 1 attempt(s))
+[ 31/317] 008_004_observed_remove_set_crdt_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] add/3 gutted to raise ... killed
+      mutant [3/9] remove/2 gutted to raise ... killed
+      mutant [4/9] member?/2 gutted to raise ... killed
+      mutant [5/9] members/1 gutted to raise ... killed
+      mutant [6/9] merge/2 gutted to raise ... killed
+      mutant [7/9] state/1 gutted to raise ... killed
+      mutant [8/9] init/1 gutted to raise ... killed
+      mutant [9/9] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_008_004_observed_remove_set_crdt
+      dedoc_008_004_observed_remove_set_crdt (dedoc) ... ACCEPTED (32 passed, inherited coverage, 1 attempt(s))
+[ 32/317] 009_001_request_deduplicator_coalescer_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] execute/3 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_call/3 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_009_001_request_deduplicator_coalescer
+      dedoc_009_001_request_deduplicator_coalescer (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[ 33/317] 009_002_write_behind_batch_coalescer_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] submit/5 gutted to raise ... killed
+      mutant [3/6] pending_count/2 gutted to raise ... killed
+      mutant [4/6] init/1 gutted to raise ... killed
+      mutant [5/6] handle_call/3 gutted to raise ... killed
+      mutant [6/6] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_009_002_write_behind_batch_coalescer
+      dedoc_009_002_write_behind_batch_coalescer (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[ 34/317] 009_003_retry_aware_request_deduplicator_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] execute/4 gutted to raise ... killed
+      mutant [3/6] status/2 gutted to raise ... killed
+      mutant [4/6] init/1 gutted to raise ... killed
+      mutant [5/6] handle_call/3 gutted to raise ... killed
+      mutant [6/6] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_009_003_retry_aware_request_deduplicator
+      dedoc_009_003_retry_aware_request_deduplicator (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[ 35/317] 009_004_per_key_bounded_concurrency_pool_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] execute/3 gutted to raise ... killed
+      mutant [3/6] status/2 gutted to raise ... killed
+      mutant [4/6] init/1 gutted to raise ... killed
+      mutant [5/6] handle_call/3 gutted to raise ... killed
+      mutant [6/6] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_009_004_per_key_bounded_concurrency_pool
+      dedoc_009_004_per_key_bounded_concurrency_pool (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[ 36/317] 010_001_session_store_with_inactivity_timeout_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] create/2 gutted to raise ... killed
+      mutant [3/9] get/2 gutted to raise ... killed
+      mutant [4/9] update/3 gutted to raise ... killed
+      mutant [5/9] touch/2 gutted to raise ... killed
+      mutant [6/9] destroy/2 gutted to raise ... killed
+      mutant [7/9] init/1 gutted to raise ... killed
+      mutant [8/9] handle_call/3 gutted to raise ... killed
+      mutant [9/9] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_010_001_session_store_with_inactivity_timeout
+      dedoc_010_001_session_store_with_inactivity_timeout (dedoc) ... ACCEPTED (24 passed, inherited coverage, 1 attempt(s))
+[ 37/317] 010_002_one_time_token_store_with_absolute_expiration_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] mint/3 gutted to raise ... killed
+      mutant [3/9] verify/2 gutted to raise ... killed
+      mutant [4/9] redeem/2 gutted to raise ... killed
+      mutant [5/9] revoke/2 gutted to raise ... killed
+      mutant [6/9] active_count/1 gutted to raise ... killed
+      mutant [7/9] init/1 gutted to raise ... killed
+      mutant [8/9] handle_call/3 gutted to raise ... killed
+      mutant [9/9] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_010_002_one_time_token_store_with_absolute_expiration
+      dedoc_010_002_one_time_token_store_with_absolute_expiration (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[ 38/317] 010_003_exclusive_lease_manager_with_ownership_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] acquire/3 gutted to raise ... killed
+      mutant [3/9] release/3 gutted to raise ... killed
+      mutant [4/9] renew/3 gutted to raise ... killed
+      mutant [5/9] holder/2 gutted to raise ... killed
+      mutant [6/9] force_release/2 gutted to raise ... killed
+      mutant [7/9] init/1 gutted to raise ... killed
+      mutant [8/9] handle_call/3 gutted to raise ... killed
+      mutant [9/9] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_010_003_exclusive_lease_manager_with_ownership
+      dedoc_010_003_exclusive_lease_manager_with_ownership (dedoc) ... ACCEPTED (29 passed, inherited coverage, 1 attempt(s))
+[ 39/317] 010_004_rolling_window_quota_tracker_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_010_004_rolling_window_quota_tracker
+      dedoc_010_004_rolling_window_quota_tracker (dedoc) ... ACCEPTED (27 passed, inherited coverage, 1 attempt(s))
+[ 40/317] 011_001_bounded_mailbox_worker_pool_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] submit/2 gutted to raise ... killed
+      mutant [3/7] await/3 gutted to raise ... killed
+      mutant [4/7] status/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_011_001_bounded_mailbox_worker_pool
+      dedoc_011_001_bounded_mailbox_worker_pool (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[ 41/317] 011_002_priority_worker_pool_with_starvation_prevention_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] submit/3 gutted to raise ... killed
+      mutant [3/7] await/3 gutted to raise ... killed
+      mutant [4/7] status/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_011_002_priority_worker_pool_with_starvation_prevention
+      dedoc_011_002_priority_worker_pool_with_starvation_prevention (dedoc) ... ACCEPTED (24 passed, inherited coverage, 1 attempt(s))
+[ 42/317] 011_003_cancellable_worker_pool_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] submit/2 gutted to raise ... killed
+      mutant [3/8] cancel/2 gutted to raise ... killed
+      mutant [4/8] await/3 gutted to raise ... killed
+      mutant [5/8] status/1 gutted to raise ... killed
+      mutant [6/8] init/1 gutted to raise ... killed
+      mutant [7/8] handle_call/3 gutted to raise ... killed
+      mutant [8/8] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_011_003_cancellable_worker_pool
+      dedoc_011_003_cancellable_worker_pool (dedoc) ... ACCEPTED (24 passed, inherited coverage, 1 attempt(s))
+[ 43/317] 011_004_worker_pool_with_per_task_timeouts_and_retry_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] submit/3 gutted to raise ... killed
+      mutant [3/7] await/3 gutted to raise ... killed
+      mutant [4/7] status/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_011_004_worker_pool_with_per_task_timeouts_and_retry
+      dedoc_011_004_worker_pool_with_per_task_timeouts_and_retry (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[ 44/317] 012_001_event_sourced_aggregate_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] execute/3 gutted to raise ... killed
+      mutant [3/6] state/2 gutted to raise ... killed
+      mutant [4/6] events/2 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_012_001_event_sourced_aggregate
+      dedoc_012_001_event_sourced_aggregate (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[ 45/317] 012_002_subscription_lifecycle_event_sourced_aggregate_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_012_002_subscription_lifecycle_event_sourced_aggregate
+      dedoc_012_002_subscription_lifecycle_event_sourced_aggregate (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[ 46/317] 012_003_inventory_stock_event_sourced_aggregate_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] execute/3 gutted to raise ... killed
+      mutant [3/6] state/2 gutted to raise ... killed
+      mutant [4/6] events/2 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_012_003_inventory_stock_event_sourced_aggregate
+      dedoc_012_003_inventory_stock_event_sourced_aggregate (dedoc) ... ACCEPTED (26 passed, inherited coverage, 1 attempt(s))
+[ 47/317] 012_004_task_tracker_event_sourced_aggregate_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] execute/3 gutted to raise ... killed
+      mutant [3/6] state/2 gutted to raise ... killed
+      mutant [4/6] events/2 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_012_004_task_tracker_event_sourced_aggregate
+      dedoc_012_004_task_tracker_event_sourced_aggregate (dedoc) ... ACCEPTED (26 passed, inherited coverage, 1 attempt(s))
+[ 48/317] 013_001_exponential_backoff_retry_worker_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] execute/3 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_call/3 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_013_001_exponential_backoff_retry_worker
+      dedoc_013_001_exponential_backoff_retry_worker (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[ 49/317] 013_002_timeout_guarded_retry_worker_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_013_002_timeout_guarded_retry_worker
+      dedoc_013_002_timeout_guarded_retry_worker (dedoc) ... ACCEPTED (24 passed, inherited coverage, 1 attempt(s))
+[ 50/317] 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_013_003_budget_constrained_retry_worker_with_decorrelated_jitter
+      dedoc_013_003_budget_constrained_retry_worker_with_decorrelated_jitter (dedoc) ... ACCEPTED (12 passed, inherited coverage, 1 attempt(s))
+[ 51/317] 013_004_classified_error_retry_worker_with_on_retry_callback_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] execute/3 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_call/3 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_013_004_classified_error_retry_worker_with_on_retry_callback
+      dedoc_013_004_classified_error_retry_worker_with_on_retry_callback (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[ 52/317] 014_001_priority_queue_processor_01 (backfill) ...
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L201 s809: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+      bugfix_014_001_priority_queue_processor_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_014_001_priority_queue_processor
+      dedoc_014_001_priority_queue_processor (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[ 53/317] 014_002_expiring_priority_queue_with_per_task_ttl_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] enqueue/4 gutted to raise ... killed
+      mutant [3/9] status/1 gutted to raise ... killed
+      mutant [4/9] processed/1 gutted to raise ... killed
+      mutant [5/9] expired/1 gutted to raise ... killed
+      mutant [6/9] drain/1 gutted to raise ... killed
+      mutant [7/9] init/1 gutted to raise ... killed
+      mutant [8/9] handle_call/3 gutted to raise ... killed
+      mutant [9/9] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_014_002_expiring_priority_queue_with_per_task_ttl
+      dedoc_014_002_expiring_priority_queue_with_per_task_ttl (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[ 54/317] 014_003_cancellable_priority_queue_with_numeric_priorities_01 (backfill) ...
+      mutant [1/10] start_link/1 gutted to raise ... killed
+      mutant [2/10] enqueue/3 gutted to raise ... killed
+      mutant [3/10] cancel/2 gutted to raise ... killed
+      mutant [4/10] status/1 gutted to raise ... killed
+      mutant [5/10] peek/1 gutted to raise ... killed
+      mutant [6/10] processed/1 gutted to raise ... killed
+      mutant [7/10] drain/1 gutted to raise ... killed
+      mutant [8/10] init/1 gutted to raise ... killed
+      mutant [9/10] handle_call/3 gutted to raise ... killed
+      mutant [10/10] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_014_003_cancellable_priority_queue_with_numeric_priorities
+      dedoc_014_003_cancellable_priority_queue_with_numeric_priorities (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[ 55/317] 014_004_concurrent_priority_queue_with_configurable_parallelism_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_014_004_concurrent_priority_queue_with_configurable_parallelism
+      dedoc_014_004_concurrent_priority_queue_with_configurable_parallelism (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[ 56/317] 015_001_heartbeat_monitor_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_015_001_heartbeat_monitor
+      dedoc_015_001_heartbeat_monitor (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[ 57/317] 015_002_rolling_window_failure_rate_monitor_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_015_002_rolling_window_failure_rate_monitor
+      dedoc_015_002_rolling_window_failure_rate_monitor (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[ 58/317] 015_003_async_check_monitor_with_timeouts_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_015_003_async_check_monitor_with_timeouts
+      dedoc_015_003_async_check_monitor_with_timeouts (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[ 59/317] 015_004_monitor_with_maintenance_windows_and_pause_resume_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_015_004_monitor_with_maintenance_windows_and_pause_resume
+      dedoc_015_004_monitor_with_maintenance_windows_and_pause_resume (dedoc) ... ACCEPTED (30 passed, inherited coverage, 1 attempt(s))
+[ 60/317] 016_002_cursor_based_list_pagination_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_016_002_cursor_based_list_pagination
+      dedoc_016_002_cursor_based_list_pagination (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[ 61/317] 016_003_validated_sortable_filterable_list_pagination_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_016_003_validated_sortable_filterable_list_pagination
+      dedoc_016_003_validated_sortable_filterable_list_pagination (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[ 62/317] 016_004_concurrent_ets_backed_list_pagination_with_page_clamping_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_016_004_concurrent_ets_backed_list_pagination_with_page_clamping
+      dedoc_016_004_concurrent_ets_backed_list_pagination_with_page_clamping (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[ 63/317] 017_002_keyset_cursor_pagination_search_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_017_002_keyset_cursor_pagination_search
+      dedoc_017_002_keyset_cursor_pagination_search (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[ 64/317] 017_003_faceted_search_with_facet_counts_01 (backfill) ...
+      mutant [1/1] search/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_017_003_faceted_search_with_facet_counts
+      dedoc_017_003_faceted_search_with_facet_counts (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[ 65/317] 017_004_relevance_ranked_full_text_search_01 (backfill) ...
+      mutant [1/1] search/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_017_004_relevance_ranked_full_text_search
+      dedoc_017_004_relevance_ranked_full_text_search (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[ 66/317] 018_002_trash_and_purge_soft_delete_with_retention_window_01 (backfill) ...
+      mutant [1/11] start_link/1 gutted to raise ... killed
+      mutant [2/11] create_document/2 gutted to raise ... killed
+      mutant [3/11] list_documents/2 gutted to raise ... killed
+      mutant [4/11] get_document/3 gutted to raise ... killed
+      mutant [5/11] update_document/3 gutted to raise ... killed
+      mutant [6/11] soft_delete_document/2 gutted to raise ... killed
+      mutant [7/11] restore_document/2 gutted to raise ... killed
+      mutant [8/11] purge_document/2 gutted to raise ... killed
+      mutant [9/11] purge_expired/1 gutted to raise ... killed
+      mutant [10/11] init/1 gutted to raise ... killed
+      mutant [11/11] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_018_002_trash_and_purge_soft_delete_with_retention_window
+      dedoc_018_002_trash_and_purge_soft_delete_with_retention_window (dedoc) ... ACCEPTED (32 passed, inherited coverage, 1 attempt(s))
+[ 67/317] 018_003_cascading_archive_tree_with_origin_aware_restore_01 (backfill) ...
+      mutant [1/11] start_link/1 gutted to raise ... killed
+      mutant [2/11] create_folder/2 gutted to raise ... killed
+      mutant [3/11] create_file/2 gutted to raise ... killed
+      mutant [4/11] fetch_node/3 gutted to raise ... killed
+      mutant [5/11] list_children/3 gutted to raise ... killed
+      mutant [6/11] rename_node/3 gutted to raise ... killed
+      mutant [7/11] archive_node/2 gutted to raise ... killed
+      mutant [8/11] unarchive_node/2 gutted to raise ... killed
+      mutant [9/11] list_archived/1 gutted to raise ... killed
+      mutant [10/11] init/1 gutted to raise ... killed
+      mutant [11/11] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_018_003_cascading_archive_tree_with_origin_aware_restore
+      dedoc_018_003_cascading_archive_tree_with_origin_aware_restore (dedoc) ... ACCEPTED (39 passed, inherited coverage, 1 attempt(s))
+[ 68/317] 018_004_optimistic_concurrency_soft_delete_with_version_guards_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] create_document/2 gutted to raise ... killed
+      mutant [3/9] list_documents/2 gutted to raise ... killed
+      mutant [4/9] get_document/3 gutted to raise ... killed
+      mutant [5/9] update_document/4 gutted to raise ... killed
+      mutant [6/9] soft_delete_document/3 gutted to raise ... killed
+      mutant [7/9] restore_document/3 gutted to raise ... killed
+      mutant [8/9] init/1 gutted to raise ... killed
+      mutant [9/9] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_018_004_optimistic_concurrency_soft_delete_with_version_guards
+      dedoc_018_004_optimistic_concurrency_soft_delete_with_version_guards (dedoc) ... ACCEPTED (27 passed, inherited coverage, 1 attempt(s))
+[ 69/317] 019_002_dependency_ordered_bulk_create_with_cascade_skip_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_019_002_dependency_ordered_bulk_create_with_cascade_skip
+      dedoc_019_002_dependency_ordered_bulk_create_with_cascade_skip (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[ 70/317] 019_003_bulk_upsert_with_conflict_resolution_policies_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_019_003_bulk_upsert_with_conflict_resolution_policies
+      dedoc_019_003_bulk_upsert_with_conflict_resolution_policies (dedoc) ... ACCEPTED (11 passed, inherited coverage, 1 attempt(s))
+[ 71/317] 019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts
+      dedoc_019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts (dedoc) ... ACCEPTED (8 passed, inherited coverage, 1 attempt(s))
+[ 72/317] 020_001_file_upload_with_validation_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] child_spec/1 gutted to raise ... killed
+      mutant [3/7] save/2 gutted to raise ... killed
+      mutant [4/7] get/2 gutted to raise ... killed
+      mutant [5/7] list/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] validate/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_020_001_file_upload_with_validation
+      dedoc_020_001_file_upload_with_validation (dedoc) ... ACCEPTED (29 passed, inherited coverage, 1 attempt(s))
+[ 73/317] 020_002_content_addressable_deduplicating_upload_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_020_002_content_addressable_deduplicating_upload
+      dedoc_020_002_content_addressable_deduplicating_upload (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[ 74/317] 020_003_per_tenant_quota_enforced_upload_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_020_003_per_tenant_quota_enforced_upload
+      dedoc_020_003_per_tenant_quota_enforced_upload (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[ 75/317] 020_004_asynchronous_validation_pipeline_upload_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_020_004_asynchronous_validation_pipeline_upload
+      dedoc_020_004_asynchronous_validation_pipeline_upload (dedoc) ... ACCEPTED (13 passed, inherited coverage, 1 attempt(s))
+[ 76/317] 021_002_media_type_content_negotiation_with_quality_values_01 (backfill) ...
+      mutant [1/2] render/2 gutted to raise ... killed
+      mutant [2/2] call/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_021_002_media_type_content_negotiation_with_quality_values
+      dedoc_021_002_media_type_content_negotiation_with_quality_values (dedoc) ... ACCEPTED (24 passed, inherited coverage, 1 attempt(s))
+[ 77/317] 021_003_url_path_versioning_with_downgrade_migration_chain_01 (backfill) ...
+      mutant [1/2] supported/0 gutted to raise ... killed
+      mutant [2/2] render/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_021_003_url_path_versioning_with_downgrade_migration_chain
+      dedoc_021_003_url_path_versioning_with_downgrade_migration_chain (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[ 78/317] 021_004_versioned_api_with_deprecation_sunset_lifecycle_01 (backfill) ...
+      mutant [1/2] render/2 gutted to raise ... killed
+      mutant [2/2] call/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_021_004_versioned_api_with_deprecation_sunset_lifecycle
+      dedoc_021_004_versioned_api_with_deprecation_sunset_lifecycle (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[ 79/317] 022_001_nested_resource_endpoint_with_authorization_01 (backfill) ...
+      mutant [1/11] start_link/1 gutted to raise ... killed
+      mutant [2/11] create_user/3 gutted to raise ... killed
+      mutant [3/11] create_team/2 gutted to raise ... killed
+      mutant [4/11] add_member/3 gutted to raise ... killed
+      mutant [5/11] get_user_by_token/2 gutted to raise ... killed
+      mutant [6/11] team_exists?/2 gutted to raise ... killed
+      mutant [7/11] is_member?/3 gutted to raise ... killed
+      mutant [8/11] list_members/2 gutted to raise ... killed
+      mutant [9/11] add_member_safe/3 gutted to raise ... killed
+      mutant [10/11] handle_call/3 gutted to raise ... killed
+      mutant [11/11] call/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_022_001_nested_resource_endpoint_with_authorization
+      dedoc_022_001_nested_resource_endpoint_with_authorization (dedoc) ... ACCEPTED (29 passed, inherited coverage, 1 attempt(s))
+[ 80/317] 022_002_role_scoped_nested_membership_endpoint_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_022_002_role_scoped_nested_membership_endpoint
+      dedoc_022_002_role_scoped_nested_membership_endpoint (dedoc) ... ACCEPTED (33 passed, inherited coverage, 1 attempt(s))
+[ 81/317] 022_003_etag_versioned_nested_membership_with_optimistic_concurrency_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_022_003_etag_versioned_nested_membership_with_optimistic_concurrency
+      dedoc_022_003_etag_versioned_nested_membership_with_optimistic_concurrency (dedoc) ... ACCEPTED (29 passed, inherited coverage, 1 attempt(s))
+[ 82/317] 022_004_invitation_accept_decline_nested_membership_workflow_01 (backfill) ...
+      mutant [1/15] start_link/1 gutted to raise ... killed
+      mutant [2/15] create_user/3 gutted to raise ... killed
+      mutant [3/15] create_team/2 gutted to raise ... killed
+      mutant [4/15] add_member/3 gutted to raise ... killed
+      mutant [5/15] get_user_by_token/2 gutted to raise ... killed
+      mutant [6/15] team_exists?/2 gutted to raise ... killed
+      mutant [7/15] is_member?/3 gutted to raise ... killed
+      mutant [8/15] is_invited?/3 gutted to raise ... killed
+      mutant [9/15] list_members/2 gutted to raise ... killed
+      mutant [10/15] list_invitations/2 gutted to raise ... killed
+      mutant [11/15] invite_member/3 gutted to raise ... killed
+      mutant [12/15] accept_invite/3 gutted to raise ... killed
+      mutant [13/15] decline_invite/3 gutted to raise ... killed
+      mutant [14/15] handle_call/3 gutted to raise ... killed
+      mutant [15/15] call/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_022_004_invitation_accept_decline_nested_membership_workflow
+      dedoc_022_004_invitation_accept_decline_nested_membership_workflow (dedoc) ... ACCEPTED (40 passed, inherited coverage, 1 attempt(s))
+[ 83/317] 023_001_idempotent_post_endpoint_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_023_001_idempotent_post_endpoint
+      dedoc_023_001_idempotent_post_endpoint (dedoc) ... ACCEPTED (24 passed, inherited coverage, 1 attempt(s))
+[ 84/317] 023_002_in_flight_coalescing_idempotent_payments_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] process_payment/3 gutted to raise ... killed
+      mutant [3/8] get_payments/1 gutted to raise ... killed
+      mutant [4/8] get_payment/2 gutted to raise ... killed
+      mutant [5/8] in_flight_count/1 gutted to raise ... killed
+      mutant [6/8] init/1 gutted to raise ... killed
+      mutant [7/8] handle_call/3 gutted to raise ... killed
+      mutant [8/8] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_023_002_in_flight_coalescing_idempotent_payments
+      dedoc_023_002_in_flight_coalescing_idempotent_payments (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[ 85/317] 023_003_fingerprint_conflict_idempotent_payments_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_023_003_fingerprint_conflict_idempotent_payments
+      dedoc_023_003_fingerprint_conflict_idempotent_payments (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[ 86/317] 023_004_lru_bounded_idempotent_payments_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] process_payment/3 gutted to raise ... killed
+      mutant [3/7] get_payments/1 gutted to raise ... killed
+      mutant [4/7] get_payment/2 gutted to raise ... killed
+      mutant [5/7] keys_by_recency/1 gutted to raise ... killed
+      mutant [6/7] init/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_023_004_lru_bounded_idempotent_payments
+      dedoc_023_004_lru_bounded_idempotent_payments (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[ 87/317] 024_001_webhook_receiver_with_signature_verification_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_024_001_webhook_receiver_with_signature_verification
+      dedoc_024_001_webhook_receiver_with_signature_verification (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[ 88/317] 024_002_replay_protected_timestamped_webhook_receiver_01 (backfill) ...
+      mutant [1/7] sign/3 gutted to raise ... killed
+      mutant [2/7] parse/1 gutted to raise ... killed
+      mutant [3/7] store_event/3 gutted to raise ... killed
+      mutant [4/7] get_event/2 gutted to raise ... killed
+      mutant [5/7] all_events/1 gutted to raise ... killed
+      mutant [6/7] start_link/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_024_002_replay_protected_timestamped_webhook_receiver
+      dedoc_024_002_replay_protected_timestamped_webhook_receiver (dedoc) ... ACCEPTED (24 passed, inherited coverage, 1 attempt(s))
+[ 89/317] 024_003_multi_provider_webhook_receiver_with_key_rotation_01 (backfill) ...
+      mutant [1/7] verify/4 gutted to raise ... killed
+      mutant [2/7] verify_any/4 gutted to raise ... killed
+      mutant [3/7] store_event/4 gutted to raise ... killed
+      mutant [4/7] get_event/3 gutted to raise ... killed
+      mutant [5/7] all_events/1 gutted to raise ... killed
+      mutant [6/7] start_link/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_024_003_multi_provider_webhook_receiver_with_key_rotation
+      dedoc_024_003_multi_provider_webhook_receiver_with_key_rotation (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[ 90/317] 024_004_ordered_stream_webhook_receiver_with_gap_buffering_01 (backfill) ...
+      mutant [1/7] verify/3 gutted to raise ... killed
+      mutant [2/7] deliver/2 gutted to raise ... killed
+      mutant [3/7] last_sequence/2 gutted to raise ... killed
+      mutant [4/7] delivered_events/2 gutted to raise ... killed
+      mutant [5/7] buffered_sequences/2 gutted to raise ... killed
+      mutant [6/7] start_link/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_024_004_ordered_stream_webhook_receiver_with_gap_buffering
+      dedoc_024_004_ordered_stream_webhook_receiver_with_gap_buffering (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[ 91/317] 025_001_long_polling_endpoint_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_025_001_long_polling_endpoint
+      dedoc_025_001_long_polling_endpoint (dedoc) ... ACCEPTED (11 passed, inherited coverage, 1 attempt(s))
+[ 92/317] 025_002_cursor_resumable_gap_free_long_poll_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_025_002_cursor_resumable_gap_free_long_poll
+      dedoc_025_002_cursor_resumable_gap_free_long_poll (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[ 93/317] 025_003_coalescing_batch_long_poll_with_linger_window_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] child_spec/1 gutted to raise ... killed
+      mutant [3/5] subscribe/2 gutted to raise ... killed
+      mutant [4/5] publish/3 gutted to raise ... killed
+      mutant [5/5] call/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_025_003_coalescing_batch_long_poll_with_linger_window
+      dedoc_025_003_coalescing_batch_long_poll_with_linger_window (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[ 94/317] 025_004_multi_channel_fan_in_long_poll_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_025_004_multi_channel_fan_in_long_poll
+      dedoc_025_004_multi_channel_fan_in_long_poll (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[ 95/317] 031_001_csv_importer_with_validation_and_error_report_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_031_001_csv_importer_with_validation_and_error_report
+      dedoc_031_001_csv_importer_with_validation_and_error_report (dedoc) ... ACCEPTED (29 passed, inherited coverage, 1 attempt(s))
+[ 96/317] 031_002_jsonl_importer_with_schema_validation_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_031_002_jsonl_importer_with_schema_validation
+      dedoc_031_002_jsonl_importer_with_schema_validation (dedoc) ... ACCEPTED (40 passed, inherited coverage, 1 attempt(s))
+[ 97/317] 031_003_csv_loader_with_type_coercion_and_enriched_schema_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_031_003_csv_loader_with_type_coercion_and_enriched_schema
+      dedoc_031_003_csv_loader_with_type_coercion_and_enriched_schema (dedoc) ... ACCEPTED (36 passed, inherited coverage, 1 attempt(s))
+[ 98/317] 031_004_logfmt_record_validator_with_hand_written_parser_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_031_004_logfmt_record_validator_with_hand_written_parser
+      dedoc_031_004_logfmt_record_validator_with_hand_written_parser (dedoc) ... ACCEPTED (33 passed, inherited coverage, 1 attempt(s))
+[ 99/317] 032_001_json_to_ecto_bulk_ingestion_pipeline_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_032_001_json_to_ecto_bulk_ingestion_pipeline
+      dedoc_032_001_json_to_ecto_bulk_ingestion_pipeline (dedoc) ... ACCEPTED (10 passed, inherited coverage, 1 attempt(s))
+[100/317] 032_002_csv_to_ecto_batch_ingestion_with_changeset_validation_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_032_002_csv_to_ecto_batch_ingestion_with_changeset_validation
+      dedoc_032_002_csv_to_ecto_batch_ingestion_with_changeset_validation (dedoc) ... ACCEPTED (8 passed, inherited coverage, 1 attempt(s))
+[101/317] 032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_032_003_jsonl_streaming_ingestion_with_parallel_batch_processing
+      dedoc_032_003_jsonl_streaming_ingestion_with_parallel_batch_processing (dedoc) ... ACCEPTED (8 passed, inherited coverage, 1 attempt(s))
+[102/317] 032_004_multi_table_json_ingestion_with_type_discriminator_routing_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_032_004_multi_table_json_ingestion_with_type_discriminator_routing
+      dedoc_032_004_multi_table_json_ingestion_with_type_discriminator_routing (dedoc) ... ACCEPTED (10 passed, inherited coverage, 1 attempt(s))
+[103/317] 033_001_log_file_analyzer_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_033_001_log_file_analyzer
+      dedoc_033_001_log_file_analyzer (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[104/317] 033_002_metrics_file_aggregator_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_033_002_metrics_file_aggregator
+      dedoc_033_002_metrics_file_aggregator (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[105/317] 033_003_http_access_log_analyzer_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_033_003_http_access_log_analyzer
+      dedoc_033_003_http_access_log_analyzer (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[106/317] 033_004_financial_transaction_analyzer_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_033_004_financial_transaction_analyzer
+      dedoc_033_004_financial_transaction_analyzer (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[107/317] 034_001_data_reconciliation_engine_01 (backfill) ...
+      mutant [1/1] reconcile/3 gutted to raise ... killed
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L104 s317: {:ok, _} -> {:error, _} killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_034_001_data_reconciliation_engine_02
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L84 s237: 1 -> 2 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L85 s254: 1 -> 2 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L98 s306: 1 -> 2 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L126 s396: 1 -> 2 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L144 s482: 1 -> 2 not killed by tests (survives or fails to compile) — not a mintable bug
+      bugfix_034_001_data_reconciliation_engine_02 (bugfix) ... ACCEPTED (26 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_034_001_data_reconciliation_engine_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_034_001_data_reconciliation_engine_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_034_001_data_reconciliation_engine_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_034_001_data_reconciliation_engine_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_034_001_data_reconciliation_engine_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_034_001_data_reconciliation_engine
+      dedoc_034_001_data_reconciliation_engine (dedoc) ... ACCEPTED (26 passed, inherited coverage, 1 attempt(s))
+[108/317] 034_002_cardinality_classifying_multi_key_reconciler_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_034_002_cardinality_classifying_multi_key_reconciler
+      dedoc_034_002_cardinality_classifying_multi_key_reconciler (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[109/317] 034_003_rule_driven_tolerant_reconciler_with_compiled_config_01 (backfill) ...
+      mutant [1/3] compile/1 gutted to raise ... killed
+      mutant [2/3] run/3 gutted to raise ... killed
+      mutant [3/3] field_summary/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_034_003_rule_driven_tolerant_reconciler_with_compiled_config
+      dedoc_034_003_rule_driven_tolerant_reconciler_with_compiled_config (dedoc) ... ACCEPTED (42 passed, inherited coverage, 1 attempt(s))
+[110/317] 034_004_incremental_streaming_reconciler_genserver_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] push_left/2 gutted to raise ... killed
+      mutant [3/8] push_right/2 gutted to raise ... killed
+      mutant [4/8] take_matches/1 gutted to raise ... killed
+      mutant [5/8] pending/1 gutted to raise ... killed
+      mutant [6/8] stop/1 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_034_004_incremental_streaming_reconciler_genserver
+      dedoc_034_004_incremental_streaming_reconciler_genserver (dedoc) ... ACCEPTED (26 passed, inherited coverage, 1 attempt(s))
+[111/317] 035_001_time_series_resampler_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_035_001_time_series_resampler
+      dedoc_035_001_time_series_resampler (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[112/317] 035_002_multi_series_aligned_resampler_01 (backfill) ...
+      mutant [1/1] resample/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_035_002_multi_series_aligned_resampler
+      dedoc_035_002_multi_series_aligned_resampler (dedoc) ... ACCEPTED (26 passed, inherited coverage, 1 attempt(s))
+[113/317] 035_003_streaming_watermark_resampler_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_035_003_streaming_watermark_resampler
+      dedoc_035_003_streaming_watermark_resampler (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[114/317] 035_004_counter_rate_resampler_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_035_004_counter_rate_resampler
+      dedoc_035_004_counter_rate_resampler (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[115/317] 036_001_markdown_to_structured_data_parser_01 (backfill) ...
+      mutant [1/1] parse/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_036_001_markdown_to_structured_data_parser
+      dedoc_036_001_markdown_to_structured_data_parser (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[116/317] 036_002_hierarchical_heading_outline_parser_01 (backfill) ...
+      mutant [1/1] parse/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_036_002_hierarchical_heading_outline_parser
+      dedoc_036_002_hierarchical_heading_outline_parser (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[117/317] 036_003_error_reporting_markdown_parser_with_line_diagnostics_01 (backfill) ...
+      mutant [1/1] parse/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_036_003_error_reporting_markdown_parser_with_line_diagnostics
+      dedoc_036_003_error_reporting_markdown_parser_with_line_diagnostics (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[118/317] 036_004_gfm_table_parser_to_row_maps_01 (backfill) ...
+      mutant [1/1] parse/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_036_004_gfm_table_parser_to_row_maps
+      dedoc_036_004_gfm_table_parser_to_row_maps (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[119/317] 037_001_data_anonymizer_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_037_001_data_anonymizer
+      dedoc_037_001_data_anonymizer (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[120/317] 037_002_path_addressed_nested_record_anonymizer_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_037_002_path_addressed_nested_record_anonymizer
+      dedoc_037_002_path_addressed_nested_record_anonymizer (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[121/317] 037_003_reversible_tokenization_vault_anonymizer_01 (backfill) ...
+      mutant [1/2] tokenize/2 gutted to raise ... killed
+      mutant [2/2] detokenize/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_037_003_reversible_tokenization_vault_anonymizer
+      dedoc_037_003_reversible_tokenization_vault_anonymizer (dedoc) ... ACCEPTED (13 passed, inherited coverage, 1 attempt(s))
+[122/317] 037_004_stateful_concurrent_consistent_pseudonymizer_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_037_004_stateful_concurrent_consistent_pseudonymizer
+      dedoc_037_004_stateful_concurrent_consistent_pseudonymizer (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[123/317] 038_001_tree_structure_builder_from_flat_list_01 (backfill) ...
+      mutant [1/1] build/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_038_001_tree_structure_builder_from_flat_list
+      dedoc_038_001_tree_structure_builder_from_flat_list (dedoc) ... ACCEPTED (28 passed, inherited coverage, 1 attempt(s))
+[124/317] 038_002_materialized_path_tree_annotator_01 (backfill) ...
+      mutant [1/2] build/2 gutted to raise ... killed
+      mutant [2/2] subtree/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_038_002_materialized_path_tree_annotator
+      dedoc_038_002_materialized_path_tree_annotator (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[125/317] 038_003_incremental_streaming_tree_builder_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] add/2 gutted to raise ... killed
+      mutant [3/8] add_many/2 gutted to raise ... killed
+      mutant [4/8] forest/1 gutted to raise ... killed
+      mutant [5/8] count/1 gutted to raise ... killed
+      mutant [6/8] stop/1 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_038_003_incremental_streaming_tree_builder
+      dedoc_038_003_incremental_streaming_tree_builder (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[126/317] 038_004_diagnostic_tree_validator_with_best_effort_repair_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_038_004_diagnostic_tree_validator_with_best_effort_repair
+      dedoc_038_004_diagnostic_tree_validator_with_best_effort_repair (dedoc) ... ACCEPTED (12 passed, inherited coverage, 1 attempt(s))
+[127/317] 039_001_diff_generator_for_record_lists_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_039_001_diff_generator_for_record_lists
+      dedoc_039_001_diff_generator_for_record_lists (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[128/317] 039_002_nested_path_addressed_record_diff_01 (backfill) ...
+      mutant [1/1] diff/3 gutted to raise ... killed
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L67 s271: 1 -> 2 not killed by tests (survives or fails to compile) — not a mintable bug
+      bugfix_039_002_nested_path_addressed_record_diff_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_039_002_nested_path_addressed_record_diff
+      dedoc_039_002_nested_path_addressed_record_diff (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[129/317] 039_003_ordered_record_diff_with_move_detection_01 (backfill) ...
+      mutant [1/1] diff/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_039_003_ordered_record_diff_with_move_detection
+      dedoc_039_003_ordered_record_diff_with_move_detection (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[130/317] 039_004_three_way_record_merge_with_conflict_detection_01 (backfill) ...
+      mutant [1/1] merge/4 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_039_004_three_way_record_merge_with_conflict_detection
+      dedoc_039_004_three_way_record_merge_with_conflict_detection (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[131/317] 040_001_configuration_merger_with_override_rules_01 (backfill) ...
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L93 s211: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+      bugfix_040_001_configuration_merger_with_override_rules_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_040_001_configuration_merger_with_override_rules
+      dedoc_040_001_configuration_merger_with_override_rules (dedoc) ... ACCEPTED (26 passed, inherited coverage, 1 attempt(s))
+[132/317] 040_002_provenance_tracking_layered_config_merger_01 (backfill) ...
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L45 s73: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L74 s212: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+      bugfix_040_002_provenance_tracking_layered_config_merger_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_040_002_provenance_tracking_layered_config_merger_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_040_002_provenance_tracking_layered_config_merger
+      dedoc_040_002_provenance_tracking_layered_config_merger (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[133/317] 040_003_stateful_layered_config_store_genserver_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_040_003_stateful_layered_config_store_genserver
+      dedoc_040_003_stateful_layered_config_store_genserver (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[134/317] 040_004_conflict_detecting_strict_config_merger_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_040_004_conflict_detecting_strict_config_merger
+      dedoc_040_004_conflict_detecting_strict_config_merger (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[135/317] 041_001_lru_cache_backed_by_ets_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_041_001_lru_cache_backed_by_ets
+      dedoc_041_001_lru_cache_backed_by_ets (dedoc) ... ACCEPTED (28 passed, inherited coverage, 1 attempt(s))
+[136/317] 041_002_lfu_cache_backed_by_ets_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_041_002_lfu_cache_backed_by_ets
+      dedoc_041_002_lfu_cache_backed_by_ets (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[137/317] 041_003_sharded_lru_cache_with_consistent_key_routing_01 (backfill) ...
+      mutant [1/9] child_spec/1 gutted to raise ... killed
+      mutant [2/9] start_link/1 gutted to raise ... killed
+      mutant [3/9] get/2 gutted to raise ... killed
+      mutant [4/9] put/3 gutted to raise ... killed
+      mutant [5/9] num_shards/1 gutted to raise ... killed
+      mutant [6/9] shard_index/2 gutted to raise ... killed
+      mutant [7/9] size/1 gutted to raise ... killed
+      mutant [8/9] init/1 gutted to raise ... killed
+      mutant [9/9] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_041_003_sharded_lru_cache_with_consistent_key_routing
+      dedoc_041_003_sharded_lru_cache_with_consistent_key_routing (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[138/317] 041_004_weight_aware_cost_bounded_lru_cache_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_041_004_weight_aware_cost_bounded_lru_cache
+      dedoc_041_004_weight_aware_cost_bounded_lru_cache (dedoc) ... ACCEPTED (13 passed, inherited coverage, 1 attempt(s))
+[139/317] 042_001_ets_based_write_through_cache_layer_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_042_001_ets_based_write_through_cache_layer
+      dedoc_042_001_ets_based_write_through_cache_layer (dedoc) ... ACCEPTED (12 passed, inherited coverage, 1 attempt(s))
+[140/317] 042_002_failure_aware_write_through_cache_with_negative_caching_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_042_002_failure_aware_write_through_cache_with_negative_caching
+      dedoc_042_002_failure_aware_write_through_cache_with_negative_caching (dedoc) ... ACCEPTED (13 passed, inherited coverage, 1 attempt(s))
+[141/317] 042_003_true_write_through_cache_with_backing_store_propagation_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] fetch/4 gutted to raise ... killed
+      mutant [3/9] put/5 gutted to raise ... killed
+      mutant [4/9] delete/4 gutted to raise ... killed
+      mutant [5/9] invalidate/3 gutted to raise ... killed
+      mutant [6/9] invalidate_all/2 gutted to raise ... killed
+      mutant [7/9] init/1 gutted to raise ... killed
+      mutant [8/9] handle_call/3 gutted to raise ... killed
+      mutant [9/9] terminate/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_042_003_true_write_through_cache_with_backing_store_propagation
+      dedoc_042_003_true_write_through_cache_with_backing_store_propagation (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[142/317] 042_004_single_flight_non_blocking_write_through_cache_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] fetch/4 gutted to raise ... killed
+      mutant [3/8] invalidate/3 gutted to raise ... killed
+      mutant [4/8] invalidate_all/2 gutted to raise ... killed
+      mutant [5/8] init/1 gutted to raise ... killed
+      mutant [6/8] handle_call/3 gutted to raise ... killed
+      mutant [7/8] handle_info/2 gutted to raise ... killed
+      mutant [8/8] terminate/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_042_004_single_flight_non_blocking_write_through_cache
+      dedoc_042_004_single_flight_non_blocking_write_through_cache (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[143/317] 043_001_ets_based_leaderboard_01 (backfill) ...
+      mutant [1/4] new/1 gutted to raise ... killed
+      mutant [2/4] submit_score/3 gutted to raise ... killed
+      mutant [3/4] top/2 gutted to raise ... killed
+      mutant [4/4] rank/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_043_001_ets_based_leaderboard
+      dedoc_043_001_ets_based_leaderboard (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[144/317] 043_002_cumulative_points_leaderboard_with_atomic_counters_01 (backfill) ...
+      mutant [1/5] new/1 gutted to raise ... killed
+      mutant [2/5] add_points/3 gutted to raise ... killed
+      mutant [3/5] total/2 gutted to raise ... killed
+      mutant [4/5] top/2 gutted to raise ... killed
+      mutant [5/5] rank/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_043_002_cumulative_points_leaderboard_with_atomic_counters
+      dedoc_043_002_cumulative_points_leaderboard_with_atomic_counters (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[145/317] 043_003_sliding_window_time_decayed_leaderboard_01 (backfill) ...
+      mutant [1/6] new/2 gutted to raise ... killed
+      mutant [2/6] record/4 gutted to raise ... killed
+      mutant [3/6] score/3 gutted to raise ... killed
+      mutant [4/6] top/3 gutted to raise ... killed
+      mutant [5/6] rank/3 gutted to raise ... killed
+      mutant [6/6] prune/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_043_003_sliding_window_time_decayed_leaderboard
+      dedoc_043_003_sliding_window_time_decayed_leaderboard (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[146/317] 043_004_ordered_set_leaderboard_with_deterministic_tie_breaking_01 (backfill) ...
+      mutant [1/6] new/1 gutted to raise ... killed
+      mutant [2/6] submit_score/3 gutted to raise ... killed
+      mutant [3/6] top/2 gutted to raise ... killed
+      mutant [4/6] rank/2 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_043_004_ordered_set_leaderboard_with_deterministic_tie_breaking
+      dedoc_043_004_ordered_set_leaderboard_with_deterministic_tie_breaking (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[147/317] 044_001_ets_based_metrics_collector_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_044_001_ets_based_metrics_collector
+      dedoc_044_001_ets_based_metrics_collector (dedoc) ... ACCEPTED (30 passed, inherited coverage, 1 attempt(s))
+[148/317] 044_002_histogram_metrics_collector_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_044_002_histogram_metrics_collector
+      dedoc_044_002_histogram_metrics_collector (dedoc) ... ACCEPTED (11 passed, inherited coverage, 1 attempt(s))
+[149/317] 044_003_labeled_dimensional_metrics_collector_01 (backfill) ...
+      mutant [1/13] start_link/1 gutted to raise ... killed
+      mutant [2/13] increment/1 gutted to raise ... killed
+      mutant [3/13] increment/2 gutted to raise ... killed
+      mutant [4/13] increment/3 gutted to raise ... killed
+      mutant [5/13] gauge/2 gutted to raise ... killed
+      mutant [6/13] gauge/3 gutted to raise ... killed
+      mutant [7/13] get/2 gutted to raise ... killed
+      mutant [8/13] get/1 gutted to raise ... killed
+      mutant [9/13] series/1 gutted to raise ... killed
+      mutant [10/13] reset/2 gutted to raise ... killed
+      mutant [11/13] reset/1 gutted to raise ... killed
+      mutant [12/13] all/0 gutted to raise ... killed
+      mutant [13/13] init/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_044_003_labeled_dimensional_metrics_collector
+      dedoc_044_003_labeled_dimensional_metrics_collector (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[150/317] 044_004_sliding_window_rate_metrics_collector_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_044_004_sliding_window_rate_metrics_collector
+      dedoc_044_004_sliding_window_rate_metrics_collector (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[151/317] 045_001_ets_based_feature_flag_store_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] enable/1 gutted to raise ... killed
+      mutant [3/8] disable/1 gutted to raise ... killed
+      mutant [4/8] enable_for_percentage/2 gutted to raise ... killed
+      mutant [5/8] enabled?/1 gutted to raise ... killed
+      mutant [6/8] enabled_for?/2 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_045_001_ets_based_feature_flag_store
+      dedoc_045_001_ets_based_feature_flag_store (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[152/317] 045_002_multivariate_a_b_c_feature_flag_store_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] enable/1 gutted to raise ... killed
+      mutant [3/9] disable/1 gutted to raise ... killed
+      mutant [4/9] set_variants/2 gutted to raise ... killed
+      mutant [5/9] enabled?/1 gutted to raise ... killed
+      mutant [6/9] variant_for/2 gutted to raise ... killed
+      mutant [7/9] enabled_for?/2 gutted to raise ... killed
+      mutant [8/9] init/1 gutted to raise ... killed
+      mutant [9/9] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_045_002_multivariate_a_b_c_feature_flag_store
+      dedoc_045_002_multivariate_a_b_c_feature_flag_store (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[153/317] 045_003_versioned_feature_flag_store_with_rollback_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_045_003_versioned_feature_flag_store_with_rollback
+      dedoc_045_003_versioned_feature_flag_store_with_rollback (dedoc) ... ACCEPTED (11 passed, inherited coverage, 1 attempt(s))
+[154/317] 045_004_dependency_aware_feature_flag_store_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_045_004_dependency_aware_feature_flag_store
+      dedoc_045_004_dependency_aware_feature_flag_store (dedoc) ... ACCEPTED (10 passed, inherited coverage, 1 attempt(s))
+[155/317] 061_001_parallel_map_with_concurrency_limit_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_061_001_parallel_map_with_concurrency_limit
+      dedoc_061_001_parallel_map_with_concurrency_limit (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[156/317] 061_002_fail_fast_parallel_map_with_cancellation_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_061_002_fail_fast_parallel_map_with_cancellation
+      dedoc_061_002_fail_fast_parallel_map_with_cancellation (dedoc) ... ACCEPTED (10 passed, inherited coverage, 1 attempt(s))
+[157/317] 061_003_timeout_and_retry_parallel_map_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] increment/1 gutted to raise ... killed
+      mutant [3/7] decrement/1 gutted to raise ... killed
+      mutant [4/7] peak/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] pmap/3 gutted to raise ... killed
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block a timed-out attempt is really killed and produces no late side effect carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (15/15), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_061_003_timeout_and_retry_parallel_map_11
+      tfim_061_003_timeout_and_retry_parallel_map_11 (tfim) ... ACCEPTED (15 passed, mutant killed (isolation), 1 attempt(s))
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_061_003_timeout_and_retry_parallel_map
+      dedoc_061_003_timeout_and_retry_parallel_map (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[158/317] 061_004_weight_budget_parallel_map_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] add/2 gutted to raise ... killed
+      mutant [3/7] sub/2 gutted to raise ... killed
+      mutant [4/7] peak/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] pmap/4 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_061_004_weight_budget_parallel_map
+      dedoc_061_004_weight_budget_parallel_map (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[159/317] 062_001_pipeline_processor_with_stages_01 (backfill) ...
+      mutant [1/3] new/0 gutted to raise ... killed
+      mutant [2/3] stage/3 gutted to raise ... killed
+      mutant [3/3] run/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_062_001_pipeline_processor_with_stages
+      dedoc_062_001_pipeline_processor_with_stages (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[160/317] 062_002_retryable_pipeline_with_per_stage_retry_policies_01 (backfill) ...
+      mutant [1/3] new/0 gutted to raise ... killed
+      mutant [2/3] stage/4 gutted to raise ... killed
+      mutant [3/3] run/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_062_002_retryable_pipeline_with_per_stage_retry_policies
+      dedoc_062_002_retryable_pipeline_with_per_stage_retry_policies (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[161/317] 062_003_fan_out_map_pipeline_with_bounded_concurrency_01 (backfill) ...
+      mutant [1/4] new/0 gutted to raise ... killed
+      mutant [2/4] stage/3 gutted to raise ... killed
+      mutant [3/4] map_stage/4 gutted to raise ... killed
+      mutant [4/4] run/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_062_003_fan_out_map_pipeline_with_bounded_concurrency
+      dedoc_062_003_fan_out_map_pipeline_with_bounded_concurrency (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[162/317] 062_004_batch_pipeline_with_error_collection_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_062_004_batch_pipeline_with_error_collection
+      dedoc_062_004_batch_pipeline_with_error_collection (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[163/317] 063_001_concurrent_data_fetcher_with_timeout_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_063_001_concurrent_data_fetcher_with_timeout
+      dedoc_063_001_concurrent_data_fetcher_with_timeout (dedoc) ... ACCEPTED (13 passed, inherited coverage, 1 attempt(s))
+[164/317] 063_002_quorum_first_n_concurrent_fetcher_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_063_002_quorum_first_n_concurrent_fetcher
+      dedoc_063_002_quorum_first_n_concurrent_fetcher (dedoc) ... ACCEPTED (13 passed, inherited coverage, 1 attempt(s))
+[165/317] 063_003_fallback_chain_concurrent_fetcher_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_063_003_fallback_chain_concurrent_fetcher
+      dedoc_063_003_fallback_chain_concurrent_fetcher (dedoc) ... ACCEPTED (9 passed, inherited coverage, 1 attempt(s))
+[166/317] 064_001_work_stealing_task_queue_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_064_001_work_stealing_task_queue
+      dedoc_064_001_work_stealing_task_queue (dedoc) ... ACCEPTED (11 passed, inherited coverage, 1 attempt(s))
+[167/317] 064_002_fault_tolerant_result_tagged_work_stealing_queue_01 (backfill) ...
+      mutant [1/1] run/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_064_002_fault_tolerant_result_tagged_work_stealing_queue
+      dedoc_064_002_fault_tolerant_result_tagged_work_stealing_queue (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[168/317] 064_003_priority_aware_work_stealing_queue_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_064_003_priority_aware_work_stealing_queue
+      dedoc_064_003_priority_aware_work_stealing_queue (dedoc) ... ACCEPTED (9 passed, inherited coverage, 1 attempt(s))
+[169/317] 064_004_instrumented_work_stealing_queue_with_steal_metrics_01 (backfill) ...
+      mutant [1/1] run/4 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_064_004_instrumented_work_stealing_queue_with_steal_metrics
+      dedoc_064_004_instrumented_work_stealing_queue_with_steal_metrics (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[170/317] 065_001_saga_compensating_transaction_coordinator_01 (backfill) ...
+      mutant [1/3] new/0 gutted to raise ... killed
+      mutant [2/3] step/4 gutted to raise ... killed
+      mutant [3/3] execute/2 gutted to raise ... killed
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block error map contains exactly the four documented keys and nothing else carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (14/14), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_065_001_saga_compensating_transaction_coordinator_11
+      tfim_065_001_saga_compensating_transaction_coordinator_11 (tfim) ... ACCEPTED (14 passed, mutant killed (isolation), 1 attempt(s))
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_065_001_saga_compensating_transaction_coordinator
+      dedoc_065_001_saga_compensating_transaction_coordinator (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[171/317] 065_002_retrying_saga_coordinator_01 (backfill) ...
+      mutant [1/3] new/0 gutted to raise ... killed
+      mutant [2/3] step/5 gutted to raise ... killed
+      mutant [3/3] execute/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_065_002_retrying_saga_coordinator
+      dedoc_065_002_retrying_saga_coordinator (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[172/317] 065_003_parallel_stage_saga_coordinator_01 (backfill) ...
+      mutant [1/3] new/0 gutted to raise ... killed
+      mutant [2/3] stage/2 gutted to raise ... killed
+      mutant [3/3] execute/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_065_003_parallel_stage_saga_coordinator
+      dedoc_065_003_parallel_stage_saga_coordinator (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[173/317] 065_004_policy_driven_saga_coordinator_01 (backfill) ...
+      mutant [1/3] new/0 gutted to raise ... killed
+      mutant [2/3] step/5 gutted to raise ... killed
+      mutant [3/3] execute/2 gutted to raise ... killed
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block omitting :on_error defaults to :continue past a failed compensation carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (15/15), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_065_004_policy_driven_saga_coordinator_11
+      tfim_065_004_policy_driven_saga_coordinator_11 (tfim) ... ACCEPTED (15 passed, mutant killed (isolation), 1 attempt(s))
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_065_004_policy_driven_saga_coordinator
+      dedoc_065_004_policy_driven_saga_coordinator (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[174/317] 070_001_saga_compensating_transaction_coordinator_01 (backfill) ...
+      mutant [1/3] new/0 gutted to raise ... killed
+      mutant [2/3] step/4 gutted to raise ... killed
+      mutant [3/3] execute/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_070_001_saga_compensating_transaction_coordinator
+      dedoc_070_001_saga_compensating_transaction_coordinator (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[175/317] 070_002_pivot_step_saga_with_forward_recovery_01 (backfill) ...
+      mutant [1/4] new/0 gutted to raise ... killed
+      mutant [2/4] step/4 gutted to raise ... killed
+      mutant [3/4] retriable/4 gutted to raise ... killed
+      mutant [4/4] execute/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_070_002_pivot_step_saga_with_forward_recovery
+      dedoc_070_002_pivot_step_saga_with_forward_recovery (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[176/317] 070_003_nested_sub_saga_composition_01 (backfill) ...
+      mutant [1/4] new/0 gutted to raise ... killed
+      mutant [2/4] step/4 gutted to raise ... killed
+      mutant [3/4] nest/3 gutted to raise ... killed
+      mutant [4/4] execute/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_070_003_nested_sub_saga_composition
+      dedoc_070_003_nested_sub_saga_composition (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[177/317] 070_004_resumable_journaled_saga_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_070_004_resumable_journaled_saga
+      dedoc_070_004_resumable_journaled_saga (dedoc) ... ACCEPTED (8 passed, inherited coverage, 1 attempt(s))
+[178/317] 071_001_factory_module_for_test_data_generation_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_071_001_factory_module_for_test_data_generation
+      dedoc_071_001_factory_module_for_test_data_generation (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[179/317] 071_002_trait_composable_factory_01 (backfill) ...
+      mutant [1/8] start/0 gutted to raise ... killed
+      mutant [2/8] sequence/2 gutted to raise ... killed
+      mutant [3/8] build/1 gutted to raise ... killed
+      mutant [4/8] build/2 gutted to raise ... killed
+      mutant [5/8] build/3 gutted to raise ... killed
+      mutant [6/8] insert/1 gutted to raise ... killed
+      mutant [7/8] insert/2 gutted to raise ... killed
+      mutant [8/8] insert/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_071_002_trait_composable_factory
+      dedoc_071_002_trait_composable_factory (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[180/317] 071_003_bulk_list_factory_with_concurrent_insertion_01 (backfill) ...
+      mutant [1/12] start/0 gutted to raise ... killed
+      mutant [2/12] sequence/2 gutted to raise ... killed
+      mutant [3/12] build/1 gutted to raise ... killed
+      mutant [4/12] build/2 gutted to raise ... killed
+      mutant [5/12] insert/1 gutted to raise ... killed
+      mutant [6/12] insert/2 gutted to raise ... killed
+      mutant [7/12] build_list/2 gutted to raise ... killed
+      mutant [8/12] build_list/3 gutted to raise ... killed
+      mutant [9/12] insert_list/2 gutted to raise ... killed
+      mutant [10/12] insert_list/3 gutted to raise ... killed
+      mutant [11/12] params_for/1 gutted to raise ... killed
+      mutant [12/12] params_for/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_071_003_bulk_list_factory_with_concurrent_insertion
+      dedoc_071_003_bulk_list_factory_with_concurrent_insertion (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[181/317] 071_004_validation_aware_factory_with_compensating_rollback_01 (backfill) ...
+      mutant [1/9] start/0 gutted to raise ... killed
+      mutant [2/9] sequence/2 gutted to raise ... killed
+      mutant [3/9] build/1 gutted to raise ... killed
+      mutant [4/9] build/2 gutted to raise ... killed
+      mutant [5/9] insert/1 gutted to raise ... killed
+      mutant [6/9] insert/2 gutted to raise ... killed
+      mutant [7/9] insert!/1 gutted to raise ... killed
+      mutant [8/9] insert!/2 gutted to raise ... killed
+      mutant [9/9] valid?/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_071_004_validation_aware_factory_with_compensating_rollback
+      dedoc_071_004_validation_aware_factory_with_compensating_rollback (dedoc) ... ACCEPTED (27 passed, inherited coverage, 1 attempt(s))
+[182/317] 072_001_test_helper_for_time_dependent_code_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_072_001_test_helper_for_time_dependent_code
+      dedoc_072_001_test_helper_for_time_dependent_code (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[183/317] 072_002_deferred_timer_virtual_clock_01 (backfill) ...
+      mutant [1/9] now/1 gutted to raise ... killed
+      mutant [2/9] now/0 gutted to raise ... killed
+      mutant [3/9] start_link/1 gutted to raise ... killed
+      mutant [4/9] schedule/3 gutted to raise ... killed
+      mutant [5/9] cancel/2 gutted to raise ... killed
+      mutant [6/9] pending/1 gutted to raise ... killed
+      mutant [7/9] advance/2 gutted to raise ... killed
+      mutant [8/9] init/1 gutted to raise ... killed
+      mutant [9/9] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_072_002_deferred_timer_virtual_clock
+      dedoc_072_002_deferred_timer_virtual_clock (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[184/317] 072_003_monotonic_measurement_clock_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_072_003_monotonic_measurement_clock
+      dedoc_072_003_monotonic_measurement_clock (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[185/317] 072_004_scripted_sequence_clock_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_072_004_scripted_sequence_clock
+      dedoc_072_004_scripted_sequence_clock (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[186/317] 073_001_database_cleaner_for_integration_tests_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_073_001_database_cleaner_for_integration_tests
+      dedoc_073_001_database_cleaner_for_integration_tests (dedoc) ... ACCEPTED (26 passed, inherited coverage, 1 attempt(s))
+[187/317] 073_002_savepoint_stack_nested_transaction_cleaner_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_073_002_savepoint_stack_nested_transaction_cleaner
+      dedoc_073_002_savepoint_stack_nested_transaction_cleaner (dedoc) ... ACCEPTED (10 passed, inherited coverage, 1 attempt(s))
+[188/317] 073_003_sandbox_ownership_cleaner_for_async_tests_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_073_003_sandbox_ownership_cleaner_for_async_tests
+      dedoc_073_003_sandbox_ownership_cleaner_for_async_tests (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[189/317] 073_004_fk_dependency_ordered_deletion_cleaner_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_073_004_fk_dependency_ordered_deletion_cleaner
+      dedoc_073_004_fk_dependency_ordered_deletion_cleaner (dedoc) ... ACCEPTED (10 passed, inherited coverage, 1 attempt(s))
+[190/317] 074_001_custom_exunit_assertion_helpers_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_074_001_custom_exunit_assertion_helpers
+      dedoc_074_001_custom_exunit_assertion_helpers (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[191/317] 074_002_collection_and_structural_assertion_helpers_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_074_002_collection_and_structural_assertion_helpers
+      dedoc_074_002_collection_and_structural_assertion_helpers (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[192/317] 074_003_concurrency_and_message_assertion_helpers_01 (backfill) ...
+      mutant [1/3] next_message/2 gutted to raise ... killed
+      mutant [2/3] no_message/1 gutted to raise ... killed
+      mutant [3/3] process_exits/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_074_003_concurrency_and_message_assertion_helpers
+      dedoc_074_003_concurrency_and_message_assertion_helpers (dedoc) ... ACCEPTED (34 passed, inherited coverage, 1 attempt(s))
+[193/317] 074_004_numeric_tolerance_and_exception_assertion_helpers_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_074_004_numeric_tolerance_and_exception_assertion_helpers
+      dedoc_074_004_numeric_tolerance_and_exception_assertion_helpers (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[194/317] 075_001_property_based_test_generators_01 (backfill) ...
+      mutant [1/5] user/0 gutted to raise ... killed
+      mutant [2/5] money/0 gutted to raise ... killed
+      mutant [3/5] date_range/0 gutted to raise ... killed
+      mutant [4/5] non_empty_list/1 gutted to raise ... killed
+      mutant [5/5] one_of_weighted/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_075_001_property_based_test_generators
+      dedoc_075_001_property_based_test_generators (dedoc) ... ACCEPTED (41 passed, inherited coverage, 1 attempt(s))
+[195/317] 075_002_recursive_json_value_generators_with_bounded_depth_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_075_002_recursive_json_value_generators_with_bounded_depth
+      dedoc_075_002_recursive_json_value_generators_with_bounded_depth (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[196/317] 075_003_stateful_command_sequence_generators_01 (backfill) ...
+      mutant [1/2] stack_program/1 gutted to raise ... killed
+      mutant [2/2] account_program/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_075_003_stateful_command_sequence_generators
+      dedoc_075_003_stateful_command_sequence_generators (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[197/317] 075_004_schema_driven_generator_interpreter_01 (backfill) ...
+      mutant [1/1] from_schema/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_075_004_schema_driven_generator_interpreter
+      dedoc_075_004_schema_driven_generator_interpreter (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[198/317] 076_001_trie_01 (backfill) ...
+      mutant [1/7] new/0 gutted to raise ... killed
+      mutant [2/7] insert/2 gutted to raise ... killed
+      mutant [3/7] member?/2 gutted to raise ... killed
+      mutant [4/7] search/2 gutted to raise ... killed
+      mutant [5/7] delete/2 gutted to raise ... killed
+      mutant [6/7] size/1 gutted to raise ... killed
+      mutant [7/7] words/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_076_001_trie
+      dedoc_076_001_trie (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[199/317] 076_002_compressed_radix_trie_with_path_compression_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_076_002_compressed_radix_trie_with_path_compression
+      dedoc_076_002_compressed_radix_trie_with_path_compression (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[200/317] 076_003_weighted_autocomplete_trie_with_top_k_ranking_01 (backfill) ...
+      mutant [1/8] new/0 gutted to raise ... killed
+      mutant [2/8] insert/3 gutted to raise ... killed
+      mutant [3/8] weight/2 gutted to raise ... killed
+      mutant [4/8] member?/2 gutted to raise ... killed
+      mutant [5/8] suggest/3 gutted to raise ... killed
+      mutant [6/8] delete/2 gutted to raise ... killed
+      mutant [7/8] size/1 gutted to raise ... killed
+      mutant [8/8] words/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_076_003_weighted_autocomplete_trie_with_top_k_ranking
+      dedoc_076_003_weighted_autocomplete_trie_with_top_k_ranking (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[201/317] 076_004_wildcard_pattern_matching_trie_01 (backfill) ...
+      mutant [1/8] new/0 gutted to raise ... killed
+      mutant [2/8] insert/2 gutted to raise ... killed
+      mutant [3/8] member?/2 gutted to raise ... killed
+      mutant [4/8] matches?/2 gutted to raise ... killed
+      mutant [5/8] matching/2 gutted to raise ... killed
+      mutant [6/8] delete/2 gutted to raise ... killed
+      mutant [7/8] size/1 gutted to raise ... killed
+      mutant [8/8] words/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_076_004_wildcard_pattern_matching_trie
+      dedoc_076_004_wildcard_pattern_matching_trie (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[202/317] 077_001_interval_tree_for_overlapping_range_queries_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_077_001_interval_tree_for_overlapping_range_queries
+      dedoc_077_001_interval_tree_for_overlapping_range_queries (dedoc) ... ACCEPTED (45 passed, inherited coverage, 1 attempt(s))
+[203/317] 077_002_deletable_interval_tree_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_077_002_deletable_interval_tree
+      dedoc_077_002_deletable_interval_tree (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[204/317] 077_003_concurrent_interval_registry_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_077_003_concurrent_interval_registry
+      dedoc_077_003_concurrent_interval_registry (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[205/317] 077_004_max_overlap_interval_tree_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_077_004_max_overlap_interval_tree
+      dedoc_077_004_max_overlap_interval_tree (dedoc) ... ACCEPTED (29 passed, inherited coverage, 1 attempt(s))
+[206/317] 078_001_ring_buffer_01 (backfill) ...
+      mutant [1/6] new/1 gutted to raise ... killed
+      mutant [2/6] push/2 gutted to raise ... killed
+      mutant [3/6] to_list/1 gutted to raise ... killed
+      mutant [4/6] size/1 gutted to raise ... killed
+      mutant [5/6] peek_oldest/1 gutted to raise ... killed
+      mutant [6/6] peek_newest/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_078_001_ring_buffer
+      dedoc_078_001_ring_buffer (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[207/317] 078_002_reject_when_full_bounded_fifo_queue_01 (backfill) ...
+      mutant [1/8] new/1 gutted to raise ... killed
+      mutant [2/8] push/2 gutted to raise ... killed
+      mutant [3/8] pop/1 gutted to raise ... killed
+      mutant [4/8] to_list/1 gutted to raise ... killed
+      mutant [5/8] size/1 gutted to raise ... killed
+      mutant [6/8] full?/1 gutted to raise ... killed
+      mutant [7/8] peek_oldest/1 gutted to raise ... killed
+      mutant [8/8] peek_newest/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_078_002_reject_when_full_bounded_fifo_queue
+      dedoc_078_002_reject_when_full_bounded_fifo_queue (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[208/317] 078_003_double_ended_ring_buffer_deque_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_078_003_double_ended_ring_buffer_deque
+      dedoc_078_003_double_ended_ring_buffer_deque (dedoc) ... ACCEPTED (10 passed, inherited coverage, 1 attempt(s))
+[209/317] 078_004_concurrent_ring_buffer_sink_genserver_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_078_004_concurrent_ring_buffer_sink_genserver
+      dedoc_078_004_concurrent_ring_buffer_sink_genserver (dedoc) ... ACCEPTED (12 passed, inherited coverage, 1 attempt(s))
+[210/317] 079_001_bloom_filter_01 (backfill) ...
+      mutant [1/4] new/2 gutted to raise ... killed
+      mutant [2/4] add/2 gutted to raise ... killed
+      mutant [3/4] member?/2 gutted to raise ... killed
+      mutant [4/4] merge/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_079_001_bloom_filter
+      dedoc_079_001_bloom_filter (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[211/317] 079_002_counting_bloom_filter_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_079_002_counting_bloom_filter
+      dedoc_079_002_counting_bloom_filter (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[212/317] 079_003_scalable_bloom_filter_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_079_003_scalable_bloom_filter
+      dedoc_079_003_scalable_bloom_filter (dedoc) ... ACCEPTED (9 passed, inherited coverage, 1 attempt(s))
+[213/317] 079_004_concurrent_bloom_filter_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_079_004_concurrent_bloom_filter
+      dedoc_079_004_concurrent_bloom_filter (dedoc) ... ACCEPTED (9 passed, inherited coverage, 1 attempt(s))
+[214/317] 080_001_directed_acyclic_graph_with_topological_sort_01 (backfill) ...
+      mutant [1/6] new/0 gutted to raise ... killed
+      mutant [2/6] add_vertex/2 gutted to raise ... killed
+      mutant [3/6] add_edge/3 gutted to raise ... killed
+      mutant [4/6] predecessors/2 gutted to raise ... killed
+      mutant [5/6] successors/2 gutted to raise ... killed
+      mutant [6/6] topological_sort/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_080_001_directed_acyclic_graph_with_topological_sort
+      dedoc_080_001_directed_acyclic_graph_with_topological_sort (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[215/317] 080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers
+      dedoc_080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[216/317] 080_004_concurrent_dag_registry_genserver_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] add_vertex/2 gutted to raise ... killed
+      mutant [3/9] add_edge/3 gutted to raise ... killed
+      mutant [4/9] topological_sort/1 gutted to raise ... killed
+      mutant [5/9] predecessors/2 gutted to raise ... killed
+      mutant [6/9] successors/2 gutted to raise ... killed
+      mutant [7/9] vertices/1 gutted to raise ... killed
+      mutant [8/9] init/1 gutted to raise ... killed
+      mutant [9/9] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_080_004_concurrent_dag_registry_genserver
+      dedoc_080_004_concurrent_dag_registry_genserver (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[217/317] 086_001_shopping_cart_with_price_calculations_01 (backfill) ...
+      mutant [1/5] new/1 gutted to raise ... killed
+      mutant [2/5] add_item/4 gutted to raise ... killed
+      mutant [3/5] remove_item/2 gutted to raise ... killed
+      mutant [4/5] update_quantity/3 gutted to raise ... killed
+      mutant [5/5] calculate_totals/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_086_001_shopping_cart_with_price_calculations
+      dedoc_086_001_shopping_cart_with_price_calculations (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[218/317] 086_002_tiered_bracket_cart_with_shipping_thresholds_01 (backfill) ...
+      mutant [1/5] new/1 gutted to raise ... killed
+      mutant [2/5] add_item/4 gutted to raise ... killed
+      mutant [3/5] remove_item/2 gutted to raise ... killed
+      mutant [4/5] update_quantity/3 gutted to raise ... killed
+      mutant [5/5] calculate_totals/1 gutted to raise ... killed
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block shipping is waived when the discounted subtotal exactly equals the threshold carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (14/14), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_086_002_tiered_bracket_cart_with_shipping_thresholds_10
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block threshold compares against the discounted subtotal, not the undiscounted one carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (14/14), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_086_002_tiered_bracket_cart_with_shipping_thresholds_11
+      tfim_086_002_tiered_bracket_cart_with_shipping_thresholds_10 (tfim) ... ACCEPTED (14 passed, mutant killed (isolation), 1 attempt(s))
+      tfim_086_002_tiered_bracket_cart_with_shipping_thresholds_11 (tfim) ... ACCEPTED (14 passed, mutant killed (isolation), 1 attempt(s))
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_086_002_tiered_bracket_cart_with_shipping_thresholds
+      dedoc_086_002_tiered_bracket_cart_with_shipping_thresholds (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[219/317] 086_003_coupon_stacking_cart_with_order_level_discounts_01 (backfill) ...
+      mutant [1/6] new/1 gutted to raise ... killed
+      mutant [2/6] add_item/4 gutted to raise ... killed
+      mutant [3/6] remove_item/2 gutted to raise ... killed
+      mutant [4/6] update_quantity/3 gutted to raise ... killed
+      mutant [5/6] apply_coupon/2 gutted to raise ... killed
+      mutant [6/6] calculate_totals/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_086_003_coupon_stacking_cart_with_order_level_discounts
+      dedoc_086_003_coupon_stacking_cart_with_order_level_discounts (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[220/317] 086_004_concurrent_genserver_backed_cart_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] add_item/4 gutted to raise ... killed
+      mutant [3/7] remove_item/2 gutted to raise ... killed
+      mutant [4/7] update_quantity/3 gutted to raise ... killed
+      mutant [5/7] totals/1 gutted to raise ... killed
+      mutant [6/7] init/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_086_004_concurrent_genserver_backed_cart
+      dedoc_086_004_concurrent_genserver_backed_cart (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[221/317] 087_001_permission_system_with_role_based_access_01 (backfill) ...
+      mutant [1/2] can?/4 gutted to raise ... killed
+      mutant [2/2] can?/5 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_087_001_permission_system_with_role_based_access
+      dedoc_087_001_permission_system_with_role_based_access (dedoc) ... ACCEPTED (31 passed, inherited coverage, 1 attempt(s))
+[222/317] 087_002_deny_override_policy_list_access_control_01 (backfill) ...
+      mutant [1/2] evaluate/4 gutted to raise ... killed
+      mutant [2/2] authorized?/4 gutted to raise ... killed
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L36 s59: 1 -> 2 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L39 s80: 1 -> 2 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L40 s95: 1 -> 2 not killed by tests (survives or fails to compile) — not a mintable bug
+      bugfix_087_002_deny_override_policy_list_access_control_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_087_002_deny_override_policy_list_access_control_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_087_002_deny_override_policy_list_access_control_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_087_002_deny_override_policy_list_access_control
+      dedoc_087_002_deny_override_policy_list_access_control (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[223/317] 087_003_multi_role_grant_with_wildcard_permissions_01 (backfill) ...
+      mutant [1/2] effective_permissions/2 gutted to raise ... killed
+      mutant [2/2] permitted?/4 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_087_003_multi_role_grant_with_wildcard_permissions
+      dedoc_087_003_multi_role_grant_with_wildcard_permissions (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[224/317] 087_004_genserver_role_graph_registry_with_runtime_grants_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] add_role/2 gutted to raise ... killed
+      mutant [3/8] add_inheritance/3 gutted to raise ... killed
+      mutant [4/8] grant/4 gutted to raise ... killed
+      mutant [5/8] revoke/4 gutted to raise ... killed
+      mutant [6/8] can?/4 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_087_004_genserver_role_graph_registry_with_runtime_grants
+      dedoc_087_004_genserver_role_graph_registry_with_runtime_grants (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[225/317] 089_001_promo_code_system_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] init/1 gutted to raise ... killed
+      mutant [3/5] create/1 gutted to raise ... killed
+      mutant [4/5] apply/3 gutted to raise ... killed
+      mutant [5/5] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_089_001_promo_code_system
+      dedoc_089_001_promo_code_system (dedoc) ... ACCEPTED (30 passed, inherited coverage, 1 attempt(s))
+[226/317] 089_002_stackable_promo_code_system_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] init/1 gutted to raise ... killed
+      mutant [3/5] create/1 gutted to raise ... killed
+      mutant [4/5] apply_codes/3 gutted to raise ... killed
+      mutant [5/5] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_089_002_stackable_promo_code_system
+      dedoc_089_002_stackable_promo_code_system (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[227/317] 089_003_tiered_promo_code_system_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] init/1 gutted to raise ... killed
+      mutant [3/6] create/1 gutted to raise ... killed
+      mutant [4/6] preview/2 gutted to raise ... killed
+      mutant [5/6] apply_code/3 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_089_003_tiered_promo_code_system
+      dedoc_089_003_tiered_promo_code_system (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[228/317] 089_004_budget_capped_promo_code_system_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] init/1 gutted to raise ... killed
+      mutant [3/7] create/1 gutted to raise ... killed
+      mutant [4/7] apply_code/3 gutted to raise ... killed
+      mutant [5/7] remaining_budget/1 gutted to raise ... killed
+      mutant [6/7] dispensed/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_089_004_budget_capped_promo_code_system
+      dedoc_089_004_budget_capped_promo_code_system (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[229/317] 091_001_workflow_state_machine_01 (backfill) ...
+      mutant [1/4] new/1 gutted to raise ... killed
+      mutant [2/4] states/0 gutted to raise ... killed
+      mutant [3/4] transition/2 gutted to raise ... killed
+      mutant [4/4] can?/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_091_001_workflow_state_machine
+      dedoc_091_001_workflow_state_machine (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[230/317] 091_002_reversible_order_workflow_with_undo_history_01 (backfill) ...
+      mutant [1/6] new/1 gutted to raise ... killed
+      mutant [2/6] states/0 gutted to raise ... killed
+      mutant [3/6] transition/2 gutted to raise ... killed
+      mutant [4/6] undo/1 gutted to raise ... killed
+      mutant [5/6] can?/2 gutted to raise ... killed
+      mutant [6/6] history/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_091_002_reversible_order_workflow_with_undo_history
+      dedoc_091_002_reversible_order_workflow_with_undo_history (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[231/317] 091_003_data_driven_finite_state_machine_engine_01 (backfill) ...
+      mutant [1/5] define/2 gutted to raise ... killed
+      mutant [2/5] states/1 gutted to raise ... killed
+      mutant [3/5] new/2 gutted to raise ... killed
+      mutant [4/5] transition/3 gutted to raise ... killed
+      mutant [5/5] can?/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_091_003_data_driven_finite_state_machine_engine
+      dedoc_091_003_data_driven_finite_state_machine_engine (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[232/317] 091_004_effectful_workflow_with_event_payloads_01 (backfill) ...
+      mutant [1/4] new/1 gutted to raise ... killed
+      mutant [2/4] states/0 gutted to raise ... killed
+      mutant [3/4] transition/3 gutted to raise ... killed
+      mutant [4/4] can?/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_091_004_effectful_workflow_with_event_payloads
+      dedoc_091_004_effectful_workflow_with_event_payloads (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[233/317] 092_001_scoring_ranking_algorithm_01 (backfill) ...
+      mutant [1/2] score/2 gutted to raise ... killed
+      mutant [2/2] rank/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_092_001_scoring_ranking_algorithm
+      dedoc_092_001_scoring_ranking_algorithm (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[234/317] 092_002_reddit_style_logarithmic_hot_ranking_01 (backfill) ...
+      mutant [1/2] score/2 gutted to raise ... killed
+      mutant [2/2] rank/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_092_002_reddit_style_logarithmic_hot_ranking
+      dedoc_092_002_reddit_style_logarithmic_hot_ranking (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[235/317] 092_003_wilson_lower_bound_confidence_ranking_01 (backfill) ...
+      mutant [1/2] score/2 gutted to raise ... killed
+      mutant [2/2] rank/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_092_003_wilson_lower_bound_confidence_ranking
+      dedoc_092_003_wilson_lower_bound_confidence_ranking (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[236/317] 092_004_bayesian_weighted_rating_ranking_01 (backfill) ...
+      mutant [1/2] score/2 gutted to raise ... killed
+      mutant [2/2] rank/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_092_004_bayesian_weighted_rating_ranking
+      dedoc_092_004_bayesian_weighted_rating_ranking (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[237/317] 095_001_multi_currency_money_module_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_095_001_multi_currency_money_module
+      dedoc_095_001_multi_currency_money_module (dedoc) ... ACCEPTED (34 passed, inherited coverage, 1 attempt(s))
+[238/317] 095_002_weighted_allocation_money_module_01 (backfill) ...
+      mutant [1/6] new/2 gutted to raise ... killed
+      mutant [2/6] add/2 gutted to raise ... killed
+      mutant [3/6] subtract/2 gutted to raise ... killed
+      mutant [4/6] multiply/2 gutted to raise ... killed
+      mutant [5/6] allocate/2 gutted to raise ... killed
+      mutant [6/6] split/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_095_002_weighted_allocation_money_module
+      dedoc_095_002_weighted_allocation_money_module (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[239/317] 095_003_currency_precision_money_module_01 (backfill) ...
+      mutant [1/8] exponent/1 gutted to raise ... killed
+      mutant [2/8] new/2 gutted to raise ... killed
+      mutant [3/8] from_major/2 gutted to raise ... killed
+      mutant [4/8] add/2 gutted to raise ... killed
+      mutant [5/8] subtract/2 gutted to raise ... killed
+      mutant [6/8] multiply/2 gutted to raise ... killed
+      mutant [7/8] split/2 gutted to raise ... killed
+      mutant [8/8] to_string/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_095_003_currency_precision_money_module
+      dedoc_095_003_currency_precision_money_module (dedoc) ... ACCEPTED (29 passed, inherited coverage, 1 attempt(s))
+[240/317] 095_004_multi_currency_money_with_fx_conversion_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_095_004_multi_currency_money_with_fx_conversion
+      dedoc_095_004_multi_currency_money_with_fx_conversion (dedoc) ... ACCEPTED (27 passed, inherited coverage, 1 attempt(s))
+[241/317] 096_001_input_sanitizer_module_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_096_001_input_sanitizer_module
+      dedoc_096_001_input_sanitizer_module (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[242/317] 096_002_schema_driven_nested_params_sanitizer_01 (backfill) ...
+      mutant [1/3] sanitize/2 gutted to raise ... killed
+      mutant [2/3] sql_identifier/1 gutted to raise ... killed
+      mutant [3/3] filename/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_096_002_schema_driven_nested_params_sanitizer
+      dedoc_096_002_schema_driven_nested_params_sanitizer (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[243/317] 096_003_stateful_sanitizer_server_with_policy_and_metrics_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] sanitize_identifier/2 gutted to raise ... killed
+      mutant [3/8] sanitize_filename/2 gutted to raise ... killed
+      mutant [4/8] strip_html/2 gutted to raise ... killed
+      mutant [5/8] metrics/1 gutted to raise ... killed
+      mutant [6/8] reset_metrics/1 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block default max_filename_length truncates to 255 and counts the truncation carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (12/12), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_096_003_stateful_sanitizer_server_with_policy_and_metrics_09
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block filename of exactly max_filename_length is kept whole and not counted truncated carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (12/12), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_096_003_stateful_sanitizer_server_with_policy_and_metrics_10
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block script and style blocks are dropped case-insensitively across newlines carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (12/12), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_096_003_stateful_sanitizer_server_with_policy_and_metrics_11
+      tfim_096_003_stateful_sanitizer_server_with_policy_and_metrics_09 (tfim) ... ACCEPTED (12 passed, mutant killed (isolation), 1 attempt(s))
+      tfim_096_003_stateful_sanitizer_server_with_policy_and_metrics_10 (tfim) ... ACCEPTED (12 passed, mutant killed (isolation), 1 attempt(s))
+      tfim_096_003_stateful_sanitizer_server_with_policy_and_metrics_11 (tfim) ... ACCEPTED (12 passed, mutant killed (isolation), 1 attempt(s))
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_096_003_stateful_sanitizer_server_with_policy_and_metrics
+      dedoc_096_003_stateful_sanitizer_server_with_policy_and_metrics (dedoc) ... ACCEPTED (12 passed, inherited coverage, 1 attempt(s))
+[244/317] 096_004_reporting_sanitizer_with_strict_and_lenient_modes_01 (backfill) ...
+      mutant [1/3] sql_identifier/2 gutted to raise ... killed
+      mutant [2/3] filename/2 gutted to raise ... killed
+      mutant [3/3] text/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_096_004_reporting_sanitizer_with_strict_and_lenient_modes
+      dedoc_096_004_reporting_sanitizer_with_strict_and_lenient_modes (dedoc) ... ACCEPTED (24 passed, inherited coverage, 1 attempt(s))
+[245/317] 097_001_password_policy_enforcer_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_097_001_password_policy_enforcer
+      dedoc_097_001_password_policy_enforcer (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[246/317] 097_002_weighted_strength_score_password_policy_01 (backfill) ...
+      mutant [1/2] evaluate/2 gutted to raise ... killed
+      mutant [2/2] levenshtein/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_097_002_weighted_strength_score_password_policy
+      dedoc_097_002_weighted_strength_score_password_policy (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[247/317] 097_003_severity_classified_password_audit_with_strict_mode_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_097_003_severity_classified_password_audit_with_strict_mode
+      dedoc_097_003_severity_classified_password_audit_with_strict_mode (dedoc) ... ACCEPTED (10 passed, inherited coverage, 1 attempt(s))
+[248/317] 097_004_stateful_password_policy_server_with_reuse_history_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] set_password/3 gutted to raise ... killed
+      mutant [3/6] history_count/2 gutted to raise ... killed
+      mutant [4/6] init/1 gutted to raise ... killed
+      mutant [5/6] handle_call/3 gutted to raise ... killed
+      mutant [6/6] levenshtein/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_097_004_stateful_password_policy_server_with_reuse_history
+      dedoc_097_004_stateful_password_policy_server_with_reuse_history (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[249/317] 098_001_token_generator_and_validator_01 (backfill) ...
+      mutant [1/2] generate/4 gutted to raise ... killed
+      mutant [2/2] verify/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_098_001_token_generator_and_validator
+      dedoc_098_001_token_generator_and_validator (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[250/317] 098_002_aead_sealed_confidential_token_01 (backfill) ...
+      mutant [1/2] seal/4 gutted to raise ... killed
+      mutant [2/2] open/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_098_002_aead_sealed_confidential_token
+      dedoc_098_002_aead_sealed_confidential_token (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[251/317] 098_003_attenuable_capability_token_with_chained_caveats_01 (backfill) ...
+      mutant [1/4] mint/2 gutted to raise ... killed
+      mutant [2/4] attenuate/2 gutted to raise ... killed
+      mutant [3/4] inspect_token/1 gutted to raise ... killed
+      mutant [4/4] authorize/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_098_003_attenuable_capability_token_with_chained_caveats
+      dedoc_098_003_attenuable_capability_token_with_chained_caveats (dedoc) ... ACCEPTED (40 passed, inherited coverage, 1 attempt(s))
+[252/317] 098_004_replay_protected_single_use_token_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_098_004_replay_protected_single_use_token
+      dedoc_098_004_replay_protected_single_use_token (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[253/317] 099_001_data_masking_for_logs_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_099_001_data_masking_for_logs
+      dedoc_099_001_data_masking_for_logs (dedoc) ... ACCEPTED (27 passed, inherited coverage, 1 attempt(s))
+[254/317] 099_002_redaction_with_match_count_reporting_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_099_002_redaction_with_match_count_reporting
+      dedoc_099_002_redaction_with_match_count_reporting (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[255/317] 099_003_per_field_masking_strategies_01 (backfill) ...
+      mutant [1/3] new/1 gutted to raise ... killed
+      mutant [2/3] mask/2 gutted to raise ... killed
+      mutant [3/3] mask_string/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_099_003_per_field_masking_strategies
+      dedoc_099_003_per_field_masking_strategies (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[256/317] 099_004_concurrent_masking_server_with_runtime_patterns_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] mask/2 gutted to raise ... killed
+      mutant [3/7] mask_string/2 gutted to raise ... killed
+      mutant [4/7] add_pattern/3 gutted to raise ... killed
+      mutant [5/7] stats/1 gutted to raise ... killed
+      mutant [6/7] init/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_099_004_concurrent_masking_server_with_runtime_patterns
+      dedoc_099_004_concurrent_masking_server_with_runtime_patterns (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[257/317] 100_001_totp_time_based_one_time_password_implementation_01 (backfill) ...
+      mutant [1/4] generate_secret/0 gutted to raise ... killed
+      mutant [2/4] generate_code/2 gutted to raise ... killed
+      mutant [3/4] valid?/3 gutted to raise ... killed
+      mutant [4/4] provisioning_uri/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_100_001_totp_time_based_one_time_password_implementation
+      dedoc_100_001_totp_time_based_one_time_password_implementation (dedoc) ... ACCEPTED (30 passed, inherited coverage, 1 attempt(s))
+[258/317] 100_003_counter_based_hotp_with_resynchronization_window_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_100_003_counter_based_hotp_with_resynchronization_window
+      dedoc_100_003_counter_based_hotp_with_resynchronization_window (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[259/317] 100_004_stateful_totp_vault_genserver_with_replay_protection_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] register/2 gutted to raise ... killed
+      mutant [3/7] secret/2 gutted to raise ... killed
+      mutant [4/7] current_code/3 gutted to raise ... killed
+      mutant [5/7] consume/4 gutted to raise ... killed
+      mutant [6/7] init/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_100_004_stateful_totp_vault_genserver_with_replay_protection
+      dedoc_100_004_stateful_totp_vault_genserver_with_replay_protection (dedoc) ... ACCEPTED (26 passed, inherited coverage, 1 attempt(s))
+[260/317] 101_001_sliding_window_counter_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] increment/2 gutted to raise ... killed
+      mutant [3/6] count/3 gutted to raise ... killed
+      mutant [4/6] init/1 gutted to raise ... killed
+      mutant [5/6] handle_call/3 gutted to raise ... killed
+      mutant [6/6] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_101_001_sliding_window_counter
+      dedoc_101_001_sliding_window_counter (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[261/317] 101_002_sliding_window_distinct_cardinality_counter_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] add/3 gutted to raise ... killed
+      mutant [3/7] distinct_count/3 gutted to raise ... killed
+      mutant [4/7] tracked_key_count/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_101_002_sliding_window_distinct_cardinality_counter
+      dedoc_101_002_sliding_window_distinct_cardinality_counter (dedoc) ... ACCEPTED (29 passed, inherited coverage, 1 attempt(s))
+[262/317] 101_003_weighted_sliding_sum_counter_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_101_003_weighted_sliding_sum_counter
+      dedoc_101_003_weighted_sliding_sum_counter (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[263/317] 101_004_sliding_window_threshold_alerter_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_101_004_sliding_window_threshold_alerter
+      dedoc_101_004_sliding_window_threshold_alerter (dedoc) ... ACCEPTED (9 passed, inherited coverage, 1 attempt(s))
+[264/317] 102_002_optimistic_concurrency_persisted_state_machine_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_102_002_optimistic_concurrency_persisted_state_machine
+      dedoc_102_002_optimistic_concurrency_persisted_state_machine (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[265/317] 102_003_auto_expiring_persisted_state_machine_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_102_003_auto_expiring_persisted_state_machine
+      dedoc_102_003_auto_expiring_persisted_state_machine (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[266/317] 102_004_threshold_approval_persisted_state_machine_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_102_004_threshold_approval_persisted_state_machine
+      dedoc_102_004_threshold_approval_persisted_state_machine (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[267/317] 103_001_dead_letter_queue_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] push/5 gutted to raise ... killed
+      mutant [3/7] peek/3 gutted to raise ... killed
+      mutant [4/7] retry/4 gutted to raise ... killed
+      mutant [5/7] purge/3 gutted to raise ... killed
+      mutant [6/7] init/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_103_001_dead_letter_queue
+      dedoc_103_001_dead_letter_queue (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[268/317] 103_002_backoff_scheduled_retry_dead_letter_queue_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] push/5 gutted to raise ... killed
+      mutant [3/8] peek/3 gutted to raise ... killed
+      mutant [4/8] ready/3 gutted to raise ... killed
+      mutant [5/8] retry/4 gutted to raise ... killed
+      mutant [6/8] purge/3 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_103_002_backoff_scheduled_retry_dead_letter_queue
+      dedoc_103_002_backoff_scheduled_retry_dead_letter_queue (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[269/317] 103_003_deduplicating_dead_letter_queue_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] push/6 gutted to raise ... killed
+      mutant [3/7] peek/3 gutted to raise ... killed
+      mutant [4/7] retry/4 gutted to raise ... killed
+      mutant [5/7] purge/3 gutted to raise ... killed
+      mutant [6/7] init/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_103_003_deduplicating_dead_letter_queue
+      dedoc_103_003_deduplicating_dead_letter_queue (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[270/317] 103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] push/6 gutted to raise ... killed
+      mutant [3/7] peek/3 gutted to raise ... killed
+      mutant [4/7] drain/4 gutted to raise ... killed
+      mutant [5/7] purge/3 gutted to raise ... killed
+      mutant [6/7] init/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_103_004_bounded_priority_dead_letter_queue_with_bulk_drain
+      dedoc_103_004_bounded_priority_dead_letter_queue_with_bulk_drain (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[271/317] 104_001_connection_pool_manager_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] checkout/2 gutted to raise ... killed
+      mutant [3/7] checkin/2 gutted to raise ... killed
+      mutant [4/7] stats/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block checkin hands the connection to the longest-waiting caller first carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (15/15), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_104_001_connection_pool_manager_11
+      tfim_104_001_connection_pool_manager_11 (tfim) ... ACCEPTED (15 passed, mutant killed (isolation), 1 attempt(s))
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_104_001_connection_pool_manager
+      dedoc_104_001_connection_pool_manager (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[272/317] 104_002_health_validated_connection_pool_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] checkout/2 gutted to raise ... killed
+      mutant [3/7] checkin/2 gutted to raise ... killed
+      mutant [4/7] stats/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block every invalid available connection is discarded before a fresh one is created carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (14/14), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_104_002_health_validated_connection_pool_11
+      tfim_104_002_health_validated_connection_pool_11 (tfim) ... ACCEPTED (14 passed, mutant killed (isolation), 1 attempt(s))
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_104_002_health_validated_connection_pool
+      dedoc_104_002_health_validated_connection_pool (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[273/317] 104_003_overflow_connection_pool_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] checkout/2 gutted to raise ... killed
+      mutant [3/7] checkin/2 gutted to raise ... killed
+      mutant [4/7] stats/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_104_003_overflow_connection_pool
+      dedoc_104_003_overflow_connection_pool (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[274/317] 104_004_usage_recycling_connection_pool_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] checkout/2 gutted to raise ... killed
+      mutant [3/7] checkin/2 gutted to raise ... killed
+      mutant [4/7] stats/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_104_004_usage_recycling_connection_pool
+      dedoc_104_004_usage_recycling_connection_pool (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[275/317] 105_001_genserver_based_debouncer_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] call/3 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_cast/2 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L66 s149: return :ok -> :error not killed by tests (survives or fails to compile) — not a mintable bug
+      bugfix_105_001_genserver_based_debouncer_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_105_001_genserver_based_debouncer
+      dedoc_105_001_genserver_based_debouncer (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[276/317] 105_002_leading_trailing_edge_debouncer_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] call/4 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_cast/2 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_105_002_leading_trailing_edge_debouncer
+      dedoc_105_002_leading_trailing_edge_debouncer (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[277/317] 105_003_max_wait_debouncer_with_flush_and_cancel_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] call/4 gutted to raise ... killed
+      mutant [3/8] flush/1 gutted to raise ... killed
+      mutant [4/8] cancel/1 gutted to raise ... killed
+      mutant [5/8] init/1 gutted to raise ... killed
+      mutant [6/8] handle_cast/2 gutted to raise ... killed
+      mutant [7/8] handle_call/3 gutted to raise ... killed
+      mutant [8/8] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_105_003_max_wait_debouncer_with_flush_and_cancel
+      dedoc_105_003_max_wait_debouncer_with_flush_and_cancel (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[278/317] 105_004_accumulating_batch_debouncer_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] call/4 gutted to raise ... killed
+      mutant [3/7] pending/1 gutted to raise ... killed
+      mutant [4/7] init/1 gutted to raise ... killed
+      mutant [5/7] handle_cast/2 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block a crashing handler leaves the server usable for later batches carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (14/14), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_105_004_accumulating_batch_debouncer_10
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block re-arming with a shorter delay flushes once and the replaced deadline never fires carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (14/14), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_105_004_accumulating_batch_debouncer_11
+      tfim_105_004_accumulating_batch_debouncer_10 (tfim) ... ACCEPTED (14 passed, mutant killed (isolation), 1 attempt(s))
+      tfim_105_004_accumulating_batch_debouncer_11 (tfim) ... ACCEPTED (14 passed, mutant killed (isolation), 1 attempt(s))
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_105_004_accumulating_batch_debouncer
+      dedoc_105_004_accumulating_batch_debouncer (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[279/317] 106_001_watchdog_timer_genserver_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] register/4 gutted to raise ... killed
+      mutant [3/7] heartbeat/1 gutted to raise ... killed
+      mutant [4/7] unregister/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_106_001_watchdog_timer_genserver
+      dedoc_106_001_watchdog_timer_genserver (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[280/317] 106_002_grace_count_watchdog_timer_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] register/5 gutted to raise ... killed
+      mutant [3/8] heartbeat/1 gutted to raise ... killed
+      mutant [4/8] unregister/1 gutted to raise ... killed
+      mutant [5/8] misses/1 gutted to raise ... killed
+      mutant [6/8] init/1 gutted to raise ... killed
+      mutant [7/8] handle_call/3 gutted to raise ... killed
+      mutant [8/8] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_106_002_grace_count_watchdog_timer
+      dedoc_106_002_grace_count_watchdog_timer (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[281/317] 106_003_recurring_watchdog_timer_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] register/4 gutted to raise ... killed
+      mutant [3/8] heartbeat/1 gutted to raise ... killed
+      mutant [4/8] unregister/1 gutted to raise ... killed
+      mutant [5/8] status/1 gutted to raise ... killed
+      mutant [6/8] init/1 gutted to raise ... killed
+      mutant [7/8] handle_call/3 gutted to raise ... killed
+      mutant [8/8] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_106_003_recurring_watchdog_timer
+      dedoc_106_003_recurring_watchdog_timer (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[282/317] 106_004_escalating_warn_then_timeout_watchdog_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] register/6 gutted to raise ... killed
+      mutant [3/8] heartbeat/1 gutted to raise ... killed
+      mutant [4/8] unregister/1 gutted to raise ... killed
+      mutant [5/8] phase/1 gutted to raise ... killed
+      mutant [6/8] init/1 gutted to raise ... killed
+      mutant [7/8] handle_call/3 gutted to raise ... killed
+      mutant [8/8] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_106_004_escalating_warn_then_timeout_watchdog
+      dedoc_106_004_escalating_warn_then_timeout_watchdog (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[283/317] 107_001_event_aggregator_with_flushing_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_107_001_event_aggregator_with_flushing
+      dedoc_107_001_event_aggregator_with_flushing (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[284/317] 107_002_keyed_event_aggregator_with_per_key_batching_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] push/3 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_cast/2 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_107_002_keyed_event_aggregator_with_per_key_batching
+      dedoc_107_002_keyed_event_aggregator_with_per_key_batching (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[285/317] 107_003_weighted_event_aggregator_with_byte_budget_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] push/2 gutted to raise ... killed
+      mutant [3/5] init/1 gutted to raise ... killed
+      mutant [4/5] handle_cast/2 gutted to raise ... killed
+      mutant [5/5] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_107_003_weighted_event_aggregator_with_byte_budget
+      dedoc_107_003_weighted_event_aggregator_with_byte_budget (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[286/317] 107_004_debounced_event_aggregator_with_max_wait_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_107_004_debounced_event_aggregator_with_max_wait
+      dedoc_107_004_debounced_event_aggregator_with_max_wait (dedoc) ... ACCEPTED (12 passed, inherited coverage, 1 attempt(s))
+[287/317] 109_001_task_dependency_resolver_and_executor_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_109_001_task_dependency_resolver_and_executor
+      dedoc_109_001_task_dependency_resolver_and_executor (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[288/317] 109_002_data_flow_task_runner_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_109_002_data_flow_task_runner
+      dedoc_109_002_data_flow_task_runner (dedoc) ... ACCEPTED (19 passed, inherited coverage, 1 attempt(s))
+[289/317] 109_003_fail_fast_task_runner_with_skip_propagation_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_109_003_fail_fast_task_runner_with_skip_propagation
+      dedoc_109_003_fail_fast_task_runner_with_skip_propagation (dedoc) ... ACCEPTED (11 passed, inherited coverage, 1 attempt(s))
+[290/317] 109_004_bounded_concurrency_task_scheduler_01 (backfill) ...
+      mutant [1/5] start_link/1 gutted to raise ... killed
+      mutant [2/5] submit/3 gutted to raise ... killed
+      mutant [3/5] run_all/1 gutted to raise ... killed
+      mutant [4/5] init/1 gutted to raise ... killed
+      mutant [5/5] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_109_004_bounded_concurrency_task_scheduler
+      dedoc_109_004_bounded_concurrency_task_scheduler (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[291/317] 110_001_rolling_percentile_calculator_01 (backfill) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] record/2 gutted to raise ... killed
+      mutant [3/6] query/2 gutted to raise ... killed
+      mutant [4/6] reset/1 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_110_001_rolling_percentile_calculator
+      dedoc_110_001_rolling_percentile_calculator (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[292/317] 110_002_histogram_based_approximate_rolling_percentile_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_110_002_histogram_based_approximate_rolling_percentile
+      dedoc_110_002_histogram_based_approximate_rolling_percentile (dedoc) ... ACCEPTED (8 passed, inherited coverage, 1 attempt(s))
+[293/317] 110_003_sla_percentile_monitor_with_inverse_queries_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] record/2 gutted to raise ... killed
+      mutant [3/8] query/2 gutted to raise ... killed
+      mutant [4/8] rank/2 gutted to raise ... killed
+      mutant [5/8] count_above/2 gutted to raise ... killed
+      mutant [6/8] reset/1 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_110_003_sla_percentile_monitor_with_inverse_queries
+      dedoc_110_003_sla_percentile_monitor_with_inverse_queries (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[294/317] 110_004_time_decay_weighted_rolling_percentile_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_110_004_time_decay_weighted_rolling_percentile
+      dedoc_110_004_time_decay_weighted_rolling_percentile (dedoc) ... ACCEPTED (13 passed, inherited coverage, 1 attempt(s))
+[295/317] 131_001_streaming_json_parser_for_large_files_01 (backfill) ...
+      mutant [1/1] process/2 gutted to raise ... killed
+    gate [1/4] target test block is carvable (top-level, parsable, not covered/rejected) ... PASS — top-level block throughput equals processed divided by elapsed seconds carved; skeleton + isolated harness built
+    gate [2/4] reconstructed harness (gold block re-inserted) green + zero warnings ... PASS — gold block re-inserted grades green (15/15), 0 warnings
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module — applying (raise-mutating the module vs the isolated target block) ...
+    gate [3/4] isolated target block kills >=1 raise-mutant of the module ... PASS — isolated block killed >=1 raise-mutant of the module
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/tfim_131_001_streaming_json_parser_for_large_files_11
+      tfim_131_001_streaming_json_parser_for_large_files_11 (tfim) ... ACCEPTED (15 passed, mutant killed (isolation), 1 attempt(s))
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_131_001_streaming_json_parser_for_large_files
+      dedoc_131_001_streaming_json_parser_for_large_files (dedoc) ... ACCEPTED (15 passed, inherited coverage, 1 attempt(s))
+[296/317] 131_002_lazy_streaming_ndjson_parser_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_131_002_lazy_streaming_ndjson_parser
+      dedoc_131_002_lazy_streaming_ndjson_parser (dedoc) ... ACCEPTED (11 passed, inherited coverage, 1 attempt(s))
+[297/317] 131_003_parallel_streaming_json_array_parser_01 (backfill) ...
+      mutant [1/1] process/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_131_003_parallel_streaming_json_array_parser
+      dedoc_131_003_parallel_streaming_json_array_parser (dedoc) ... ACCEPTED (16 passed, inherited coverage, 1 attempt(s))
+[298/317] 131_004_resumable_streaming_json_array_parser_with_error_budget_01 (backfill) ...
+      mutant [1/1] process/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_131_004_resumable_streaming_json_array_parser_with_error_budget
+      dedoc_131_004_resumable_streaming_json_array_parser_with_error_budget (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+[299/317] 134_001_schema_inference_from_csv_01 (backfill) ...
+      mutant [1/2] infer_string/2 gutted to raise ... killed
+      mutant [2/2] infer_file/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_134_001_schema_inference_from_csv
+      dedoc_134_001_schema_inference_from_csv (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[300/317] 134_002_nullable_unique_column_profiler_01 (backfill) ...
+      mutant [1/2] infer_string/2 gutted to raise ... killed
+      mutant [2/2] infer_file/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_134_002_nullable_unique_column_profiler
+      dedoc_134_002_nullable_unique_column_profiler (dedoc) ... ACCEPTED (17 passed, inherited coverage, 1 attempt(s))
+[301/317] 134_004_widening_lattice_schema_inference_01 (backfill) ...
+      mutant [1/2] infer_string/2 gutted to raise ... killed
+      mutant [2/2] infer_file/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_134_004_widening_lattice_schema_inference
+      dedoc_134_004_widening_lattice_schema_inference (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[302/317] 623_001_mini_elasticsearch_like_inverted_index_01 (backfill) ...
+      mutant [1/10] start_link/1 gutted to raise ... killed
+      mutant [2/10] index/4 gutted to raise ... killed
+      mutant [3/10] remove/2 gutted to raise ... killed
+      mutant [4/10] search/3 gutted to raise ... killed
+      mutant [5/10] suggest/3 gutted to raise ... killed
+      mutant [6/10] stats/1 gutted to raise ... killed
+      mutant [7/10] init/1 gutted to raise ... killed
+      mutant [8/10] handle_call/3 gutted to raise ... killed
+      mutant [9/10] tokenize/3 gutted to raise ... killed
+      mutant [10/10] stem/1 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_623_001_mini_elasticsearch_like_inverted_index
+      dedoc_623_001_mini_elasticsearch_like_inverted_index (dedoc) ... ACCEPTED (32 passed, inherited coverage, 1 attempt(s))
+[303/317] 623_002_boolean_phrase_query_inverted_index_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] index/3 gutted to raise ... killed
+      mutant [3/8] remove/2 gutted to raise ... killed
+      mutant [4/8] search/2 gutted to raise ... killed
+      mutant [5/8] suggest/3 gutted to raise ... killed
+      mutant [6/8] stats/1 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_623_002_boolean_phrase_query_inverted_index
+      dedoc_623_002_boolean_phrase_query_inverted_index (dedoc) ... ACCEPTED (32 passed, inherited coverage, 1 attempt(s))
+[304/317] 623_003_bm25_ranked_inverted_index_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] index/3 gutted to raise ... killed
+      mutant [3/8] remove/2 gutted to raise ... killed
+      mutant [4/8] search/3 gutted to raise ... killed
+      mutant [5/8] suggest/3 gutted to raise ... killed
+      mutant [6/8] stats/1 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_623_003_bm25_ranked_inverted_index
+      dedoc_623_003_bm25_ranked_inverted_index (dedoc) ... ACCEPTED (28 passed, inherited coverage, 1 attempt(s))
+[305/317] 623_004_fuzzy_edit_distance_inverted_index_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] index/3 gutted to raise ... killed
+      mutant [3/8] remove/2 gutted to raise ... killed
+      mutant [4/8] search/3 gutted to raise ... killed
+      mutant [5/8] terms_like/3 gutted to raise ... killed
+      mutant [6/8] stats/1 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_623_004_fuzzy_edit_distance_inverted_index
+      dedoc_623_004_fuzzy_edit_distance_inverted_index (dedoc) ... ACCEPTED (25 passed, inherited coverage, 1 attempt(s))
+[306/317] 624_001_mini_git_like_object_store_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] store/2 gutted to raise ... killed
+      mutant [3/8] retrieve/2 gutted to raise ... killed
+      mutant [4/8] tree/2 gutted to raise ... killed
+      mutant [5/8] commit/5 gutted to raise ... killed
+      mutant [6/8] log/2 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_624_001_mini_git_like_object_store
+      dedoc_624_001_mini_git_like_object_store (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[307/317] 624_002_merge_commit_dag_with_topological_log_and_merge_base_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_624_002_merge_commit_dag_with_topological_log_and_merge_base
+      dedoc_624_002_merge_commit_dag_with_topological_log_and_merge_base (dedoc) ... ACCEPTED (20 passed, inherited coverage, 1 attempt(s))
+[308/317] 624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] store/2 gutted to raise ... killed
+      mutant [3/7] retrieve/2 gutted to raise ... killed
+      mutant [4/7] has_object?/2 gutted to raise ... killed
+      mutant [5/7] list_objects/1 gutted to raise ... killed
+      mutant [6/7] init/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks
+      dedoc_624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[309/317] 624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01 (backfill) ...
+      mutant [1/12] start_link/1 gutted to raise ... killed
+      mutant [2/12] store/2 gutted to raise ... killed
+      mutant [3/12] retrieve/2 gutted to raise ... killed
+      mutant [4/12] commit/5 gutted to raise ... killed
+      mutant [5/12] create_branch/3 gutted to raise ... killed
+      mutant [6/12] branch_head/2 gutted to raise ... killed
+      mutant [7/12] update_branch/4 gutted to raise ... killed
+      mutant [8/12] delete_branch/2 gutted to raise ... killed
+      mutant [9/12] list_branches/1 gutted to raise ... killed
+      mutant [10/12] gc/1 gutted to raise ... killed
+      mutant [11/12] init/1 gutted to raise ... killed
+      mutant [12/12] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_624_004_branch_references_with_atomic_cas_updates_and_reachability_gc
+      dedoc_624_004_branch_references_with_atomic_cas_updates_and_reachability_gc (dedoc) ... ACCEPTED (34 passed, inherited coverage, 1 attempt(s))
+[310/317] 625_001_mini_s3_like_object_storage_01 (backfill) ...
+      mutant [1/15] start_link/1 gutted to raise ... killed
+      mutant [2/15] create_bucket/2 gutted to raise ... killed
+      mutant [3/15] delete_bucket/2 gutted to raise ... killed
+      mutant [4/15] list_buckets/1 gutted to raise ... killed
+      mutant [5/15] put_object/6 gutted to raise ... killed
+      mutant [6/15] get_object/3 gutted to raise ... killed
+      mutant [7/15] delete_object/3 gutted to raise ... killed
+      mutant [8/15] list_objects/3 gutted to raise ... killed
+      mutant [9/15] copy_object/5 gutted to raise ... killed
+      mutant [10/15] start_multipart/5 gutted to raise ... killed
+      mutant [11/15] upload_part/4 gutted to raise ... killed
+      mutant [12/15] complete_multipart/2 gutted to raise ... killed
+      mutant [13/15] abort_multipart/2 gutted to raise ... killed
+      mutant [14/15] init/1 gutted to raise ... killed
+      mutant [15/15] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_625_001_mini_s3_like_object_storage
+      dedoc_625_001_mini_s3_like_object_storage (dedoc) ... ACCEPTED (47 passed, inherited coverage, 1 attempt(s))
+[311/317] 625_002_versioned_object_store_with_delete_markers_01 (backfill) ...
+      mutant [1/12] start_link/1 gutted to raise ... killed
+      mutant [2/12] create_bucket/2 gutted to raise ... killed
+      mutant [3/12] list_buckets/1 gutted to raise ... killed
+      mutant [4/12] put_object/5 gutted to raise ... killed
+      mutant [5/12] get_object/3 gutted to raise ... killed
+      mutant [6/12] get_object_version/4 gutted to raise ... killed
+      mutant [7/12] delete_object/3 gutted to raise ... killed
+      mutant [8/12] list_versions/3 gutted to raise ... killed
+      mutant [9/12] delete_version/4 gutted to raise ... killed
+      mutant [10/12] list_objects/2 gutted to raise ... killed
+      mutant [11/12] init/1 gutted to raise ... killed
+      mutant [12/12] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_625_002_versioned_object_store_with_delete_markers
+      dedoc_625_002_versioned_object_store_with_delete_markers (dedoc) ... ACCEPTED (35 passed, inherited coverage, 1 attempt(s))
+[312/317] 625_003_lifecycle_ttl_object_store_with_lazy_expiration_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_625_003_lifecycle_ttl_object_store_with_lazy_expiration
+      dedoc_625_003_lifecycle_ttl_object_store_with_lazy_expiration (dedoc) ... ACCEPTED (30 passed, inherited coverage, 1 attempt(s))
+[313/317] 625_004_conditional_write_object_store_with_etags_01 (backfill) ...
+      mutant [1/9] start_link/1 gutted to raise ... killed
+      mutant [2/9] create_bucket/2 gutted to raise ... killed
+      mutant [3/9] list_buckets/1 gutted to raise ... killed
+      mutant [4/9] put_object/5 gutted to raise ... killed
+      mutant [5/9] get_object/4 gutted to raise ... killed
+      mutant [6/9] delete_object/4 gutted to raise ... killed
+      mutant [7/9] list_objects/2 gutted to raise ... killed
+      mutant [8/9] init/1 gutted to raise ... killed
+      mutant [9/9] handle_call/3 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_625_004_conditional_write_object_store_with_etags
+      dedoc_625_004_conditional_write_object_store_with_etags (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[314/317] 626_001_mini_prometheus_like_time_series_db_01 (backfill) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] insert/5 gutted to raise ... killed
+      mutant [3/8] query/4 gutted to raise ... killed
+      mutant [4/8] query_agg/6 gutted to raise ... killed
+      mutant [5/8] init/1 gutted to raise ... killed
+      mutant [6/8] handle_cast/2 gutted to raise ... killed
+      mutant [7/8] handle_call/3 gutted to raise ... killed
+      mutant [8/8] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_626_001_mini_prometheus_like_time_series_db
+      dedoc_626_001_mini_prometheus_like_time_series_db (dedoc) ... ACCEPTED (23 passed, inherited coverage, 1 attempt(s))
+[315/317] 626_002_pre_aggregated_rollup_time_series_db_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] insert/5 gutted to raise ... killed
+      mutant [3/7] query/4 gutted to raise ... killed
+      mutant [4/7] init/1 gutted to raise ... killed
+      mutant [5/7] handle_cast/2 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_626_002_pre_aggregated_rollup_time_series_db
+      dedoc_626_002_pre_aggregated_rollup_time_series_db (dedoc) ... ACCEPTED (21 passed, inherited coverage, 1 attempt(s))
+[316/317] 626_003_reset_aware_counter_time_series_db_01 (backfill) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] insert/5 gutted to raise ... killed
+      mutant [3/7] query/4 gutted to raise ... killed
+      mutant [4/7] query_range/6 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_626_003_reset_aware_counter_time_series_db
+      dedoc_626_003_reset_aware_counter_time_series_db (dedoc) ... ACCEPTED (22 passed, inherited coverage, 1 attempt(s))
+[317/317] 626_004_sharded_concurrent_time_series_db_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_626_004_sharded_concurrent_time_series_db
+      dedoc_626_004_sharded_concurrent_time_series_db (dedoc) ... ACCEPTED (40 passed, inherited coverage, 1 attempt(s))
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 1098 | mintable (rejected → accepted) pairs: 222 | minted: %{exists: 89, unverified: 133}
+
+Done.
+=== rc=0
+=== dedoc dirs now: 321

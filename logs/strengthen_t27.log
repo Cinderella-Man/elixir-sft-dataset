@@ -1,0 +1,32 @@
+strengthening 6 family(ies), sequential, ledger logs/strengthen_harnesses.jsonl
+
+[1/6] 097_004_stateful_password_policy_server_with_reuse_history_01 (ledgered 0.4) ... 
+22:31:31.599 [warning] transient error (error_max_turns ) on strengthen_harness (097_004_stateful_password_policy_server_with_reuse_history_01) — retry 1/5 after 2000ms
+applied
+[2/6] 037_001_data_anonymizer_01 (ledgered 0.42) ... 
+22:42:09.912 [warning] transient error (error_max_turns ) on strengthen_harness (037_001_data_anonymizer_01) — retry 1/5 after 2000ms
+rejected — house/harness lint: generation-process chatter in comments (test_harness.exs line 203: Prompt: — cites the task prompt (write behavioral comments, not citations); test_harness.exs line 215: Prompt: — cites the task prompt (write behavioral comments, not citations)) — comments must describe behavior, never the process that wrote the file
+[3/6] 100_004_stateful_totp_vault_genserver_with_replay_protection_01 (ledgered 0.42) ... rejected — new harness compiles with warnings: ["test_harness.exs: line 198: the variable \"offset\" is accessed inside size(...) of a bitstring but it was defined outside of the match. You must precede it with the pin operator"]
+[4/6] 003_004_shared_pool_bucket_01 (ledgered 0.45) ... rejected — house/harness lint: test_harness.exs reaches into internal state via `:sys.get_state`/`:sys.replace_state` (3 call(s)) — assert observable behavior through the public API instead
+[5/6] 101_003_weighted_sliding_sum_counter_01 (ledgered 0.46) ... rejected — blind solver fails ADDED test(s) — the harness pins behavior the prompt does not state. Failing: the default bucket width is 1_000 ms
+[6/6] 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01 (ledgered 0.48) ... rejected — INCONCLUSIVE: the blind solver failed the harness's ORIGINAL tests (returns budget_exhausted when time runs out; max_delay_ms caps the computed delay; attempt count reflects all tries made) — the solver could not solve this task, which says nothing about the added tests. Do NOT enrich the prompt on this evidence; retry the family.
+
+=== STRENGTHEN LEDGER (67 row(s)) === %{"already_ok" => 10, "applied" => 18, "rejected" => 39}
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  105_001_genserver_based_debouncer_01: 0.4 → 0.8 (+3 test(s))
+  013_002_timeout_guarded_retry_worker_01: 0.4 → 0.84 (+6 test(s))
+  107_002_keyed_event_aggregator_with_per_key_batching_01: 0.43 → 0.79 (+3 test(s))
+  001_001_rate_limiter_01: 0.47 → 0.87 (+4 test(s))
+  002_002_rolling_window_error_rate_cb_01: 0.47 → 0.75 (+5 test(s))
+  104_004_usage_recycling_connection_pool_01: 0.47 → 0.82 (+9 test(s))
+  041_002_lfu_cache_backed_by_ets_01: 0.48 → 0.78 (+4 test(s))
+  079_001_bloom_filter_01: 0.48 → 1.0 (+6 test(s))
+  075_001_property_based_test_generators_01: 0.49 → 1.0 (+7 test(s))
+  074_001_custom_exunit_assertion_helpers_01: 0.41 → 1.0 (+8 test(s))
+  063_004_bounded_concurrency_concurrent_fetcher_01: 0.47 → 0.94 (+5 test(s))
+  097_004_stateful_password_policy_server_with_reuse_history_01: 0.4 → 0.97 (+8 test(s))

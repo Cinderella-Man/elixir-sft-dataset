@@ -1,0 +1,473 @@
+08:04:30.621 [info] FIM 109_004_bounded_concurrency_task_scheduler_fim01 → 109_004_bounded_concurrency_task_scheduler_04: target strip/2
+08:04:30.621 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+08:04:30.621 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `strip/2`.
+
+Generate a prompt describing how to implement `strip/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `strip/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `strip/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `strip/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Bounded-Concurrency Task Scheduler
+
+Write me an Elixir `GenServer` module called `BoundedRunner` that accepts tasks
+with dependencies and executes them in a valid order — but runs **at most
+`max_concurrency` tasks at any instant**, even when far more tasks are ready.
+Ready tasks beyond the concurrency budget wait for a running slot to free up.
+
+## Public API
+
+- `BoundedRunner.start_link(opts)` — starts the process. It must accept:
+  - `:name` — used for process registration.
+  - `:max_concurrency` — a positive integer bounding how many tasks may run
+    simultaneously. Optional, defaults to `4`. A non-positive or non-integer
+    value must raise `ArgumentError`.
+  Return the usual `{:ok, pid}`.
+
+- `BoundedRunner.submit(name, task_id, opts)` — registers a task.
+  - `opts` is a keyword list with:
+    - `:depends_on` — a list of `task_id`s this task depends on. Optional,
+      defaults to `[]`.
+    - `:func` — a zero-arity function to execute. Required.
+  - Returns `:ok`. Submitting the same `task_id` again overwrites the previous
+    definition. Nothing runs until `run_all/1` is called.
+
+- `BoundedRunner.run_all(name)` — validates the graph, then executes all tasks.
+  - A task's `:func` runs only **after every one of its dependencies has finished
+    executing**.
+  - At no point may more than `max_concurrency` tasks be executing at once. When
+    more tasks are ready than there are free slots, the extras wait; as each
+    running task finishes, a free slot is immediately given to a waiting ready
+    task (and finishing a task may make new tasks ready by satisfying their
+    dependencies).
+  - On success it returns `{:ok, results}` where `results` maps each `task_id`
+    to the value returned by its `:func`.
+  - If the dependency graph contains a cycle, it must **not** execute any task
+    and must return `{:error, {:cycle, involved}}`.
+  - If any task lists a dependency that was never submitted, it must **not**
+    execute any task and must return `{:error, {:unknown_dependencies, missing}}`.
+  - Calling `run_all/1` with no submitted tasks returns `{:ok, %{}}`.
+
+## Notes
+
+- Use only the OTP standard library — no external dependencies.
+- Give me the complete module in a single file.
+- The design goal is correctness of ordering *and* a hard concurrency ceiling:
+  with `max_concurrency: 2`, six independent equal-length tasks should take
+  roughly three waves, not one; and dependency ordering must still hold exactly.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule BoundedRunner do
+  @moduledoc """
+  A `GenServer` that accepts tasks with dependencies and executes them in a valid
+  topological order, but runs at most `:max_concurrency` tasks simultaneously.
+
+  Rather than executing whole dependency layers at once, it maintains a ready
+  queue and a running set: it starts ready tasks up to the concurrency budget,
+  waits for one to finish, releases that task's dependents (adding any that
+  become ready), and repeats until every task has run.
+  """
+
+  use GenServer
+
+  # ── Public API ──────────────────────────────────────────────────────────
+
+  def start_link(opts) do
+    name = Keyword.get(opts, :name)
+    max = Keyword.get(opts, :max_concurrency, 4)
+
+    unless is_integer(max) and max > 0 do
+      raise ArgumentError, ":max_concurrency must be a positive integer"
+    end
+
+    GenServer.start_link(__MODULE__, max, name: name)
+  end
+
+  @spec submit(GenServer.server(), term(), keyword()) :: :ok | {:error, atom()}
+  @doc "Submits `task_id` with its dependencies/opts to runner `name`. Returns `:ok`."
+  def submit(name, task_id, opts) do
+    depends_on = Keyword.get(opts, :depends_on, [])
+
+    func =
+      case Keyword.fetch(opts, :func) do
+        {:ok, f} when is_function(f, 0) -> f
+        {:ok, _} -> raise ArgumentError, ":func must be a zero-arity function"
+        :error -> raise ArgumentError, ":func option is required"
+      end
+
+    GenServer.call(name, {:submit, task_id, depends_on, func})
+  end
+
+  def run_all(name) do
+    GenServer.call(name, :run_all, :infinity)
+  end
+
+  # ── GenServer callbacks ─────────────────────────────────────────────────
+
+  @impl true
+  def init(max), do: {:ok, %{tasks: %{}, max: max}}
+
+  @impl true
+  def handle_call({:submit, task_id, depends_on, func}, _from, state) do
+    tasks = Map.put(state.tasks, task_id, %{depends_on: depends_on, func: func})
+    {:reply, :ok, %{state | tasks: tasks}}
+  end
+
+  def handle_call(:run_all, _from, state) do
+    tasks = state.tasks
+
+    result =
+      with :ok <- check_unknown_dependencies(tasks),
+           :ok <- ensure_acyclic(tasks) do
+        {:ok, schedule(tasks, state.max)}
+      end
+
+    {:reply, result, state}
+  end
+
+  # ── Validation ──────────────────────────────────────────────────────────
+
+  defp check_unknown_dependencies(tasks) do
+    known = MapSet.new(Map.keys(tasks))
+
+    missing =
+      tasks
+      |> Enum.flat_map(fn {_id, %{depends_on: deps}} -> deps end)
+      |> Enum.uniq()
+      |> Enum.reject(&MapSet.member?(known, &1))
+
+    case missing do
+      [] -> :ok
+      _ -> {:error, {:unknown_dependencies, missing}}
+    end
+  end
+
+  # Detect cycles up front (Kahn) so no task runs when the graph is invalid.
+  defp ensure_acyclic(tasks) do
+    in_degree =
+      Map.new(tasks, fn {id, %{depends_on: deps}} -> {id, length(Enum.uniq(deps))} end)
+
+    dependents = build_dependents(tasks)
+    strip(in_degree, dependents)
+  end
+
+  defp strip(in_degree, _dependents) when map_size(in_degree) == 0, do: :ok
+
+  defp strip(in_degree, dependents) do
+    ready = for {id, 0} <- in_degree, do: id
+
+    case ready do
+      [] ->
+        {:error, {:cycle, Map.keys(in_degree)}}
+
+      _ ->
+        remaining = Map.drop(in_degree, ready)
+        remaining = decrement_dependents(ready, remaining, dependents)
+        strip(remaining, dependents)
+    end
+  end
+
+  # ── Bounded scheduler ─────────────────────────────────────────────────────
+
+  defp schedule(tasks, max) when map_size(tasks) == 0 and max > 0, do: %{}
+
+  defp schedule(tasks, max) do
+    in_degree =
+      Map.new(tasks, fn {id, %{depends_on: deps}} -> {id, length(Enum.uniq(deps))} end)
+
+    dependents = build_dependents(tasks)
+    ready = for {id, 0} <- in_degree, do: id
+
+    loop(%{
+      tasks: tasks,
+      max: max,
+      in_degree: in_degree,
+      dependents: dependents,
+      ready: ready,
+      running: %{},
+      results: %{}
+    })
+  end
+
+  defp loop(s) do
+    running_count = map_size(s.running)
+
+    cond do
+      s.ready != [] and running_count < s.max ->
+        [id | rest] = s.ready
+        %{func: func} = Map (truncated)
+08:05:14.602 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `strip/2`
+
+`BoundedRunner` uses Kahn's algorithm to detect cycles in the dependency graph
+*before* running any task, so an invalid graph never executes anything. The
+recursion at the heart of that check is the private `strip/2` function.
+
+Implement the two clauses of the private `strip/2` function. It performs a
+Kahn-style topological peel over the dependency graph and reports whether the
+graph is acyclic.
+
+`strip/2` receives two arguments:
+
+- `in_degree` — a map from `task_id` to the number of (unique) dependencies of
+  that task that have **not yet been peeled off**.
+- `dependents` — a map from `task_id` to the list of tasks that depend on it
+  (i.e. the reverse edges), as produced by `build_dependents/1`.
+
+Behavior:
+
+- **Base case:** when `in_degree` is empty (`map_size/1` is `0`), every task has
+  been successfully peeled, so the graph is acyclic — return `:ok`.
+- **Recursive case:** collect every `task_id` whose current in-degree is `0`
+  (the tasks that are "ready", with all dependencies already removed).
+  - If **no** task is ready, the remaining tasks form at least one cycle —
+    return `{:error, {:cycle, involved}}`, where `involved` is the list of
+    `task_id`s still present in `in_degree` (its keys).
+  - Otherwise, remove all currently-ready tasks from `in_degree`, then decrement
+    the in-degree of each of their dependents (use the shared
+    `decrement_dependents/3` helper), and recurse on the reduced map with the
+    same `dependents`.
+
+```elixir
+defmodule BoundedRunner do
+  @moduledoc """
+  A `GenServer` that accepts tasks with dependencies and executes them in a valid
+  topological order, but runs at most `:max_concurrency` tasks simultaneously.
+
+  Rather than executing whole dependency layers at once, it maintains a ready
+  queue and a running set: it starts ready tasks up to the concurrency budget,
+  waits for one to finish, releases that task's dependents (adding any that
+  become ready), and repeats until every task has run.
+  """
+
+  use GenServer
+
+  # ── Public API ──────────────────────────────────────────────────────────
+
+  def start_link(opts) do
+    name = Keyword.get(opts, :name)
+    max = Keyword.get(opts, :max_concurrency, 4)
+
+    unless is_integer(max) and max > 0 do
+      raise ArgumentError, ":max_concurrency must be a positive integer"
+    end
+
+    GenServer.start_link(__MODULE__, max, name: name)
+  end
+
+  @spec submit(GenServer.server(), term(), keyword()) :: :ok | {:error, atom()}
+  @doc "Submits `task_id` with its dependencies/opts to runner `name`. Returns `:ok`."
+  def submit(name, task_id, opts) do
+    depends_on = Keyword.get(opts, :depends_on, [])
+
+    func =
+      case Keyword.fetch(opts, :func) do
+        {:ok, f} when is_function(f, 0) -> f
+        {:ok, _} -> raise ArgumentError, ":func must be a zero-arity function"
+        :error -> raise ArgumentError, ":func option is required"
+      end
+
+    GenServer.call(name, {:submit, task_id, depends_on, func})
+  end
+
+  def run_all(name) do
+    GenServer.call(name, :run_all, :infinity)
+  end
+
+  # ── GenServer callbacks ─────────────────────────────────────────────────
+
+  @impl true
+  def init(max), do: {:ok, %{tasks: %{}, max: max}}
+
+  @impl true
+  def handle_call({:submit, task_id, depends_on, func}, _from, state) do
+    tasks = Map.put(state.tasks, task_id, %{depends_on: depends_on, func: func})
+    {:reply, :ok, %{state | tasks: tasks}}
+  end
+
+  def handle_call(:run_all, _from, state) do
+    tasks = state.tasks
+
+    result =
+      with :ok <- check_unknown_dependencies(tasks),
+           :ok <- ensure_acyclic(tasks) do
+        {:ok, schedule(tasks, state.max)}
+      end
+
+    {:reply, result, state}
+  end
+
+  # ── Validation ──────────────────────────────────────────────────────────
+
+  defp check_unknown_dependencies(tasks) do
+    known = MapSet.new(Map.keys(tasks))
+
+    missing =
+      tasks
+      |> Enum.flat_map(fn {_id, %{depends_on: deps}} -> deps end)
+      |> Enum.uniq()
+      |> Enum.reject(&MapSet.member?(known, &1))
+
+    case missing do
+      [] -> :ok
+      _ -> {:error, {:unknown_dependencies, missing}}
+    end
+  end
+
+  # Detect cycles up front (Kahn) so no task runs when the graph is invalid.
+  defp ensure_acyclic(tasks) do
+    in_degree =
+      Map.new(tasks, fn {id, %{depends_on: deps}} -> {id, length(Enum.uniq(deps))} end)
+
+    dependents = build_dependents(tasks)
+    strip(in_degree, dependents)
+  end
+
+  defp strip(in_degree, _dependents) when map_size(in_degree) == 0 do
+    # TODO
+  end
+
+  defp strip(in_degree, dependents) do
+    # TODO
+  end
+
+  # ── Bounded scheduler ─────────────────────────────────────────────────────
+
+  defp schedule(tasks, max) when map_size(tasks) == 0 and max > 0, do: %{}
+
+  defp schedule(tasks, max) do
+    in_degree =
+      Map.new(tasks, fn {id, %{depends_on: deps}} -> {id, length(Enum.uniq(deps))} end)
+
+    dependents = build_dependents(tasks)
+    ready = for {id, 0} <- in_degree, do: id
+
+    loop(%{
+      tasks: tasks,
+      max: max,
+      in_degree: in_degree,
+      dependents: dependents,
+      ready: ready,
+      running: %{},
+      results: %{}
+    })
+  end
+
+  defp loop(s) do
+    running_count = map_size(s.running)
+
+    cond do
+      s.ready != [] and running_count < s.max ->
+        [id | rest] = s.ready
+        %{func: func} = Map.fetch!(s.tasks, id)
+        task = Task.async(fn -> func.() end)
+        loop(%{s | ready: rest, running: Map.put(s.running, task.ref, id)})
+
+      running_count == 0 and s.ready == [] ->
+        s.results
+
+      true ->
+        loop(await_one(s))
+    end
+  end
+
+  defp await_one(s) do
+    receive do
+      {ref, value} when is_map_key(s.running, ref) ->
+        Process.demonitor(ref, [:flush])
+        id = Map.fetch!(s.running, ref)
+        running = Map.delete(s.running, ref)
+        results = Map.put(s.results, id, value)
+
+        {in_degree, newly_ready} =
+          s.dependents
+          |> Map.get(id, [])
+          |> Enum.reduce({s.in_degree, []}, fn dep, {ind, acc} ->
+            case Map.fetch(ind, dep) do
+              {:ok, n} ->
+                nn = n - 1
+                acc = if nn == 0, do: [dep | acc], else: acc
+                {Map.put(ind, dep, nn), acc}
+
+              :error ->
+                {ind, acc}
+            end
+          end)
+
+        %{
+          s
+          | running: running,
+            results: results,
+            in_degree: in_degree,
+            ready: s.ready ++ Enum.reverse(newly_ready)
+        }
+    end
+  end
+
+  # ── Shared helpers ────────────────────────────────────────────────────────
+
+  defp build_dependents(tasks) do
+    Enum.reduce(tasks, %{}, fn {id, %{depends_on: deps}}, acc ->
+      Enum.reduce(Enum.uniq(deps), acc, fn dep, acc2 ->
+        Map.update(acc2, dep, [id], &[id | &1])
+      end)
+    end)
+  end
+
+  defp decrement_dependents(ids, in_degree, dependents) do
+    Enum.reduce(ids, in_degree, fn id, acc ->
+      dependents
+      |> Map.get(id, [])
+      |> Enum.reduce(acc, fn dependent, acc2 ->
+        case Map.fetch(acc2, dependent) do
+          {:ok, n} -> Map.put(acc2, dependent, n - 1)
+          :error -> acc2
+        end
+      end)
+    end)
+  end
+end
+```
+</file>
+<file path="solution.ex">
+defp strip(in_degree, _dependents) when map_size(in_degree) == 0, do: :ok
+
+defp strip(in_degree, dependents) do
+  ready = for {id, 0} <- in_degree, do: id
+
+  case ready do
+    [] ->
+      {:error, {:cycle, Map.keys(in_degree)}}
+
+    _ ->
+      remaining = Map.drop(in_degree, ready)
+      remain (truncated)
+08:05:14.602 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7579, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7579, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7579, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7579, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 3940, "type" => "message"}], "output_tokens" => 3940, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:05:14.622 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_109_004_bounded_concurrency_task_scheduler_04/109_004_bounded_concurrency_task_scheduler_04 solution.ex
+08:05:16.022 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":15,"lines_over_98":0,"max_line_length":73,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"109_004_bounded_concurrency_task_scheduler_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_109_004_bounded_concurrency_task_scheduler_04/109_004_bounded_concurrency_task_scheduler_04/solution.ex","task":"109_004_bounded_concurrency_task_scheduler_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-11T06:05:15.999704Z"}
+08:05:16.023 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_109_004_bounded_concurrency_task_scheduler_04/109_004_bounded_concurrency_task_scheduler_04 .gen_staging/fim_109_004_bounded_concurrency_task_scheduler_04/mutant.ex
+08:05:16.762 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":7,"lines_over_98":0,"max_line_length":67,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"parent":"109_004_bounded_concurrency_task_scheduler_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.6,"mode":"fim","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 10/12 failed"],"tests":0.17},"shape":"fim","solution_file":".gen_staging/fim_109_004_bounded_concurrency_task_scheduler_04/mutant.ex","task":"109_004_bounded_concurrency_task_scheduler_04","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{BoundedRunner, :strip, 2, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 96, error_info: %{module: Exception}]}, {BoundedRunner, :handle_call, 3, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 62]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:runner, :run_all, :infinity]}}","module":"BoundedRunnerTest","test":"test empty runner returns an empty map"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{BoundedRunner, :strip, 2, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 100, error_info: %{module: Exception}]}, {BoundedRunner, :handle_call, 3, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 62]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:runner, :run_all, :infinity]}}","module":"BoundedRunnerTest","test":"test single task returns its value"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{BoundedRunner, :strip, 2, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 100, error_info: %{module: Exception}]}, {BoundedRunner, :handle_call, 3, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 62]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:runner, :run_all, :infinity]}}","module":"BoundedRunnerTest","test":"test concurrency never exceeds max even with many ready tasks"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{BoundedRunner, :strip, 2, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 100, error_info: %{module: Exception}]}, {BoundedRunner, :handle_call, 3, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 62]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:runner, :run_all, :infinity]}}","module":"BoundedRunnerTest","test":"test with max_concurrency 1 execution is fully serial"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{BoundedRunner, :strip, 2, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 100, error_info: %{module: Exception}]}, {BoundedRunner, :handle_call, 3, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 62]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:runner, :run_all, :infinity]}}","module":"BoundedRunnerTest","test":"test bounded runner takes multiple waves (wall clock)"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{BoundedRunner, :strip, 2, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 100, error_info: %{module: Exception}]}, {BoundedRunner, :handle_call, 3, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 62]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:runner, :run_all, :infinity]}}","module":"BoundedRunnerTest","test":"test a high budget lets independent tasks overlap"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{BoundedRunner, :strip, 2, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 100, error_info: %{module: Exception}]}, {BoundedRunner, :handle_call, 3, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 62]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:runner, :run_all, :infinity]}}","module":"BoundedRunnerTest","test":"test dependency ordering is respected under a concurrency cap"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{BoundedRunner, :strip, 2, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 100, error_info: %{module: Exception}]}, {BoundedRunner, :handle_call, 3, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 62]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:runner, :run_all, :infinity]}}","module":"BoundedRunnerTest","test":"test diamond DAG produces correct results with a cap"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{BoundedRunner, :strip, 2, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 100, error_info: %{module: Exception}]}, {BoundedRunner, :handle_call, 3, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 62]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:runner, :run_all, :infinity]}}","module":"BoundedRunnerTest","test":"test detects a cycle and runs nothing"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{BoundedRunner, :strip, 2, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 100, error_info: %{module: Exception}]}, {BoundedRunner, :handle_call, 3, [file: ~c\"/tmp/evalfim_1605131_2632.ex\", line: 62]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:runner, :run_all, :infinity]}}","module":"BoundedRunnerTest","test":"test resubmitting a task overwrites its definition"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-11T06:05:16.738958Z"}
+08:05:16.762 [debug] fim mutation gate: killed
+08:05:16.764 [info] promoted 109_004_bounded_concurrency_task_scheduler_04 -> tasks/109_004_bounded_concurrency_task_scheduler_04

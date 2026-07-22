@@ -1,0 +1,72 @@
+Screen triage: 8 untriaged RED task(s) — model=opus
+[1/8] 007_004_cusumanomaly_01 ... PROMPT GAP: start_link/1 must validate its options and raise ArgumentError when :threshold, :slack, :warmup_samples, or :epsilon is given a value outside its stated valid range/type.
+[2/8] 014_001_priority_queue_processor_01 ... ENTAILED (solver-weak — keep)
+[3/8] 071_001_factory_module_for_test_data_generation_01 ... PROMPT GAP: `Factory.build(:post)` must eagerly call `Factory.insert(:user)` and populate `user_id` with the resulting integer database id, even though build otherwise does not persist the struct being built.
+[4/8] 073_001_database_cleaner_for_integration_tests_01 ... PROMPT GAP: Specify the exact form of the TRUNCATE statement query!/3 must receive (e.g. the precise table-name quoting/whitespace) and any table-registration the harness expects, so the emitted query matches the keys the test tracks.
+[5/8] 074_001_custom_exunit_assertion_helpers_01 ... PROMPT GAP: Specify that success requires func to return boolean `true` (values that are merely truthy, e.g. the string "still_pending", count as not-yet-ready) and that the timeout failure message must contain the exact last returned value rendered verbatim.
+[6/8] 074_002_collection_and_structural_assertion_helpers_01 ... ENTAILED (solver-weak — keep)
+[7/8] 075_001_property_based_test_generators_01 ... ENTAILED (solver-weak — keep)
+[8/8] 086_001_shopping_cart_with_price_calculations_01 ... PROMPT GAP: Each entry in `:items` must be a plain map of exactly `%{product_id: product_id, quantity: quantity, unit_price: unit_price}`, keyed in the items map by its product id.
+
+=== SCREEN TRIAGE SUMMARY (whole ledger) ===
+  triaged: 79   entailed/keep: 50   prompt gaps: 29   errors: 0
+
+  PROMPT GAPS (human sign-off + backfill needed — cascade per docs/10 inv. #5):
+    - 070_004_resumable_journaled_saga_01
+        When a compensating function raises, record its value as the tuple `{:exception, kind, error}` capturing the caught exception's kind and error.
+    - 080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01
+        If either vertex does not exist, `add_edge` must return exactly `{:error, :vertex_not_found}`.
+    - 074_004_numeric_tolerance_and_exception_assertion_helpers_01
+        When no exception is raised at all, the failure message must contain the literal substring "no exception".
+    - 005_003_replayeventbus_01
+        Each topic must store its subscribers in a field named `subs` that is a list, so that after a subscriber is removed a topic with no subscribers has `subs == []`.
+    - 096_001_input_sanitizer_module_01
+        For tags whose contents are not renderable text — specifically `<script>` and `<style>` — remove the tag and its entire inner content, not just the tag.
+    - 009_003_retry_aware_request_deduplicator_01
+        During the initial attempt, before any retry has been scheduled, `status` must return `:idle`.
+    - 007_004_cusumanomaly_01
+        start_link/1 must validate its options and raise ArgumentError when :threshold, :slack, :warmup_samples, or :epsilon is given a value outside its stated valid range/type.
+    - 006_003_refreshaheadcache_01
+        If `:refresh_threshold` is not a float in the interval (0.0, 1.0], `start_link/1` must raise an ArgumentError.
+    - 086_001_shopping_cart_with_price_calculations_01
+        Each entry in `:items` must be a plain map of exactly `%{product_id: product_id, quantity: quantity, unit_price: unit_price}`, keyed in the items map by its product id.
+    - 003_003_lease_based_bucket_01
+        The `lease_id` returned by `acquire_lease` must be an Erlang reference created with `make_ref/0` (i.e. `is_reference(lease_id)` is true).
+    - 035_002_multi_series_aligned_resampler_01
+        If `interval_ms` is not a positive integer or `:agg`/`:fill` is not one of the documented values, raise an ArgumentError.
+    - 001_004_penalty_escalation_01
+        Specify that a strike's cooldown persists exactly until (strike_time + ladder[strike_index]) independent of decay, and that the last-strike timestamp advances by one window_ms*10 period for each strike removed (rather than resetting), so that the choice between :cooling_down and :rate_limited at any clock value is fully determined.
+    - 019_002_dependency_ordered_bulk_create_with_cascade_skip_01
+        In a `{:validation, errors_map}` result, `errors_map` must be keyed by the offending string field name (e.g. `%{"name" => ["can't be blank"]}`).
+    - 031_001_csv_importer_with_validation_and_error_report_01
+        For `import_string`, an empty binary string ("") must return `{:error, :empty_file}`, mirroring the zero-byte file case.
+    - 070_003_nested_sub_saga_composition_01
+        When a compensating function raises, record its result as the tuple `{:exception, kind, error}` where `kind` is the caught error's kind and `error` is the raised value.
+    - 006_002_lrucache_01
+        When `:capacity` is not a positive integer, `start_link` must fail by exiting with the reason `{:invalid_capacity, capacity}`.
+    - 096_002_schema_driven_nested_params_sanitizer_01
+        When a nested-schema value is not a map, report the error atom `:expected_map` (and `:expected_list` when a `{:list, inner}` value is not a list).
+    - 024_001_webhook_receiver_with_signature_verification_01
+        Specify the exact value passed as the `:store` option and how the router derives the `store_pid` for the callbacks (e.g. "`:store` is a `{module, pid}` tuple, or a started GenServer pid whose module is the MemoryStore").
+    - 010_004_rolling_window_quota_tracker_01
+        Per-call `window_ms` only filters which entries count toward the returned total; it must never permanently remove stored entries — actual eviction from storage happens only via `max_window_ms` (used by both lazy cleanup and the sweep), so entries within `max_window_ms` remain available to subsequent calls that use a larger `window_ms`.
+    - 035_004_counter_rate_resampler_01
+        If `interval_ms` is not a positive integer, or if any option value is outside its documented set, `resample/3` must raise an ArgumentError.
+    - 044_001_ets_based_metrics_collector_01
+        `Metrics.increment/2` must return `:ok` (not the new counter value).
+    - 071_001_factory_module_for_test_data_generation_01
+        `Factory.build(:post)` must eagerly call `Factory.insert(:user)` and populate `user_id` with the resulting integer database id, even though build otherwise does not persist the struct being built.
+    - 074_001_custom_exunit_assertion_helpers_01
+        Specify that success requires func to return boolean `true` (values that are merely truthy, e.g. the string "still_pending", count as not-yet-ready) and that the timeout failure message must contain the exact last returned value rendered verbatim.
+    - 018_001_crud_with_soft_delete_01
+        POST /api/documents should return 200 (not 201) with the created document JSON.
+    - 061_004_weight_budget_parallel_map_01
+        If weight_fun returns a value that is not a positive integer (or budget is not a positive integer), pmap must raise an ArgumentError.
+    - 626_001_mini_prometheus_like_time_series_db_01
+        In query/4, a matched series that has no data points within [start_ts, end_ts] must be omitted from the result entirely rather than returned with an empty points list.
+    - 073_001_database_cleaner_for_integration_tests_01
+        Specify the exact form of the TRUNCATE statement query!/3 must receive (e.g. the precise table-name quoting/whitespace) and any table-registration the harness expects, so the emitted query matches the keys the test tracks.
+    - 032_004_multi_table_json_ingestion_with_type_discriminator_routing_01
+        `:by_schema` must contain an entry for every schema module in the routing map, initialized to `%{inserted: 0, failed: 0}`, even for schemas that received no records.
+    - 086_002_tiered_bracket_cart_with_shipping_thresholds_01
+        The cart struct must have an `:items` field that stores items as a map keyed by `product_id`, initialized to an empty map `%{}` for a new cart.

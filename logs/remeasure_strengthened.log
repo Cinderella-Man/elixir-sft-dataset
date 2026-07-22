@@ -1,0 +1,64 @@
+Concurrency: 16 (EVAL_CONCURRENCY to override)
+  corpus-integrity: all pass ✓
+Semantic mutants (report-only): 13 tasks, ≤40 mutants each ...
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_2119.ex:22: BloomFilter.add/2
+  tasks/079_001_bloom_filter_01/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_2823.ex:22: BloomFilter.add/2
+  tasks/079_001_bloom_filter_01/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_4103.ex:33: BloomFilter.member?/2
+  tasks/079_001_bloom_filter_01/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_4743.ex:33: BloomFilter.member?/2
+  tasks/079_001_bloom_filter_01/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+............
+
+=== SEMANTIC-MUTANT REPORT (kill-rate = behavior changes noticed) ===
+  tasks: 13   mutants: 346   killed: 281 (81.2%)   mean per-task rate: 0.824   non-compiling dropped: 5
+
+  kill-rate histogram:
+    0.0–0.1:  0
+    0.1–0.2:  0
+    0.2–0.3:  0
+    0.3–0.4:  0
+    0.4–0.5:  0
+    0.5–0.6: █ 1
+    0.6–0.7: █ 1
+    0.7–0.8: ██ 2
+    0.8–0.9: ██████ 6
+    0.9–1.0: ███ 3
+
+  20 weakest tasks (most unnoticed behavior changes):
+    - 077_004_max_overlap_interval_tree_01: 16/31 (survivors: L101 s152: 0 -> 1; L114 s195: 0 -> 1; L140 s292: 0 -> 1; L157 s353: 1 -> 2; …)
+    - 002_003_progressive_recovery_cb_01: 27/40 (survivors: L86 s254: 0 -> 1; L86 s257: 0 -> 1; L113 s351: 1 -> 2; L162 s544: 0 -> 1; …)
+    - 002_002_rolling_window_error_rate_cb_01: 27/36 (survivors: L68 s217: 1 -> 2; L72 s232: 0 -> 1; L97 s323: 1 -> 2; L97 s323: 1 -> 0; …)
+    - 041_002_lfu_cache_backed_by_ets_01: 18/23 (survivors: L99 s261: true -> false; L116 s288: 0 -> 1; L159 s537: 1 -> 2; L159 s537: 1 -> 0; …)
+    - 013_002_timeout_guarded_retry_worker_01: 20/25 (survivors: L31 s159: 1 -> 0; L68 s366: {:error, _} -> {:ok, _}; L100 s519: {:ok, _} -> {:error, _}; L123 s628: 50 -> 51; …)
+    - 105_001_genserver_based_debouncer_01: 4/5 (survivors: L66 s149: return :ok -> :error)
+    - 104_004_usage_recycling_connection_pool_01: 33/40 (survivors: L11 s29: 0 -> 1; L11 s32: 10 -> 11; L11 s32: 10 -> 9; L46 s226: return :ok -> :error; …)
+    - 097_002_weighted_strength_score_password_policy_01: 32/38 (survivors: L16 s15: 60 -> 59; L18 s21: 3 -> 4; L69 s224: 100 -> 101; L110 s450: < -> <=; …)
+    - 107_002_keyed_event_aggregator_with_per_key_batching_01: 12/14 (survivors: L55 s128: return :ok -> :error; L98 s311: > -> >=)
+    - 001_001_rate_limiter_01: 13/15 (survivors: L115 s316: 1 -> 0; L154 s449: return :ok -> :error)
+    - 075_001_property_based_test_generators_01: 35/35 (survivors: )
+    - 079_001_bloom_filter_01: 27/27 (survivors: )
+    - 074_001_custom_exunit_assertion_helpers_01: 17/17 (survivors: )
+
+SEMANTIC-MUTANT REPORT COMPLETE (report-only — no gate)

@@ -1,0 +1,348 @@
+02:52:00.453 [info] FIM 025_001_long_polling_endpoint_fim01 → 025_001_long_polling_endpoint_04: target wait_for_notification/2
+02:52:00.453 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+02:52:00.453 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `wait_for_notification/2`.
+
+Generate a prompt describing how to implement `wait_for_notification/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `wait_for_notification/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `wait_for_notification/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `wait_for_notification/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me a set of Elixir modules that implement a long-polling notifications endpoint. I need three pieces:
+
+## 1. `Notifications` module
+
+This module manages pub/sub for user notifications. It should provide:
+
+- `Notifications.start_link(opts)` — starts whatever backing process is needed. Accept a `:name` option for registration (default `Notifications`).
+
+- `Notifications.subscribe(server \\ Notifications, user_id)` — subscribes the calling process to notifications for the given `user_id`. When a notification is published for that user, the subscribing process should receive a message `{:notification, payload}`.
+
+- `Notifications.publish(server \\ Notifications, user_id, payload)` — publishes `payload` to all processes currently subscribed to `user_id`. Returns `:ok`.
+
+Use only OTP primitives (e.g., `Registry`, `GenServer`, `Process`). Do not pull in Phoenix.PubSub or any external dependencies. A `Registry` in `:duplicate` mode is a fine backing store.
+
+## 2. `NotificationPoller` Plug
+
+Build a Plug module `NotificationPoller` that implements `GET /api/notifications/poll`. It must:
+
+- Accept a `:notifications_server` option (the name/pid of the `Notifications` process) and a `:timeout_ms` option (max time to hold the connection open, default `30_000`).
+
+- Extract the user ID from the connection assigns at `conn.assigns.user_id`. If `user_id` is missing, return 401 with body `"unauthorized"`.
+
+- Subscribe to `Notifications` for that user, then block (using a `receive` with `after`) waiting for a `{:notification, payload}` message.
+
+- If a notification arrives within the timeout, return 200 with `content-type: application/json` and the JSON-encoded payload as the body.
+
+- If the timeout expires with no notification, return 204 No Content with an empty body.
+
+Use `Jason` for JSON encoding (the only external dependency allowed).
+
+## 3. `NotificationRouter` Plug.Router
+
+Build a thin `NotificationRouter` using `Plug.Router` that:
+
+- Has a `plug :match` and `plug :dispatch` pipeline.
+- Forwards `GET /api/notifications/poll` to `NotificationPoller`.
+- Returns 404 for anything else.
+
+The router should accept the same `:notifications_server` and `:timeout_ms` options and pass them through to the poller.
+
+## General requirements
+
+- All modules go in a single file.
+- No external dependencies except `Jason` and `Plug`.
+- The long-poll must truly hold the connection open (a blocking `receive`), not a polling loop with `Process.sleep`.
+- Keep the implementation straightforward — no GenStage, no Phoenix Channels, no websockets.
+
+=== WHOLE MODULE ===
+```elixir
+<file path="lib/notifications.ex">
+defmodule Notifications do
+  @moduledoc """
+  In-memory pub/sub for user notifications backed by a `Registry` in
+  `:duplicate` mode. Subscribers receive `{:notification, payload}` messages.
+  """
+
+  @doc """
+  Starts the backing `Registry`. Accepts a `:name` option (default
+  `Notifications`) used both for registration and as the server reference.
+  """
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name, __MODULE__)
+    Registry.start_link(keys: :duplicate, name: name)
+  end
+
+  @doc false
+  def child_spec(opts) do
+    %{
+      id: Keyword.get(opts, :name, __MODULE__),
+      start: {__MODULE__, :start_link, [opts]},
+      type: :supervisor
+    }
+  end
+
+  @doc """
+  Subscribes the calling process to notifications for `user_id`.
+  """
+  def subscribe(server \\ __MODULE__, user_id) do
+    {:ok, _pid} = Registry.register(server, user_id, nil)
+    :ok
+  end
+
+  @doc """
+  Publishes `payload` to every process currently subscribed to `user_id`.
+  """
+  def publish(server \\ __MODULE__, user_id, payload) do
+    Registry.dispatch(server, user_id, fn entries ->
+      for {pid, _value} <- entries, do: send(pid, {:notification, payload})
+    end)
+
+    :ok
+  end
+end
+
+defmodule NotificationPoller do
+  @moduledoc """
+  A Plug implementing `GET /api/notifications/poll` using true long-polling: it
+  subscribes to `Notifications` for the authenticated user and blocks on a
+  `receive` until a notification arrives or the timeout elapses.
+  """
+
+  import Plug.Conn
+
+  @default_timeout_ms 30_000
+
+  def init(opts), do: opts
+
+  def call(conn, opts) do
+    server = Keyword.fetch!(opts, :notifications_server)
+    timeout = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
+
+    case conn.assigns[:user_id] do
+      nil ->
+        send_resp(conn, 401, "unauthorized")
+
+      user_id ->
+        Notifications.subscribe(server, user_id)
+        wait_for_notification(conn, timeout)
+    end
+  end
+
+  defp wait_for_notification(conn, timeout) do
+    receive do
+      {:notification, payload} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(payload))
+    after
+      timeout ->
+        send_resp(conn, 204, "")
+    end
+  end
+end
+
+defmodule NotificationRouter do
+  @moduledoc """
+  Thin `Plug.Router` that forwards `GET /api/notifications/poll` to
+  `NotificationPoller`, passing through the `:notifications_server` and
+  `:timeout_ms` options, and returns 404 for everything else.
+  """
+
+  use Plug.Router, copy_opts_to_assign: :poller_opts
+
+  plug :match
+  plug :dispatch
+
+  get "/api/notifications/poll" do
+    opts = conn.assigns.poller_opts
+    NotificationPoller.call(conn, NotificationPoller.init(opts))
+  end
+
+  match _ do
+    send_resp(conn, 404, "not found")
+  end
+end
+</file>
+
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description + skeleton module with a `# TODO` for wait_for_notification/2
+  - solution.ex — just the wait_for_notification/2 function
+
+
+02:52:21.776 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Implement `wait_for_notification/2`
+
+You are completing the `NotificationPoller` Plug, which implements a true
+long-polling endpoint. The public `call/2` function has already subscribed the
+authenticated process to the `Notifications` pub/sub for the current user and
+now delegates the blocking wait to the private helper `wait_for_notification/2`.
+
+Implement the private `wait_for_notification/2` function. It receives the current
+`conn` and a `timeout` (in milliseconds). It must block on a `receive` waiting
+for a `{:notification, payload}` message — this is genuine long-polling, not a
+sleep/poll loop.
+
+- If a `{:notification, payload}` message arrives before `timeout` elapses,
+  respond with HTTP 200, set the `content-type` response header to
+  `application/json`, and use the JSON-encoded `payload` (via `Jason.encode!/1`)
+  as the response body.
+- If no notification arrives within `timeout` milliseconds, respond with HTTP
+  204 and an empty body.
+
+In both cases return the resulting `conn` (i.e. the value produced by
+`send_resp/3`).
+
+```elixir
+defmodule Notifications do
+  @moduledoc """
+  In-memory pub/sub for user notifications backed by a `Registry` in
+  `:duplicate` mode. Subscribers receive `{:notification, payload}` messages.
+  """
+
+  @doc """
+  Starts the backing `Registry`. Accepts a `:name` option (default
+  `Notifications`) used both for registration and as the server reference.
+  """
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name, __MODULE__)
+    Registry.start_link(keys: :duplicate, name: name)
+  end
+
+  @doc false
+  def child_spec(opts) do
+    %{
+      id: Keyword.get(opts, :name, __MODULE__),
+      start: {__MODULE__, :start_link, [opts]},
+      type: :supervisor
+    }
+  end
+
+  @doc """
+  Subscribes the calling process to notifications for `user_id`.
+  """
+  def subscribe(server \\ __MODULE__, user_id) do
+    {:ok, _pid} = Registry.register(server, user_id, nil)
+    :ok
+  end
+
+  @doc """
+  Publishes `payload` to every process currently subscribed to `user_id`.
+  """
+  def publish(server \\ __MODULE__, user_id, payload) do
+    Registry.dispatch(server, user_id, fn entries ->
+      for {pid, _value} <- entries, do: send(pid, {:notification, payload})
+    end)
+
+    :ok
+  end
+end
+
+defmodule NotificationPoller do
+  @moduledoc """
+  A Plug implementing `GET /api/notifications/poll` using true long-polling: it
+  subscribes to `Notifications` for the authenticated user and blocks on a
+  `receive` until a notification arrives or the timeout elapses.
+  """
+
+  import Plug.Conn
+
+  @default_timeout_ms 30_000
+
+  def init(opts), do: opts
+
+  def call(conn, opts) do
+    server = Keyword.fetch!(opts, :notifications_server)
+    timeout = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
+
+    case conn.assigns[:user_id] do
+      nil ->
+        send_resp(conn, 401, "unauthorized")
+
+      user_id ->
+        Notifications.subscribe(server, user_id)
+        wait_for_notification(conn, timeout)
+    end
+  end
+
+  defp wait_for_notification(conn, timeout) do
+    # TODO
+  end
+end
+
+defmodule NotificationRouter do
+  @moduledoc """
+  Thin `Plug.Router` that forwards `GET /api/notifications/poll` to
+  `NotificationPoller`, passing through the `:notifications_server` and
+  `:timeout_ms` options, and returns 404 for everything else.
+  """
+
+  use Plug.Router, copy_opts_to_assign: :poller_opts
+
+  plug :match
+  plug :dispatch
+
+  get "/api/notifications/poll" do
+    opts = conn.assigns.poller_opts
+    NotificationPoller.call(conn, NotificationPoller.init(opts))
+  end
+
+  match _ do
+    send_resp(conn, 404, "not found")
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+defp wait_for_notification(conn, timeout) do
+  receive do
+    {:notification, payload} ->
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(200, Jason.encode!(payload))
+  after
+    timeout ->
+      send_resp(conn, 204, "")
+  end
+end
+</file>
+02:52:21.776 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2916, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2916, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2916, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2916, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 1767, "type" => "message"}], "output_tokens" => 1767, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:52:21.795 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_025_001_long_polling_endpoint_04/025_001_long_polling_endpoint_04 solution.ex
+02:52:24.598 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":11,"lines_over_98":0,"max_line_length":50,"mode":"fim","pipe_chain_count":2,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"025_001_long_polling_endpoint_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_025_001_long_polling_endpoint_04/025_001_long_polling_endpoint_04/solution.ex","task":"025_001_long_polling_endpoint_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T00:52:24.574610Z"}
+02:52:24.598 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_025_001_long_polling_endpoint_04/025_001_long_polling_endpoint_04 .gen_staging/fim_025_001_long_polling_endpoint_04/mutant.ex
+02:52:25.319 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":44,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"025_001_long_polling_endpoint_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.53,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 7/11 failed"],"tests":0.36},"shape":"fim","solution_file":".gen_staging/fim_025_001_long_polling_endpoint_04/mutant.ex","task":"025_001_long_polling_endpoint_04","test_failures":[{"message":"{:EXIT, #PID<0.214.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: \"user:1\", poller_opts: [notifications_server: :notifications_1091, timeout_ms: 500]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"GET\", owner: nil, params: %{}, path_info: [\"api\", \"notifications\", \"poll\"], path_params: %{}, port: 80, private: %{plug_route: {\"/api/notifications/poll\", #Function<1.53196727/2 in NotificationRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_headers: [], request_path: \"/api/notifications/poll\", resp_body: nil, resp_cookies: %{}, resp_headers: [{\"cache-control\", \"max-age=0, private, must-revalidate\"}], scheme: :http, script_name: [], secret_key_base: nil, state: :unset, status: nil}, kind: :error, reason: %RuntimeError{message: \"MUTATION\"}, stack: [{NotificationPoller, :wait_for_notification, 2, [file: ~c\"/tmp/evalfim_326588_2626.ex\", line: 73, error_info: %{module: Exception}]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\"/tmp/evalfim_326588_2626.ex\", line: 77]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}, [{NotificationPoller, :wait_for_notification, 2, [file: ~c\"/tmp/evalfim_326588_2626.ex\", line: 73, error_info: %{module: Exception}]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\"/tmp/evalfim_326588_2626.ex\", line: 77]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"NotificationPollerTest","test":"test returns notification immediately when one is published during poll"},{"message":"** (RuntimeError) MUTATION","module":"NotificationPollerTest","test":"test returns 204 when timeout expires with no notifications"},{"message":"{:EXIT, #PID<0.227.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: \"user:b\", poller_opts: [notifications_server: :notifications_1411, timeout_ms: 500]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"GET\", owner: nil, params: %{}, path_info: [\"api\", \"notifications\", \"poll\"], path_params: %{}, port: 80, private: %{plug_route: {\"/api/notifications/poll\", #Function<1.53196727/2 in NotificationRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_headers: [], request_path: \"/api/notifications/poll\", resp_body: nil, resp_cookies: %{}, resp_headers: [{\"cache-control\", \"max-age=0, private, must-revalidate\"}], scheme: :http, script_name: [], secret_key_base: nil, state: :unset, status: nil}, kind: :error, reason: %RuntimeError{message: \"MUTATION\"}, stack: [{NotificationPoller, :wait_for_notification, 2, [file: ~c\"/tmp/evalfim_326588_2626.ex\", line: 73, error_info: %{module: Exception}]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\"/tmp/evalfim_326588_2626.ex\", line: 77]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}, [{NotificationPoller, :wait_for_notification, 2, [file: ~c\"/tmp/evalfim_326588_2626.ex\", line: 73, error_info: %{module: Exception}]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\"/tmp/evalfim_326588_2626.ex\", line: 77]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"NotificationPollerTest","test":"test notification for user A is not delivered to user B's poll"},{"message":"{:EXIT, #PID<0.232.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: \"user:a\", poller_opts: [notifications_server: :notifications_1539, timeout_ms: 500]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"GET\", owner: nil, params: %{}, path_info: [\"api\", \"notifications\", \"poll\"], path_params: %{}, port: 80, private: %{plug_route: {\"/api/notifications/poll\", #Function<1.53196727/2 in NotificationRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_headers: [], request_path: \"/api/notifications/poll\", resp_body: nil, resp_cookies: %{}, resp_headers: [{\"cache-control\", \"max-age=0, private, must-revalidate\"}], scheme: :http, script_name: [], secret_key_base: nil, state: :unset, status: nil}, kind: :error, reason: %RuntimeError{message: \"MUTATION\"}, stack: [{NotificationPoller, :wait_for_notification, 2, [file: ~c\"/tmp/evalfim_326588_2626.ex\", line: 73, error_info: %{module: Exception}]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\"/tmp/evalfim_326588_2626.ex\", line: 77]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}, [{NotificationPoller, :wait_for_notification, 2, [file: ~c\"/tmp/evalfim_326588_2626.ex\", line: 73, error_info: %{module: Exception}]}, {NotificationRouter, :\"-di (truncated)
+02:52:25.320 [debug] fim mutation gate: killed
+02:52:25.321 [info] promoted 025_001_long_polling_endpoint_04 -> tasks/025_001_long_polling_endpoint_04

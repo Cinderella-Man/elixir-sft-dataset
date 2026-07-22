@@ -1,0 +1,407 @@
+09:19:39.892 [info] VARIATIONS gen for 039_001_diff_generator_for_record_lists_01 (3 slot(s))
+09:19:39.893 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+09:19:39.893 [debug] claude -p USER prompt:
+I have this SFT task (idea #39 — "Diff Generator for Record Lists"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 39 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `RecordDiff` that compares two versions of a record list keyed by ID and produces a structured diff.
+
+I need these functions in the public API:
+- `RecordDiff.diff(old_list, new_list, opts \\ [])` where both lists are lists of maps. It should accept a `:key` option that is an atom specifying which field to use as the unique identifier (defaults to `:id`). It should return a map with three keys:
+  - `:added` — a list of records present in `new_list` but not in `old_list`
+  - `:removed` — a list of records present in `old_list` but not in `new_list`
+  - `:changed` — a list of maps, one per modified record, each containing: the key field's value (e.g. `id: 1`), a `:changes` map where each key is a changed field name and the value is a two-element tuple `{old_value, new_value}`
+
+Only compare fields that exist in both versions of a record. If a field is added or removed between old and new versions of the same record, treat it as a change (old value is `:missing` if the field didn't exist before, new value is `:missing` if it was removed).
+
+The function must be pure — no processes, no state, no side effects. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+=== BASE solution.ex ===
+defmodule RecordDiff do
+  @moduledoc """
+  Compares two versions of a record list keyed by a unique ID field and
+  produces a structured diff describing what was added, removed, or changed.
+
+  ## Example
+
+      iex> old = [%{id: 1, name: "Alice", age: 30}, %{id: 2, name: "Bob", age: 25}]
+      iex> new = [%{id: 1, name: "Alice", age: 31}, %{id: 3, name: "Carol", age: 28}]
+      iex> RecordDiff.diff(old, new)
+      %{
+        added:   [%{id: 3, name: "Carol", age: 28}],
+        removed: [%{id: 2, name: "Bob",   age: 25}],
+        changed: [%{id: 1, changes: %{age: {30, 31}}}]
+      }
+  """
+
+  @type record :: map()
+  @type key_value :: term()
+  @type field_diff :: {old_value :: term(), new_value :: term()}
+
+  @type change_entry :: %{
+          required(atom()) => key_value(),
+          required(:changes) => %{atom() => field_diff()}
+        }
+
+  @type diff_result :: %{
+          added: [record()],
+          removed: [record()],
+          changed: [change_entry()]
+        }
+
+  @doc """
+  Compares `old_list` and `new_list` (both lists of maps) and returns a
+  structured diff map.
+
+  ## Options
+
+    * `:key` — the atom key used as the unique record identifier.
+      Defaults to `:id`.
+
+  ## Return value
+
+  A map with the following keys:
+
+    * `:added`   — records present in `new_list` but absent in `old_list`.
+    * `:removed` — records present in `old_list` but absent in `new_list`.
+    * `:changed` — one entry per record that exists in both lists but differs.
+      Each entry is a map containing the key field's value and a `:changes`
+      sub-map of `%{field => {old_value, new_value}}`.
+
+  Fields that appear in only one version of a record are still reported as
+  changes, using the atom `:missing` as a placeholder for the absent value.
+  """
+  @spec diff([record()], [record()], keyword()) :: diff_result()
+  def diff(old_list, new_list, opts \\ []) do
+    key = Keyword.get(opts, :key, :id)
+
+    old_index = index_by(old_list, key)
+    new_index = index_by(new_list, key)
+
+    old_keys = MapSet.new(Map.keys(old_index))
+    new_keys = MapSet.new(Map.keys(new_index))
+
+    added   = new_keys |> MapSet.difference(old_keys) |> map_set_to_records(new_index)
+    removed = old_keys |> MapSet.difference(new_keys) |> map_set_to_records(old_index)
+    changed = old_keys |> MapSet.intersection(new_keys) |> changed_entries(old_index, new_index, key)
+
+    %{added: added, removed: removed, changed: changed}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Build a %{key_value => record} lookup map from a list of records.
+  @spec index_by([record()], atom()) :: %{term() => record()}
+  defp index_by(records, key) do
+    Map.new(records, fn record -> {Map.fetch!(record, key), record} end)
+  end
+
+  # Convert a MapSet of key values to the corresponding list of records,
+  # preserving insertion order by sorting keys for determinism.
+  @spec map_set_to_records(MapSet.t(), %{term() => record()}) :: [record()]
+  defp map_set_to_records(key_set, index) do
+    key_set
+    |> MapSet.to_list()
+    |> Enum.sort()
+    |> Enum.map(&Map.fetch!(index, &1))
+  end
+
+  # For every key present in both old and new, compute a change entry if the
+  # records differ. Records that are identical are silently dropped.
+  @spec changed_entries(MapSet.t(), map(), map(), atom()) :: [change_entry()]
+  defp changed_entries(common_keys, old_index, new_index, key) do
+    common_keys
+    |> MapSet.to_list()
+    |> Enum.sort()
+    |> Enum.reduce([], fn key_value, acc ->
+      old_record = Map.fetch!(old_index, key_value)
+      new_record = Map.fetch!(new_index, key_value)
+
+      case diff_records(old_record, new_record) do
+        changes when map_size(changes) == 0 ->
+          # Records are identical; nothing to report.
+          acc
+
+        changes ->
+          entry = %{key => key_value, changes: changes}
+          [entry | acc]
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  # Compare two versions of the same record field by field.
+  # Returns %{field => {old_value, new_value}} for every differing field.
+  # Fields present in only one version use :missing as the absent-side value.
+  @spec diff_records(record(), record()) :: %{atom() => field_diff()}
+  defp diff_records(old_record, new_record) do
+    all_fields =
+      (Map.keys(old_record) ++ Map.keys(new_record))
+      |> Enum.uniq()
+
+    Enum.reduce(all_fields, %{}, fn field, acc ->
+      old_value = Map.get(old_record, field, :missing)
+      new_value = Map.get(new_record, field, :missing)
+
+      if old_value == new_value do
+        acc
+      else
+        Map.put(acc, field, {old_value, new_value})
+      end
+    end)
+  end
+end
+
+
+=== BASE test_harness.exs ===
+defmodule RecordDiffTest do
+  use ExUnit.Case, async: true
+
+  # -------------------------------------------------------
+  # Helpers
+  # -------------------------------------------------------
+
+  defp sort_by_id(list), do: Enum.sort_by(list, & &1.id)
+
+  defp changes_for(changed, id) do
+    changed
+    |> Enum.find(&(&1.id == id))
+    |> Map.get(:changes)
+  end
+
+  # -------------------------------------------------------
+  # Identical lists → empty diff
+  # -------------------------------------------------------
+
+  test "identical lists produce an empty diff" do
+    records = [%{id: 1, name: "Alice"}, %{id: 2, name: "Bob"}]
+    assert RecordDiff.diff(records, records) == %{added: [], removed: [], changed: []}
+  end
+
+  test "two empty lists produce an empty diff" do
+    assert RecordDiff.diff([], []) == %{added: [], removed: [], changed: []}
+  end
+
+  # -------------------------------------------------------
+  # Additions
+  # -------------------------------------------------------
+
+  test "records in new but not old appear in :added" do
+    old  (truncated)
+09:24:52.219 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `NestedRecordDiff` that compares two versions of a record list keyed by ID and produces a structured diff — but unlike a shallow field-by-field diff, this one must descend into **nested maps** and report every change addressed by a dotted path.
+
+I need these functions in the public API:
+- `NestedRecordDiff.diff(old_list, new_list, opts \\ [])` where both lists are lists of maps (whose values may themselves be maps, nested to arbitrary depth). It should accept a `:key` option that is an atom specifying which field to use as the unique identifier (defaults to `:id`). It should return a map with three keys:
+  - `:added` — a list of whole records present in `new_list` but not in `old_list`
+  - `:removed` — a list of whole records present in `old_list` but not in `new_list`
+  - `:changed` — a list of maps, one per modified record, each containing: the key field's value (e.g. `id: 1`) and a `:changes` map where each key is a **dotted path string** (e.g. `"address.city"`) locating a changed leaf, and each value is a two-element tuple `{old_value, new_value}`
+
+Path rules:
+- Recurse into a field only when the value is a map in BOTH versions of the record. Two nested maps are compared key-by-key, and their dotted paths are built by joining the atom field names with `"."` (so `%{address: %{city: ...}}` yields paths like `"address.city"`).
+- If a field is a map on one side and a scalar (or missing) on the other, do NOT recurse — report the whole value change at that field's path (e.g. `"address" => {%{...}, "unknown"}`).
+- If a leaf field is added or removed between old and new versions of the same record, treat it as a change: use the atom `:missing` for the absent side (`{:missing, new}` for an added leaf, `{old, :missing}` for a removed one).
+- Only report a `:changed` entry for a record whose comparison yields at least one path.
+
+The function must be pure — no processes, no state, no side effects. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule NestedRecordDiffTest do
+  use ExUnit.Case, async: false
+
+  defp changes_for(changed, id) do
+    changed
+    |> Enum.find(&(&1.id == id))
+    |> Map.get(:changes)
+  end
+
+  test "identical nested lists produce an empty diff" do
+    records = [%{id: 1, name: "A", address: %{city: "NYC", zip: "10001"}}]
+    assert NestedRecordDiff.diff(records, records) ==
+             %{added: [], removed: [], changed: []}
+  end
+
+  test "two empty lists produce an empty diff" do
+    assert NestedRecordDiff.diff([], []) == %{added: [], removed: [], changed: []}
+  end
+
+  test "nested leaf change is reported with a dotted path" do
+    old = [%{id: 1, name: "A", address: %{city: "NYC", zip: "10001"}}]
+    new = [%{id: 1, name: "A", address: %{city: "LA", zip: "10001"}}]
+
+    assert changes_for(NestedRecordDiff.diff(old, new).changed, 1) ==
+             %{"address.city" => {"NYC", "LA"}}
+  end
+
+  test "top-level and nested changes coexist" do
+    old = [%{id: 1, name: "A", address: %{city: "NYC"}}]
+    new = [%{id: 1, name: "Alice", address: %{city: "LA"}}]
+
+    assert changes_for(NestedRecordDiff.diff(old, new).changed, 1) ==
+             %{"name" => {"A", "Alice"}, "address.city" => {"NYC", "LA"}}
+  end
+
+  test "deeply nested leaf change builds a multi-segment path" do
+    old = [%{id: 1, a: %{b: %{c: 1}}}]
+    new = [%{id: 1, a: %{b: %{c: 2}}}]
+
+    assert changes_for(NestedRecordDiff.diff(old, new).changed, 1) ==
+             %{"a.b.c" => {1, 2}}
+  end
+
+  test "nested leaf added inside an existing map uses :missing old value" do
+    old = [%{id: 1, address: %{city: "NYC"}}]
+    new = [%{id: 1, address: %{city: "NYC", country: "US"}}]
+
+    assert changes_for(NestedRecordDiff.diff(old, new).changed, 1) ==
+             %{"address.country" => {:missing, "US"}}
+  end
+
+  test "nested leaf removed inside an existing map uses :missing new value" do
+    old = [%{id: 1, address: %{city: "NYC", country: "US"}}]
+    new = [%{id: 1, address: %{city: "NYC"}}]
+
+    assert changes_for(NestedRecordDiff.diff(old, new).changed, 1) ==
+             %{"address.country" => {"US", :missing}}
+  end
+
+  test "map replaced by a scalar reports the whole value at the field path" do
+    old = [%{id: 1, address: %{city: "NYC"}}]
+    new = [%{id: 1, address: "unknown"}]
+
+    assert changes_for(NestedRecordDiff.diff(old, new).changed, 1) ==
+             %{"address" => {%{city: "NYC"}, "unknown"}}
+  end
+
+  test "additions and removals return whole records" do
+    old = [%{id: 1, address: %{city: "NYC"}}, %{id: 2, address: %{city: "LA"}}]
+    new = [%{id: 1, address: %{city: "NYC"}}, %{id: 3, address: %{city: "SF"}}]
+
+    %{added: added, removed: removed, changed: changed} = NestedRecordDiff.diff(old, new)
+
+    assert added == [%{id: 3, address: %{city: "SF"}}]
+    assert removed == [%{id: 2, address: %{city: "LA"}}]
+    assert changed == []
+  end
+
+  test "unchanged nested records do not appear in :changed" do
+    old = [%{id: 1, a: %{b: 1}}, %{id: 2, a: %{b: 2}}]
+    new = [%{id: 1, a: %{b: 1}}, %{id: 2, a: %{b: 99}}]
+
+    %{changed: changed} = NestedRecordDiff.diff(old, new)
+
+    assert length(changed) == 1
+    assert hd(changed).id == 2
+    assert hd(changed).changes == %{"a.b" => {2, 99}}
+  end
+
+  test "custom :key option uses a different identifier field" do
+    old = [%{uuid: "aaa", meta: %{v: 1}}]
+    new = [%{uuid: "aaa", meta: %{v: 2}}, %{uuid: "bbb", meta: %{v: 9}}]
+
+    %{added: added, changed: changed} = NestedRecordDiff.diff(old, new, key: :uuid)
+
+    assert added == [%{uuid: "bbb", meta: %{v: 9}}]
+    assert length(changed) == 1
+    assert hd(changed).uuid == "aaa"
+    assert hd(changed).changes == %{"meta.v" => {1, 2}}
+  end
+
+  test "multiple nested branches change on the same record" do
+    old = [%{id: 1, home: %{city: "NYC"}, work: %{city: "NJ"}}]
+    new = [%{id: 1, home: %{city: "LA"}, work: %{city: "SF"}}]
+
+    assert changes_for(NestedRecordDiff.diff(old, new).changed, 1) ==
+             %{"home.city" => {"NYC", "LA"}, "work.city" => {"NJ", "SF"}}
+  end
+end
+</file>
+
+<file path="v1/solution.ex">
+defmodule NestedRecordDiff do
+  @moduledoc """
+  Compares two versions of a record list keyed by a unique ID field and
+  produces a structured diff. Unlike a shallow diff, nested maps are compared
+  recursively and every change is addressed by a dotted path string
+  (e.g. `"address.city"`).
+  """
+
+  @doc """
+  Compares `old_list` and `new_list` (both lists of possibly-nested maps) and
+  returns `%{added: [...], removed: [...], changed: [...]}`.
+
+  Options:
+
+    * `:key` — atom used as the unique record identifier (defaults to `:id`).
+
+  Each `:changed` entry is `%{key => id, changes: %{path_string => {old, new}}}`.
+  """
+  @spec diff([map()], [map()], keyword()) :: %{
+          added: [map()],
+          removed: [map()],
+          changed: [map()]
+        }
+  def diff(old_list, new_list, opts \\ []) do
+    key = Keyword.get(opts, :key, :id)
+
+    old_index = index_by(old_list, key)
+    new_index = index_by(new_list, key)
+
+    old_keys = old_index |> Map.keys() |> MapSet.new()
+    new_keys = new_index |> Map.keys() |> MapSet.new()
+
+    added = new_keys |> MapSet.difference(old_keys) |> to_records(new_index)
+    removed = old_keys |> MapSet.difference(new_keys) |> to_records(old_index)
+
+    changed =
+      old_keys
+      |> MapSet.intersection(new_keys)
+      |> MapSet.to_list()
+      |> Enum.sort()
+      |> Enum.reduce([], fn kv, acc ->
+        changes = deep_changes(Map.fetch!(old_index, kv), Map.fetch!(new_index, kv))
+
+        if map_size(changes) == 0 do
+          acc
+        else
+          [%{key => kv, changes: changes} | acc]
+        end
+      end)
+      |> Enum.reverse()
+
+    %{added: added, removed: removed, changed: changed}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp index_by(records, key) do
+    Map.n (truncated)
+09:24:52.219 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 23877, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 23877, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 23877, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 23877, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 28332, "type" => "message"}], "output_tokens" => 28332, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

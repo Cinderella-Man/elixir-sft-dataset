@@ -1,0 +1,20 @@
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 110_002_histogram_based_approximate_rolling_percentile_01 ... RED (test slices outside the window are excluded: 
+
+match (=) failed
+code:  assert {:error, :empty} = HistogramPercentile.query(:t, 0.5)
+left:  {:error, :empty}
+right: {:ok, 51.0}
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 110_002_histogram_based_approximate_rolling_percentile_01: test slices outside the window are excluded: 
+
+match (=) failed
+code:  assert {:error, :empty} = HistogramPercentile.query(:t, 0.5)
+left:  {:error, :empty}
+right: {:ok, 51.0}
+

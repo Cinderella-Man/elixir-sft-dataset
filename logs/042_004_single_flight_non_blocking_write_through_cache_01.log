@@ -1,0 +1,1335 @@
+10:17:07.781 [info] VARIATION 042_004_single_flight_non_blocking_write_through_cache_01: Single-Flight Non-Blocking Write-Through Cache
+10:17:07.781 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01 solution.ex
+10:17:08.544 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":true,"line_count":226,"lines_over_98":1,"max_line_length":102,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.75,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.95,"reasons":["analysis: no lines over 98 chars (found 1) → 0/1 pts","analysis: @doc on public functions → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T08:17:08.521309Z"}
+10:17:08.546 [info] cycle 042_004_single_flight_non_blocking_write_through_cache_01: repairing — The solution is green but does not meet the house style: no @doc on any public function; 1 line(s) over 98 columns — wrap them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+10:17:08.546 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+10:17:08.546 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @doc on any public function; 1 line(s) over 98 columns — wrap them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `CacheLayer` that wraps database reads with an ETS-backed cache using a **single-flight (request-coalescing), non-blocking** concurrency model.
+
+The naive design serialises *every* cache miss through the GenServer and runs the slow `fallback_fn` inside the GenServer's critical section — so one slow database call blocks misses for **all** keys. I want a better concurrency model:
+
+- The expensive `fallback_fn` must run **outside** the GenServer process, so a slow load for one key never blocks loads for other keys — distinct keys are computed concurrently.
+- For a single key, if several callers miss at the same time, exactly **one** of them (the "leader") runs `fallback_fn`; the others ("followers") block until the leader finishes and then receive the leader's result. `fallback_fn` is called **at most once** per cache miss no matter how many callers race.
+
+I need these functions in the public API:
+- `CacheLayer.start_link(opts)` to start the process as a GenServer. It should accept a `:name` option for process registration and own the lifecycle of all ETS tables it creates.
+- `CacheLayer.fetch(server, table, key, fallback_fn)` which returns `{:ok, value}`. On a cache hit it reads directly from ETS (no GenServer round-trip). On a miss it participates in the single-flight protocol described above and returns `{:ok, value}`.
+- `CacheLayer.invalidate(server, table, key)` which removes the entry for `{table, key}`. Returns `:ok`.
+- `CacheLayer.invalidate_all(server, table)` which removes **all** cached entries for the given `table`. Returns `:ok`.
+
+Each `table` is an atom mapping to a separate `:set`, `:public` ETS table owned by the GenServer, created lazily on first use. The GenServer coordinates the single-flight bookkeeping (who is the leader for `{table, key}`, which callers are waiting) but must **not** execute `fallback_fn` itself. If the leader crashes before producing a value, the followers must not hang forever — one of them should get a chance to retry.
+
+Give me the complete module in a single file. Use only OTP and the standard library, no external dependencies.
+
+----- solution.ex -----
+defmodule CacheLayer do
+  @moduledoc """
+  An ETS-backed read cache with a single-flight, non-blocking concurrency model.
+
+  Each logical `table` (an atom) maps to a separate `:set`, `:public` ETS table
+  owned by this process, created lazily on first use. Cache hits are served
+  directly from ETS with no GenServer round-trip.
+
+  ## Single-flight
+
+  The expensive `fallback_fn` runs in the *caller's* process, never inside the
+  GenServer, so a slow load for one key does not block loads for other keys.
+  For a given `{table, key}`:
+
+    * The first caller to miss becomes the **leader** and runs `fallback_fn`.
+    * Concurrent callers become **followers**: their `fetch` call is parked
+      inside the GenServer (no reply) until the leader finishes, at which point
+      they receive the leader's value. `fallback_fn` is therefore invoked at
+      most once per cache miss.
+
+  If the leader crashes before reporting a value (monitored via
+  `Process.monitor/1`), all parked followers are told to `:retry`, so they never
+  hang — one of them becomes the new leader.
+  """
+
+  use GenServer
+
+  # --------------------------------------------------------------------------
+  # Public API
+  # --------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @spec fetch(GenServer.server(), atom(), term(), (-> term())) :: {:ok, term()}
+  def fetch(server, table, key, fallback_fn)
+      when is_atom(table) and is_function(fallback_fn, 0) do
+    pid = resolve_pid!(server)
+
+    case :persistent_term.get({__MODULE__, pid, table}, :no_table) do
+      :no_table ->
+        join_and_compute(server, table, key, fallback_fn)
+
+      tid ->
+        case :ets.lookup(tid, key) do
+          [{^key, value}] -> {:ok, value}
+          [] -> join_and_compute(server, table, key, fallback_fn)
+        end
+    end
+  end
+
+  @spec invalidate(GenServer.server(), atom(), term()) :: :ok
+  def invalidate(server, table, key) when is_atom(table) do
+    GenServer.call(server, {:invalidate, table, key})
+  end
+
+  @spec invalidate_all(GenServer.server(), atom()) :: :ok
+  def invalidate_all(server, table) when is_atom(table) do
+    GenServer.call(server, {:invalidate_all, table})
+  end
+
+  # Single-flight participation. Runs the fallback in THIS process when elected
+  # leader; blocks (via a parked GenServer call) when a follower.
+  defp join_and_compute(server, table, key, fallback_fn) do
+    case GenServer.call(server, {:join, table, key}, :infinity) do
+      {:hit, value} ->
+        {:ok, value}
+
+      {:value, value} ->
+        # A follower whose leader completed.
+        {:ok, value}
+
+      :retry ->
+        # Leader failed; try again (we may become the new leader).
+        join_and_compute(server, table, key, fallback_fn)
+
+      {:leader, _ref} ->
+        try do
+          value = fallback_fn.()
+          :ok = GenServer.call(server, {:done, table, key, value}, :infinity)
+          {:ok, value}
+        rescue
+          e ->
+            GenServer.call(server, {:fail, table, key}, :infinity)
+            reraise e, __STACKTRACE__
+        end
+    end
+  end
+
+  # --------------------------------------------------------------------------
+  # GenServer callbacks
+  # --------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(:ok) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{tables: %{}, inflight: %{}}}
+  end
+
+  @impl GenServer
+  def handle_call({:join, table, key}, from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    case :ets.lookup(tid, key) do
+      [{^key, value}] ->
+        {:reply, {:hit, value}, state}
+
+      [] ->
+        flight_key = {table, key}
+
+        case Map.get(state.inflight, flight_key) do
+          nil ->
+            leader = elem(from, 0)
+            mref = Process.monitor(leader)
+            entry = %{leader: leader, mref: mref, waiters: []}
+            {:reply, {:leader, mref}, %{state | inflight: Map.put(state.inflight, flight_key, entry)}}
+
+          entry ->
+            entry = %{entry | waiters: [from | entry.waiters]}
+            {:noreply, %{state | inflight: Map.put(state.inflight, flight_key, entry)}}
+        end
+    end
+  end
+
+  def handle_call({:done, table, key, value}, _from, state) do
+    {tid, state} = ensure_table(table, state)
+    :ets.insert(tid, {key, value})
+
+    flight_key = {table, key}
+
+    case Map.pop(state.inflight, flight_key) do
+      {nil, _} ->
+        {:reply, :ok, state}
+
+      {entry, inflight} ->
+        Process.demonitor(entry.mref, [:flush])
+        Enum.each(entry.waiters, fn w -> GenServer.reply(w, {:value, value}) end)
+        {:reply, :ok, %{state | inflight: inflight}}
+    end
+  end
+
+  def handle_call({:fail, table, key}, _from, state) do
+    flight_key = {table, key}
+
+    case Map.pop(state.inflight, flight_key) do (truncated)
+10:17:44.194 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule CacheLayer do
+  @moduledoc """
+  An ETS-backed read cache with a single-flight, non-blocking concurrency model.
+
+  Each logical `table` (an atom) maps to a separate `:set`, `:public` ETS table
+  owned by this process, created lazily on first use. Cache hits are served
+  directly from ETS with no GenServer round-trip.
+
+  ## Single-flight
+
+  The expensive `fallback_fn` runs in the *caller's* process, never inside the
+  GenServer, so a slow load for one key does not block loads for other keys.
+  For a given `{table, key}`:
+
+    * The first caller to miss becomes the **leader** and runs `fallback_fn`.
+    * Concurrent callers become **followers**: their `fetch` call is parked
+      inside the GenServer (no reply) until the leader finishes, at which point
+      they receive the leader's value. `fallback_fn` is therefore invoked at
+      most once per cache miss.
+
+  If the leader crashes before reporting a value (monitored via
+  `Process.monitor/1`), all parked followers are told to `:retry`, so they never
+  hang — one of them becomes the new leader.
+  """
+
+  use GenServer
+
+  # --------------------------------------------------------------------------
+  # Public API
+  # --------------------------------------------------------------------------
+
+  @doc """
+  Starts the cache as a GenServer.
+
+  Accepts the usual GenServer options, notably `:name` for process registration.
+  The started process owns the lifecycle of every ETS table it creates.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc """
+  Fetches the value cached under `{table, key}`, computing it on a miss.
+
+  On a cache hit the value is read directly from ETS with no GenServer
+  round-trip. On a miss the caller joins the single-flight protocol: exactly one
+  racing caller runs `fallback_fn`, the rest wait for and receive its result.
+  Always returns `{:ok, value}`.
+  """
+  @spec fetch(GenServer.server(), atom(), term(), (-> term())) :: {:ok, term()}
+  def fetch(server, table, key, fallback_fn)
+      when is_atom(table) and is_function(fallback_fn, 0) do
+    pid = resolve_pid!(server)
+
+    case :persistent_term.get({__MODULE__, pid, table}, :no_table) do
+      :no_table ->
+        join_and_compute(server, table, key, fallback_fn)
+
+      tid ->
+        case :ets.lookup(tid, key) do
+          [{^key, value}] -> {:ok, value}
+          [] -> join_and_compute(server, table, key, fallback_fn)
+        end
+    end
+  end
+
+  @doc """
+  Removes the cached entry for `{table, key}`. Always returns `:ok`.
+  """
+  @spec invalidate(GenServer.server(), atom(), term()) :: :ok
+  def invalidate(server, table, key) when is_atom(table) do
+    GenServer.call(server, {:invalidate, table, key})
+  end
+
+  @doc """
+  Removes every cached entry for `table`. Always returns `:ok`.
+  """
+  @spec invalidate_all(GenServer.server(), atom()) :: :ok
+  def invalidate_all(server, table) when is_atom(table) do
+    GenServer.call(server, {:invalidate_all, table})
+  end
+
+  # Single-flight participation. Runs the fallback in THIS process when elected
+  # leader; blocks (via a parked GenServer call) when a follower.
+  defp join_and_compute(server, table, key, fallback_fn) do
+    case GenServer.call(server, {:join, table, key}, :infinity) do
+      {:hit, value} ->
+        {:ok, value}
+
+      {:value, value} ->
+        # A follower whose leader completed.
+        {:ok, value}
+
+      :retry ->
+        # Leader failed; try again (we may become the new leader).
+        join_and_compute(server, table, key, fallback_fn)
+
+      {:leader, _ref} ->
+        try do
+          value = fallback_fn.()
+          :ok = GenServer.call(server, {:done, table, key, value}, :infinity)
+          {:ok, value}
+        rescue
+          e ->
+            GenServer.call(server, {:fail, table, key}, :infinity)
+            reraise e, __STACKTRACE__
+        end
+    end
+  end
+
+  # --------------------------------------------------------------------------
+  # GenServer callbacks
+  # --------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(:ok) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{tables: %{}, inflight: %{}}}
+  end
+
+  @impl GenServer
+  def handle_call({:join, table, key}, from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    case :ets.lookup(tid, key) do
+      [{^key, value}] ->
+        {:reply, {:hit, value}, state}
+
+      [] ->
+        flight_key = {table, key}
+
+        case Map.get(state.inflight, flight_key) do
+          nil ->
+            leader = elem(from, 0)
+            mref = Process.monitor(leader)
+            entry = %{leader: leader, mref: mref, waiters: []}
+            inflight = Map.put(state.inflight, flight_key, entry)
+            {:reply, {:leader, mref}, %{state | inflight: inflight}}
+
+          entry ->
+            entry = %{entry | waiters: [from | entry.waiters]}
+            {:noreply, %{state | inflight: Map.put(state.inflight, flight_key, entry)}}
+        end
+    end
+  end
+
+  def handle_call({:done, table, key, value}, _from, state) do
+    {tid, state} = ensure_table(table, state)
+    :ets.insert(tid, {key, value})
+
+    flight_key = {table, key}
+
+    case Map.pop(state.inflight, flight_key) do
+      {nil, _} ->
+        {:reply, :ok, state}
+
+      {entry, inflight} ->
+        Process.demonitor(entry.mref, [:flush])
+        Enum.each(entry.waiters, fn w -> GenServer.reply(w, {:value, value}) end)
+        {:reply, :ok, %{state | inflight: inflight}}
+    end
+  end
+
+  def handle_call({:fail, table, key}, _from, state) do
+    flight_key = {table, key}
+
+    case Map.pop(state.inflight, flight_key) do
+      {nil, _} ->
+        {:reply, :ok, state}
+
+      {entry, inflight} ->
+        Process.demonitor(entry.mref, [:flush])
+        Enum.each(entry.waiters, fn w -> GenServer.reply(w, :retry) end)
+        {:reply, :ok, %{state | inflight: inflight}}
+    end
+  end
+
+  def handle_call({:invalidate, table, key}, _from, state) do
+    case Map.get(state.tables, table) do
+      nil -> :ok
+      tid -> :ets.delete(tid, key)
+    end
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:invalidate_all, table}, _from, state) do
+    case Map.get(state.tables, table) do
+      nil -> :ok
+      tid -> :ets.delete_all_objects(tid)
+    end
+
+    {:reply, :ok, state}
+  end
+
+  @impl GenServer
+  def handle_info({:DOWN, mref, :process, _pid, _reason}, state) do
+    case Enum.find(state.inflight, fn {_k, entry} -> entry.mref == mref end) do
+      nil ->
+        {:noreply, state}
+
+      {flight_key, entry} ->
+        Enum.each(entry.waiters, fn w -> GenServer.reply(w, :retry) end)
+        {:noreply, %{state | inflight: Map.delete(state.inflight, flight_key)}}
+    end
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  @impl GenServer
+  def terminate(_reason, state) do
+    pid = self()
+
+    Enum.each(state.tables, fn {table, tid} ->
+      :persistent_term.erase({__MODULE__, pid, table})
+      :ets.delete(tid)
+    end)
+
+    :ok
+  end
+
+  # --------------------------------------------------------------------------
+  # Helpers
+  # --------------------------------------------------------------------------
+
+  defp ensure_table(table, %{tables: tables} = state) do
+    case Map.get(tables, table) do
+      nil ->
+        tid = :ets.new(table, [:set, :public])
+        :persistent_term.put({__MODULE__, self(), table}, tid)
+        {tid, %{state | tables: Map.put(tables, table, tid)}}
+
+      tid ->
+        {tid, state}
+    end
+  end
+
+  defp resolve_pid!(pid) when is_pid(pid), do: pid
+
+  defp resolve_pid!(name) do
+    case GenServer.whereis(name) do
+      nil -> raise ArgumentError, "CacheLayer: cannot resolve #{inspect(name)} to a pid"
+      pid -> pid
+    end
+  end
+end
+</file>
+10:17:44.195 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6895, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6895, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6895, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6895, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 3512, "type" => "message"}], "output_tokens" => 3512, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+10:17:44.216 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01 solution.ex
+10:17:44.999 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":247,"lines_over_98":0,"max_line_length":88,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T08:17:44.974977Z"}
+10:17:45.004 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:17:45.703 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":195,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 11/11 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test cache miss calls the fallback and returns the value"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test cache hit does not call the fallback again"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test nil is a valid cached value and is not recomputed"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test concurrent misses of the same key run the fallback exactly once"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test a slow load for one key does not block loads for another key"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test if the leader crashes, a waiting follower retries and succeeds"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_s (truncated)
+10:17:45.707 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:17:47.426 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":184,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.3,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 10/11 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.09},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test cache miss calls the fallback and returns the value"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test cache hit does not call the fallback again"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test nil is a valid cached value and is not recomputed"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :fetch, 4, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 15, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CacheLayerSingleFlightTest","test":"test concurrent misses of the same key run the fallback exactly once"},{"message":"{:EXIT, #PID<0.256.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :fetch, 4, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 15, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CacheLayerSingleFlightTest","test":"test a slow load for one key does not block loads for another key"},{"message":"\n\nleader never started\n","module":"CacheLayerSingleFlightTest","test":"test if the leader crashes, a waiting follower retries and succeeds"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate_all clears every key in the table"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test different tables are independent namespaces"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T08:17:47.402934Z"}
+10:17:47.432 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:17:48.218 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":195,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.83,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 2/11 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.82},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T08:17:48.194548Z"}
+10:17:48.224 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:17:48.987 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":195,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.84,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 2/11 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.82},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate_all clears every key in the table"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate_all on an unused table returns :ok"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T08:17:48.963692Z"}
+10:17:48.993 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:17:49.674 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":194,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 11/11 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test cache miss calls the fallback and returns the value"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test cache hit does not call the fallback again"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test nil is a valid cached value and is not recomputed"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test concurrent misses of the same key run the fallback exactly once"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test a slow load for one key does not block loads for another key"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test if the leader crashes, a waiting follower retries and succeeds"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate_all clears every key in the table"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate_all on an unused table returns :ok"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test different tables are independent namespaces"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T08:17:49.652928Z"}
+10:17:49.679 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:17:50.363 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":142,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":17,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.18,"reasons":["compilation: 17 warning(s) → -1.7 pts","tests: 11/11 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.213.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test cache miss calls the fallback and returns the value"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.218.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test cache hit does not call the fallback again"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.223.0>, {:join, :t, \"k\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test nil is a valid cached value and is not recomputed"},{"message":"{:EXIT, #PID<0.225.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.228.0>, {:join, :users, \"hot\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test concurrent misses of the same key run the fallback exactly once"},{"message":"{:EXIT, #PID<0.260.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.263.0>, {:join, :t, :a}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test a slow load for one key does not block loads for another key"},{"message":"{:EXIT, #PID<0.266.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.269.0>, {:join, :t, :k}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test if the leader crashes, a waiting follower retries and succeeds"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.275.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.280.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.285.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test invalidate_all clears every key in the table"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.290.0>, {:invalidate_all, :never_used}, 5000]}}","module":"CacheLayerSingleFlightTest","test":"test invalidate_all on an unused table returns :ok"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.295.0>, {:join, :users, \"id:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test different tables are independent namespaces"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T08:17:50.340684Z"}
+10:17:50.369 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:17:51.115 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":188,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.94,"reasons":["compilation: 3 warning(s) → -0.3 pts","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T08:17:51.091140Z"}
+10:17:51.115 [debug] base mutation gate (per-fn): handle_info/2 survived
+10:17:51.117 [info] cycle 042_004_single_flight_non_blocking_write_through_cache_01: repairing — Mutation gate failed: the raise-mutant of `handle_info/2` still passes the tests — that public function is not exercised by test_harness.exs. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+10:17:51.117 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+10:17:51.117 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Mutation gate failed: the raise-mutant of `handle_info/2` still passes the tests — that public function is not exercised by test_harness.exs. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `CacheLayer` that wraps database reads with an ETS-backed cache using a **single-flight (request-coalescing), non-blocking** concurrency model.
+
+The naive design serialises *every* cache miss through the GenServer and runs the slow `fallback_fn` inside the GenServer's critical section — so one slow database call blocks misses for **all** keys. I want a better concurrency model:
+
+- The expensive `fallback_fn` must run **outside** the GenServer process, so a slow load for one key never blocks loads for other keys — distinct keys are computed concurrently.
+- For a single key, if several callers miss at the same time, exactly **one** of them (the "leader") runs `fallback_fn`; the others ("followers") block until the leader finishes and then receive the leader's result. `fallback_fn` is called **at most once** per cache miss no matter how many callers race.
+
+I need these functions in the public API:
+- `CacheLayer.start_link(opts)` to start the process as a GenServer. It should accept a `:name` option for process registration and own the lifecycle of all ETS tables it creates.
+- `CacheLayer.fetch(server, table, key, fallback_fn)` which returns `{:ok, value}`. On a cache hit it reads directly from ETS (no GenServer round-trip). On a miss it participates in the single-flight protocol described above and returns `{:ok, value}`.
+- `CacheLayer.invalidate(server, table, key)` which removes the entry for `{table, key}`. Returns `:ok`.
+- `CacheLayer.invalidate_all(server, table)` which removes **all** cached entries for the given `table`. Returns `:ok`.
+
+Each `table` is an atom mapping to a separate `:set`, `:public` ETS table owned by the GenServer, created lazily on first use. The GenServer coordinates the single-flight bookkeeping (who is the leader for `{table, key}`, which callers are waiting) but must **not** execute `fallback_fn` itself. If the leader crashes before producing a value, the followers must not hang forever — one of them should get a chance to retry.
+
+Give me the complete module in a single file. Use only OTP and the standard library, no external dependencies.
+
+----- solution.ex -----
+defmodule CacheLayer do
+  @moduledoc """
+  An ETS-backed read cache with a single-flight, non-blocking concurrency model.
+
+  Each logical `table` (an atom) maps to a separate `:set`, `:public` ETS table
+  owned by this process, created lazily on first use. Cache hits are served
+  directly from ETS with no GenServer round-trip.
+
+  ## Single-flight
+
+  The expensive `fallback_fn` runs in the *caller's* process, never inside the
+  GenServer, so a slow load for one key does not block loads for other keys.
+  For a given `{table, key}`:
+
+    * The first caller to miss becomes the **leader** and runs `fallback_fn`.
+    * Concurrent callers become **followers**: their `fetch` call is parked
+      inside the GenServer (no reply) until the leader finishes, at which point
+      they receive the leader's value. `fallback_fn` is therefore invoked at
+      most once per cache miss.
+
+  If the leader crashes before reporting a value (monitored via
+  `Process.monitor/1`), all parked followers are told to `:retry`, so they never
+  hang — one of them becomes the new leader.
+  """
+
+  use GenServer
+
+  # --------------------------------------------------------------------------
+  # Public API
+  # --------------------------------------------------------------------------
+
+  @doc """
+  Starts the cache as a GenServer.
+
+  Accepts the usual GenServer options, notably `:name` for process registration.
+  The started process owns the lifecycle of every ETS table it creates.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc """
+  Fetches the value cached under `{table, key}`, computing it on a miss.
+
+  On a cache hit the value is read directly from ETS with no GenServer
+  round-trip. On a miss the caller joins the single-flight protocol: exactly one
+  racing caller runs `fallback_fn`, the rest wait for and receive its result.
+  Always returns `{:ok, value}`.
+  """
+  @spec fetch(GenServer.server(), atom(), term(), (-> term())) :: {:ok, term()}
+  def fetch(server, table, key, fallback_fn)
+      when is_atom(table) and is_function(fallback_fn, 0) do
+    pid = resolve_pid!(server)
+
+    case :persistent_term.get({__MODULE__, pid, table}, :no_table) do
+      :no_table ->
+        join_and_compute(server, table, key, fallback_fn)
+
+      tid ->
+        case :ets.lookup(tid, key) do
+          [{^key, value}] -> {:ok, value}
+          [] -> join_and_compute(server, table, key, fallback_fn)
+        end
+    end
+  end
+
+  @doc """
+  Removes the cached entry for `{table, key}`. Always returns `:ok`.
+  """
+  @spec invalidate(GenServer.server(), atom(), term()) :: :ok
+  def invalidate(server, table, key) when is_atom(table) do
+    GenServer.call(server, {:invalidate, table, key})
+  end
+
+  @doc """
+  Removes every cached entry for `table`. Always returns `:ok`.
+  """
+  @spec invalidate_all(GenServer.server(), atom()) :: :ok
+  def invalidate_all(server, table) when is_atom(table) do
+    GenServer.call(server, {:invalidate_all, table})
+  end
+
+  # Single-flight participation. Runs the fallback in THIS process when elected
+  # leader; blocks (via a parked GenServer call) when a follower.
+  defp join_and_compute(server, table, key, fallback_fn) do
+    case GenServer.call(server, {:join, table, key}, :infinity) do
+      {:hit, value} ->
+        {:ok, value}
+
+      {:value, value} ->
+        # A follower whose leader completed.
+        {:ok, value}
+
+      :retry ->
+        # Leader failed; try again (we may become the new leader).
+        join_and_compute(server, table, key, fallback_fn)
+
+      {:leader, _ref} ->
+        try do
+          value = fallback_fn.()
+          :ok = GenServer.call(server, {:done, table, key, value}, :infinity)
+          {:ok, value}
+        rescue
+          e ->
+            GenServer.call(server, {:fail, table, key}, :infinity)
+            reraise e, __STACKTRACE__
+        end
+    end
+  end
+
+  # --------------------------------------------------------------------------
+  # GenServer callbacks
+  # --------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(:ok) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{tables: %{}, inflight: %{}}}
+  end
+
+  @impl GenServer
+  def handle_call({:join, table, key}, from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    case :ets.lookup(tid, key) do
+      [{^key, value}] ->
+        {:reply, {:hit, value}, state}
+
+      [] ->
+        flight_key = {table, key}
+
+        case Map.get(state.inflight, flight_key) do
+          nil ->
+            leader = elem(from, 0)
+            mref = Process.monitor(leader)
+            entry = %{leader: leader, mref: mref, waiters: []}
+            inflight = Map.put(state.inflight, flight_key, entry)
+            {:reply, {:leader, mref}, %{state | inflight: inflight}}
+
+          entry ->
+            entry = %{entry | waiters: [from | entry.waiters]}
+            {:nore (truncated)
+10:19:11.202 [debug] claude -p RESULT (stop="end_turn"):
+<file path="test_harness.exs">
+defmodule CacheLayerSingleFlightTest do
+  use ExUnit.Case, async: false
+
+  defmodule Tracker do
+    use Agent
+
+    def start_link(value), do: Agent.start_link(fn -> {0, value} end, name: __MODULE__)
+
+    def fallback do
+      Agent.get_and_update(__MODULE__, fn {count, value} -> {value, {count + 1, value}} end)
+    end
+
+    def count, do: Agent.get(__MODULE__, fn {count, _} -> count end)
+  end
+
+  setup do
+    start_supervised!({Tracker, :db_value})
+    cl = start_supervised!({CacheLayer, []})
+    %{cl: cl}
+  end
+
+  # -------------------------------------------------------
+  # Basic behaviour
+  # -------------------------------------------------------
+
+  test "cache miss calls the fallback and returns the value", %{cl: cl} do
+    assert {:ok, :db_value} = CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 1
+  end
+
+  test "cache hit does not call the fallback again", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert {:ok, :db_value} = CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 1
+  end
+
+  test "nil is a valid cached value and is not recomputed", %{cl: cl} do
+    fun = fn -> nil end
+    assert {:ok, nil} = CacheLayer.fetch(cl, :t, "k", fun)
+    assert {:ok, nil} = CacheLayer.fetch(cl, :t, "k", fun)
+  end
+
+  # -------------------------------------------------------
+  # Single-flight coalescing
+  # -------------------------------------------------------
+
+  test "concurrent misses of the same key run the fallback exactly once", %{cl: cl} do
+    fun = fn -> Process.sleep(40); Tracker.fallback() end
+
+    results =
+      for _ <- 1..30 do
+        Task.async(fn -> CacheLayer.fetch(cl, :users, "hot", fun) end)
+      end
+      |> Enum.map(&Task.await/1)
+
+    assert Enum.all?(results, &(&1 == {:ok, :db_value}))
+    assert Tracker.count() == 1
+  end
+
+  # -------------------------------------------------------
+  # Non-blocking: distinct keys compute concurrently
+  # -------------------------------------------------------
+
+  test "a slow load for one key does not block loads for another key", %{cl: cl} do
+    parent = self()
+
+    # Leader for :a announces itself and blocks until told to proceed.
+    slow_a = fn ->
+      send(parent, {:a_leading, self()})
+
+      receive do
+        :go -> :val_a
+      end
+    end
+
+    task_a = Task.async(fn -> CacheLayer.fetch(cl, :t, :a, slow_a) end)
+
+    a_pid =
+      receive do
+        {:a_leading, pid} -> pid
+      after
+        1_000 -> flunk("leader for :a never started")
+      end
+
+    # While :a's fallback is blocked (running OUTSIDE the GenServer), a fetch
+    # for a different key must complete promptly.
+    assert {:ok, :val_b} = CacheLayer.fetch(cl, :t, :b, fn -> :val_b end)
+
+    # Release :a and confirm it resolves.
+    send(a_pid, :go)
+    assert {:ok, :val_a} = Task.await(task_a)
+  end
+
+  # -------------------------------------------------------
+  # Leader failure: followers do not hang, they retry
+  # -------------------------------------------------------
+
+  test "if the leader crashes, a waiting follower retries and succeeds", %{cl: cl} do
+    parent = self()
+
+    # The leader signals, then crashes without producing a value.
+    crashing = fn ->
+      send(parent, :leader_ready)
+      Process.sleep(30)
+      raise "boom"
+    end
+
+    leader =
+      Task.async(fn ->
+        try do
+          CacheLayer.fetch(cl, :t, :k, crashing)
+        rescue
+          _ -> :crashed
+        end
+      end)
+
+    receive do
+      :leader_ready -> :ok
+    after
+      1_000 -> flunk("leader never started")
+    end
+
+    # A follower joins while the leader is still "computing".
+    follower =
+      Task.async(fn -> CacheLayer.fetch(cl, :t, :k, fn -> :recovered end) end)
+
+    assert :crashed = Task.await(leader)
+    assert {:ok, :recovered} = Task.await(follower, 2_000)
+  end
+
+  # -------------------------------------------------------
+  # Leader hard-killed: DOWN monitor (handle_info/2) rescues followers
+  # -------------------------------------------------------
+
+  test "if the leader process is hard-killed, followers retry via the DOWN monitor",
+       %{cl: cl} do
+    parent = self()
+
+    # The leader announces its pid then blocks forever; a hard kill means no
+    # rescue clause can run, so ONLY the GenServer's Process.monitor/DOWN
+    # handling (in handle_info/2) can unblock a parked follower.
+    blocking = fn ->
+      send(parent, {:leader_pid, self()})
+      Process.sleep(:infinity)
+    end
+
+    # Unlinked spawn so killing the leader does not take down the test process.
+    leader_pid = spawn(fn -> CacheLayer.fetch(cl, :t, :down_key, blocking) end)
+
+    receive do
+      {:leader_pid, ^leader_pid} -> :ok
+    after
+      1_000 -> flunk("leader never started")
+    end
+
+    # A follower parks inside the GenServer, waiting on the leader's result.
+    follower =
+      Task.async(fn -> CacheLayer.fetch(cl, :t, :down_key, fn -> :recovered end) end)
+
+    # Give the follower time to register as a waiter before the leader dies.
+    Process.sleep(80)
+
+    # Hard kill: untrappable, so the leader cannot report {:fail, ...}. The only
+    # thing that can rescue the follower is the monitored :DOWN message routed
+    # through handle_info/2. If that clause is gutted, the follower hangs and
+    # this assertion times out.
+    Process.exit(leader_pid, :kill)
+
+    assert {:ok, :recovered} = Task.await(follower, 2_000)
+
+    # The recovered value must now be cached without recomputation.
+    assert {:ok, :recovered} = CacheLayer.fetch(cl, :t, :down_key, fn -> :other end)
+  end
+
+  # -------------------------------------------------------
+  # Invalidation
+  # -------------------------------------------------------
+
+  test "invalidate forces the next fetch to recompute", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 1
+
+    :ok = CacheLayer.invalidate(cl, :users, "u:1")
+
+    CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 2
+  end
+
+  test "invalidate only removes the targeted key", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    CacheLayer.fetch(cl, :users, "u:2", &Tracker.fallback/0)
+    assert Tracker.count() == 2
+
+    CacheLayer.invalidate(cl, :users, "u:1")
+
+    CacheLayer.fetch(cl, :users, "u:2", &Tracker.fallback/0)
+    assert Tracker.count() == 2
+
+    CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 3
+  end
+
+  test "invalidate_all clears every key in the table", %{cl: cl} do
+    for i <- 1..5 do
+      CacheLayer.fetch(cl, :users, "u:#{i}", &Tracker.fallback/0)
+    end
+
+    assert Tracker.count() == 5
+    :ok = CacheLayer.invalidate_all(cl, :users)
+
+    for i <- 1..5 do
+      CacheLayer.fetch(cl, :users, "u:#{i}", &Tracker.fallback/0)
+    end
+
+    assert Tracker.count() == 10
+  end
+
+  test "invalidate_all on an unused table returns :ok", %{cl: cl} do
+    assert :ok = CacheLayer.invalidate_all(cl, :never_used)
+  end
+
+  # -------------------------------------------------------
+  # Table independence
+  # -------------------------------------------------------
+
+  test "different tables are independent namespaces", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "id:1", &Tracker.fallback/0)
+    CacheLayer.fetch(cl, :posts, "id:1", &Tracker.fallback/0)
+    assert Tracker.count() == 2
+
+    CacheLayer.fetch(cl, :users, "id:1", &Tracker.fallback/0)
+    CacheLayer.fetch(cl, :posts, "id:1", &Tracker.fallback/0)
+    assert Tracker.count() == 2
+  end
+end
+</file>
+10:19:11.202 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7157, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7157, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7157, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7157, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 6924, "type" => "message"}], "output_tokens" => 6924, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+10:19:11.222 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01 solution.ex
+10:19:12.087 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":247,"lines_over_98":0,"max_line_length":88,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:19:12.063241Z"}
+10:19:12.094 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:19:12.816 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":195,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 12/12 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test cache miss calls the fallback and returns the value"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test cache hit does not call the fallback again"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test nil is a valid cached value and is not recomputed"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test concurrent misses of the same key run the fallback exactly once"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test a slow load for one key does not block loads for another key"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test if the leader crashes, a waiting follower retries and succeeds"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test if the leader process is hard-killed, followers retry via the DOWN monitor"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) sup (truncated)
+10:19:12.822 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:19:15.522 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":184,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.29,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 11/12 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.08},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test cache miss calls the fallback and returns the value"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test cache hit does not call the fallback again"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test nil is a valid cached value and is not recomputed"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :fetch, 4, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 15, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CacheLayerSingleFlightTest","test":"test concurrent misses of the same key run the fallback exactly once"},{"message":"{:EXIT, #PID<0.256.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :fetch, 4, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 15, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CacheLayerSingleFlightTest","test":"test a slow load for one key does not block loads for another key"},{"message":"\n\nleader never started\n","module":"CacheLayerSingleFlightTest","test":"test if the leader crashes, a waiting follower retries and succeeds"},{"message":"\n\nleader never started\n","module":"CacheLayerSingleFlightTest","test":"test if the leader process is hard-killed, followers retry via the DOWN monitor"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate_all clears every key in the table"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test different tables are independent namespaces"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:19:15.498356Z"}
+10:19:15.529 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:19:16.386 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":195,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.84,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 2/12 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.83},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:19:16.362306Z"}
+10:19:16.392 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:19:17.243 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":195,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.85,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 2/12 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.83},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate_all clears every key in the table"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate_all on an unused table returns :ok"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:19:17.220860Z"}
+10:19:17.249 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:19:17.938 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":194,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 12/12 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test cache miss calls the fallback and returns the value"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test cache hit does not call the fallback again"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test nil is a valid cached value and is not recomputed"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test concurrent misses of the same key run the fallback exactly once"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test a slow load for one key does not block loads for another key"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test if the leader crashes, a waiting follower retries and succeeds"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test if the leader process is hard-killed, followers retry via the DOWN monitor"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate_all clears every key in the table"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate_all on an unused table returns :ok"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test different tables are independent namespaces"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:19:17.916532Z"}
+10:19:17.943 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:19:19.648 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":142,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":17,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.18,"reasons":["compilation: 17 warning(s) → -1.7 pts","tests: 12/12 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.213.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test cache miss calls the fallback and returns the value"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.218.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test cache hit does not call the fallback again"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.223.0>, {:join, :t, \"k\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test nil is a valid cached value and is not recomputed"},{"message":"{:EXIT, #PID<0.225.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.228.0>, {:join, :users, \"hot\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test concurrent misses of the same key run the fallback exactly once"},{"message":"{:EXIT, #PID<0.260.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.263.0>, {:join, :t, :a}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test a slow load for one key does not block loads for another key"},{"message":"{:EXIT, #PID<0.266.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.269.0>, {:join, :t, :k}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test if the leader crashes, a waiting follower retries and succeeds"},{"message":"\n\nleader never started\n","module":"CacheLayerSingleFlightTest","test":"test if the leader process is hard-killed, followers retry via the DOWN monitor"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.281.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.286.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.291.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test invalidate_all clears every key in the table"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.296.0>, {:invalidate_all, :never_used}, 5000]}}","module":"CacheLayerSingleFlightTest","test":"test invalidate_all on an unused table returns :ok"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.301.0>, {:join, :users, \"id:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test different tables are independent namespaces"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_pas (truncated)
+10:19:19.654 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:19:20.528 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":188,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.89,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 1/12 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.92},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.267.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_info, 2, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 147, error_info: %{module: Exception}]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.270.0>, {:join, :t, :down_key}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test if the leader process is hard-killed, followers retry via the DOWN monitor"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:19:20.504147Z"}
+10:19:20.535 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:19:21.378 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":188,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.96,"reasons":["compilation: 1 warning(s) → -0.1 pts","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:19:21.356003Z"}
+10:19:21.378 [debug] base mutation gate (per-fn): terminate/2 survived
+10:19:21.379 [info] cycle 042_004_single_flight_non_blocking_write_through_cache_01: repairing — Mutation gate failed: the raise-mutant of `terminate/2` still passes the tests — that public function is not exercised by test_harness.exs. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+10:19:21.379 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+10:19:21.379 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Mutation gate failed: the raise-mutant of `terminate/2` still passes the tests — that public function is not exercised by test_harness.exs. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `CacheLayer` that wraps database reads with an ETS-backed cache using a **single-flight (request-coalescing), non-blocking** concurrency model.
+
+The naive design serialises *every* cache miss through the GenServer and runs the slow `fallback_fn` inside the GenServer's critical section — so one slow database call blocks misses for **all** keys. I want a better concurrency model:
+
+- The expensive `fallback_fn` must run **outside** the GenServer process, so a slow load for one key never blocks loads for other keys — distinct keys are computed concurrently.
+- For a single key, if several callers miss at the same time, exactly **one** of them (the "leader") runs `fallback_fn`; the others ("followers") block until the leader finishes and then receive the leader's result. `fallback_fn` is called **at most once** per cache miss no matter how many callers race.
+
+I need these functions in the public API:
+- `CacheLayer.start_link(opts)` to start the process as a GenServer. It should accept a `:name` option for process registration and own the lifecycle of all ETS tables it creates.
+- `CacheLayer.fetch(server, table, key, fallback_fn)` which returns `{:ok, value}`. On a cache hit it reads directly from ETS (no GenServer round-trip). On a miss it participates in the single-flight protocol described above and returns `{:ok, value}`.
+- `CacheLayer.invalidate(server, table, key)` which removes the entry for `{table, key}`. Returns `:ok`.
+- `CacheLayer.invalidate_all(server, table)` which removes **all** cached entries for the given `table`. Returns `:ok`.
+
+Each `table` is an atom mapping to a separate `:set`, `:public` ETS table owned by the GenServer, created lazily on first use. The GenServer coordinates the single-flight bookkeeping (who is the leader for `{table, key}`, which callers are waiting) but must **not** execute `fallback_fn` itself. If the leader crashes before producing a value, the followers must not hang forever — one of them should get a chance to retry.
+
+Give me the complete module in a single file. Use only OTP and the standard library, no external dependencies.
+
+----- solution.ex -----
+defmodule CacheLayer do
+  @moduledoc """
+  An ETS-backed read cache with a single-flight, non-blocking concurrency model.
+
+  Each logical `table` (an atom) maps to a separate `:set`, `:public` ETS table
+  owned by this process, created lazily on first use. Cache hits are served
+  directly from ETS with no GenServer round-trip.
+
+  ## Single-flight
+
+  The expensive `fallback_fn` runs in the *caller's* process, never inside the
+  GenServer, so a slow load for one key does not block loads for other keys.
+  For a given `{table, key}`:
+
+    * The first caller to miss becomes the **leader** and runs `fallback_fn`.
+    * Concurrent callers become **followers**: their `fetch` call is parked
+      inside the GenServer (no reply) until the leader finishes, at which point
+      they receive the leader's value. `fallback_fn` is therefore invoked at
+      most once per cache miss.
+
+  If the leader crashes before reporting a value (monitored via
+  `Process.monitor/1`), all parked followers are told to `:retry`, so they never
+  hang — one of them becomes the new leader.
+  """
+
+  use GenServer
+
+  # --------------------------------------------------------------------------
+  # Public API
+  # --------------------------------------------------------------------------
+
+  @doc """
+  Starts the cache as a GenServer.
+
+  Accepts the usual GenServer options, notably `:name` for process registration.
+  The started process owns the lifecycle of every ETS table it creates.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc """
+  Fetches the value cached under `{table, key}`, computing it on a miss.
+
+  On a cache hit the value is read directly from ETS with no GenServer
+  round-trip. On a miss the caller joins the single-flight protocol: exactly one
+  racing caller runs `fallback_fn`, the rest wait for and receive its result.
+  Always returns `{:ok, value}`.
+  """
+  @spec fetch(GenServer.server(), atom(), term(), (-> term())) :: {:ok, term()}
+  def fetch(server, table, key, fallback_fn)
+      when is_atom(table) and is_function(fallback_fn, 0) do
+    pid = resolve_pid!(server)
+
+    case :persistent_term.get({__MODULE__, pid, table}, :no_table) do
+      :no_table ->
+        join_and_compute(server, table, key, fallback_fn)
+
+      tid ->
+        case :ets.lookup(tid, key) do
+          [{^key, value}] -> {:ok, value}
+          [] -> join_and_compute(server, table, key, fallback_fn)
+        end
+    end
+  end
+
+  @doc """
+  Removes the cached entry for `{table, key}`. Always returns `:ok`.
+  """
+  @spec invalidate(GenServer.server(), atom(), term()) :: :ok
+  def invalidate(server, table, key) when is_atom(table) do
+    GenServer.call(server, {:invalidate, table, key})
+  end
+
+  @doc """
+  Removes every cached entry for `table`. Always returns `:ok`.
+  """
+  @spec invalidate_all(GenServer.server(), atom()) :: :ok
+  def invalidate_all(server, table) when is_atom(table) do
+    GenServer.call(server, {:invalidate_all, table})
+  end
+
+  # Single-flight participation. Runs the fallback in THIS process when elected
+  # leader; blocks (via a parked GenServer call) when a follower.
+  defp join_and_compute(server, table, key, fallback_fn) do
+    case GenServer.call(server, {:join, table, key}, :infinity) do
+      {:hit, value} ->
+        {:ok, value}
+
+      {:value, value} ->
+        # A follower whose leader completed.
+        {:ok, value}
+
+      :retry ->
+        # Leader failed; try again (we may become the new leader).
+        join_and_compute(server, table, key, fallback_fn)
+
+      {:leader, _ref} ->
+        try do
+          value = fallback_fn.()
+          :ok = GenServer.call(server, {:done, table, key, value}, :infinity)
+          {:ok, value}
+        rescue
+          e ->
+            GenServer.call(server, {:fail, table, key}, :infinity)
+            reraise e, __STACKTRACE__
+        end
+    end
+  end
+
+  # --------------------------------------------------------------------------
+  # GenServer callbacks
+  # --------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(:ok) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{tables: %{}, inflight: %{}}}
+  end
+
+  @impl GenServer
+  def handle_call({:join, table, key}, from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    case :ets.lookup(tid, key) do
+      [{^key, value}] ->
+        {:reply, {:hit, value}, state}
+
+      [] ->
+        flight_key = {table, key}
+
+        case Map.get(state.inflight, flight_key) do
+          nil ->
+            leader = elem(from, 0)
+            mref = Process.monitor(leader)
+            entry = %{leader: leader, mref: mref, waiters: []}
+            inflight = Map.put(state.inflight, flight_key, entry)
+            {:reply, {:leader, mref}, %{state | inflight: inflight}}
+
+          entry ->
+            entry = %{entry | waiters: [from | entry.waiters]}
+            {:norepl (truncated)
+10:20:31.796 [debug] claude -p RESULT (stop="end_turn"):
+<file path="test_harness.exs">
+defmodule CacheLayerSingleFlightTest do
+  use ExUnit.Case, async: false
+
+  defmodule Tracker do
+    use Agent
+
+    def start_link(value), do: Agent.start_link(fn -> {0, value} end, name: __MODULE__)
+
+    def fallback do
+      Agent.get_and_update(__MODULE__, fn {count, value} -> {value, {count + 1, value}} end)
+    end
+
+    def count, do: Agent.get(__MODULE__, fn {count, _} -> count end)
+  end
+
+  setup do
+    start_supervised!({Tracker, :db_value})
+    cl = start_supervised!({CacheLayer, []})
+    %{cl: cl}
+  end
+
+  # -------------------------------------------------------
+  # Basic behaviour
+  # -------------------------------------------------------
+
+  test "cache miss calls the fallback and returns the value", %{cl: cl} do
+    assert {:ok, :db_value} = CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 1
+  end
+
+  test "cache hit does not call the fallback again", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert {:ok, :db_value} = CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 1
+  end
+
+  test "nil is a valid cached value and is not recomputed", %{cl: cl} do
+    fun = fn -> nil end
+    assert {:ok, nil} = CacheLayer.fetch(cl, :t, "k", fun)
+    assert {:ok, nil} = CacheLayer.fetch(cl, :t, "k", fun)
+  end
+
+  # -------------------------------------------------------
+  # Single-flight coalescing
+  # -------------------------------------------------------
+
+  test "concurrent misses of the same key run the fallback exactly once", %{cl: cl} do
+    fun = fn -> Process.sleep(40); Tracker.fallback() end
+
+    results =
+      for _ <- 1..30 do
+        Task.async(fn -> CacheLayer.fetch(cl, :users, "hot", fun) end)
+      end
+      |> Enum.map(&Task.await/1)
+
+    assert Enum.all?(results, &(&1 == {:ok, :db_value}))
+    assert Tracker.count() == 1
+  end
+
+  # -------------------------------------------------------
+  # Non-blocking: distinct keys compute concurrently
+  # -------------------------------------------------------
+
+  test "a slow load for one key does not block loads for another key", %{cl: cl} do
+    parent = self()
+
+    # Leader for :a announces itself and blocks until told to proceed.
+    slow_a = fn ->
+      send(parent, {:a_leading, self()})
+
+      receive do
+        :go -> :val_a
+      end
+    end
+
+    task_a = Task.async(fn -> CacheLayer.fetch(cl, :t, :a, slow_a) end)
+
+    a_pid =
+      receive do
+        {:a_leading, pid} -> pid
+      after
+        1_000 -> flunk("leader for :a never started")
+      end
+
+    # While :a's fallback is blocked (running OUTSIDE the GenServer), a fetch
+    # for a different key must complete promptly.
+    assert {:ok, :val_b} = CacheLayer.fetch(cl, :t, :b, fn -> :val_b end)
+
+    # Release :a and confirm it resolves.
+    send(a_pid, :go)
+    assert {:ok, :val_a} = Task.await(task_a)
+  end
+
+  # -------------------------------------------------------
+  # Leader failure: followers do not hang, they retry
+  # -------------------------------------------------------
+
+  test "if the leader crashes, a waiting follower retries and succeeds", %{cl: cl} do
+    parent = self()
+
+    # The leader signals, then crashes without producing a value.
+    crashing = fn ->
+      send(parent, :leader_ready)
+      Process.sleep(30)
+      raise "boom"
+    end
+
+    leader =
+      Task.async(fn ->
+        try do
+          CacheLayer.fetch(cl, :t, :k, crashing)
+        rescue
+          _ -> :crashed
+        end
+      end)
+
+    receive do
+      :leader_ready -> :ok
+    after
+      1_000 -> flunk("leader never started")
+    end
+
+    # A follower joins while the leader is still "computing".
+    follower =
+      Task.async(fn -> CacheLayer.fetch(cl, :t, :k, fn -> :recovered end) end)
+
+    assert :crashed = Task.await(leader)
+    assert {:ok, :recovered} = Task.await(follower, 2_000)
+  end
+
+  # -------------------------------------------------------
+  # Leader hard-killed: DOWN monitor (handle_info/2) rescues followers
+  # -------------------------------------------------------
+
+  test "if the leader process is hard-killed, followers retry via the DOWN monitor",
+       %{cl: cl} do
+    parent = self()
+
+    # The leader announces its pid then blocks forever; a hard kill means no
+    # rescue clause can run, so ONLY the GenServer's Process.monitor/DOWN
+    # handling (in handle_info/2) can unblock a parked follower.
+    blocking = fn ->
+      send(parent, {:leader_pid, self()})
+      Process.sleep(:infinity)
+    end
+
+    # Unlinked spawn so killing the leader does not take down the test process.
+    leader_pid = spawn(fn -> CacheLayer.fetch(cl, :t, :down_key, blocking) end)
+
+    receive do
+      {:leader_pid, ^leader_pid} -> :ok
+    after
+      1_000 -> flunk("leader never started")
+    end
+
+    # A follower parks inside the GenServer, waiting on the leader's result.
+    follower =
+      Task.async(fn -> CacheLayer.fetch(cl, :t, :down_key, fn -> :recovered end) end)
+
+    # Give the follower time to register as a waiter before the leader dies.
+    Process.sleep(80)
+
+    # Hard kill: untrappable, so the leader cannot report {:fail, ...}. The only
+    # thing that can rescue the follower is the monitored :DOWN message routed
+    # through handle_info/2. If that clause is gutted, the follower hangs and
+    # this assertion times out.
+    Process.exit(leader_pid, :kill)
+
+    assert {:ok, :recovered} = Task.await(follower, 2_000)
+
+    # The recovered value must now be cached without recomputation.
+    assert {:ok, :recovered} = CacheLayer.fetch(cl, :t, :down_key, fn -> :other end)
+  end
+
+  # -------------------------------------------------------
+  # Termination: terminate/2 cleans up its table registry
+  # -------------------------------------------------------
+
+  test "terminating the cache erases the persistent_term registry for its tables" do
+    # Start an unsupervised instance we fully control the lifecycle of, so we can
+    # observe what terminate/2 does on a clean shutdown. terminate/2 must erase
+    # the persistent_term entries it created for each table (ETS tables are freed
+    # automatically when the owner dies, but persistent_term is NOT — only
+    # terminate/2 can clean those up).
+    {:ok, pid} = CacheLayer.start_link([])
+
+    assert {:ok, :db_value} = CacheLayer.fetch(pid, :users, "u:1", fn -> :db_value end)
+    assert {:ok, :db_value} = CacheLayer.fetch(pid, :posts, "p:1", fn -> :db_value end)
+
+    users_key = {CacheLayer, pid, :users}
+    posts_key = {CacheLayer, pid, :posts}
+
+    # While alive, the registry entries exist and point at real ETS tables.
+    users_tid = :persistent_term.get(users_key, :no_table)
+    posts_tid = :persistent_term.get(posts_key, :no_table)
+    assert users_tid != :no_table
+    assert posts_tid != :no_table
+    assert :ets.info(users_tid) != :undefined
+    assert :ets.info(posts_tid) != :undefined
+
+    # Cleanly stop the process; terminate/2 must run and scrub the registry.
+    ref = Process.monitor(pid)
+    :ok = GenServer.stop(pid, :normal, 1_000)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
+
+    # If terminate/2 is gutted, these persistent_term entries linger as stale
+    # references and these assertions fail.
+    assert :persistent_term.get(users_key, :no_table) == :no_table
+    assert :persistent_term.get(posts_key, :no_table) == :no_table
+
+    # The ETS tables terminate/2 deleted must also be gone.
+    assert :ets.info(users_tid) == :undefined
+    assert :ets.info(posts_tid) == :undefined
+  end
+
+  # -------------------------------------------------------
+  # Invalidation
+  # -------------------------------------------------------
+
+  test "invalidate forces the next fetch to recompute", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 1
+
+    :ok = CacheLayer.invalidate(cl, :users, "u:1")
+
+    CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 2
+  end
+
+  test "invalidate only removes the targeted key", %{cl: cl} do (truncated)
+10:20:31.796 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7828, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7828, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7828, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7828, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 6423, "type" => "message"}], "output_tokens" => 6423, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+10:20:31.815 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01 solution.ex
+10:20:32.695 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":247,"lines_over_98":0,"max_line_length":88,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T08:20:32.670612Z"}
+10:20:32.702 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:20:33.421 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":195,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 13/13 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test cache miss calls the fallback and returns the value"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test cache hit does not call the fallback again"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test nil is a valid cached value and is not recomputed"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test concurrent misses of the same key run the fallback exactly once"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test a slow load for one key does not block loads for another key"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test if the leader crashes, a waiting follower retries and succeeds"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test if the leader process is hard-killed, followers retry via the DOWN monitor"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test terminating the cache erases the persistent_term registry for its tables"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:8: CacheLayer.start_link/1\ (truncated)
+10:20:33.427 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:20:36.143 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":184,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.29,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 12/13 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.08},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test cache miss calls the fallback and returns the value"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test cache hit does not call the fallback again"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test nil is a valid cached value and is not recomputed"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :fetch, 4, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 15, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CacheLayerSingleFlightTest","test":"test concurrent misses of the same key run the fallback exactly once"},{"message":"{:EXIT, #PID<0.256.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :fetch, 4, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 15, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CacheLayerSingleFlightTest","test":"test a slow load for one key does not block loads for another key"},{"message":"\n\nleader never started\n","module":"CacheLayerSingleFlightTest","test":"test if the leader crashes, a waiting follower retries and succeeds"},{"message":"\n\nleader never started\n","module":"CacheLayerSingleFlightTest","test":"test if the leader process is hard-killed, followers retry via the DOWN monitor"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test terminating the cache erases the persistent_term registry for its tables"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate_all clears every key in the table"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test different tables are independent namespaces"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T08:20:36.119386Z"}
+10:20:36.149 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:20:37.025 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":195,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.85,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 2/13 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.85},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T08:20:37.001394Z"}
+10:20:37.031 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:20:37.937 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":195,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.86,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 2/13 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.85},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate_all clears every key in the table"},{"message":"MUTATION","module":"CacheLayerSingleFlightTest","test":"test invalidate_all on an unused table returns :ok"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T08:20:37.914043Z"}
+10:20:37.943 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:20:38.677 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":194,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 13/13 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test cache miss calls the fallback and returns the value"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test cache hit does not call the fallback again"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test nil is a valid cached value and is not recomputed"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test concurrent misses of the same key run the fallback exactly once"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test a slow load for one key does not block loads for another key"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test if the leader crashes, a waiting follower retries and succeeds"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test if the leader process is hard-killed, followers retry via the DOWN monitor"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test terminating the cache erases the persistent_term registry for its tables"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate_all clears every key in the table"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test invalidate_all on an unused table returns :ok"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex:67: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerSingleFlightTest","test":"test different tables are independent namespaces"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13 (truncated)
+10:20:38.682 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:20:40.418 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":142,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":17,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.18,"reasons":["compilation: 17 warning(s) → -1.7 pts","tests: 13/13 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.213.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test cache miss calls the fallback and returns the value"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.218.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test cache hit does not call the fallback again"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.223.0>, {:join, :t, \"k\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test nil is a valid cached value and is not recomputed"},{"message":"{:EXIT, #PID<0.225.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.228.0>, {:join, :users, \"hot\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test concurrent misses of the same key run the fallback exactly once"},{"message":"{:EXIT, #PID<0.260.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.263.0>, {:join, :t, :a}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test a slow load for one key does not block loads for another key"},{"message":"{:EXIT, #PID<0.266.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.269.0>, {:join, :t, :k}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test if the leader crashes, a waiting follower retries and succeeds"},{"message":"\n\nleader never started\n","module":"CacheLayerSingleFlightTest","test":"test if the leader process is hard-killed, followers retry via the DOWN monitor"},{"message":"{:EXIT, #PID<0.278.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CacheLayerSingleFlightTest","test":"test terminating the cache erases the persistent_term registry for its tables"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.286.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test invalidate forces the next fetch to recompute"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.291.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test invalidate only removes the targeted key"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 73, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.296.0>, {:join, :users, \"u:1\"}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test invalidate_all clears every key in the table"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 89, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.301.0>, {:invalidate_all, :never_used}, 5000]}}","module":"CacheLayerSingleFlightTest","test":"test invalidate_all on an unused table returns :ok"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: (truncated)
+10:20:40.424 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:20:41.332 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":188,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.89,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 1/13 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.92},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.267.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_info, 2, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 147, error_info: %{module: Exception}]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.270.0>, {:join, :t, :down_key}, :infinity]}}","module":"CacheLayerSingleFlightTest","test":"test if the leader process is hard-killed, followers retry via the DOWN monitor"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T08:20:41.308742Z"}
+10:20:41.338 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut solution.ex
+10:20:42.223 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":188,"lines_over_98":3,"max_line_length":1034,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.91,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 1/13 failed","analysis: no lines over 98 chars (found 3) → 0/1 pts"],"tests":0.92},"shape":"single","solution_file":".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex","task":"042_004_single_flight_non_blocking_write_through_cache_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.273.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :terminate, 2, [file: ~c\".gen_staging/042_004_single_flight_non_blocking_write_through_cache_01_mut/solution.ex\", line: 163, error_info: %{module: Exception}]}, {:gen_server, :try_terminate, 3, [file: ~c\"gen_server.erl\", line: 2482]}, {:gen_server, :terminate, 9, [file: ~c\"gen_server.erl\", line: 2733]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CacheLayerSingleFlightTest","test":"test terminating the cache erases the persistent_term registry for its tables"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T08:20:42.198513Z"}
+10:20:42.224 [info] cycle 042_004_single_flight_non_blocking_write_through_cache_01: ACCEPTED on attempt 3
+10:20:42.225 [info] promoted 042_004_single_flight_non_blocking_write_through_cache_01 -> tasks/042_004_single_flight_non_blocking_write_through_cache_01

@@ -1,0 +1,367 @@
+02:50:01.923 [info] FIM 098_002_aead_sealed_confidential_token_fim03 → 098_002_aead_sealed_confidential_token_04: target seal/4
+02:50:01.923 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+02:50:01.923 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `seal/4`.
+
+Generate a prompt describing how to implement `seal/4` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `seal/4` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `seal/4` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `seal/4` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `SealedToken` that produces and opens
+*encrypted*, expiring tokens without any database or persistent state.
+Unlike a plain signed token, the payload here must be **confidential** —
+an observer who does not hold the key must not be able to read it — and
+tamper-evident at the same time. Use authenticated encryption (AES-256-GCM)
+so that a single operation gives you both secrecy and integrity.
+
+I need these two functions in the public API:
+
+- `SealedToken.seal(payload, key, ttl_seconds, opts \\ [])` where
+  `payload` is any Elixir term, `key` is a 32-byte binary encryption key,
+  and `ttl_seconds` is a positive integer. It must return a URL-safe
+  binary token (no padding issues, safe to embed in URLs or headers) that
+  carries a fresh random 12-byte nonce, the issue timestamp, the
+  expiration timestamp, the GCM authentication tag, and the encrypted
+  payload. Because a fresh random nonce is chosen on every call, sealing
+  the same payload twice yields two *different* tokens; both must open
+  successfully.
+
+- `SealedToken.open(token, key, opts \\ [])` which decodes, authenticates,
+  decrypts, and validates the token. Return `{:ok, payload}` if the token
+  authenticates and has not expired. Return `{:error, :expired}` if the
+  token authenticates but the current time is at or past the expiration.
+  Return `{:error, :invalid}` if the token parses structurally but fails
+  authenticated decryption (wrong key, tampered ciphertext, tampered
+  nonce, or tampered timestamps — the timestamps are part of the
+  authenticated data, so they cannot be altered independently). Return
+  `{:error, :malformed}` for anything that cannot be structurally decoded
+  at all: bad base64, too short to contain a nonce + timestamps + tag,
+  non-binary input, and so on.
+
+Both functions take an optional `opts` keyword. The only recognized key
+is `:clock`, a zero-arity function returning a Unix epoch second. When
+omitted, the current time is read from `System.os_time(:second)`. This is
+purely a test seam for deterministic expiry testing — in production the
+default applies.
+
+The check order inside `open` is exactly: base64 decode → structural
+parse (peel off the 12-byte nonce, the two 64-bit timestamps, and the
+16-byte tag) → authenticated decryption → expiry check → payload
+deserialization. Any structural failure before authenticated decryption
+yields `:malformed`. An authentication failure yields `:invalid`.
+Authentication is therefore always checked *before* expiry, so a token
+opened with the wrong key that also happens to be past its expiry returns
+`:invalid`, never `:expired`. A post-decryption expiry failure yields
+`:expired`. A post-decryption deserialization failure yields `:malformed`.
+A token whose `expires_at` equals the current time is already expired (use
+strict `<` on the validity check, not `<=`).
+
+Implementation requirements:
+
+- Use `:crypto.crypto_one_time_aead/6,7` with the `:aes_256_gcm` cipher.
+- The two timestamps must be passed as the AAD (additional authenticated
+  data) so they are covered by the tag without being encrypted.
+- Use `Base.url_encode64/2` with `padding: false` so the output is
+  URL-safe without `=` characters.
+- Generate the nonce with `:crypto.strong_rand_bytes/1`.
+- Deserialize the payload with `:erlang.binary_to_term/2` using the
+  `[:safe]` option.
+- Do not use any external dependencies — only the Elixir standard library
+  and OTP.
+
+Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule SealedToken do
+  @moduledoc """
+  Confidential, expiring, stateless tokens backed by authenticated encryption.
+
+  A `SealedToken` carries an encrypted Elixir term along with an issue and an
+  expiration timestamp. Encryption uses AES-256-GCM, which provides both
+  secrecy (an observer without the key cannot read the payload) and integrity
+  (any tampering is detected). No database or persistent state is required:
+  everything needed to open a token travels inside the token itself.
+
+  The wire format, before base64 URL encoding, is the concatenation of:
+
+    * a fresh random 12-byte nonce,
+    * the 64-bit issued-at Unix timestamp,
+    * the 64-bit expires-at Unix timestamp,
+    * the 16-byte GCM authentication tag,
+    * the encrypted payload (ciphertext).
+
+  The two timestamps are supplied as GCM additional authenticated data (AAD),
+  so they are authenticated by the tag but are not themselves encrypted and
+  cannot be altered independently of the ciphertext.
+  """
+
+  @cipher :aes_256_gcm
+  @nonce_size 12
+  @tag_size 16
+
+  @typedoc "A URL-safe, base64-encoded sealed token."
+  @type token :: binary()
+
+  @doc """
+  Seals `payload` into a confidential, expiring, URL-safe token.
+
+  `key` must be a 32-byte binary AES-256 key and `ttl_seconds` a positive
+  integer number of seconds until expiry. A fresh random nonce is generated on
+  every call, so sealing the same payload twice yields two different tokens;
+  both open successfully.
+
+  The `:clock` option, a zero-arity function returning a Unix epoch second, is
+  a test seam for deterministic timing. When omitted, `System.os_time/1` is
+  used.
+  """
+  @spec seal(term(), binary(), pos_integer(), keyword()) :: token()
+  def seal(payload, key, ttl_seconds, opts \\ [])
+      when is_binary(key) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    now = now(opts)
+    issued_at = now
+    expires_at = now + ttl_seconds
+
+    nonce = :crypto.strong_rand_bytes(@nonce_size)
+    plaintext = :erlang.term_to_binary(payload)
+    aad = <<issued_at::64, expires_at::64>>
+
+    {ciphertext, tag} =
+      :crypto.crypto_one_time_aead(@cipher, key, nonce, plaintext, aad, true)
+
+    binary =
+      <<nonce::binary-size(@nonce_size), issued_at::64, expires_at::64,
+        tag::binary-size(@tag_size), ciphertext::binary>>
+
+    Base.url_encode64(binary, padding: false)
+  end
+
+  @doc """
+  Opens a sealed `token`, authenticating, decrypting, and validating it.
+
+  Returns `{:ok, payload}` when the token authenticates and has not expired.
+  Returns `{:error, :expired}` when it authenticates but the current time is at
+  or past its expiration (strict validity: `now < expires_at`). Returns
+  `{:error, :invalid}` when it parses structurally but fails authenticated
+  decryption (wrong key, tampered ciphertext, nonce, or timestamps). Returns
+  `{:error, :malformed}` when it cannot be structurally decoded at all.
+
+  Authentication is always checked before expiry, so a token opened with the
+  wrong key that is also past its expiry returns `:invalid`, never `:expired`.
+
+  The `:clock` option behaves as documented on `seal/4`.
+  """
+  @spec open(token(), binary(), keyword()) ::
+          {:ok, term()} | {:error, :expired | :invalid | :malformed}
+  def open(token, key, opts \\ []) do
+    with true <- is_binary(token),
+         {:ok, binary} <- decode(token),
+         {:ok, nonce, issued_at, expires_at, tag, ciphertext} <- parse(binary) do
+      decrypt_and_validate(key, nonce, issued_at, expires_at, tag, ciphert (truncated)
+02:50:33.829 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `seal/4` function. It seals `payload` into a confidential,
+expiring, URL-safe token using AES-256-GCM.
+
+Read the current time by calling `now(opts)` and use it as the `issued_at`
+timestamp; compute `expires_at` as that time plus `ttl_seconds`. Generate a fresh
+random 12-byte nonce with `:crypto.strong_rand_bytes(@nonce_size)`, and serialize
+the payload with `:erlang.term_to_binary/1`. Build the additional authenticated
+data (AAD) as the two 64-bit timestamps concatenated (`<<issued_at::64, expires_at::64>>`)
+so the timestamps are authenticated but not encrypted. Encrypt with
+`:crypto.crypto_one_time_aead(@cipher, key, nonce, plaintext, aad, true)`, which
+returns `{ciphertext, tag}`. Assemble the wire binary as the concatenation of the
+nonce, the issued-at and expires-at 64-bit timestamps, the 16-byte tag, and the
+ciphertext, then encode it with `Base.url_encode64(binary, padding: false)` so the
+result is URL-safe with no padding. Because the nonce is random on every call,
+sealing the same payload twice yields two different tokens that both open
+successfully. Keep the existing function head and guard clause intact.
+
+```elixir
+defmodule SealedToken do
+  @moduledoc """
+  Confidential, expiring, stateless tokens backed by authenticated encryption.
+
+  A `SealedToken` carries an encrypted Elixir term along with an issue and an
+  expiration timestamp. Encryption uses AES-256-GCM, which provides both
+  secrecy (an observer without the key cannot read the payload) and integrity
+  (any tampering is detected). No database or persistent state is required:
+  everything needed to open a token travels inside the token itself.
+
+  The wire format, before base64 URL encoding, is the concatenation of:
+
+    * a fresh random 12-byte nonce,
+    * the 64-bit issued-at Unix timestamp,
+    * the 64-bit expires-at Unix timestamp,
+    * the 16-byte GCM authentication tag,
+    * the encrypted payload (ciphertext).
+
+  The two timestamps are supplied as GCM additional authenticated data (AAD),
+  so they are authenticated by the tag but are not themselves encrypted and
+  cannot be altered independently of the ciphertext.
+  """
+
+  @cipher :aes_256_gcm
+  @nonce_size 12
+  @tag_size 16
+
+  @typedoc "A URL-safe, base64-encoded sealed token."
+  @type token :: binary()
+
+  @doc """
+  Seals `payload` into a confidential, expiring, URL-safe token.
+
+  `key` must be a 32-byte binary AES-256 key and `ttl_seconds` a positive
+  integer number of seconds until expiry. A fresh random nonce is generated on
+  every call, so sealing the same payload twice yields two different tokens;
+  both open successfully.
+
+  The `:clock` option, a zero-arity function returning a Unix epoch second, is
+  a test seam for deterministic timing. When omitted, `System.os_time/1` is
+  used.
+  """
+  @spec seal(term(), binary(), pos_integer(), keyword()) :: token()
+  def seal(payload, key, ttl_seconds, opts \\ [])
+      when is_binary(key) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    # TODO
+  end
+
+  @doc """
+  Opens a sealed `token`, authenticating, decrypting, and validating it.
+
+  Returns `{:ok, payload}` when the token authenticates and has not expired.
+  Returns `{:error, :expired}` when it authenticates but the current time is at
+  or past its expiration (strict validity: `now < expires_at`). Returns
+  `{:error, :invalid}` when it parses structurally but fails authenticated
+  decryption (wrong key, tampered ciphertext, nonce, or timestamps). Returns
+  `{:error, :malformed}` when it cannot be structurally decoded at all.
+
+  Authentication is always checked before expiry, so a token opened with the
+  wrong key that is also past its expiry returns `:invalid`, never `:expired`.
+
+  The `:clock` option behaves as documented on `seal/4`.
+  """
+  @spec open(token(), binary(), keyword()) ::
+          {:ok, term()} | {:error, :expired | :invalid | :malformed}
+  def open(token, key, opts \\ []) do
+    with true <- is_binary(token),
+         {:ok, binary} <- decode(token),
+         {:ok, nonce, issued_at, expires_at, tag, ciphertext} <- parse(binary) do
+      decrypt_and_validate(key, nonce, issued_at, expires_at, tag, ciphertext, opts)
+    else
+      _ -> {:error, :malformed}
+    end
+  end
+
+  @spec decode(binary()) :: {:ok, binary()} | :error
+  defp decode(token), do: Base.url_decode64(token, padding: false)
+
+  @spec parse(binary()) ::
+          {:ok, binary(), non_neg_integer(), non_neg_integer(), binary(), binary()}
+          | :error
+  defp parse(
+         <<nonce::binary-size(@nonce_size), issued_at::64, expires_at::64,
+           tag::binary-size(@tag_size), ciphertext::binary>>
+       ) do
+    {:ok, nonce, issued_at, expires_at, tag, ciphertext}
+  end
+
+  defp parse(_binary), do: :error
+
+  @spec decrypt_and_validate(
+          binary(),
+          binary(),
+          non_neg_integer(),
+          non_neg_integer(),
+          binary(),
+          binary(),
+          keyword()
+        ) :: {:ok, term()} | {:error, :expired | :invalid | :malformed}
+  defp decrypt_and_validate(key, nonce, issued_at, expires_at, tag, ciphertext, opts) do
+    aad = <<issued_at::64, expires_at::64>>
+
+    case :crypto.crypto_one_time_aead(@cipher, key, nonce, ciphertext, aad, tag, false) do
+      :error ->
+        {:error, :invalid}
+
+      plaintext when is_binary(plaintext) ->
+        validate_and_deserialize(plaintext, expires_at, opts)
+    end
+  end
+
+  @spec validate_and_deserialize(binary(), non_neg_integer(), keyword()) ::
+          {:ok, term()} | {:error, :expired | :malformed}
+  defp validate_and_deserialize(plaintext, expires_at, opts) do
+    if now(opts) < expires_at do
+      deserialize(plaintext)
+    else
+      {:error, :expired}
+    end
+  end
+
+  @spec deserialize(binary()) :: {:ok, term()} | {:error, :malformed}
+  defp deserialize(plaintext) do
+    {:ok, :erlang.binary_to_term(plaintext, [:safe])}
+  rescue
+    ArgumentError -> {:error, :malformed}
+  end
+
+  @spec now(keyword()) :: integer()
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      fun when is_function(fun, 0) -> fun.()
+      _ -> System.os_time(:second)
+    end
+  end
+end
+```
+</file>
+<file path="solution.ex">
+  def seal(payload, key, ttl_seconds, opts \\ [])
+      when is_binary(key) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    now = now(opts)
+    issued_at = now
+    expires_at = now + ttl_seconds
+
+    nonce = :crypto.strong_rand_bytes(@nonce_size)
+    plaintext = :erlang.term_to_binary(payload)
+    aad = <<issued_at::64, expires_at::64>>
+
+    {ciphertext, tag} =
+      :crypto.crypto_one_time_aead(@cipher, key, nonce, plaintext, aad, true)
+
+    binary =
+      <<nonce::binary-size(@nonce_size), issued_at::64, expires_at::64,
+        tag::binary-size(@tag_size), ciphertext::binary>>
+
+    Base.url_encode64(binary, padding: false)
+  end
+</file>
+02:50:33.829 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4725, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4725, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4725, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4725, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 2968, "type" => "message"}], "output_tokens" => 2968, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:50:33.848 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_098_002_aead_sealed_confidential_token_04/098_002_aead_sealed_confidential_token_04 solution.ex
+02:50:34.531 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":19,"lines_over_98":0,"max_line_length":77,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"098_002_aead_sealed_confidential_token_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_098_002_aead_sealed_confidential_token_04/098_002_aead_sealed_confidential_token_04/solution.ex","task":"098_002_aead_sealed_confidential_token_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-11T00:50:34.504777Z"}
+02:50:34.531 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_098_002_aead_sealed_confidential_token_04/098_002_aead_sealed_confidential_token_04 .gen_staging/fim_098_002_aead_sealed_confidential_token_04/mutant.ex
+02:50:35.174 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":4,"lines_over_98":0,"max_line_length":74,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"098_002_aead_sealed_confidential_token_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 16/20 failed"],"tests":0.2},"shape":"fim","solution_file":".gen_staging/fim_098_002_aead_sealed_confidential_token_04/mutant.ex","task":"098_002_aead_sealed_confidential_token_04","test_failures":[{"message":"MUTATION","module":"SealedTokenTest","test":"test sealed token opens successfully"},{"message":"MUTATION","module":"SealedTokenTest","test":"test payload is preserved exactly through round-trip"},{"message":"MUTATION","module":"SealedTokenTest","test":"test token is URL-safe (no +, /, or = characters)"},{"message":"MUTATION","module":"SealedTokenTest","test":"test sealing the same payload twice yields different tokens (random nonce)"},{"message":"MUTATION","module":"SealedTokenTest","test":"test token is valid just before expiry"},{"message":"MUTATION","module":"SealedTokenTest","test":"test expired token returns :expired"},{"message":"MUTATION","module":"SealedTokenTest","test":"test token expires exactly at ttl boundary"},{"message":"MUTATION","module":"SealedTokenTest","test":"test wrong key returns :invalid"},{"message":"MUTATION","module":"SealedTokenTest","test":"test tampered token returns :invalid"},{"message":"MUTATION","module":"SealedTokenTest","test":"test authentication check takes precedence over expiry check"},{"message":"MUTATION","module":"SealedTokenTest","test":"test truncated token returns :malformed"},{"message":"MUTATION","module":"SealedTokenTest","test":"test tokens are not cross-openable across keys"},{"message":"MUTATION","module":"SealedTokenTest","test":"test supports atom payload"},{"message":"MUTATION","module":"SealedTokenTest","test":"test supports integer payload"},{"message":"MUTATION","module":"SealedTokenTest","test":"test supports list payload"},{"message":"MUTATION","module":"SealedTokenTest","test":"test supports deeply nested map payload"}],"tests_errors":0,"tests_excluded":0,"tests_failed":16,"tests_passed":4,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-11T00:50:35.150832Z"}
+02:50:35.174 [debug] fim mutation gate: killed
+02:50:35.175 [info] promoted 098_002_aead_sealed_confidential_token_04 -> tasks/098_002_aead_sealed_confidential_token_04

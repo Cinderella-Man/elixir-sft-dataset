@@ -1,0 +1,403 @@
+18:45:35.045 [info] FIM 072_004_scripted_sequence_clock_fim01 → 072_004_scripted_sequence_clock_02: target handle_call/3
+18:45:35.045 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+18:45:35.045 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `handle_call/3`.
+
+Generate a prompt describing how to implement `handle_call/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `handle_call/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `handle_call/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `handle_call/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir `Clock` behaviour and two implementations — one for production, one for testing — in a single file. This variation makes the fake clock **scripted**: instead of a single frozen value, it returns a predetermined sequence of timestamps, one per read, which is ideal for testing code that reads the clock several times.
+
+The behaviour should define one callback: `now/0`, returning the current time as a `DateTime`.
+
+The production implementation `Clock.Real` should implement `now/0` by delegating to `DateTime.utc_now()`.
+
+The test implementation `Clock.Fake` should be a `GenServer` with the following public API:
+- `Clock.Fake.start_link(opts)` — starts the process. Accepts:
+  - `:script` — a non-empty list of `DateTime`s to hand out, one per `now/1` call (defaults to `[~U[2024-01-01 00:00:00Z]]`).
+  - `:on_exhaust` — the policy applied once the script is consumed. One of `:repeat_last` (default — keep returning the final value), `:cycle` (wrap around to the start), or `:raise` (raise a `RuntimeError`).
+  - `:name` — an optional registration name.
+  - Starting with an empty script, a non-`DateTime` element, or an unknown policy must fail to start.
+- `Clock.Fake.now(server)` — returns the next scripted `DateTime`, advancing the internal cursor. Behaviour after the script is exhausted follows `:on_exhaust`.
+- `Clock.Fake.remaining(server)` — returns how many scripted values have not yet been consumed.
+- `Clock.Fake.reset(server)` — rewinds the cursor to the beginning of the script.
+- `Clock.Fake.push(server, datetimes)` — appends more `DateTime`s to the end of the script.
+
+Additionally, provide a top-level `Clock` module with a `now/1` function that accepts a module name (`Clock.Real`) or a `Clock.Fake` PID/registered name and dispatches correctly — calling `Clock.Real.now()` or `Clock.Fake.now(server)` depending on the argument. This lets application code accept a `:clock` dependency-injection option and call `Clock.now(clock)` uniformly.
+
+Give me the complete implementation in a single file with no external dependencies, using only the Elixir standard library and OTP.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Clock do
+  @moduledoc """
+  Behaviour and dispatcher for clock implementations.
+
+  In this variation the fake clock is *scripted*: it hands out a predetermined
+  sequence of timestamps, one per read. Application code accepts a `:clock`
+  option and calls `Clock.now/1` uniformly, unaware of what backs it.
+
+  ## Usage
+
+      {:ok, c} = Clock.Fake.start_link(script: [
+        ~U[2024-06-01 12:00:00Z],
+        ~U[2024-06-01 12:00:42Z]
+      ])
+      Clock.now(c)   #=> ~U[2024-06-01 12:00:00Z]
+      Clock.now(c)   #=> ~U[2024-06-01 12:00:42Z]
+  """
+
+  @doc "Returns the current datetime."
+  @callback now() :: DateTime.t()
+
+  @doc "Dispatches `now/0` to the correct implementation."
+  @spec now(module() | GenServer.server()) :: DateTime.t()
+  def now(clock) when is_atom(clock) do
+    if function_exported?(clock, :now, 0) do
+      clock.now()
+    else
+      Clock.Fake.now(clock)
+    end
+  end
+
+  def now(clock), do: Clock.Fake.now(clock)
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Real do
+  @moduledoc "Production clock — delegates straight to the OS."
+
+  @behaviour Clock
+
+  @impl Clock
+  @spec now() :: DateTime.t()
+  def now, do: DateTime.utc_now()
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Fake do
+  @moduledoc """
+  A scripted, process-based clock for tests.
+
+  Each call to `now/1` returns the next `DateTime` in the script and advances an
+  internal cursor. Once the script is consumed, the `:on_exhaust` policy decides
+  what happens next: `:repeat_last`, `:cycle`, or `:raise`.
+
+  ## Starting
+
+      {:ok, c} = Clock.Fake.start_link(
+        script: [~U[2024-01-01 00:00:00Z], ~U[2024-01-01 00:00:05Z]],
+        on_exhaust: :cycle
+      )
+  """
+
+  use GenServer
+
+  @default_initial ~U[2024-01-01 00:00:00Z]
+  @policies [:repeat_last, :cycle, :raise]
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {script, opts} = Keyword.pop(opts, :script, [@default_initial])
+    {policy, opts} = Keyword.pop(opts, :on_exhaust, :repeat_last)
+    {name_opt, _rest} = Keyword.pop(opts, :name)
+    gen_opts = if name_opt, do: [name: name_opt], else: []
+    GenServer.start_link(__MODULE__, {script, policy}, gen_opts)
+  end
+
+  @doc "Returns the next scripted `DateTime`, advancing the cursor."
+  @spec now(GenServer.server()) :: DateTime.t()
+  def now(server) do
+    case GenServer.call(server, :now) do
+      {:ok, dt} -> dt
+      {:error, :exhausted} -> raise "Clock.Fake: scripted time sequence exhausted"
+    end
+  end
+
+  @doc "Returns how many scripted values have not yet been consumed."
+  @spec remaining(GenServer.server()) :: non_neg_integer()
+  def remaining(server), do: GenServer.call(server, :remaining)
+
+  @doc "Rewinds the cursor to the beginning of the script."
+  @spec reset(GenServer.server()) :: :ok
+  def reset(server), do: GenServer.call(server, :reset)
+
+  @doc "Appends more `DateTime`s to the end of the script."
+  @spec push(GenServer.server(), [DateTime.t()]) :: :ok
+  def push(server, datetimes) when is_list(datetimes),
+    do: GenServer.call(server, {:push, datetimes})
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init({script, policy}) do
+    cond do
+      script == [] -> {:stop, :empty_script}
+      not Enum.all?(script, &match?(%DateTime{}, &1)) -> {:stop, :invalid_script}
+      policy not in @policies -> {:stop, :invalid_policy}
+      true -> {:ok, %{script: script, index: 0, policy: policy}}
+    end
+  end
+
+  @impl GenServer
+  def handle_call(:now, _from, %{script: script, index: index, policy: policy} = state) do
+    len = length(script)
+
+    cond do
+      index < len ->
+        {:reply, {:ok, Enum.at(script, index)}, %{state | index: index + 1}}
+
+      policy == :repeat_last ->
+        {:reply, {:ok, List.last(script)}, state}
+
+      policy == :cycle ->
+        {:reply, {:ok, Enum.at(script, rem(index, len))}, %{state | index: index + 1}}
+
+      policy == :raise ->
+        {:reply, {:error, :exhausted}, state}
+    end
+  end
+
+  def handle_call(:remaining, _from, %{script: script, index: index} = state) do
+    {:reply, max(0, length(script) - index), state}
+  end
+
+  def handle_call(:reset, _from, state), do: {:reply, :ok, %{state | index: 0}}
+
+  def handle_call({:push, datetimes}, _from, state) do
+    {:reply, :ok, %{state | script: state.script ++ datetimes}}
+  end
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write, (truncated)
+18:46:09.068 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the `handle_call/3` GenServer callbacks for `Clock.Fake`. The process
+state is a map `%{script: [DateTime.t()], index: non_neg_integer(), policy: atom()}`,
+where `script` is the list of scripted timestamps, `index` is the cursor pointing at
+the next value to hand out, and `policy` is one of `:repeat_last`, `:cycle`, or
+`:raise`. Provide one `handle_call/3` clause for each of the four supported messages:
+
+- `:now` — return the next scripted `DateTime`. Let `len` be the length of `script`.
+  If `index < len`, reply with `{:ok, Enum.at(script, index)}` and advance the cursor
+  to `index + 1`. Otherwise the script is exhausted and the `policy` decides what
+  happens: for `:repeat_last`, reply `{:ok, List.last(script)}` without changing the
+  state; for `:cycle`, wrap around by replying `{:ok, Enum.at(script, rem(index, len))}`
+  and still advance the cursor to `index + 1`; for `:raise`, reply `{:error, :exhausted}`
+  without changing the state.
+
+- `:remaining` — reply with how many scripted values have not yet been consumed,
+  i.e. `max(0, length(script) - index)`, leaving the state unchanged.
+
+- `:reset` — rewind the cursor by setting `index` back to `0`, and reply `:ok`.
+
+- `{:push, datetimes}` — append `datetimes` to the end of the current `script`,
+  and reply `:ok`.
+
+```elixir
+defmodule Clock do
+  @moduledoc """
+  Behaviour and dispatcher for clock implementations.
+
+  In this variation the fake clock is *scripted*: it hands out a predetermined
+  sequence of timestamps, one per read. Application code accepts a `:clock`
+  option and calls `Clock.now/1` uniformly, unaware of what backs it.
+
+  ## Usage
+
+      {:ok, c} = Clock.Fake.start_link(script: [
+        ~U[2024-06-01 12:00:00Z],
+        ~U[2024-06-01 12:00:42Z]
+      ])
+      Clock.now(c)   #=> ~U[2024-06-01 12:00:00Z]
+      Clock.now(c)   #=> ~U[2024-06-01 12:00:42Z]
+  """
+
+  @doc "Returns the current datetime."
+  @callback now() :: DateTime.t()
+
+  @doc "Dispatches `now/0` to the correct implementation."
+  @spec now(module() | GenServer.server()) :: DateTime.t()
+  def now(clock) when is_atom(clock) do
+    if function_exported?(clock, :now, 0) do
+      clock.now()
+    else
+      Clock.Fake.now(clock)
+    end
+  end
+
+  def now(clock), do: Clock.Fake.now(clock)
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Real do
+  @moduledoc "Production clock — delegates straight to the OS."
+
+  @behaviour Clock
+
+  @impl Clock
+  @spec now() :: DateTime.t()
+  def now, do: DateTime.utc_now()
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Fake do
+  @moduledoc """
+  A scripted, process-based clock for tests.
+
+  Each call to `now/1` returns the next `DateTime` in the script and advances an
+  internal cursor. Once the script is consumed, the `:on_exhaust` policy decides
+  what happens next: `:repeat_last`, `:cycle`, or `:raise`.
+
+  ## Starting
+
+      {:ok, c} = Clock.Fake.start_link(
+        script: [~U[2024-01-01 00:00:00Z], ~U[2024-01-01 00:00:05Z]],
+        on_exhaust: :cycle
+      )
+  """
+
+  use GenServer
+
+  @default_initial ~U[2024-01-01 00:00:00Z]
+  @policies [:repeat_last, :cycle, :raise]
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {script, opts} = Keyword.pop(opts, :script, [@default_initial])
+    {policy, opts} = Keyword.pop(opts, :on_exhaust, :repeat_last)
+    {name_opt, _rest} = Keyword.pop(opts, :name)
+    gen_opts = if name_opt, do: [name: name_opt], else: []
+    GenServer.start_link(__MODULE__, {script, policy}, gen_opts)
+  end
+
+  @doc "Returns the next scripted `DateTime`, advancing the cursor."
+  @spec now(GenServer.server()) :: DateTime.t()
+  def now(server) do
+    case GenServer.call(server, :now) do
+      {:ok, dt} -> dt
+      {:error, :exhausted} -> raise "Clock.Fake: scripted time sequence exhausted"
+    end
+  end
+
+  @doc "Returns how many scripted values have not yet been consumed."
+  @spec remaining(GenServer.server()) :: non_neg_integer()
+  def remaining(server), do: GenServer.call(server, :remaining)
+
+  @doc "Rewinds the cursor to the beginning of the script."
+  @spec reset(GenServer.server()) :: :ok
+  def reset(server), do: GenServer.call(server, :reset)
+
+  @doc "Appends more `DateTime`s to the end of the script."
+  @spec push(GenServer.server(), [DateTime.t()]) :: :ok
+  def push(server, datetimes) when is_list(datetimes),
+    do: GenServer.call(server, {:push, datetimes})
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init({script, policy}) do
+    cond do
+      script == [] -> {:stop, :empty_script}
+      not Enum.all?(script, &match?(%DateTime{}, &1)) -> {:stop, :invalid_script}
+      policy not in @policies -> {:stop, :invalid_policy}
+      true -> {:ok, %{script: script, index: 0, policy: policy}}
+    end
+  end
+
+  @impl GenServer
+  def handle_call(:now, _from, %{script: script, index: index, policy: policy} = state) do
+    # TODO
+  end
+
+  def handle_call(:remaining, _from, %{script: script, index: index} = state) do
+    # TODO
+  end
+
+  def handle_call(:reset, _from, state) do
+    # TODO
+  end
+
+  def handle_call({:push, datetimes}, _from, state) do
+    # TODO
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+@impl GenServer
+def handle_call(:now, _from, %{script: script, index: index, policy: policy} = state) do
+  len = length(script)
+
+  cond do
+    index < len ->
+      {:reply, {:ok, Enum.at(script, index)}, %{state | index: index + 1}}
+
+    policy == :repeat_last ->
+      {:reply, {:ok, List.last(script)}, state}
+
+    policy == :cycle ->
+      {:reply, {:ok, Enum.at(script, rem(index, len))}, %{state | index: index + 1}}
+
+    policy == :raise ->
+      {:reply, {:error, :exhausted}, state}
+  end
+end
+
+def handle_call(:remaining, _from, %{script: script, index: index} = state) do
+  {:reply, max(0, length(script) - index), state}
+end
+
+def handle_call(:reset, _from, state), do: {:reply, :ok, %{state | index: 0}}
+
+def handle_call({:push, datetimes}, _from, state) do
+  {:reply, :ok, %{state | script: state.script ++ datetimes}}
+end
+</file>
+18:46:09.068 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3589, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3589, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3589, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3589, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3102, "type" => "message"}], "output_tokens" => 3102, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+18:46:09.087 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_072_004_scripted_sequence_clock_02/072_004_scripted_sequence_clock_02 solution.ex
+18:46:09.789 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":28,"lines_over_98":0,"max_line_length":88,"mode":"fim","pipe_chain_count":0,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":13,"compiled":true,"parent":"072_004_scripted_sequence_clock_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.9,"reasons":["compilation: 13 warning(s) → -1.3 pts"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_072_004_scripted_sequence_clock_02/072_004_scripted_sequence_clock_02/solution.ex","task":"072_004_scripted_sequence_clock_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:46:09.769270Z"}
+18:46:09.789 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_072_004_scripted_sequence_clock_02/072_004_scripted_sequence_clock_02 .gen_staging/fim_072_004_scripted_sequence_clock_02/mutant.ex
+18:46:10.492 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":16,"lines_over_98":0,"max_line_length":88,"mode":"fim","pipe_chain_count":0,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":23,"compiled":true,"parent":"072_004_scripted_sequence_clock_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.41,"reasons":["compilation: 23 warning(s) → -2.3 pts","tests: 12/17 failed"],"tests":0.29},"shape":"fim","solution_file":".gen_staging/fim_072_004_scripted_sequence_clock_02/mutant.ex","task":"072_004_scripted_sequence_clock_02","test_failures":[{"message":"{:EXIT, #PID<0.218.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1046484_2649.ex\", line: 122, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV3Test","test":"test Clock.Fake scripted sequence hands out the scripted values in order, one per call"},{"message":"{:EXIT, #PID<0.220.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1046484_2649.ex\", line: 126, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV3Test","test":"test Clock.Fake scripted sequence remaining/1 counts unconsumed values"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1046484_2649.ex\", line: 122, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV3Test","test":"test Clock.Fake scripted sequence reset/1 rewinds the cursor"},{"message":"{:EXIT, #PID<0.224.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1046484_2649.ex\", line: 134, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV3Test","test":"test Clock.Fake scripted sequence push/2 appends more values"},{"message":"{:EXIT, #PID<0.226.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1046484_2649.ex\", line: 122, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV3Test","test":"test :on_exhaust policies :repeat_last returns the final value forever (default)"},{"message":"{:EXIT, #PID<0.228.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1046484_2649.ex\", line: 122, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV3Test","test":"test :on_exhaust policies :cycle wraps back to the start"},{"message":"{:EXIT, #PID<0.230.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1046484_2649.ex\", line: 122, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV3Test","test":"test :on_exhaust policies :raise blows up once the script is exhausted"},{"message":"{:EXIT, #PID<0.238.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1046484_2649.ex\", line: 122, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV3Test","test":"test startup validation defaults to a single-value script when none given"},{"message":"{:EXIT, #PID<0.241.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1046484_2649.ex\", line: 122, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV3Test","test":"test Clock.now/1 unified dispatch dispatches to Clock.Fake when given a pid, consuming the script"},{"message":"{:EXIT, #PID<0.243.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1046484_2649.ex\", line: 122, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV3Test","test":"test Clock.now/1 unified dispatch dispatches to Clock.Fake when given a registered name"},{"message":"{:EXIT, #PID<0.245.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1046484_2649.ex\", line: 122, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV3Test","test":"test isolation two scripted clocks advance independently"},{"message":"{:EXIT, #PID<0.248.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1046484_2649.ex\", line: 122, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV3Test","test":"test dependency injection pattern scripted reads drive a deterministic elapsed measurement"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-04T16:46:10.473190Z"}
+18:46:10.492 [debug] fim mutation gate: killed
+18:46:10.493 [info] promoted 072_004_scripted_sequence_clock_02 -> tasks/072_004_scripted_sequence_clock_02

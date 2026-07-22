@@ -1,0 +1,440 @@
+02:37:27.958 [info] VARIATION 024_004_ordered_stream_webhook_receiver_with_gap_buffering_01: Ordered-Stream Webhook Receiver with Gap Buffering
+02:37:27.959 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01 solution.ex
+02:37:28.716 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":false,"line_count":193,"lines_over_98":1,"max_line_length":99,"mode":"full","pipe_chain_count":9,"public_fn_count":16,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.5,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.9,"reasons":["analysis: no lines over 98 chars (found 1) → 0/1 pts","analysis: @doc on public functions → 0/1 pts","analysis: @spec annotations present → 0/2 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01/solution.ex","task":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:37:28.693815Z"}
+02:37:28.717 [info] cycle 024_004_ordered_stream_webhook_receiver_with_gap_buffering_01: repairing — The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function; 1 line(s) over 98 columns — wrap them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+02:37:28.717 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:37:28.717 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function; 1 line(s) over 98 columns — wrap them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `WebhookReceiver` that implements a Plug-based HTTP endpoint for receiving webhook payloads with HMAC-SHA256 signature verification **and ordered, per-stream delivery with gap buffering**.
+
+Each webhook belongs to a logical stream and carries a monotonically increasing sequence number. Events must be applied strictly in order per stream; an out-of-order (future) event is buffered until the gap fills, then drained.
+
+I need these modules:
+
+1. `WebhookReceiver.Signature` — `verify(payload, signature, secret)` computes lowercase hex HMAC-SHA256 of the raw `payload` and constant-time compares to `signature`. Returns `:ok` or `:error` (non-binary input → `:error`).
+
+2. `WebhookReceiver.Store` — a behaviour with callbacks:
+   - `deliver(store, event)` where `event` is a map with `:event_id`, `:stream_id`, `:sequence`, `:payload`, `:status`. Per stream it tracks the last delivered sequence (starting at `0`). Returns:
+     - `{:ok, :received}` when `sequence == last_seq + 1` (deliver it, then drain any consecutive buffered events).
+     - `{:ok, :duplicate}` when `sequence <= last_seq`, or when that exact sequence is already buffered.
+     - `{:ok, :buffered}` when `sequence > last_seq + 1` (store it for later).
+   - `last_sequence(store, stream_id)` — the last delivered sequence (default `0`).
+   - `delivered_events(store, stream_id)` — delivered events in delivery order.
+   - `buffered_sequences(store, stream_id)` — sorted list of currently-buffered sequence numbers.
+
+3. `WebhookReceiver.MemoryStore` — a GenServer implementing the behaviour. Delivered events should have `:status` `:delivered`; buffered events `:status` `:pending`. Draining must apply buffered events in ascending, gapless order and stop at the first gap.
+
+4. `WebhookReceiver.Router` — a `Plug.Router` exposing `POST /api/webhooks/stripe`. Options `:secret` and `:store`.
+   - Read the raw body once and the `stripe-signature` header; missing/empty header or bad signature → **401** `{"error": "invalid_signature"}`.
+   - Decode the JSON and require `"id"` (string), `"stream_id"` (string), and `"sequence"` (integer). Any missing/wrong-typed field or malformed JSON → **400** `{"error": "bad_payload"}`.
+   - Build the event and call `deliver/2`:
+     - `:received` → **200** `{"status": "received"}`
+     - `:duplicate` → **200** `{"status": "duplicate"}`
+     - `:buffered` → **202** `{"status": "buffered"}`
+
+Use only Plug and Jason (plus `:crypto`). No Phoenix, no Ecto. Give me all modules in a single file.
+
+----- solution.ex -----
+defmodule WebhookReceiver.Signature do
+  @moduledoc """
+  HMAC-SHA256 signature verification for webhook payloads.
+  """
+
+  def verify(payload, signature, secret)
+      when is_binary(payload) and is_binary(signature) and is_binary(secret) do
+    expected = :crypto.mac(:hmac, :sha256, secret, payload) |> Base.encode16(case: :lower)
+
+    if Plug.Crypto.secure_compare(expected, signature) do
+      :ok
+    else
+      :error
+    end
+  end
+
+  def verify(_payload, _signature, _secret), do: :error
+end
+
+defmodule WebhookReceiver.Store do
+  @moduledoc """
+  Behaviour describing an ordered, per-stream webhook delivery store.
+  """
+
+  @callback deliver(store :: pid() | atom(), event :: map()) ::
+              {:ok, :received | :duplicate | :buffered}
+  @callback last_sequence(store :: pid() | atom(), stream_id :: String.t()) :: non_neg_integer()
+  @callback delivered_events(store :: pid() | atom(), stream_id :: String.t()) :: [map()]
+  @callback buffered_sequences(store :: pid() | atom(), stream_id :: String.t()) :: [integer()]
+
+  def deliver(store, event), do: GenServer.call(store, {:deliver, event})
+  def last_sequence(store, stream_id), do: GenServer.call(store, {:last_sequence, stream_id})
+  def delivered_events(store, stream_id), do: GenServer.call(store, {:delivered_events, stream_id})
+
+  def buffered_sequences(store, stream_id),
+    do: GenServer.call(store, {:buffered_sequences, stream_id})
+end
+
+defmodule WebhookReceiver.MemoryStore do
+  @moduledoc """
+  In-memory `GenServer` implementation of `WebhookReceiver.Store` with per-stream
+  ordering and gap buffering.
+  """
+
+  @behaviour WebhookReceiver.Store
+  use GenServer
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @impl WebhookReceiver.Store
+  def deliver(store, event), do: GenServer.call(store, {:deliver, event})
+
+  @impl WebhookReceiver.Store
+  def last_sequence(store, stream_id), do: GenServer.call(store, {:last_sequence, stream_id})
+
+  @impl WebhookReceiver.Store
+  def delivered_events(store, stream_id),
+    do: GenServer.call(store, {:delivered_events, stream_id})
+
+  @impl WebhookReceiver.Store
+  def buffered_sequences(store, stream_id),
+    do: GenServer.call(store, {:buffered_sequences, stream_id})
+
+  @impl GenServer
+  def init(_opts), do: {:ok, %{streams: %{}}}
+
+  @impl GenServer
+  def handle_call({:deliver, event}, _from, %{streams: streams} = state) do
+    sid = event.stream_id
+    seq = event.sequence
+    stream = Map.get(streams, sid, %{last_seq: 0, buffer: %{}, delivered: []})
+    %{last_seq: last_seq, buffer: buffer, delivered: delivered} = stream
+
+    cond do
+      seq <= last_seq ->
+        {:reply, {:ok, :duplicate}, state}
+
+      Map.has_key?(buffer, seq) ->
+        {:reply, {:ok, :duplicate}, state}
+
+      seq == last_seq + 1 ->
+        {new_last, new_buffer, new_delivered} =
+          drain(last_seq, buffer, delivered, %{event | status: :delivered})
+
+        new_stream = %{last_seq: new_last, buffer: new_buffer, delivered: new_delivered}
+        {:reply, {:ok, :received}, %{state | streams: Map.put(streams, sid, new_stream)}}
+
+      true ->
+        new_stream = %{stream | buffer: Map.put(buffer, seq, %{event | status: :pending})}
+        {:reply, {:ok, :buffered}, %{state | streams: Map.put(streams, sid, new_stream)}}
+    end
+  end
+
+  @impl GenServer
+  def handle_call({:last_sequence, sid}, _from, %{streams: streams} = state) do
+    {:reply, stream(streams, sid).last_seq, state}
+  end
+
+  @impl GenServer
+  def handle_call({:delivered_events, sid}, _from, %{streams: streams} = state) do
+    {:reply, stream(streams, sid).delivered, state}
+  end
+
+  @impl GenServer
+  def handle_call({:buffered_sequences, sid}, _from, %{streams: streams} = state) do
+    {:reply, streams |> stream(sid) |> Map.fetch!(:buffer) |> Map.keys() |> Enum.sort(), state}
+  end
+
+  defp stream(streams, sid), do: Map.get(streams, sid, %{last_seq: 0, buffer: %{}, delivered: []})
+
+  # Applies `event` (whose sequence is last_seq + 1), then keeps applying
+  # consecutive buffered events until the first gap.
+  defp drain(last_seq, buffer, delivered, event) do
+    delivered = delivered ++ [event]
+    last_seq = last_seq + 1
+
+    case Map.pop(buffer, last_seq + 1) do
+      {nil, _buffer} -> {last_seq, buffer, delivered}
+      {next, rest} -> drain(last_seq, rest, delivered, %{next | status: :delivered})
+    end
+  end
+end
+
+defmodule WebhookReceiver.Router do
+  @moduledoc """
+  `Plug.Router` receivin (truncated)
+02:39:10.378 [debug] claude -p RESULT (stop="end_turn"):
+Looking at the failure: I need to add `@doc` and `@spec` to public functions and wrap one line (`Store.delivered_events/2` is 99 columns). I'll only change `solution.ex`.
+
+<file path="solution.ex">
+defmodule WebhookReceiver.Signature do
+  @moduledoc """
+  HMAC-SHA256 signature verification for webhook payloads.
+  """
+
+  @doc """
+  Verifies `signature` against the lowercase hex HMAC-SHA256 of `payload`
+  computed with `secret`, using a constant-time comparison.
+
+  Returns `:ok` on match and `:error` otherwise, including when any argument is
+  not a binary.
+  """
+  @spec verify(term(), term(), term()) :: :ok | :error
+  def verify(payload, signature, secret)
+      when is_binary(payload) and is_binary(signature) and is_binary(secret) do
+    expected = :crypto.mac(:hmac, :sha256, secret, payload) |> Base.encode16(case: :lower)
+
+    if Plug.Crypto.secure_compare(expected, signature) do
+      :ok
+    else
+      :error
+    end
+  end
+
+  def verify(_payload, _signature, _secret), do: :error
+end
+
+defmodule WebhookReceiver.Store do
+  @moduledoc """
+  Behaviour describing an ordered, per-stream webhook delivery store.
+  """
+
+  @callback deliver(store :: pid() | atom(), event :: map()) ::
+              {:ok, :received | :duplicate | :buffered}
+  @callback last_sequence(store :: pid() | atom(), stream_id :: String.t()) :: non_neg_integer()
+  @callback delivered_events(store :: pid() | atom(), stream_id :: String.t()) :: [map()]
+  @callback buffered_sequences(store :: pid() | atom(), stream_id :: String.t()) :: [integer()]
+
+  @doc """
+  Delivers `event` to `store`, returning the delivery outcome tuple.
+  """
+  @spec deliver(pid() | atom(), map()) :: {:ok, :received | :duplicate | :buffered}
+  def deliver(store, event), do: GenServer.call(store, {:deliver, event})
+
+  @doc """
+  Returns the last delivered sequence for `stream_id` (default `0`).
+  """
+  @spec last_sequence(pid() | atom(), String.t()) :: non_neg_integer()
+  def last_sequence(store, stream_id), do: GenServer.call(store, {:last_sequence, stream_id})
+
+  @doc """
+  Returns the delivered events for `stream_id` in delivery order.
+  """
+  @spec delivered_events(pid() | atom(), String.t()) :: [map()]
+  def delivered_events(store, stream_id) do
+    GenServer.call(store, {:delivered_events, stream_id})
+  end
+
+  @doc """
+  Returns the sorted list of currently-buffered sequence numbers for `stream_id`.
+  """
+  @spec buffered_sequences(pid() | atom(), String.t()) :: [integer()]
+  def buffered_sequences(store, stream_id),
+    do: GenServer.call(store, {:buffered_sequences, stream_id})
+end
+
+defmodule WebhookReceiver.MemoryStore do
+  @moduledoc """
+  In-memory `GenServer` implementation of `WebhookReceiver.Store` with per-stream
+  ordering and gap buffering.
+  """
+
+  @behaviour WebhookReceiver.Store
+  use GenServer
+
+  @doc """
+  Starts the store. Accepts standard `GenServer` options such as `:name`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc """
+  Delivers `event` to `store`, returning the delivery outcome tuple.
+  """
+  @spec deliver(pid() | atom(), map()) :: {:ok, :received | :duplicate | :buffered}
+  @impl WebhookReceiver.Store
+  def deliver(store, event), do: GenServer.call(store, {:deliver, event})
+
+  @doc """
+  Returns the last delivered sequence for `stream_id` (default `0`).
+  """
+  @spec last_sequence(pid() | atom(), String.t()) :: non_neg_integer()
+  @impl WebhookReceiver.Store
+  def last_sequence(store, stream_id), do: GenServer.call(store, {:last_sequence, stream_id})
+
+  @doc """
+  Returns the delivered events for `stream_id` in delivery order.
+  """
+  @spec delivered_events(pid() | atom(), String.t()) :: [map()]
+  @impl WebhookReceiver.Store
+  def delivered_events(store, stream_id),
+    do: GenServer.call(store, {:delivered_events, stream_id})
+
+  @doc """
+  Returns the sorted list of currently-buffered sequence numbers for `stream_id`.
+  """
+  @spec buffered_sequences(pid() | atom(), String.t()) :: [integer()]
+  @impl WebhookReceiver.Store
+  def buffered_sequences(store, stream_id),
+    do: GenServer.call(store, {:buffered_sequences, stream_id})
+
+  @doc """
+  Initializes the store state with an empty stream registry.
+  """
+  @spec init(keyword()) :: {:ok, map()}
+  @impl GenServer
+  def init(_opts), do: {:ok, %{streams: %{}}}
+
+  @doc """
+  Handles synchronous store operations: delivery and per-stream inspection.
+  """
+  @spec handle_call(term(), GenServer.from(), map()) :: {:reply, term(), map()}
+  @impl GenServer
+  def handle_call({:deliver, event}, _from, %{streams: streams} = state) do
+    sid = event.stream_id
+    seq = event.sequence
+    stream = Map.get(streams, sid, %{last_seq: 0, buffer: %{}, delivered: []})
+    %{last_seq: last_seq, buffer: buffer, delivered: delivered} = stream
+
+    cond do
+      seq <= last_seq ->
+        {:reply, {:ok, :duplicate}, state}
+
+      Map.has_key?(buffer, seq) ->
+        {:reply, {:ok, :duplicate}, state}
+
+      seq == last_seq + 1 ->
+        {new_last, new_buffer, new_delivered} =
+          drain(last_seq, buffer, delivered, %{event | status: :delivered})
+
+        new_stream = %{last_seq: new_last, buffer: new_buffer, delivered: new_delivered}
+        {:reply, {:ok, :received}, %{state | streams: Map.put(streams, sid, new_stream)}}
+
+      true ->
+        new_stream = %{stream | buffer: Map.put(buffer, seq, %{event | status: :pending})}
+        {:reply, {:ok, :buffered}, %{state | streams: Map.put(streams, sid, new_stream)}}
+    end
+  end
+
+  @impl GenServer
+  def handle_call({:last_sequence, sid}, _from, %{streams: streams} = state) do
+    {:reply, stream(streams, sid).last_seq, state}
+  end
+
+  @impl GenServer
+  def handle_call({:delivered_events, sid}, _from, %{streams: streams} = state) do
+    {:reply, stream(streams, sid).delivered, state}
+  end
+
+  @impl GenServer
+  def handle_call({:buffered_sequences, sid}, _from, %{streams: streams} = state) do
+    {:reply, streams |> stream(sid) |> Map.fetch!(:buffer) |> Map.keys() |> Enum.sort(), state}
+  end
+
+  defp stream(streams, sid), do: Map.get(streams, sid, %{last_seq: 0, buffer: %{}, delivered: []})
+
+  # Applies `event` (whose sequence is last_seq + 1), then keeps applying
+  # consecutive buffered events until the first gap.
+  defp drain(last_seq, buffer, delivered, event) do
+    delivered = delivered ++ [event]
+    last_seq = last_seq + 1
+
+    case Map.pop(buffer, last_seq + 1) do
+      {nil, _buffer} -> {last_seq, buffer, delivered}
+      {next, rest} -> drain(last_seq, rest, delivered, %{next | status: :delivered})
+    end
+  end
+end
+
+defmodule WebhookReceiver.Router do
+  @moduledoc """
+  `Plug.Router` receiving Stripe-style webhooks with per-stream ordered delivery.
+  """
+
+  use Plug.Router, copy_opts_to_assign: :webhook_opts
+
+  alias WebhookReceiver.{Signature, Store}
+
+  plug :match
+  plug :dispatch
+
+  post "/api/webhooks/stripe" do
+    opts = conn.assigns.webhook_opts
+    secret = Keyword.fetch!(opts, :secret)
+    store = Keyword.fetch!(opts, :store)
+
+    {:ok, body, conn} = read_body(conn)
+    signature = conn |> get_req_header("stripe-signature") |> List.first()
+
+    cond do
+      is_nil(signature) or signature == "" ->
+        send_json(conn, 401, %{error: "invalid_signature"})
+
+      Signature.verify(body, signature, secret) != :ok ->
+        send_json(conn, 401, %{error: "invalid_signature"})
+
+      true ->
+        handle_verified(conn, body, store)
+    end
+  end
+
+  match _ do
+    send_resp(conn, 404, "not found")
+  end
+
+  defp handle_verified(conn, body, store) do
+    case Jason.decode(body) do
+      {:ok, %{"id" => id, "stream_id" => sid, "sequence" => seq} = payload}
+      when is_binary(id) and is_binary(sid) and is_integer(seq) ->
+        event = %{
+          event_id: id,
+          stream_id: sid,
+          sequence: seq,
+          payload: payload,
+          status: :pending
+        }
+
+        case Store.deliver(store, event) do
+          {:ok, :received} -> send_json(conn, 200, %{status: "received"})
+          {:ok, :duplica (truncated)
+02:39:10.379 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7606, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7606, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7606, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7606, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 9173, "type" => "message"}], "output_tokens" => 9173, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:39:10.398 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01 solution.ex
+02:39:11.149 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":249,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":9,"public_fn_count":16,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01/solution.ex","task":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:39:11.126596Z"}
+02:39:11.155 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut solution.ex
+02:39:11.913 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":204,"lines_over_98":2,"max_line_length":237,"mode":"full","pipe_chain_count":8,"public_fn_count":16,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.36,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 13/15 failed","analysis: no lines over 98 chars (found 2) → 0/1 pts"],"tests":0.13},"shape":"single","solution_file":".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex","task":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test in-order deliveries are all received"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test delivered events are marked :delivered"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test future event is buffered with 202 then drained when gap fills"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test long gap drains multiple buffered events in order"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test already-delivered sequence returns duplicate"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test re-sending an already-buffered sequence returns duplicate"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test streams are independent"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test invalid signature returns 401"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test missing stream_id returns bad_payload"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test missing sequence returns bad_payload"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test non-integer sequence returns bad_payload"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test malformed JSON returns bad_payload"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test Signature.verify/3 basics"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:39:11.890373Z"}
+02:39:11.918 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut solution.ex
+02:39:12.681 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":210,"lines_over_98":2,"max_line_length":237,"mode":"full","pipe_chain_count":9,"public_fn_count":16,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.3,"mode":"full","overall":0.53,"reasons":["compilation: 7 warning(s) → -0.7 pts","tests: 8/15 failed","analysis: no lines over 98 chars (found 2) → 0/1 pts"],"tests":0.47},"shape":"single","solution_file":".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex","task":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test in-order deliveries are all received"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test delivered events are marked :delivered"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test future event is buffered with 202 then drained when gap fills"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test long gap drains multiple buffered events in order"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test already-delivered sequence returns duplicate"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test re-sending an already-buffered sequence returns duplicate"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverOrderedTest","test":"test streams are independent"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test Store.deliver/2 directly buffers and drains"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:39:12.657667Z"}
+02:39:12.686 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut solution.ex
+02:39:13.458 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":210,"lines_over_98":2,"max_line_length":237,"mode":"full","pipe_chain_count":9,"public_fn_count":16,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.66,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 6/15 failed","analysis: no lines over 98 chars (found 2) → 0/1 pts"],"tests":0.6},"shape":"single","solution_file":".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex","task":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut","test_failures":[{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test in-order deliveries are all received"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test future event is buffered with 202 then drained when gap fills"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test long gap drains multiple buffered events in order"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test already-delivered sequence returns duplicate"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test streams are independent"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test Store.deliver/2 directly buffers and drains"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:39:13.433843Z"}
+02:39:13.463 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut solution.ex
+02:39:14.218 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":210,"lines_over_98":2,"max_line_length":237,"mode":"full","pipe_chain_count":9,"public_fn_count":16,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.75,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 4/15 failed","analysis: no lines over 98 chars (found 2) → 0/1 pts"],"tests":0.73},"shape":"single","solution_file":".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex","task":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut","test_failures":[{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test in-order deliveries are all received"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test delivered events are marked :delivered"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test future event is buffered with 202 then drained when gap fills"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test long gap drains multiple buffered events in order"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:39:14.193159Z"}
+02:39:14.222 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut solution.ex
+02:39:14.976 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":210,"lines_over_98":2,"max_line_length":237,"mode":"full","pipe_chain_count":9,"public_fn_count":16,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.75,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 4/15 failed","analysis: no lines over 98 chars (found 2) → 0/1 pts"],"tests":0.73},"shape":"single","solution_file":".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex","task":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut","test_failures":[{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test in-order deliveries are all received"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test future event is buffered with 202 then drained when gap fills"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test re-sending an already-buffered sequence returns duplicate"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test streams are independent"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:39:14.954722Z"}
+02:39:14.984 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut solution.ex
+02:39:15.755 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":210,"lines_over_98":2,"max_line_length":237,"mode":"full","pipe_chain_count":9,"public_fn_count":16,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 15/15 failed","analysis: no lines over 98 chars (found 2) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex","task":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut","test_failures":[{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test in-order deliveries are all received"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test delivered events are marked :delivered"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test future event is buffered with 202 then drained when gap fills"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test long gap drains multiple buffered events in order"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test already-delivered sequence returns duplicate"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test re-sending an already-buffered sequence returns duplicate"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test streams are independent"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test invalid signature returns 401"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test missing stream_id returns bad_payload"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test missing sequence returns bad_payload"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test non-integer sequence returns bad_payload"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test malformed JSON returns bad_payload"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test Store.deliver/2 directly buffers and drains"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test Signature.verify/3 basics"},{"message":"MUTATION","module":"WebhookReceiverOrderedTest","test":"test GET to webhook path returns 404 or 405"}],"tests_errors":0,"tests_excluded":0,"tests_failed":15,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:39:15.731116Z"}
+02:39:15.762 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut solution.ex
+02:39:16.520 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":210,"lines_over_98":2,"max_line_length":237,"mode":"full","pipe_chain_count":9,"public_fn_count":16,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 15/15 failed","analysis: no lines over 98 chars (found 2) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex","task":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test in-order deliveries are all received"},{"message":"{:EXIT, #PID<0.218.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test delivered events are marked :delivered"},{"message":"{:EXIT, #PID<0.220.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test future event is buffered with 202 then drained when gap fills"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test long gap drains multiple buffered events in order"},{"message":"{:EXIT, #PID<0.224.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test already-delivered sequence returns duplicate"},{"message":"{:EXIT, #PID<0.226.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test re-sending an already-buffered sequence returns duplicate"},{"message":"{:EXIT, #PID<0.228.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test streams are independent"},{"message":"{:EXIT, #PID<0.230.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test invalid signature returns 401"},{"message":"{:EXIT, #PID<0.232.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test missing stream_id returns bad_payload"},{"message":"{:EXIT, #PID<0.234.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test missing sequence returns bad_payload"},{"message":"{:EXIT, #PID<0.236.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test non-integer sequence returns bad_payload"},{"message":"{:EXIT, #PID<0.238.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test malformed JSON returns bad_payload"},{"message":"{:EXIT, #PID<0.240.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :init, 1, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 95, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3 (truncated)
+02:39:16.526 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut solution.ex
+02:39:17.291 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":188,"lines_over_98":2,"max_line_length":237,"mode":"full","pipe_chain_count":5,"public_fn_count":16,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":14,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.5,"reasons":["compilation: 14 warning(s) → -1.4 pts","tests: 8/15 failed","analysis: no lines over 98 chars (found 2) → 0/1 pts"],"tests":0.47},"shape":"single","solution_file":".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex","task":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test in-order deliveries are all received"},{"message":"{:EXIT, #PID<0.218.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test delivered events are marked :delivered"},{"message":"{:EXIT, #PID<0.220.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test future event is buffered with 202 then drained when gap fills"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test long gap drains multiple buffered events in order"},{"message":"{:EXIT, #PID<0.224.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test already-delivered sequence returns duplicate"},{"message":"{:EXIT, #PID<0.226.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test re-sending an already-buffered sequence returns duplicate"},{"message":"{:EXIT, #PID<0.228.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test streams are independent"},{"message":"{:EXIT, #PID<0.240.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\".gen_staging/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test Store.deliver/2 directly buffers and drains"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:39:17.268658Z"}
+02:39:17.292 [info] cycle 024_004_ordered_stream_webhook_receiver_with_gap_buffering_01: ACCEPTED on attempt 1
+02:39:17.293 [info] promoted 024_004_ordered_stream_webhook_receiver_with_gap_buffering_01 -> tasks/024_004_ordered_stream_webhook_receiver_with_gap_buffering_01

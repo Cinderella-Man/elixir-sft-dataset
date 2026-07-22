@@ -1,0 +1,370 @@
+09:25:01.081 [info] FIM 039_001_diff_generator_for_record_lists_fim01 → 039_001_diff_generator_for_record_lists_02: target diff_records/2
+09:25:01.081 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+09:25:01.081 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `diff_records/2`.
+
+Generate a prompt describing how to implement `diff_records/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `diff_records/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `diff_records/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `diff_records/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `RecordDiff` that compares two versions of a record list keyed by ID and produces a structured diff.
+
+I need these functions in the public API:
+- `RecordDiff.diff(old_list, new_list, opts \\ [])` where both lists are lists of maps. It should accept a `:key` option that is an atom specifying which field to use as the unique identifier (defaults to `:id`). It should return a map with three keys:
+  - `:added` — a list of records present in `new_list` but not in `old_list`
+  - `:removed` — a list of records present in `old_list` but not in `new_list`
+  - `:changed` — a list of maps, one per modified record, each containing: the key field's value (e.g. `id: 1`), a `:changes` map where each key is a changed field name and the value is a two-element tuple `{old_value, new_value}`
+
+Only compare fields that exist in both versions of a record. If a field is added or removed between old and new versions of the same record, treat it as a change (old value is `:missing` if the field didn't exist before, new value is `:missing` if it was removed).
+
+The function must be pure — no processes, no state, no side effects. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule RecordDiff do
+  @moduledoc """
+  Compares two versions of a record list keyed by a unique ID field and
+  produces a structured diff describing what was added, removed, or changed.
+
+  ## Example
+
+      iex> old = [%{id: 1, name: "Alice", age: 30}, %{id: 2, name: "Bob", age: 25}]
+      iex> new = [%{id: 1, name: "Alice", age: 31}, %{id: 3, name: "Carol", age: 28}]
+      iex> RecordDiff.diff(old, new)
+      %{
+        added:   [%{id: 3, name: "Carol", age: 28}],
+        removed: [%{id: 2, name: "Bob",   age: 25}],
+        changed: [%{id: 1, changes: %{age: {30, 31}}}]
+      }
+  """
+
+  @type record :: map()
+  @type key_value :: term()
+  @type field_diff :: {old_value :: term(), new_value :: term()}
+
+  @type change_entry :: %{
+          required(atom()) => key_value(),
+          required(:changes) => %{atom() => field_diff()}
+        }
+
+  @type diff_result :: %{
+          added: [record()],
+          removed: [record()],
+          changed: [change_entry()]
+        }
+
+  @doc """
+  Compares `old_list` and `new_list` (both lists of maps) and returns a
+  structured diff map.
+
+  ## Options
+
+    * `:key` — the atom key used as the unique record identifier.
+      Defaults to `:id`.
+
+  ## Return value
+
+  A map with the following keys:
+
+    * `:added`   — records present in `new_list` but absent in `old_list`.
+    * `:removed` — records present in `old_list` but absent in `new_list`.
+    * `:changed` — one entry per record that exists in both lists but differs.
+      Each entry is a map containing the key field's value and a `:changes`
+      sub-map of `%{field => {old_value, new_value}}`.
+
+  Fields that appear in only one version of a record are still reported as
+  changes, using the atom `:missing` as a placeholder for the absent value.
+  """
+  @spec diff([record()], [record()], keyword()) :: diff_result()
+  def diff(old_list, new_list, opts \\ []) do
+    key = Keyword.get(opts, :key, :id)
+
+    old_index = index_by(old_list, key)
+    new_index = index_by(new_list, key)
+
+    old_keys = MapSet.new(Map.keys(old_index))
+    new_keys = MapSet.new(Map.keys(new_index))
+
+    added   = new_keys |> MapSet.difference(old_keys) |> map_set_to_records(new_index)
+    removed = old_keys |> MapSet.difference(new_keys) |> map_set_to_records(old_index)
+    changed = old_keys |> MapSet.intersection(new_keys) |> changed_entries(old_index, new_index, key)
+
+    %{added: added, removed: removed, changed: changed}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Build a %{key_value => record} lookup map from a list of records.
+  @spec index_by([record()], atom()) :: %{term() => record()}
+  defp index_by(records, key) do
+    Map.new(records, fn record -> {Map.fetch!(record, key), record} end)
+  end
+
+  # Convert a MapSet of key values to the corresponding list of records,
+  # preserving insertion order by sorting keys for determinism.
+  @spec map_set_to_records(MapSet.t(), %{term() => record()}) :: [record()]
+  defp map_set_to_records(key_set, index) do
+    key_set
+    |> MapSet.to_list()
+    |> Enum.sort()
+    |> Enum.map(&Map.fetch!(index, &1))
+  end
+
+  # For every key present in both old and new, compute a change entry if the
+  # records differ. Records that are identical are silently dropped.
+  @spec changed_entries(MapSet.t(), map(), map(), atom()) :: [change_entry()]
+  defp changed_entries(common_keys, old_index, new_index, key) do
+    common_keys
+    |> MapSet.to_list()
+    |> Enum.sort()
+    |> Enum.reduce([], fn key_value, acc ->
+      old_record = Map.fetch!(old_index, key_value)
+      new_record = Map.fetch!(new_index, key_value)
+
+      case diff_records(old_record, new_record) do
+        changes when map_size(changes) == 0 ->
+          # Records are identical; nothing to report.
+          acc
+
+        changes ->
+          entry = %{key => key_value, changes: changes}
+          [entry | acc]
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  # Compare two versions of the same record field by field.
+  # Returns %{field => {old_value, new_value}} for every differing field.
+  # Fields present in only one version use :missing as the absent-side value.
+  @spec diff_records(record(), record()) :: %{atom() => field_diff()}
+  defp diff_records(old_record, new_record) do
+    all_fields =
+      (Map.keys(old_record) ++ Map.keys(new_record))
+      |> Enum.uniq()
+
+    Enum.reduce(all_fields, %{}, fn field, acc ->
+      old_value = Map.get(old_record, field, :missing)
+      new_value = Map.get(new_record, field, :missing)
+
+      if old_value == new_value do
+        acc
+      else
+        Map.put(acc, field, {old_value, new_value})
+      end
+    end)
+  end
+end
+
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description + skeleton module with a `# TODO` for diff_records/2
+  - solution.ex — just the diff_records/2 function
+
+
+09:25:27.180 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `diff_records/2` function. It receives two versions of the
+same record — `old_record` and `new_record` — both maps, and returns a map of the
+form `%{field => {old_value, new_value}}` containing one entry for every field
+whose value differs between the two versions.
+
+Consider the union of all field names present in either record (deduplicated).
+For each field, look up its value in the old record and in the new record, using
+the atom `:missing` as the placeholder when a field is absent from that version.
+If the two values are equal, omit the field from the result; otherwise record it
+as `field => {old_value, new_value}`. A field that exists in only one version is
+therefore reported as a change, with `:missing` on the side where it is absent.
+If the two records are identical, return an empty map.
+
+```elixir
+defmodule RecordDiff do
+  @moduledoc """
+  Compares two versions of a record list keyed by a unique ID field and
+  produces a structured diff describing what was added, removed, or changed.
+
+  ## Example
+
+      iex> old = [%{id: 1, name: "Alice", age: 30}, %{id: 2, name: "Bob", age: 25}]
+      iex> new = [%{id: 1, name: "Alice", age: 31}, %{id: 3, name: "Carol", age: 28}]
+      iex> RecordDiff.diff(old, new)
+      %{
+        added:   [%{id: 3, name: "Carol", age: 28}],
+        removed: [%{id: 2, name: "Bob",   age: 25}],
+        changed: [%{id: 1, changes: %{age: {30, 31}}}]
+      }
+  """
+
+  @type record :: map()
+  @type key_value :: term()
+  @type field_diff :: {old_value :: term(), new_value :: term()}
+
+  @type change_entry :: %{
+          required(atom()) => key_value(),
+          required(:changes) => %{atom() => field_diff()}
+        }
+
+  @type diff_result :: %{
+          added: [record()],
+          removed: [record()],
+          changed: [change_entry()]
+        }
+
+  @doc """
+  Compares `old_list` and `new_list` (both lists of maps) and returns a
+  structured diff map.
+
+  ## Options
+
+    * `:key` — the atom key used as the unique record identifier.
+      Defaults to `:id`.
+
+  ## Return value
+
+  A map with the following keys:
+
+    * `:added`   — records present in `new_list` but absent in `old_list`.
+    * `:removed` — records present in `old_list` but absent in `new_list`.
+    * `:changed` — one entry per record that exists in both lists but differs.
+      Each entry is a map containing the key field's value and a `:changes`
+      sub-map of `%{field => {old_value, new_value}}`.
+
+  Fields that appear in only one version of a record are still reported as
+  changes, using the atom `:missing` as a placeholder for the absent value.
+  """
+  @spec diff([record()], [record()], keyword()) :: diff_result()
+  def diff(old_list, new_list, opts \\ []) do
+    key = Keyword.get(opts, :key, :id)
+
+    old_index = index_by(old_list, key)
+    new_index = index_by(new_list, key)
+
+    old_keys = MapSet.new(Map.keys(old_index))
+    new_keys = MapSet.new(Map.keys(new_index))
+
+    added   = new_keys |> MapSet.difference(old_keys) |> map_set_to_records(new_index)
+    removed = old_keys |> MapSet.difference(new_keys) |> map_set_to_records(old_index)
+    changed = old_keys |> MapSet.intersection(new_keys) |> changed_entries(old_index, new_index, key)
+
+    %{added: added, removed: removed, changed: changed}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Build a %{key_value => record} lookup map from a list of records.
+  @spec index_by([record()], atom()) :: %{term() => record()}
+  defp index_by(records, key) do
+    Map.new(records, fn record -> {Map.fetch!(record, key), record} end)
+  end
+
+  # Convert a MapSet of key values to the corresponding list of records,
+  # preserving insertion order by sorting keys for determinism.
+  @spec map_set_to_records(MapSet.t(), %{term() => record()}) :: [record()]
+  defp map_set_to_records(key_set, index) do
+    key_set
+    |> MapSet.to_list()
+    |> Enum.sort()
+    |> Enum.map(&Map.fetch!(index, &1))
+  end
+
+  # For every key present in both old and new, compute a change entry if the
+  # records differ. Records that are identical are silently dropped.
+  @spec changed_entries(MapSet.t(), map(), map(), atom()) :: [change_entry()]
+  defp changed_entries(common_keys, old_index, new_index, key) do
+    common_keys
+    |> MapSet.to_list()
+    |> Enum.sort()
+    |> Enum.reduce([], fn key_value, acc ->
+      old_record = Map.fetch!(old_index, key_value)
+      new_record = Map.fetch!(new_index, key_value)
+
+      case diff_records(old_record, new_record) do
+        changes when map_size(changes) == 0 ->
+          # Records are identical; nothing to report.
+          acc
+
+        changes ->
+          entry = %{key => key_value, changes: changes}
+          [entry | acc]
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  # Compare two versions of the same record field by field.
+  # Returns %{field => {old_value, new_value}} for every differing field.
+  # Fields present in only one version use :missing as the absent-side value.
+  @spec diff_records(record(), record()) :: %{atom() => field_diff()}
+  defp diff_records(old_record, new_record) do
+    # TODO
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  # Compare two versions of the same record field by field.
+  # Returns %{field => {old_value, new_value}} for every differing field.
+  # Fields present in only one version use :missing as the absent-side value.
+  @spec diff_records(record(), record()) :: %{atom() => field_diff()}
+  defp diff_records(old_record, new_record) do
+    all_fields =
+      (Map.keys(old_record) ++ Map.keys(new_record))
+      |> Enum.uniq()
+
+    Enum.reduce(all_fields, %{}, fn field, acc ->
+      old_value = Map.get(old_record, field, :missing)
+      new_value = Map.get(new_record, field, :missing)
+
+      if old_value == new_value do
+        acc
+      else
+        Map.put(acc, field, {old_value, new_value})
+      end
+    end)
+  end
+</file>
+09:25:27.180 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3068, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3068, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3068, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3068, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2365, "type" => "message"}], "output_tokens" => 2365, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+09:25:27.199 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_039_001_diff_generator_for_record_lists_02/039_001_diff_generator_for_record_lists_02 solution.ex
+09:25:27.837 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":20,"lines_over_98":0,"max_line_length":77,"mode":"fim","pipe_chain_count":1,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"parent":"039_001_diff_generator_for_record_lists_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.9,"mode":"fim","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_039_001_diff_generator_for_record_lists_02/039_001_diff_generator_for_record_lists_02/solution.ex","task":"039_001_diff_generator_for_record_lists_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T07:25:27.811390Z"}
+09:25:27.837 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_039_001_diff_generator_for_record_lists_02/039_001_diff_generator_for_record_lists_02 .gen_staging/fim_039_001_diff_generator_for_record_lists_02/mutant.ex
+09:25:28.464 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":67,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"parent":"039_001_diff_generator_for_record_lists_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.5,"mode":"fim","overall":0.44,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 11/15 failed"],"tests":0.27},"shape":"fim","solution_file":".gen_staging/fim_039_001_diff_generator_for_record_lists_02/mutant.ex","task":"039_001_diff_generator_for_record_lists_02","test_failures":[{"message":"MUTATION","module":"RecordDiffTest","test":"test identical lists produce an empty diff"},{"message":"MUTATION","module":"RecordDiffTest","test":"test records in new but not old appear in :added"},{"message":"MUTATION","module":"RecordDiffTest","test":"test records in old but not new appear in :removed"},{"message":"MUTATION","module":"RecordDiffTest","test":"test changed record appears in :changed with correct field diff"},{"message":"MUTATION","module":"RecordDiffTest","test":"test multiple fields changed on the same record"},{"message":"MUTATION","module":"RecordDiffTest","test":"test only field-level changes: no additions or removals"},{"message":"MUTATION","module":"RecordDiffTest","test":"test unchanged records do not appear in :changed"},{"message":"MUTATION","module":"RecordDiffTest","test":"test field added to existing record is reported as change with :missing old value"},{"message":"MUTATION","module":"RecordDiffTest","test":"test field removed from existing record is reported as change with :missing new value"},{"message":"MUTATION","module":"RecordDiffTest","test":"test custom :key option uses a different field as the record identifier"},{"message":"MUTATION","module":"RecordDiffTest","test":"test mixed scenario: additions, removals, and changes together"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":4,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T07:25:28.440143Z"}
+09:25:28.464 [debug] fim mutation gate: killed
+09:25:28.465 [info] promoted 039_001_diff_generator_for_record_lists_02 -> tasks/039_001_diff_generator_for_record_lists_02

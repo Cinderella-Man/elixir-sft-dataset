@@ -1,0 +1,182 @@
+judging 4 root(s) with opus + sonnet, sequential, ledger logs/rubric_judge.jsonl
+
+[1/4] 001_001_rate_limiter_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[2/4] 001_002_fixed_window_counter_01 ... 
+22:12:00.249 [warning] transient error (error_max_turns ) on rubric_judge (001_002_fixed_window_counter_01) — retry 1/5 after 2000ms
+opus: 5/4/4 | sonnet: 5/5/5
+[3/4] 001_003_hierarchical_limiter_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[4/4] 001_004_penalty_escalation_01 ... opus: 5/5/4 | sonnet: 5/5/4
+
+=== RUBRIC JUDGE LEDGER (46 root(s), latest-per-task over 90 rows) ===
+  requirement_conformance: both-judge low (<=3): 0; agreement rate: 44/45
+  logical_correctness: both-judge low (<=3): 2; agreement rate: 44/45
+    TRIAGE prefix_control2:control_095_003
+    TRIAGE 015_001_heartbeat_monitor_01
+  edge_case_consideration: both-judge low (<=3): 1; agreement rate: 45/45
+    TRIAGE prefix_control2:control_095_003
+  rows with a judge error: 1
+judging 320 root(s) with opus + sonnet, sequential, ledger logs/rubric_judge.jsonl
+
+[1/320] 002_001_circuit_breaker_01 ... opus: 4/5/4 | sonnet: 2/3/3  [2 axis disagreement(s)]
+[2/320] 002_002_rolling_window_error_rate_cb_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[3/320] 002_003_progressive_recovery_cb_01 ... opus: 3/5/4 | sonnet: 5/5/5  [1 axis disagreement(s)]
+[4/320] 002_004_leaky_bucket_failure_cb_01 ... opus: 4/4/4 | sonnet: 3/3/3
+[5/320] 003_001_leaky_bucket_token_dispenser_01 ... opus: 5/4/4 | sonnet: 5/5/3
+[6/320] 003_002_gcra_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[7/320] 003_003_lease_based_bucket_01 ... opus: 5/5/3 | sonnet: 4/5/3
+[8/320] 003_004_shared_pool_bucket_01 ... 
+22:46:50.697 [warning] rubric_judge (003_004_shared_pool_bucket_01): contract violation: rubric.json must be {"scores": {each axis 1-5}, "issues": [{axis,file,evidence,why,severity}]} — reminding
+opus: 4/5/4 | sonnet: 2/3/2  [3 axis disagreement(s)]
+[9/320] 004_001_job_scheduler_with_cron_like_expressions_01 ... opus: 4/5/5 | sonnet: 5/5/5
+[10/320] 004_002_intervalscheduler_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[11/320] 004_003_retryscheduler_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[12/320] 004_004_calendarscheduler_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[13/320] 005_001_pubsub_event_bus_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[14/320] 005_002_priorityeventbus_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[15/320] 005_003_replayeventbus_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[16/320] 005_004_filteredeventbus_01 ... opus: 4/4/4 | sonnet: 5/5/4
+[17/320] 006_001_ttl_cache_with_lazy_expiration_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[18/320] 006_002_lrucache_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[19/320] 006_003_refreshaheadcache_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[20/320] 006_004_swrcache_01 ... opus: 5/4/4 | sonnet: 5/5/5
+[21/320] 007_001_moving_average_calculator_01 ... opus: 5/5/4 | sonnet: 5/4/4
+[22/320] 007_002_weightedmovingaverage_01 ... 
+23:25:49.485 [warning] transient error (error_max_turns ) on rubric_judge (007_002_weightedmovingaverage_01) — retry 1/5 after 2000ms
+
+23:27:32.578 [warning] transient error (error_max_turns ) on rubric_judge (007_002_weightedmovingaverage_01) — retry 2/5 after 4000ms
+
+23:29:03.601 [warning] transient error (error_max_turns ) on rubric_judge (007_002_weightedmovingaverage_01) — retry 3/5 after 8000ms
+
+23:30:50.479 [warning] transient error (error_max_turns ) on rubric_judge (007_002_weightedmovingaverage_01) — retry 4/5 after 16000ms
+
+23:32:42.978 [warning] transient error (error_max_turns ) on rubric_judge (007_002_weightedmovingaverage_01) — retry 5/5 after 32000ms
+
+23:35:37.072 [warning] rubric_judge (007_002_weightedmovingaverage_01): contract violation: rubric.json must be {"scores": {each axis 1-5}, "issues": [{axis,file,evidence,why,severity}]} — reminding
+
+23:37:44.015 [warning] transient error (error_max_turns ) on rubric_judge (007_002_weightedmovingaverage_01) — retry 1/5 after 2000ms
+
+23:39:00.664 [warning] transient error (error_max_turns ) on rubric_judge (007_002_weightedmovingaverage_01) — retry 2/5 after 4000ms
+
+23:41:14.719 [warning] transient error (error_max_turns ) on rubric_judge (007_002_weightedmovingaverage_01) — retry 3/5 after 8000ms
+
+23:42:34.889 [warning] transient error (error_max_turns ) on rubric_judge (007_002_weightedmovingaverage_01) — retry 4/5 after 16000ms
+
+23:43:44.861 [warning] transient error (error_max_turns ) on rubric_judge (007_002_weightedmovingaverage_01) — retry 5/5 after 32000ms
+opus: 5/4/4 | sonnet: 4/3/2  [1 axis disagreement(s)]
+[23/320] 007_003_streamingpercentile_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[24/320] 007_004_cusumanomaly_01 ... opus: 5/5/5 | sonnet: 5/5/3  [1 axis disagreement(s)]
+[25/320] 008_001_distributed_counter_with_crdt_style_merge_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[26/320] 008_002_lww_element_set_crdt_01 ... opus: 5/5/4 | sonnet: 5/5/4
+[27/320] 008_004_observed_remove_set_crdt_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[28/320] 009_001_request_deduplicator_coalescer_01 ... opus: 5/4/4 | sonnet: 5/4/4
+[29/320] 009_002_write_behind_batch_coalescer_01 ... opus: 4/4/4 | sonnet: 4/4/5
+[30/320] 009_003_retry_aware_request_deduplicator_01 ... opus: 5/4/5 | sonnet: 5/5/5
+[31/320] 009_004_per_key_bounded_concurrency_pool_01 ... opus: 5/4/4 | sonnet: 5/5/5
+[32/320] 010_001_session_store_with_inactivity_timeout_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[33/320] 010_002_one_time_token_store_with_absolute_expiration_01 ... opus: 5/4/4 | sonnet: 5/5/5
+[34/320] 010_003_exclusive_lease_manager_with_ownership_01 ... opus: 5/4/5 | sonnet: 5/5/3  [1 axis disagreement(s)]
+[35/320] 010_004_rolling_window_quota_tracker_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[36/320] 011_001_bounded_mailbox_worker_pool_01 ... 
+00:20:41.257 [warning] transient error (error_max_turns ) on rubric_judge (011_001_bounded_mailbox_worker_pool_01) — retry 1/5 after 2000ms
+opus: 4/4/4 | sonnet: 5/5/5
+[37/320] 011_002_priority_worker_pool_with_starvation_prevention_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[38/320] 011_003_cancellable_worker_pool_01 ... 
+00:31:09.186 [warning] transient error (error_max_turns ) on rubric_judge (011_003_cancellable_worker_pool_01) — retry 1/5 after 2000ms
+opus: 5/4/4 | sonnet: 5/5/3
+[39/320] 011_004_worker_pool_with_per_task_timeouts_and_retry_01 ... opus: 4/3/4 | sonnet: 5/3/4
+[40/320] 012_001_event_sourced_aggregate_01 ... 
+00:40:56.945 [warning] transient error (error_max_turns ) on rubric_judge (012_001_event_sourced_aggregate_01) — retry 1/5 after 2000ms
+
+00:42:16.623 [warning] transient error (error_max_turns ) on rubric_judge (012_001_event_sourced_aggregate_01) — retry 2/5 after 4000ms
+
+00:43:36.493 [warning] transient error (error_max_turns ) on rubric_judge (012_001_event_sourced_aggregate_01) — retry 3/5 after 8000ms
+opus: 4/5/5 | sonnet: 5/5/5
+[41/320] 012_002_subscription_lifecycle_event_sourced_aggregate_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[42/320] 012_003_inventory_stock_event_sourced_aggregate_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[43/320] 012_004_task_tracker_event_sourced_aggregate_01 ... 
+00:51:23.830 [warning] transient error (error_max_turns ) on rubric_judge (012_004_task_tracker_event_sourced_aggregate_01) — retry 1/5 after 2000ms
+opus: 5/5/4 | sonnet: 5/4/5
+[44/320] 013_001_exponential_backoff_retry_worker_01 ... opus: 5/5/4 | sonnet: 5/5/4
+[45/320] 013_002_timeout_guarded_retry_worker_01 ... opus: 3/3/4 | sonnet: 2/2/3
+[46/320] 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01 ... opus: 4/4/4 | sonnet: 5/3/3
+[47/320] 013_004_classified_error_retry_worker_with_on_retry_callback_01 ... opus: 5/5/4 | sonnet: 5/5/4
+[48/320] 014_001_priority_queue_processor_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[49/320] 014_002_expiring_priority_queue_with_per_task_ttl_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[50/320] 014_003_cancellable_priority_queue_with_numeric_priorities_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[51/320] 014_004_concurrent_priority_queue_with_configurable_parallelism_01 ... opus: 5/3/4 | sonnet: 5/5/5  [1 axis disagreement(s)]
+[52/320] 015_001_heartbeat_monitor_01 ... opus: 5/4/4 | sonnet: 5/4/5
+[53/320] 015_002_rolling_window_failure_rate_monitor_01 ... opus: 3/3/3 | sonnet: 3/3/3
+[54/320] 015_003_async_check_monitor_with_timeouts_01 ... opus: 4/4/4 | sonnet: 5/5/5
+[55/320] 015_004_monitor_with_maintenance_windows_and_pause_resume_01 ... 
+01:30:44.833 [warning] transient error (error_max_turns ) on rubric_judge (015_004_monitor_with_maintenance_windows_and_pause_resume_01) — retry 1/5 after 2000ms
+opus: 4/3/3 | sonnet: 3/3/2
+[56/320] 016_001_paginated_list_endpoint_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[57/320] 016_002_cursor_based_list_pagination_01 ... 
+01:37:30.223 [warning] rubric_judge (016_002_cursor_based_list_pagination_01): contract violation: rubric.json must be {"scores": {each axis 1-5}, "issues": [{axis,file,evidence,why,severity}]} — reminding
+opus: 5/5/5 | sonnet: 5/5/5
+[58/320] 016_003_validated_sortable_filterable_list_pagination_01 ... opus: 5/5/5 | sonnet: 4/4/3  [1 axis disagreement(s)]
+[59/320] 016_004_concurrent_ets_backed_list_pagination_with_page_clamping_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[60/320] 017_001_search_endpoint_with_filtering_and_sorting_01 ... opus: 5/5/4 | sonnet: 3/5/4  [1 axis disagreement(s)]
+[61/320] 017_002_keyset_cursor_pagination_search_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[62/320] 017_003_faceted_search_with_facet_counts_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[63/320] 017_004_relevance_ranked_full_text_search_01 ... opus: 5/5/4 | sonnet: 5/5/4
+[64/320] 018_001_crud_with_soft_delete_01 ... 
+01:53:08.931 [warning] rubric_judge (018_001_crud_with_soft_delete_01): contract violation: rubric.json must be {"scores": {each axis 1-5}, "issues": [{axis,file,evidence,why,severity}]} — reminding
+opus: 5/5/4 | sonnet: 4/5/5
+[65/320] 018_002_trash_and_purge_soft_delete_with_retention_window_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[66/320] 018_003_cascading_archive_tree_with_origin_aware_restore_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[67/320] 018_004_optimistic_concurrency_soft_delete_with_version_guards_01 ... opus: 5/5/4 | sonnet: 5/4/3
+[68/320] 019_001_bulk_create_endpoint_with_partial_failure_reporting_01 ... opus: 5/5/4 | sonnet: 5/5/4
+[69/320] 019_002_dependency_ordered_bulk_create_with_cascade_skip_01 ... opus: 5/5/4 | sonnet: 4/5/4
+[70/320] 019_003_bulk_upsert_with_conflict_resolution_policies_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[71/320] 019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[72/320] 020_002_content_addressable_deduplicating_upload_01 ... 
+02:15:18.931 [warning] transient error (error_max_turns ) on rubric_judge (020_002_content_addressable_deduplicating_upload_01) — retry 1/5 after 2000ms
+
+02:16:51.948 [warning] transient error (error_max_turns ) on rubric_judge (020_002_content_addressable_deduplicating_upload_01) — retry 2/5 after 4000ms
+
+02:18:46.831 [warning] transient error (error_max_turns ) on rubric_judge (020_002_content_addressable_deduplicating_upload_01) — retry 3/5 after 8000ms
+
+02:19:54.286 [warning] transient error (error_max_turns ) on rubric_judge (020_002_content_addressable_deduplicating_upload_01) — retry 4/5 after 16000ms
+opus: 4/5/4 | sonnet: 5/5/4
+[73/320] 020_003_per_tenant_quota_enforced_upload_01 ... 
+02:23:49.924 [warning] transient error (error_max_turns ) on rubric_judge (020_003_per_tenant_quota_enforced_upload_01) — retry 1/5 after 2000ms
+
+02:24:50.940 [warning] transient error (error_max_turns ) on rubric_judge (020_003_per_tenant_quota_enforced_upload_01) — retry 2/5 after 4000ms
+opus: 4/5/5 | sonnet: 5/5/4
+[74/320] 020_004_asynchronous_validation_pipeline_upload_01 ... 
+02:28:57.212 [warning] transient error (error_max_turns ) on rubric_judge (020_004_asynchronous_validation_pipeline_upload_01) — retry 1/5 after 2000ms
+opus: 5/5/4 | sonnet: 3/2/4  [2 axis disagreement(s)]
+[75/320] 021_001_versioned_api_with_content_negotiation_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[76/320] 021_002_media_type_content_negotiation_with_quality_values_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[77/320] 021_003_url_path_versioning_with_downgrade_migration_chain_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[78/320] 021_004_versioned_api_with_deprecation_sunset_lifecycle_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[79/320] 022_001_nested_resource_endpoint_with_authorization_01 ... 
+02:38:07.387 [warning] transient error (error_max_turns ) on rubric_judge (022_001_nested_resource_endpoint_with_authorization_01) — retry 1/5 after 2000ms
+opus: 4/5/4 | sonnet: 3/4/4
+[80/320] 022_002_role_scoped_nested_membership_endpoint_01 ... opus: 4/4/3 | sonnet: 5/5/5  [1 axis disagreement(s)]
+[81/320] 022_003_etag_versioned_nested_membership_with_optimistic_concurrency_01 ... opus: 5/4/5 | sonnet: 5/5/5
+[82/320] 022_004_invitation_accept_decline_nested_membership_workflow_01 ... opus: 4/4/4 | sonnet: 5/5/5
+[83/320] 023_001_idempotent_post_endpoint_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[84/320] 023_002_in_flight_coalescing_idempotent_payments_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[85/320] 023_003_fingerprint_conflict_idempotent_payments_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[86/320] 023_004_lru_bounded_idempotent_payments_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[87/320] 024_001_webhook_receiver_with_signature_verification_01 ... opus: 4/4/5 | sonnet: 5/5/5
+[88/320] 024_002_replay_protected_timestamped_webhook_receiver_01 ... opus: 4/5/5 | sonnet: 5/5/5
+[89/320] 024_003_multi_provider_webhook_receiver_with_key_rotation_01 ... opus: 4/5/4 | sonnet: 5/5/4
+[90/320] 024_004_ordered_stream_webhook_receiver_with_gap_buffering_01 ... opus: 5/5/4 | sonnet: 5/5/5
+[91/320] 025_001_long_polling_endpoint_01 ... opus: 5/4/4 | sonnet: 5/5/5
+[92/320] 025_002_cursor_resumable_gap_free_long_poll_01 ... 
+03:09:05.592 [warning] rubric_judge (025_002_cursor_resumable_gap_free_long_poll_01): contract violation: rubric.json must be {"scores": {each axis 1-5}, "issues": [{axis,file,evidence,why,severity}]} — reminding
+opus: 5/5/4 | sonnet: 4/5/4
+[93/320] 025_003_coalescing_batch_long_poll_with_linger_window_01 ... opus: 5/5/5 | sonnet: 5/5/5
+[94/320] 031_001_csv_importer_with_validation_and_error_report_01 ... opus: 4/4/3 | sonnet: 4/4/4
+[95/320] 031_003_csv_loader_with_type_coercion_and_enriched_schema_01 ... 
+03:18:53.016 [warning] transient error (error_max_turns ) on rubric_judge (031_003_csv_loader_with_type_coercion_and_enriched_schema_01) — retry 1/5 after 2000ms
+opus: 5/5/4 | sonnet: 5/5/4
+[96/320] 031_004_logfmt_record_validator_with_hand_written_parser_01 ... 
+03:23:29.818 [warning] transient error (error_max_turns ) on rubric_judge (031_004_logfmt_record_validator_with_hand_written_parser_01) — retry 1/5 after 2000ms
+opus: 5/4/4 | sonnet: 4/4/5
+[97/320] 032_001_json_to_ecto_bulk_ingestion_pipeline_01 ... opus: 4/4/3 | sonnet: 5/3/4
+[98/320] 032_002_csv_to_ecto_batch_ingestion_with_changeset_validation_01 ... 
+03:30:03.762 [warning] transient error (error_max_turns ) on rubric_judge (032_002_csv_to_ecto_batch_ingestion_with_changeset_validation_01) — retry 1/5 after 2000ms

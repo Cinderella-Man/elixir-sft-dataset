@@ -1,0 +1,35 @@
+enriching 1 prompt(s), sequential, ledger logs/enrich_prompts.jsonl
+
+[1/1] 077_001_interval_tree_for_overlapping_range_queries_01 ... applied
+
+=== ENRICH LEDGER (18 row(s)) === %{"applied" => 16, "rejected" => 2}
+  001_001_rate_limiter_01: 22 → 109 lines
+  002_002_rolling_window_error_rate_cb_01: 28 → 68 lines
+  013_002_timeout_guarded_retry_worker_01: 15 → 63 lines
+  041_001_lru_cache_backed_by_ets_01: REJECTED — enriched prompt still not blind-solvable (compile failed)
+  041_002_lfu_cache_backed_by_ets_01: 16 → 52 lines
+  041_003_sharded_lru_cache_with_consistent_key_routing_01: 19 → 57 lines
+  063_004_bounded_concurrency_concurrent_fetcher_01: 25 → 59 lines
+  074_001_custom_exunit_assertion_helpers_01: 18 → 46 lines
+  075_001_property_based_test_generators_01: 17 → 73 lines
+  041_001_lru_cache_backed_by_ets_01: 14 → 35 lines
+  079_001_bloom_filter_01: 11 → 62 lines
+  105_001_genserver_based_debouncer_01: 52 → 98 lines
+  107_002_keyed_event_aggregator_with_per_key_batching_01: 53 → 98 lines
+  013_001_exponential_backoff_retry_worker_01: 15 → 60 lines
+  023_002_in_flight_coalescing_idempotent_payments_01: 20 → 66 lines
+  077_001_interval_tree_for_overlapping_range_queries_01: REJECTED — enriched prompt still not blind-solvable (tests failed) — failing: test correct results with many intervals in
+  101_001_sliding_window_counter_01: 35 → 110 lines
+  077_001_interval_tree_for_overlapping_range_queries_01: 15 → 42 lines
+Blind-solve screen: 4 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/4] 013_001_exponential_backoff_retry_worker_01 ... GREEN
+[2/4] 023_002_in_flight_coalescing_idempotent_payments_01 ... RED (test concurrent requests with same key coalesce into one processing: :exit: {:timeout, {Task, :await_many, [[%Task{mfa: {:erlang, :apply, 2}, owner: #PID<0.222.0>, pid: #PID<0.227.0>, ref: #Reference<0.0.28419.4227689244.3968139268.128024>}, %Task{mfa: {:erlang, :apply)
+[3/4] 077_001_interval_tree_for_overlapping_range_queries_01 ... RED (compile: /tmp/screen_1993594_8326.ex: cannot compile module IntervalTree (errors have been logged))
+[4/4] 101_001_sliding_window_counter_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 4   green: 2   RED: 2   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 023_002_in_flight_coalescing_idempotent_payments_01: test concurrent requests with same key coalesce into one processing: :exit: {:timeout, {Task, :await_many, [[%Task{mfa: {:erlang, :apply, 2}, owner: #PID<0.222.0>, pid: #PID<0.227.0>, ref: #Reference<0.0.28419.4227689244.3968139268.128024>}, %Task{mfa: {:erlang, :apply
+    - 077_001_interval_tree_for_overlapping_range_queries_01: compile: /tmp/screen_1993594_8326.ex: cannot compile module IntervalTree (errors have been logged)

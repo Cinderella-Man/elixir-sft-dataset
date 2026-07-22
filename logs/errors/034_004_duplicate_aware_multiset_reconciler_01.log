@@ -1,0 +1,1206 @@
+06:26:06.093 [info] VARIATION 034_004_duplicate_aware_multiset_reconciler_01: Duplicate-Aware Multiset Reconciler
+06:26:06.093 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+06:26:06.093 [debug] claude -p USER prompt:
+Write me an Elixir module called `Reconciler` that reconciles two lists of records by a shared key — but in this variation keys are **not assumed to be unique**. The same composite key may appear multiple times on either side, and the engine must treat these as a multiset: group records by key, report which keys are shared vs. side-exclusive, and surface duplicate keys explicitly.
+
+I need this public API:
+
+- `Reconciler.reconcile(left, right, opts)` where `left` and `right` are lists of maps, and `opts` is a keyword list. It returns a map with **four** keys:
+  - `:matched` — a list of `%{key: key_map, left: left_records, right: right_records}` entries, one per composite key that appears on **both** sides. `key_map` is a map of `%{key_field => value}` for each field in the composite key. `left_records` is the list of all left records sharing that key, and `right_records` is the list of all right records sharing that key; both are non-empty.
+  - `:only_in_left` — a list of `%{key: key_map, records: records}` entries, one per composite key that appears **only** on the left side. `records` is the list of all left records with that key.
+  - `:only_in_right` — a list of `%{key: key_map, records: records}` entries, one per composite key that appears **only** on the right side. `records` is the list of all right records with that key.
+  - `:duplicates` — a list of `%{key: key_map, side: side, count: count}` entries, one per `(key, side)` combination where **more than one** record shares that composite key on that side. `side` is `:left` or `:right`, and `count` is how many records share the key on that side. A key can produce two `:duplicates` entries (one per side) if it is duplicated on both sides.
+
+The `opts` keyword list must support:
+
+- `:key_fields` (required) — a list of atoms that together form the composite key (e.g., `[:id]` or `[:org_id, :user_id]`). Key matching is exact: a key appears on a side if any record on that side has those exact key-field values.
+
+Behaviour requirements:
+
+- Composite keys (`[:org_id, :user_id]`) must group records only when every key field is equal.
+- Within each group (`left_records`, `right_records`, and the `records` list of the only-lists), records must appear in the same relative order as they appeared in the corresponding input list.
+- `key_map` must contain exactly the key fields mapped to their values — e.g. for `key_fields: [:org_id, :user_id]` and a record with `org_id: 1, user_id: 10`, the `key_map` is `%{org_id: 1, user_id: 10}`.
+- The order of entries in each of the four top-level lists does not matter.
+- A key that appears exactly once on each side still goes into `:matched` (with single-element `left`/`right` lists) and produces **no** `:duplicates` entry.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+06:26:35.814 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of map records by a shared composite key, treating keys
+  as a multiset rather than assuming uniqueness.
+
+  The same composite key may appear multiple times on either side. Records are
+  grouped by key and the engine reports:
+
+    * which keys are shared by both sides (`:matched`),
+    * which keys are exclusive to one side (`:only_in_left`, `:only_in_right`),
+    * and which `(key, side)` combinations contain duplicate records
+      (`:duplicates`).
+
+  The composite key is defined by the required `:key_fields` option, a list of
+  atoms. A key matches exactly when every key field is equal. Within any group,
+  records preserve the relative order in which they appeared in their input list.
+
+  The module is pure: it performs no side effects and depends only on the Elixir
+  standard library.
+  """
+
+  @typedoc "A single record represented as a map."
+  @type record :: map()
+
+  @typedoc "A composite key mapping each key field atom to its value."
+  @type key_map :: %{atom() => term()}
+
+  @typedoc "Which input list a group of records came from."
+  @type side :: :left | :right
+
+  @typedoc "A matched entry: a key present on both sides with all its records."
+  @type matched_entry :: %{key: key_map(), left: [record()], right: [record()]}
+
+  @typedoc "A side-exclusive entry: a key present on only one side."
+  @type exclusive_entry :: %{key: key_map(), records: [record()]}
+
+  @typedoc "A duplicate entry: a `(key, side)` pair with more than one record."
+  @type duplicate_entry :: %{key: key_map(), side: side(), count: pos_integer()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [exclusive_entry()],
+          only_in_right: [exclusive_entry()],
+          duplicates: [duplicate_entry()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` lists of map records by their composite key.
+
+  `left` and `right` are lists of maps. `opts` is a keyword list that must
+  contain `:key_fields`, a non-empty list of atoms forming the composite key.
+
+  Returns a map with four keys: `:matched`, `:only_in_left`, `:only_in_right`
+  and `:duplicates`. See the module documentation for the shape of each entry.
+  The order of entries within each top-level list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}, %{id: 2, v: :c}]
+      iex> right = [%{id: 1, v: :x}, %{id: 3, v: :y}]
+      iex> res = Reconciler.reconcile(left, right, key_fields: [:id])
+      iex> Enum.map(res.matched, & &1.key)
+      [%{id: 1}]
+      iex> Enum.map(res.only_in_left, & &1.key)
+      [%{id: 2}]
+      iex> Enum.map(res.only_in_right, & &1.key)
+      [%{id: 3}]
+      iex> res.duplicates
+      [%{key: %{id: 1}, side: :left, count: 2}]
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) do
+    key_fields = fetch_key_fields!(opts)
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    left_keys = MapSet.new(Enum.map(left_groups, fn {key, _records} -> key end))
+    right_keys = MapSet.new(Enum.map(right_groups, fn {key, _records} -> key end))
+
+    %{
+      matched: build_matched(left_groups, right_groups, key_fields),
+      only_in_left:
+        build_exclusive(left_groups, right_keys, key_fields),
+      only_in_right:
+        build_exclusive(right_groups, left_keys, key_fields),
+      duplicates:
+        build_duplicates(left_groups, :left, key_fields) ++
+          build_duplicates(right_groups, :right, key_fields)
+    }
+  end
+
+  @spec fetch_key_fields!(keyword()) :: [atom(), ...]
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, [_ | _] = fields} ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      _other ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+    end
+  end
+
+  @spec group_by_key([record()], [atom(), ...]) :: [{tuple(), [record()]}]
+  defp group_by_key(records, key_fields) do
+    {ordered_keys, grouped} =
+      Enum.reduce(records, {[], %{}}, fn record, {order, acc} ->
+        key = key_tuple(record, key_fields)
+
+        case Map.fetch(acc, key) do
+          {:ok, existing} ->
+            {order, Map.put(acc, key, [record | existing])}
+
+          :error ->
+            {[key | order], Map.put(acc, key, [record])}
+        end
+      end)
+
+    ordered_keys
+    |> Enum.reverse()
+    |> Enum.map(fn key -> {key, Enum.reverse(Map.fetch!(grouped, key))} end)
+  end
+
+  @spec key_tuple(record(), [atom(), ...]) :: tuple()
+  defp key_tuple(record, key_fields) do
+    key_fields
+    |> Enum.map(fn field -> Map.get(record, field) end)
+    |> List.to_tuple()
+  end
+
+  @spec key_map(tuple(), [atom(), ...]) :: key_map()
+  defp key_map(key, key_fields) do
+    key_fields
+    |> Enum.zip(Tuple.to_list(key))
+    |> Map.new()
+  end
+
+  @spec build_matched(
+          [{tuple(), [record()]}],
+          [{tuple(), [record()]}],
+          [atom(), ...]
+        ) :: [matched_entry()]
+  defp build_matched(left_groups, right_groups, key_fields) do
+    right_lookup = Map.new(right_groups)
+
+    left_groups
+    |> Enum.filter(fn {key, _records} -> Map.has_key?(right_lookup, key) end)
+    |> Enum.map(fn {key, left_records} ->
+      %{
+        key: key_map(key, key_fields),
+        left: left_records,
+        right: Map.fetch!(right_lookup, key)
+      }
+    end)
+  end
+
+  @spec build_exclusive(
+          [{tuple(), [record()]}],
+          MapSet.t(),
+          [atom(), ...]
+        ) :: [exclusive_entry()]
+  defp build_exclusive(groups, other_keys, key_fields) do
+    groups
+    |> Enum.reject(fn {key, _records} -> MapSet.member?(other_keys, key) end)
+    |> Enum.map(fn {key, records} ->
+      %{key: key_map(key, key_fields), records: records}
+    end)
+  end
+
+  @spec build_duplicates(
+          [{tuple(), [record()]}],
+          side(),
+          [atom(), ...]
+        ) :: [duplicate_entry()]
+  defp build_duplicates(groups, side, key_fields) do
+    groups
+    |> Enum.filter(fn {_key, records} -> length(records) > 1 end)
+    |> Enum.map(fn {key, records} ->
+      %{key: key_map(key, key_fields), side: side, count: length(records)}
+    end)
+  end
+end
+</file>
+06:26:35.815 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1711, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1711, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1711, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1711, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 2711, "type" => "message"}], "output_tokens" => 2711, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+06:26:35.842 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_duplicate_aware_multiset_reconciler_01 solution.ex
+06:26:36.546 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":186,"lines_over_98":0,"max_line_length":82,"mode":"full","pipe_chain_count":12,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_duplicate_aware_multiset_reconciler_01/solution.ex","task":"034_004_duplicate_aware_multiset_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-10T04:26:36.520399Z"}
+06:26:36.547 [info] cycle 034_004_duplicate_aware_multiset_reconciler_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+06:26:36.547 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+06:26:36.547 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Reconciler` that reconciles two lists of records by a shared key — but in this variation keys are **not assumed to be unique**. The same composite key may appear multiple times on either side, and the engine must treat these as a multiset: group records by key, report which keys are shared vs. side-exclusive, and surface duplicate keys explicitly.
+
+I need this public API:
+
+- `Reconciler.reconcile(left, right, opts)` where `left` and `right` are lists of maps, and `opts` is a keyword list. It returns a map with **four** keys:
+  - `:matched` — a list of `%{key: key_map, left: left_records, right: right_records}` entries, one per composite key that appears on **both** sides. `key_map` is a map of `%{key_field => value}` for each field in the composite key. `left_records` is the list of all left records sharing that key, and `right_records` is the list of all right records sharing that key; both are non-empty.
+  - `:only_in_left` — a list of `%{key: key_map, records: records}` entries, one per composite key that appears **only** on the left side. `records` is the list of all left records with that key.
+  - `:only_in_right` — a list of `%{key: key_map, records: records}` entries, one per composite key that appears **only** on the right side. `records` is the list of all right records with that key.
+  - `:duplicates` — a list of `%{key: key_map, side: side, count: count}` entries, one per `(key, side)` combination where **more than one** record shares that composite key on that side. `side` is `:left` or `:right`, and `count` is how many records share the key on that side. A key can produce two `:duplicates` entries (one per side) if it is duplicated on both sides.
+
+The `opts` keyword list must support:
+
+- `:key_fields` (required) — a list of atoms that together form the composite key (e.g., `[:id]` or `[:org_id, :user_id]`). Key matching is exact: a key appears on a side if any record on that side has those exact key-field values.
+
+Behaviour requirements:
+
+- Composite keys (`[:org_id, :user_id]`) must group records only when every key field is equal.
+- Within each group (`left_records`, `right_records`, and the `records` list of the only-lists), records must appear in the same relative order as they appeared in the corresponding input list.
+- `key_map` must contain exactly the key fields mapped to their values — e.g. for `key_fields: [:org_id, :user_id]` and a record with `org_id: 1, user_id: 10`, the `key_map` is `%{org_id: 1, user_id: 10}`.
+- The order of entries in each of the four top-level lists does not matter.
+- A key that appears exactly once on each side still goes into `:matched` (with single-element `left`/`right` lists) and produces **no** `:duplicates` entry.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of map records by a shared composite key, treating keys
+  as a multiset rather than assuming uniqueness.
+
+  The same composite key may appear multiple times on either side. Records are
+  grouped by key and the engine reports:
+
+    * which keys are shared by both sides (`:matched`),
+    * which keys are exclusive to one side (`:only_in_left`, `:only_in_right`),
+    * and which `(key, side)` combinations contain duplicate records
+      (`:duplicates`).
+
+  The composite key is defined by the required `:key_fields` option, a list of
+  atoms. A key matches exactly when every key field is equal. Within any group,
+  records preserve the relative order in which they appeared in their input list.
+
+  The module is pure: it performs no side effects and depends only on the Elixir
+  standard library.
+  """
+
+  @typedoc "A single record represented as a map."
+  @type record :: map()
+
+  @typedoc "A composite key mapping each key field atom to its value."
+  @type key_map :: %{atom() => term()}
+
+  @typedoc "Which input list a group of records came from."
+  @type side :: :left | :right
+
+  @typedoc "A matched entry: a key present on both sides with all its records."
+  @type matched_entry :: %{key: key_map(), left: [record()], right: [record()]}
+
+  @typedoc "A side-exclusive entry: a key present on only one side."
+  @type exclusive_entry :: %{key: key_map(), records: [record()]}
+
+  @typedoc "A duplicate entry: a `(key, side)` pair with more than one record."
+  @type duplicate_entry :: %{key: key_map(), side: side(), count: pos_integer()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [exclusive_entry()],
+          only_in_right: [exclusive_entry()],
+          duplicates: [duplicate_entry()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` lists of map records by their composite key.
+
+  `left` and `right` are lists of maps. `opts` is a keyword list that must
+  contain `:key_fields`, a non-empty list of atoms forming the composite key.
+
+  Returns a map with four keys: `:matched`, `:only_in_left`, `:only_in_right`
+  and `:duplicates`. See the module documentation for the shape of each entry.
+  The order of entries within each top-level list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}, %{id: 2, v: :c}]
+      iex> right = [%{id: 1, v: :x}, %{id: 3, v: :y}]
+      iex> res = Reconciler.reconcile(left, right, key_fields: [:id])
+      iex> Enum.map(res.matched, & &1.key)
+      [%{id: 1}]
+      iex> Enum.map(res.only_in_left, & &1.key)
+      [%{id: 2}]
+      iex> Enum.map(res.only_in_right, & &1.key)
+      [%{id: 3}]
+      iex> res.duplicates
+      [%{key: %{id: 1}, side: :left, count: 2}]
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) do
+    key_fields = fetch_key_fields!(opts)
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    left_keys = MapSet.new(Enum.map(left_groups, fn {key, _records} -> key end))
+    right_keys = MapSet.new(Enum.map(right_groups, fn {key, _records} -> key end))
+
+    %{
+      matched: build_matched(left_groups, right_groups, key_fields),
+      only_in_left: build_exclusive(left_groups, right_keys, key_fields),
+      only_in_right: build_exclusive(right_groups, left_keys, key_fields),
+      duplicates:
+        build_duplicates(left_groups, :left, key_fields) ++
+          build_duplicates(right_groups, :right, key_fields)
+    }
+  end
+
+  @spec fetch_key_fields!(keyword()) :: [atom(), ...]
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, [_ | _] = fields} ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      _other ->
+        raise ArgumentError, ":key_fields m (truncated)
+06:32:35.231 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the code looks clean of ordinary warnings (no unused vars, no float literals, all types/functions used). The one real issue is a **type-checker** warning (Elixir 1.18/1.19 with OTP 27+): `build_duplicates/3` sets `count: length(records)`, and `length/1` is statically typed as `non_neg_integer()`, which does **not** conform to the declared spec type `pos_integer()`. Every other value flows through `dynamic()` (map records, `Keyword.fetch`), so this is the single static mismatch → exactly one warning.
+
+The fix is to loosen the `count` field type to `non_neg_integer()`, which is behavior-preserving (typespecs don't affect runtime).
+
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of map records by a shared composite key, treating keys
+  as a multiset rather than assuming uniqueness.
+
+  The same composite key may appear multiple times on either side. Records are
+  grouped by key and the engine reports:
+
+    * which keys are shared by both sides (`:matched`),
+    * which keys are exclusive to one side (`:only_in_left`, `:only_in_right`),
+    * and which `(key, side)` combinations contain duplicate records
+      (`:duplicates`).
+
+  The composite key is defined by the required `:key_fields` option, a list of
+  atoms. A key matches exactly when every key field is equal. Within any group,
+  records preserve the relative order in which they appeared in their input list.
+
+  The module is pure: it performs no side effects and depends only on the Elixir
+  standard library.
+  """
+
+  @typedoc "A single record represented as a map."
+  @type record :: map()
+
+  @typedoc "A composite key mapping each key field atom to its value."
+  @type key_map :: %{atom() => term()}
+
+  @typedoc "Which input list a group of records came from."
+  @type side :: :left | :right
+
+  @typedoc "A matched entry: a key present on both sides with all its records."
+  @type matched_entry :: %{key: key_map(), left: [record()], right: [record()]}
+
+  @typedoc "A side-exclusive entry: a key present on only one side."
+  @type exclusive_entry :: %{key: key_map(), records: [record()]}
+
+  @typedoc "A duplicate entry: a `(key, side)` pair with more than one record."
+  @type duplicate_entry :: %{key: key_map(), side: side(), count: non_neg_integer()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [exclusive_entry()],
+          only_in_right: [exclusive_entry()],
+          duplicates: [duplicate_entry()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` lists of map records by their composite key.
+
+  `left` and `right` are lists of maps. `opts` is a keyword list that must
+  contain `:key_fields`, a non-empty list of atoms forming the composite key.
+
+  Returns a map with four keys: `:matched`, `:only_in_left`, `:only_in_right`
+  and `:duplicates`. See the module documentation for the shape of each entry.
+  The order of entries within each top-level list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}, %{id: 2, v: :c}]
+      iex> right = [%{id: 1, v: :x}, %{id: 3, v: :y}]
+      iex> res = Reconciler.reconcile(left, right, key_fields: [:id])
+      iex> Enum.map(res.matched, & &1.key)
+      [%{id: 1}]
+      iex> Enum.map(res.only_in_left, & &1.key)
+      [%{id: 2}]
+      iex> Enum.map(res.only_in_right, & &1.key)
+      [%{id: 3}]
+      iex> res.duplicates
+      [%{key: %{id: 1}, side: :left, count: 2}]
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) do
+    key_fields = fetch_key_fields!(opts)
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    left_keys = MapSet.new(Enum.map(left_groups, fn {key, _records} -> key end))
+    right_keys = MapSet.new(Enum.map(right_groups, fn {key, _records} -> key end))
+
+    %{
+      matched: build_matched(left_groups, right_groups, key_fields),
+      only_in_left: build_exclusive(left_groups, right_keys, key_fields),
+      only_in_right: build_exclusive(right_groups, left_keys, key_fields),
+      duplicates:
+        build_duplicates(left_groups, :left, key_fields) ++
+          build_duplicates(right_groups, :right, key_fields)
+    }
+  end
+
+  @spec fetch_key_fields!(keyword()) :: [atom(), ...]
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, [_ | _] = fields} ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      _other ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+    end
+  end
+
+  @spec group_by_key([record()], [atom(), ...]) :: [{tuple(), [record()]}]
+  defp group_by_key(records, key_fields) do
+    {ordered_keys, grouped} =
+      Enum.reduce(records, {[], %{}}, fn record, {order, acc} ->
+        key = key_tuple(record, key_fields)
+
+        case Map.fetch(acc, key) do
+          {:ok, existing} ->
+            {order, Map.put(acc, key, [record | existing])}
+
+          :error ->
+            {[key | order], Map.put(acc, key, [record])}
+        end
+      end)
+
+    ordered_keys
+    |> Enum.reverse()
+    |> Enum.map(fn key -> {key, Enum.reverse(Map.fetch!(grouped, key))} end)
+  end
+
+  @spec key_tuple(record(), [atom(), ...]) :: tuple()
+  defp key_tuple(record, key_fields) do
+    key_fields
+    |> Enum.map(fn field -> Map.get(record, field) end)
+    |> List.to_tuple()
+  end
+
+  @spec key_map(tuple(), [atom(), ...]) :: key_map()
+  defp key_map(key, key_fields) do
+    key_fields
+    |> Enum.zip(Tuple.to_list(key))
+    |> Map.new()
+  end
+
+  @spec build_matched(
+          [{tuple(), [record()]}],
+          [{tuple(), [record()]}],
+          [atom(), ...]
+        ) :: [matched_entry()]
+  defp build_matched(left_groups, right_groups, key_fields) do
+    right_lookup = Map.new(right_groups)
+
+    left_groups
+    |> Enum.filter(fn {key, _records} -> Map.has_key?(right_lookup, key) end)
+    |> Enum.map(fn {key, left_records} ->
+      %{
+        key: key_map(key, key_fields),
+        left: left_records,
+        right: Map.fetch!(right_lookup, key)
+      }
+    end)
+  end
+
+  @spec build_exclusive(
+          [{tuple(), [record()]}],
+          MapSet.t(),
+          [atom(), ...]
+        ) :: [exclusive_entry()]
+  defp build_exclusive(groups, other_keys, key_fields) do
+    groups
+    |> Enum.reject(fn {key, _records} -> MapSet.member?(other_keys, key) end)
+    |> Enum.map(fn {key, records} ->
+      %{key: key_map(key, key_fields), records: records}
+    end)
+  end
+
+  @spec build_duplicates(
+          [{tuple(), [record()]}],
+          side(),
+          [atom(), ...]
+        ) :: [duplicate_entry()]
+  defp build_duplicates(groups, side, key_fields) do
+    groups
+    |> Enum.filter(fn {_key, records} -> length(records) > 1 end)
+    |> Enum.map(fn {key, records} ->
+      %{key: key_map(key, key_fields), side: side, count: length(records)}
+    end)
+  end
+end
+</file>
+06:32:35.231 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7549, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7549, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7549, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7549, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 26974, "type" => "message"}], "output_tokens" => 26974, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+06:32:35.260 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_duplicate_aware_multiset_reconciler_01 solution.ex
+06:32:35.919 [debug] grade JSON: {"analysis":{"defp_count":7,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":186,"lines_over_98":0,"max_line_length":84,"mode":"full","pipe_chain_count":12,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_duplicate_aware_multiset_reconciler_01/solution.ex","task":"034_004_duplicate_aware_multiset_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-10T04:32:35.895389Z"}
+06:32:35.920 [info] cycle 034_004_duplicate_aware_multiset_reconciler_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+06:32:35.920 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+06:32:35.920 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Reconciler` that reconciles two lists of records by a shared key — but in this variation keys are **not assumed to be unique**. The same composite key may appear multiple times on either side, and the engine must treat these as a multiset: group records by key, report which keys are shared vs. side-exclusive, and surface duplicate keys explicitly.
+
+I need this public API:
+
+- `Reconciler.reconcile(left, right, opts)` where `left` and `right` are lists of maps, and `opts` is a keyword list. It returns a map with **four** keys:
+  - `:matched` — a list of `%{key: key_map, left: left_records, right: right_records}` entries, one per composite key that appears on **both** sides. `key_map` is a map of `%{key_field => value}` for each field in the composite key. `left_records` is the list of all left records sharing that key, and `right_records` is the list of all right records sharing that key; both are non-empty.
+  - `:only_in_left` — a list of `%{key: key_map, records: records}` entries, one per composite key that appears **only** on the left side. `records` is the list of all left records with that key.
+  - `:only_in_right` — a list of `%{key: key_map, records: records}` entries, one per composite key that appears **only** on the right side. `records` is the list of all right records with that key.
+  - `:duplicates` — a list of `%{key: key_map, side: side, count: count}` entries, one per `(key, side)` combination where **more than one** record shares that composite key on that side. `side` is `:left` or `:right`, and `count` is how many records share the key on that side. A key can produce two `:duplicates` entries (one per side) if it is duplicated on both sides.
+
+The `opts` keyword list must support:
+
+- `:key_fields` (required) — a list of atoms that together form the composite key (e.g., `[:id]` or `[:org_id, :user_id]`). Key matching is exact: a key appears on a side if any record on that side has those exact key-field values.
+
+Behaviour requirements:
+
+- Composite keys (`[:org_id, :user_id]`) must group records only when every key field is equal.
+- Within each group (`left_records`, `right_records`, and the `records` list of the only-lists), records must appear in the same relative order as they appeared in the corresponding input list.
+- `key_map` must contain exactly the key fields mapped to their values — e.g. for `key_fields: [:org_id, :user_id]` and a record with `org_id: 1, user_id: 10`, the `key_map` is `%{org_id: 1, user_id: 10}`.
+- The order of entries in each of the four top-level lists does not matter.
+- A key that appears exactly once on each side still goes into `:matched` (with single-element `left`/`right` lists) and produces **no** `:duplicates` entry.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of map records by a shared composite key, treating keys
+  as a multiset rather than assuming uniqueness.
+
+  The same composite key may appear multiple times on either side. Records are
+  grouped by key and the engine reports:
+
+    * which keys are shared by both sides (`:matched`),
+    * which keys are exclusive to one side (`:only_in_left`, `:only_in_right`),
+    * and which `(key, side)` combinations contain duplicate records
+      (`:duplicates`).
+
+  The composite key is defined by the required `:key_fields` option, a list of
+  atoms. A key matches exactly when every key field is equal. Within any group,
+  records preserve the relative order in which they appeared in their input list.
+
+  The module is pure: it performs no side effects and depends only on the Elixir
+  standard library.
+  """
+
+  @typedoc "A single record represented as a map."
+  @type record :: map()
+
+  @typedoc "A composite key mapping each key field atom to its value."
+  @type key_map :: %{atom() => term()}
+
+  @typedoc "Which input list a group of records came from."
+  @type side :: :left | :right
+
+  @typedoc "A matched entry: a key present on both sides with all its records."
+  @type matched_entry :: %{key: key_map(), left: [record()], right: [record()]}
+
+  @typedoc "A side-exclusive entry: a key present on only one side."
+  @type exclusive_entry :: %{key: key_map(), records: [record()]}
+
+  @typedoc "A duplicate entry: a `(key, side)` pair with more than one record."
+  @type duplicate_entry :: %{key: key_map(), side: side(), count: non_neg_integer()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [exclusive_entry()],
+          only_in_right: [exclusive_entry()],
+          duplicates: [duplicate_entry()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` lists of map records by their composite key.
+
+  `left` and `right` are lists of maps. `opts` is a keyword list that must
+  contain `:key_fields`, a non-empty list of atoms forming the composite key.
+
+  Returns a map with four keys: `:matched`, `:only_in_left`, `:only_in_right`
+  and `:duplicates`. See the module documentation for the shape of each entry.
+  The order of entries within each top-level list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}, %{id: 2, v: :c}]
+      iex> right = [%{id: 1, v: :x}, %{id: 3, v: :y}]
+      iex> res = Reconciler.reconcile(left, right, key_fields: [:id])
+      iex> Enum.map(res.matched, & &1.key)
+      [%{id: 1}]
+      iex> Enum.map(res.only_in_left, & &1.key)
+      [%{id: 2}]
+      iex> Enum.map(res.only_in_right, & &1.key)
+      [%{id: 3}]
+      iex> res.duplicates
+      [%{key: %{id: 1}, side: :left, count: 2}]
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) do
+    key_fields = fetch_key_fields!(opts)
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    left_keys = MapSet.new(Enum.map(left_groups, fn {key, _records} -> key end))
+    right_keys = MapSet.new(Enum.map(right_groups, fn {key, _records} -> key end))
+
+    %{
+      matched: build_matched(left_groups, right_groups, key_fields),
+      only_in_left: build_exclusive(left_groups, right_keys, key_fields),
+      only_in_right: build_exclusive(right_groups, left_keys, key_fields),
+      duplicates:
+        build_duplicates(left_groups, :left, key_fields) ++
+          build_duplicates(right_groups, :right, key_fields)
+    }
+  end
+
+  @spec fetch_key_fields!(keyword()) :: [atom(), ...]
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, [_ | _] = fields} ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      _other ->
+        raise ArgumentError, ":key_fiel (truncated)
+06:36:42.962 [debug] claude -p RESULT (stop="end_turn"):
+Looking at the solution, the code is functionally correct and green, so the warning is stylistic/compiler-level. The most likely culprit on OTP 27 + recent Elixir is the type-checker flagging the `Enum.reduce` accumulator in `group_by_key`: it infers the accumulator map as the empty-map type `%{}`, then warns that the `{:ok, existing}` clause of `Map.fetch(acc, key)` can never match (since `Map.fetch/2` on an empty map returns `:error`).
+
+I'll eliminate that reduce entirely by using `Enum.group_by/2` (which already preserves within-group input order and is all the spec requires, since top-level list order doesn't matter). This removes the warning while keeping behavior identical, and also tidies the private helpers.
+
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of map records by a shared composite key, treating keys
+  as a multiset rather than assuming uniqueness.
+
+  The same composite key may appear multiple times on either side. Records are
+  grouped by key and the engine reports:
+
+    * which keys are shared by both sides (`:matched`),
+    * which keys are exclusive to one side (`:only_in_left`, `:only_in_right`),
+    * and which `(key, side)` combinations contain duplicate records
+      (`:duplicates`).
+
+  The composite key is defined by the required `:key_fields` option, a list of
+  atoms. A key matches exactly when every key field is equal. Within any group,
+  records preserve the relative order in which they appeared in their input list.
+
+  The module is pure: it performs no side effects and depends only on the Elixir
+  standard library.
+  """
+
+  @typedoc "A single record represented as a map."
+  @type record :: map()
+
+  @typedoc "A composite key mapping each key field atom to its value."
+  @type key_map :: %{atom() => term()}
+
+  @typedoc "Which input list a group of records came from."
+  @type side :: :left | :right
+
+  @typedoc "A matched entry: a key present on both sides with all its records."
+  @type matched_entry :: %{key: key_map(), left: [record()], right: [record()]}
+
+  @typedoc "A side-exclusive entry: a key present on only one side."
+  @type exclusive_entry :: %{key: key_map(), records: [record()]}
+
+  @typedoc "A duplicate entry: a `(key, side)` pair with more than one record."
+  @type duplicate_entry :: %{key: key_map(), side: side(), count: non_neg_integer()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [exclusive_entry()],
+          only_in_right: [exclusive_entry()],
+          duplicates: [duplicate_entry()]
+        }
+
+  @typep grouped :: %{tuple() => [record()]}
+
+  @doc """
+  Reconciles `left` and `right` lists of map records by their composite key.
+
+  `left` and `right` are lists of maps. `opts` is a keyword list that must
+  contain `:key_fields`, a non-empty list of atoms forming the composite key.
+
+  Returns a map with four keys: `:matched`, `:only_in_left`, `:only_in_right`
+  and `:duplicates`. See the module documentation for the shape of each entry.
+  The order of entries within each top-level list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}, %{id: 2, v: :c}]
+      iex> right = [%{id: 1, v: :x}, %{id: 3, v: :y}]
+      iex> res = Reconciler.reconcile(left, right, key_fields: [:id])
+      iex> Enum.map(res.matched, & &1.key)
+      [%{id: 1}]
+      iex> Enum.map(res.only_in_left, & &1.key)
+      [%{id: 2}]
+      iex> Enum.map(res.only_in_right, & &1.key)
+      [%{id: 3}]
+      iex> res.duplicates
+      [%{key: %{id: 1}, side: :left, count: 2}]
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) do
+    key_fields = fetch_key_fields!(opts)
+
+    left_groups = Enum.group_by(left, fn record -> key_tuple(record, key_fields) end)
+    right_groups = Enum.group_by(right, fn record -> key_tuple(record, key_fields) end)
+
+    left_keys = MapSet.new(Map.keys(left_groups))
+    right_keys = MapSet.new(Map.keys(right_groups))
+
+    %{
+      matched: build_matched(left_groups, right_groups, key_fields),
+      only_in_left: build_exclusive(left_groups, right_keys, key_fields),
+      only_in_right: build_exclusive(right_groups, left_keys, key_fields),
+      duplicates:
+        build_duplicates(left_groups, :left, key_fields) ++
+          build_duplicates(right_groups, :right, key_fields)
+    }
+  end
+
+  @spec fetch_key_fields!(keyword()) :: [atom(), ...]
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, [_ | _] = fields} ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      _other ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+    end
+  end
+
+  @spec key_tuple(record(), [atom(), ...]) :: tuple()
+  defp key_tuple(record, key_fields) do
+    key_fields
+    |> Enum.map(fn field -> Map.get(record, field) end)
+    |> List.to_tuple()
+  end
+
+  @spec build_key_map(tuple(), [atom(), ...]) :: key_map()
+  defp build_key_map(key, key_fields) do
+    key_fields
+    |> Enum.zip(Tuple.to_list(key))
+    |> Map.new()
+  end
+
+  @spec build_matched(grouped(), grouped(), [atom(), ...]) :: [matched_entry()]
+  defp build_matched(left_groups, right_groups, key_fields) do
+    for {key, left_records} <- left_groups, Map.has_key?(right_groups, key) do
+      %{
+        key: build_key_map(key, key_fields),
+        left: left_records,
+        right: Map.fetch!(right_groups, key)
+      }
+    end
+  end
+
+  @spec build_exclusive(grouped(), MapSet.t(), [atom(), ...]) :: [exclusive_entry()]
+  defp build_exclusive(groups, other_keys, key_fields) do
+    for {key, records} <- groups, not MapSet.member?(other_keys, key) do
+      %{key: build_key_map(key, key_fields), records: records}
+    end
+  end
+
+  @spec build_duplicates(grouped(), side(), [atom(), ...]) :: [duplicate_entry()]
+  defp build_duplicates(groups, side, key_fields) do
+    for {key, records} <- groups, length(records) > 1 do
+      %{key: build_key_map(key, key_fields), side: side, count: length(records)}
+    end
+  end
+end
+</file>
+06:36:42.962 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7551, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7551, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7551, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7551, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 19262, "type" => "message"}], "output_tokens" => 19262, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+06:36:42.990 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_duplicate_aware_multiset_reconciler_01 solution.ex
+06:36:43.647 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":148,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":4,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_duplicate_aware_multiset_reconciler_01/solution.ex","task":"034_004_duplicate_aware_multiset_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-10T04:36:43.623817Z"}
+06:36:43.648 [info] cycle 034_004_duplicate_aware_multiset_reconciler_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+06:36:43.648 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+06:36:43.648 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Reconciler` that reconciles two lists of records by a shared key — but in this variation keys are **not assumed to be unique**. The same composite key may appear multiple times on either side, and the engine must treat these as a multiset: group records by key, report which keys are shared vs. side-exclusive, and surface duplicate keys explicitly.
+
+I need this public API:
+
+- `Reconciler.reconcile(left, right, opts)` where `left` and `right` are lists of maps, and `opts` is a keyword list. It returns a map with **four** keys:
+  - `:matched` — a list of `%{key: key_map, left: left_records, right: right_records}` entries, one per composite key that appears on **both** sides. `key_map` is a map of `%{key_field => value}` for each field in the composite key. `left_records` is the list of all left records sharing that key, and `right_records` is the list of all right records sharing that key; both are non-empty.
+  - `:only_in_left` — a list of `%{key: key_map, records: records}` entries, one per composite key that appears **only** on the left side. `records` is the list of all left records with that key.
+  - `:only_in_right` — a list of `%{key: key_map, records: records}` entries, one per composite key that appears **only** on the right side. `records` is the list of all right records with that key.
+  - `:duplicates` — a list of `%{key: key_map, side: side, count: count}` entries, one per `(key, side)` combination where **more than one** record shares that composite key on that side. `side` is `:left` or `:right`, and `count` is how many records share the key on that side. A key can produce two `:duplicates` entries (one per side) if it is duplicated on both sides.
+
+The `opts` keyword list must support:
+
+- `:key_fields` (required) — a list of atoms that together form the composite key (e.g., `[:id]` or `[:org_id, :user_id]`). Key matching is exact: a key appears on a side if any record on that side has those exact key-field values.
+
+Behaviour requirements:
+
+- Composite keys (`[:org_id, :user_id]`) must group records only when every key field is equal.
+- Within each group (`left_records`, `right_records`, and the `records` list of the only-lists), records must appear in the same relative order as they appeared in the corresponding input list.
+- `key_map` must contain exactly the key fields mapped to their values — e.g. for `key_fields: [:org_id, :user_id]` and a record with `org_id: 1, user_id: 10`, the `key_map` is `%{org_id: 1, user_id: 10}`.
+- The order of entries in each of the four top-level lists does not matter.
+- A key that appears exactly once on each side still goes into `:matched` (with single-element `left`/`right` lists) and produces **no** `:duplicates` entry.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of map records by a shared composite key, treating keys
+  as a multiset rather than assuming uniqueness.
+
+  The same composite key may appear multiple times on either side. Records are
+  grouped by key and the engine reports:
+
+    * which keys are shared by both sides (`:matched`),
+    * which keys are exclusive to one side (`:only_in_left`, `:only_in_right`),
+    * and which `(key, side)` combinations contain duplicate records
+      (`:duplicates`).
+
+  The composite key is defined by the required `:key_fields` option, a list of
+  atoms. A key matches exactly when every key field is equal. Within any group,
+  records preserve the relative order in which they appeared in their input list.
+
+  The module is pure: it performs no side effects and depends only on the Elixir
+  standard library.
+  """
+
+  @typedoc "A single record represented as a map."
+  @type record :: map()
+
+  @typedoc "A composite key mapping each key field atom to its value."
+  @type key_map :: %{atom() => term()}
+
+  @typedoc "Which input list a group of records came from."
+  @type side :: :left | :right
+
+  @typedoc "A matched entry: a key present on both sides with all its records."
+  @type matched_entry :: %{key: key_map(), left: [record()], right: [record()]}
+
+  @typedoc "A side-exclusive entry: a key present on only one side."
+  @type exclusive_entry :: %{key: key_map(), records: [record()]}
+
+  @typedoc "A duplicate entry: a `(key, side)` pair with more than one record."
+  @type duplicate_entry :: %{key: key_map(), side: side(), count: non_neg_integer()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [exclusive_entry()],
+          only_in_right: [exclusive_entry()],
+          duplicates: [duplicate_entry()]
+        }
+
+  @typep grouped :: %{tuple() => [record()]}
+
+  @doc """
+  Reconciles `left` and `right` lists of map records by their composite key.
+
+  `left` and `right` are lists of maps. `opts` is a keyword list that must
+  contain `:key_fields`, a non-empty list of atoms forming the composite key.
+
+  Returns a map with four keys: `:matched`, `:only_in_left`, `:only_in_right`
+  and `:duplicates`. See the module documentation for the shape of each entry.
+  The order of entries within each top-level list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}, %{id: 2, v: :c}]
+      iex> right = [%{id: 1, v: :x}, %{id: 3, v: :y}]
+      iex> res = Reconciler.reconcile(left, right, key_fields: [:id])
+      iex> Enum.map(res.matched, & &1.key)
+      [%{id: 1}]
+      iex> Enum.map(res.only_in_left, & &1.key)
+      [%{id: 2}]
+      iex> Enum.map(res.only_in_right, & &1.key)
+      [%{id: 3}]
+      iex> res.duplicates
+      [%{key: %{id: 1}, side: :left, count: 2}]
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) do
+    key_fields = fetch_key_fields!(opts)
+
+    left_groups = Enum.group_by(left, fn record -> key_tuple(record, key_fields) end)
+    right_groups = Enum.group_by(right, fn record -> key_tuple(record, key_fields) end)
+
+    left_keys = MapSet.new(Map.keys(left_groups))
+    right_keys = MapSet.new(Map.keys(right_groups))
+
+    %{
+      matched: build_matched(left_groups, right_groups, key_fields),
+      only_in_left: build_exclusive(left_groups, right_keys, key_fields),
+      only_in_right: build_exclusive(right_groups, left_keys, key_fields),
+      duplicates:
+        build_duplicates(left_groups, :left, key_fields) ++
+          build_duplicates(right_groups, :right, key_fields)
+    }
+  end
+
+  @spec fetch_key_fields!(keyword()) :: [atom(), ...]
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, [_ | _] = fields} ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        en (truncated)
+06:44:05.498 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the solution's public logic is clean, so the single warning is almost certainly tied to the one construct that's unusual here: the private `@typep grouped` type (and the type‑keyed map specs). The safest, behavior‑preserving fix that silences any "unused type" / exotic‑map‑type spec warning is to drop the private type alias and use plain `map()` in the internal specs, while keeping full `@moduledoc`/`@doc`/`@spec` coverage and identical runtime behavior.
+
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of map records by a shared composite key, treating keys
+  as a multiset rather than assuming uniqueness.
+
+  The same composite key may appear multiple times on either side. Records are
+  grouped by key and the engine reports:
+
+    * which keys are shared by both sides (`:matched`),
+    * which keys are exclusive to one side (`:only_in_left`, `:only_in_right`),
+    * and which `(key, side)` combinations contain duplicate records
+      (`:duplicates`).
+
+  The composite key is defined by the required `:key_fields` option, a list of
+  atoms. A key matches exactly when every key field is equal. Within any group,
+  records preserve the relative order in which they appeared in their input list.
+
+  The module is pure: it performs no side effects and depends only on the Elixir
+  standard library.
+  """
+
+  @typedoc "A single record represented as a map."
+  @type record :: map()
+
+  @typedoc "A composite key mapping each key field atom to its value."
+  @type key_map :: %{optional(atom()) => term()}
+
+  @typedoc "Which input list a group of records came from."
+  @type side :: :left | :right
+
+  @typedoc "A matched entry: a key present on both sides with all its records."
+  @type matched_entry :: %{key: key_map(), left: [record()], right: [record()]}
+
+  @typedoc "A side-exclusive entry: a key present on only one side."
+  @type exclusive_entry :: %{key: key_map(), records: [record()]}
+
+  @typedoc "A duplicate entry: a `(key, side)` pair with more than one record."
+  @type duplicate_entry :: %{key: key_map(), side: side(), count: non_neg_integer()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [exclusive_entry()],
+          only_in_right: [exclusive_entry()],
+          duplicates: [duplicate_entry()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` lists of map records by their composite key.
+
+  `left` and `right` are lists of maps. `opts` is a keyword list that must
+  contain `:key_fields`, a non-empty list of atoms forming the composite key.
+
+  Returns a map with four keys: `:matched`, `:only_in_left`, `:only_in_right`
+  and `:duplicates`. See the module documentation for the shape of each entry.
+  The order of entries within each top-level list is unspecified.
+
+  ## Examples
+
+      iex> left = [%{id: 1, v: :a}, %{id: 1, v: :b}, %{id: 2, v: :c}]
+      iex> right = [%{id: 1, v: :x}, %{id: 3, v: :y}]
+      iex> res = Reconciler.reconcile(left, right, key_fields: [:id])
+      iex> Enum.map(res.matched, & &1.key)
+      [%{id: 1}]
+      iex> Enum.map(res.only_in_left, & &1.key)
+      [%{id: 2}]
+      iex> Enum.map(res.only_in_right, & &1.key)
+      [%{id: 3}]
+      iex> res.duplicates
+      [%{key: %{id: 1}, side: :left, count: 2}]
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) do
+    key_fields = fetch_key_fields!(opts)
+
+    left_groups = Enum.group_by(left, fn record -> key_tuple(record, key_fields) end)
+    right_groups = Enum.group_by(right, fn record -> key_tuple(record, key_fields) end)
+
+    left_keys = MapSet.new(Map.keys(left_groups))
+    right_keys = MapSet.new(Map.keys(right_groups))
+
+    %{
+      matched: build_matched(left_groups, right_groups, key_fields),
+      only_in_left: build_exclusive(left_groups, right_keys, key_fields),
+      only_in_right: build_exclusive(right_groups, left_keys, key_fields),
+      duplicates:
+        build_duplicates(left_groups, :left, key_fields) ++
+          build_duplicates(right_groups, :right, key_fields)
+    }
+  end
+
+  @spec fetch_key_fields!(keyword()) :: [atom(), ...]
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, [_ | _] = fields} ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      _other ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+    end
+  end
+
+  @spec key_tuple(record(), [atom(), ...]) :: tuple()
+  defp key_tuple(record, key_fields) do
+    key_fields
+    |> Enum.map(fn field -> Map.get(record, field) end)
+    |> List.to_tuple()
+  end
+
+  @spec build_key_map(tuple(), [atom(), ...]) :: key_map()
+  defp build_key_map(key, key_fields) do
+    key_fields
+    |> Enum.zip(Tuple.to_list(key))
+    |> Map.new()
+  end
+
+  @spec build_matched(map(), map(), [atom(), ...]) :: [matched_entry()]
+  defp build_matched(left_groups, right_groups, key_fields) do
+    for {key, left_records} <- left_groups, Map.has_key?(right_groups, key) do
+      %{
+        key: build_key_map(key, key_fields),
+        left: left_records,
+        right: Map.fetch!(right_groups, key)
+      }
+    end
+  end
+
+  @spec build_exclusive(map(), MapSet.t(), [atom(), ...]) :: [exclusive_entry()]
+  defp build_exclusive(groups, other_keys, key_fields) do
+    for {key, records} <- groups, not MapSet.member?(other_keys, key) do
+      %{key: build_key_map(key, key_fields), records: records}
+    end
+  end
+
+  @spec build_duplicates(map(), side(), [atom(), ...]) :: [duplicate_entry()]
+  defp build_duplicates(groups, side, key_fields) do
+    for {key, records} <- groups, length(records) > 1 do
+      %{key: build_key_map(key, key_fields), side: side, count: length(records)}
+    end
+  end
+end
+</file>
+06:44:05.498 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7143, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7143, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7143, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7143, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 32982, "type" => "message"}], "output_tokens" => 32982, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+06:44:05.524 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_duplicate_aware_multiset_reconciler_01 solution.ex
+06:44:06.196 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":146,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":4,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_duplicate_aware_multiset_reconciler_01/solution.ex","task":"034_004_duplicate_aware_multiset_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-10T04:44:06.172345Z"}
+06:44:06.197 [info] cycle 034_004_duplicate_aware_multiset_reconciler_01: REJECTED after 4 attempt(s)

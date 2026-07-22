@@ -1,0 +1,147 @@
+08:46:09.769 [info] FIM candidate-select for 037_003_reversible_tokenization_vault_anonymizer_01 (up to 3)
+08:46:09.769 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+08:46:09.769 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Anonymizer` that performs **reversible pseudonymization** (tokenization) of record fields, backed by a vault that can later restore the originals.
+
+I need these functions in the public API:
+- `Anonymizer.tokenize(records, fields)` where `records` is a list of maps and `fields` is a list of field-name atoms to pseudonymize. It returns `{tokenized_records, vault}`:
+  - Each unique original value of a given field is replaced by a **stable opaque token string**. The token format is `"TOK_<FIELD>_<n>"` where `<FIELD>` is the uppercased field name and `<n>` is a per-field counter assigned in first-seen order (e.g. `"TOK_EMAIL_1"`).
+  - Referential integrity: within a single `tokenize/2` call, the same original value for a field always produces the same token; different values produce different tokens. Distinct fields produce tokens in distinct namespaces even for equal values.
+  - Fields not listed, and listed fields absent from a given record, are left untouched.
+  - `vault` is an opaque term that records the mapping needed to reverse the transformation.
+- `Anonymizer.detokenize(records, vault)` returns the list of records with every value that is a known token (per the vault) replaced by its original value. Values that are not known tokens are left exactly as-is.
+
+The round trip must be lossless: `detokenize(tokenize(records, fields) |> elem(0), vault)` must equal the original `records`.
+
+Use only the Elixir/OTP standard library — no external dependencies. Give me the complete module in a single file.
+
+=== MODULE ===
+```elixir
+defmodule Anonymizer do
+  @moduledoc """
+  Reversible pseudonymization (tokenization) of record fields with a vault.
+
+  `tokenize/2` replaces each unique original value of a listed field with a
+  stable opaque token (`"TOK_<FIELD>_<n>"`, `n` assigned in first-seen order)
+  and returns `{tokenized_records, vault}`. `detokenize/2` uses the vault to
+  restore originals, leaving any non-token value untouched. The round trip is
+  lossless. Only OTP/stdlib modules are used.
+  """
+
+  @type vault :: %{forward: map(), reverse: map(), counters: map()}
+
+  @doc """
+  Pseudonymizes `fields` across `records`.
+
+  Each unique original value of a listed field is replaced by a stable opaque
+  token of the form `"TOK_<FIELD>_<n>"`, where `<FIELD>` is the uppercased
+  field name and `<n>` is a per-field, first-seen counter. Distinct fields use
+  distinct namespaces even for equal values. Fields not listed, and listed
+  fields absent from a record, are left untouched.
+
+  Returns `{tokenized_records, vault}`, where `vault` is an opaque term that
+  records the mapping needed to reverse the transformation.
+  """
+  @spec tokenize([map()], [atom()]) :: {[map()], vault()}
+  def tokenize(records, fields) when is_list(records) and is_list(fields) do
+    {reversed, vault} =
+      Enum.reduce(records, {[], new_vault()}, fn record, {acc, vault} ->
+        {record2, vault2} =
+          Enum.reduce(fields, {record, vault}, fn field, {rec, v} ->
+            case Map.fetch(rec, field) do
+              {:ok, value} ->
+                {token, v2} = get_or_create_token(v, field, value)
+                {Map.put(rec, field, token), v2}
+
+              :error ->
+                {rec, v}
+            end
+          end)
+
+        {[record2 | acc], vault2}
+      end)
+
+    {Enum.reverse(reversed), vault}
+  end
+
+  @doc """
+  Restores original values in `records` using `vault`.
+
+  Every value that is a known token (per the vault) is replaced by its original
+  value; values that are not known tokens are left exactly as-is. This is the
+  inverse of `tokenize/2`.
+  """
+  @spec detokenize([map()], vault()) :: [map()]
+  def detokenize(records, vault) when is_list(records) and is_map(vault) do
+    reverse = Map.get(vault, :reverse, %{})
+
+    Enum.map(records, fn record ->
+      Map.new(record, fn {k, v} -> {k, Map.get(reverse, v, v)} end)
+    end)
+  end
+
+  # --- Internal ---------------------------------------------------------------
+
+  defp new_vault, do: %{forward: %{}, reverse: %{}, counters: %{}}
+
+  defp get_or_create_token(vault, field, value) do
+    key = {field, value}
+
+    case Map.fetch(vault.forward, key) do
+      {:ok, token} ->
+        {token, vault}
+
+      :error ->
+        n = Map.get(vault.counters, field, 0) + 1
+        token = "TOK_" <> String.upcase(Atom.to_string(field)) <> "_" <> Integer.to_string(n)
+
+        vault = %{
+          forward: Map.put(vault.forward, key, token),
+          reverse: Map.put(vault.reverse, token, value),
+          counters: Map.put(vault.counters, field, n)
+        }
+
+        {token, vault}
+    end
+  end
+end
+```
+
+Return ONE file `candidates.md` containing at most 3 lines, each a single
+function target written as `name/arity` (e.g. `refill_and_expire/2`), most valuable
+first, and NOTHING else.
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - candidates.md — one function target (name/arity) per line
+
+
+08:46:14.439 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+get_or_create_token/3
+tokenize/2
+detokenize/2
+</file>
+08:46:14.439 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2369, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2369, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2369, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2369, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 160, "type" => "message"}], "output_tokens" => 160, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

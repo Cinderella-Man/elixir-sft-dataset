@@ -1,0 +1,375 @@
+[22m02:44:06.316 [info] FIM 078_004_concurrent_ring_buffer_sink_genserver_fim01 → 078_004_concurrent_ring_buffer_sink_genserver_02: target do_push/2[0m
+[36m02:44:06.316 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m02:44:06.316 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `do_push/2`.
+
+Generate a prompt describing how to implement `do_push/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `do_push/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `do_push/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `do_push/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `ConcurrentRingBuffer` that implements a fixed-size overwriting ring buffer as a **GenServer**, so it can be shared safely across many concurrent processes (e.g. as a live log tail or a metrics sink).
+
+Push semantics match a classic ring buffer: when the buffer is full, the oldest item is silently overwritten. All operations are serialized through the GenServer so concurrent writers never corrupt the buffer.
+
+I need this public API (each function takes the server pid or registered name as its first argument):
+- `ConcurrentRingBuffer.start_link(opts)` — starts the server. `opts` is a keyword list that MUST include `:capacity` (a positive integer) and MAY include `:name` for registration. Returns `{:ok, pid}`.
+- `ConcurrentRingBuffer.push(server, item)` — inserts an item, overwriting the oldest when full. Returns `:ok`.
+- `ConcurrentRingBuffer.to_list(server)` — returns all current items in insertion order (oldest to newest).
+- `ConcurrentRingBuffer.size(server)` — returns the number of items currently stored (0 to capacity).
+- `ConcurrentRingBuffer.peek_oldest(server)` — returns `{:ok, item}` for the oldest item, or `:error` if empty.
+- `ConcurrentRingBuffer.peek_newest(server)` — returns `{:ok, item}` for the newest item, or `:error` if empty.
+- `ConcurrentRingBuffer.flush(server)` — atomically returns all current items (oldest to newest) AND empties the buffer in a single operation, so a draining consumer never loses or double-reads items.
+
+Internally the server state must store items in a fixed-size tuple (pre-allocated to `capacity` slots) with integer read/write head indices that wrap around using `rem/2`. Do not use a list or an `Enum`-grown structure as the primary store.
+
+Give me the complete module in a single file. Use only the Elixir standard library (and OTP's `GenServer`) — no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule ConcurrentRingBuffer do
+  @moduledoc """
+  A fixed-size overwriting ring buffer implemented as a `GenServer`, safe to
+  share across many concurrent processes (a live log tail, a metrics sink, …).
+
+  Every mutating and reading operation is serialized through the server, so
+  concurrent writers can never interleave partial updates. Push semantics
+  match a classic ring buffer: when full, the oldest item is silently
+  overwritten. `flush/1` atomically drains the buffer — returning everything
+  and resetting to empty in one call — so a consumer never loses or
+  double-reads items.
+
+  Server state stores items in a fixed-size tuple pre-allocated to `capacity`
+  slots, with integer `read`/`write` head indices that wrap around via
+  `rem/2`, plus an independent `size` capped at `capacity`.
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Client API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the server. `opts` must include `:capacity` (positive integer) and
+  may include `:name` for registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) when is_list(opts) do
+    {capacity, opts} = Keyword.pop(opts, :capacity)
+    GenServer.start_link(__MODULE__, capacity, opts)
+  end
+
+  @doc "Inserts `item`, overwriting the oldest when full. Returns `:ok`."
+  @spec push(GenServer.server(), any()) :: :ok
+  def push(server, item), do: GenServer.call(server, {:push, item})
+
+  @doc "Returns all live items in insertion order (oldest → newest)."
+  @spec to_list(GenServer.server()) :: list()
+  def to_list(server), do: GenServer.call(server, :to_list)
+
+  @doc "Returns the number of items currently stored (0..capacity)."
+  @spec size(GenServer.server()) :: non_neg_integer()
+  def size(server), do: GenServer.call(server, :size)
+
+  @doc "Returns `{:ok, item}` for the oldest item, or `:error` if empty."
+  @spec peek_oldest(GenServer.server()) :: {:ok, any()} | :error
+  def peek_oldest(server), do: GenServer.call(server, :peek_oldest)
+
+  @doc "Returns `{:ok, item}` for the newest item, or `:error` if empty."
+  @spec peek_newest(GenServer.server()) :: {:ok, any()} | :error
+  def peek_newest(server), do: GenServer.call(server, :peek_newest)
+
+  @doc """
+  Atomically returns all live items (oldest → newest) and empties the buffer.
+  """
+  @spec flush(GenServer.server()) :: list()
+  def flush(server), do: GenServer.call(server, :flush)
+
+  # ---------------------------------------------------------------------------
+  # Server callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(capacity) when is_integer(capacity) and capacity > 0 do
+    {:ok, fresh_state(capacity)}
+  end
+
+  @impl true
+  def handle_call({:push, item}, _from, state) do
+    {:reply, :ok, do_push(state, item)}
+  end
+
+  def handle_call(:to_list, _from, state) do
+    {:reply, do_to_list(state), state}
+  end
+
+  def handle_call(:size, _from, state) do
+    {:reply, state.size, state}
+  end
+
+  def handle_call(:peek_oldest, _from, state) do
+    {:reply, do_peek_oldest(state), state}
+  end
+
+  def handle_call(:peek_newest, _from, state) do
+    {:reply, do_peek_newest(state), state}
+  end
+
+  def handle_call(:flush, _from, state) do
+    {:reply, do_to_list(state), fresh_state(state.capacity)}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal ring-buffer logic (pure, over the state map)
+  # ---------------------------------------------------------------------------
+
+  defp fresh_state(capacity) do
+    %{
+      capacity: capacity,
+      store: :erlang.make_tuple(capacity, nil),
+      read: 0,
+      write: 0,
+      size: 0
+    }
+  end
+
+  defp do_push(state, item) do
+    %{capacity: cap, store: store, read: read, write: write, size: size} = state
+    new_store = :erlang.setelement(write + 1, store, item)
+    new_write = rem(write + 1, cap)
+
+    if size == cap do
+      %{state | store: new_store, write: new_write, read: rem(read + 1, cap)}
+    else
+      %{state | store: new_store, write: new_write, size: size + 1}
+    end
+  end
+
+  defp do_to_list(%{size: 0}), do: []
+
+  defp do_to_list(%{capacity: cap, store: store, read: read, size: size}) do
+    Enum.map(0..(size - 1), fn offset ->
+      :erlang.element(rem(read + offset, cap) + 1, store)
+    end)
+  end
+
+  defp do_peek_oldest(%{size: 0}), do: :error
+
+  defp do_peek_oldest(%{store: store, read: read}) do
+    {:ok, :erlang.element(read + 1, store)}
+  end
+
+  defp do_peek_newest(%{size: 0}), do: :error
+
+  defp do_peek_newest(%{capacity: cap, store: store, write: write}) do
+    newest_index = rem(write - 1 + cap, cap)
+    {:ok, :erlang.element(newest_index + 1, store)}
+  end
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. E (truncated)[0m
+[36m02:44:37.386 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Implement `do_push/2`
+
+Implement the private `do_push/2` function for the `ConcurrentRingBuffer` GenServer.
+
+`do_push/2` takes the current server `state` map and the `item` to insert, and
+returns the **updated state** map. It performs a single overwriting ring-buffer
+insertion:
+
+- Destructure `capacity` (`cap`), `store`, `read`, `write`, and `size` from `state`.
+- Write `item` into the tuple `store` at the current `write` head. Remember the
+  fixed-size tuple is 1-indexed for `:erlang.setelement/3`, so use `write + 1`.
+- Advance the `write` head with wraparound: `rem(write + 1, cap)`.
+- If the buffer is already full (`size == cap`), the oldest item is being
+  overwritten, so also advance the `read` head with wraparound
+  (`rem(read + 1, cap)`) and leave `size` unchanged.
+- Otherwise the buffer is not yet full, so keep `read` where it is and increment
+  `size` by 1.
+
+Return the new state map with the updated `store`, `write`, and (as appropriate)
+`read` or `size` fields. The function is pure — it must not send messages or read
+from the mailbox.
+
+```elixir
+defmodule ConcurrentRingBuffer do
+  @moduledoc """
+  A fixed-size overwriting ring buffer implemented as a `GenServer`, safe to
+  share across many concurrent processes (a live log tail, a metrics sink, …).
+
+  Every mutating and reading operation is serialized through the server, so
+  concurrent writers can never interleave partial updates. Push semantics
+  match a classic ring buffer: when full, the oldest item is silently
+  overwritten. `flush/1` atomically drains the buffer — returning everything
+  and resetting to empty in one call — so a consumer never loses or
+  double-reads items.
+
+  Server state stores items in a fixed-size tuple pre-allocated to `capacity`
+  slots, with integer `read`/`write` head indices that wrap around via
+  `rem/2`, plus an independent `size` capped at `capacity`.
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Client API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the server. `opts` must include `:capacity` (positive integer) and
+  may include `:name` for registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) when is_list(opts) do
+    {capacity, opts} = Keyword.pop(opts, :capacity)
+    GenServer.start_link(__MODULE__, capacity, opts)
+  end
+
+  @doc "Inserts `item`, overwriting the oldest when full. Returns `:ok`."
+  @spec push(GenServer.server(), any()) :: :ok
+  def push(server, item), do: GenServer.call(server, {:push, item})
+
+  @doc "Returns all live items in insertion order (oldest → newest)."
+  @spec to_list(GenServer.server()) :: list()
+  def to_list(server), do: GenServer.call(server, :to_list)
+
+  @doc "Returns the number of items currently stored (0..capacity)."
+  @spec size(GenServer.server()) :: non_neg_integer()
+  def size(server), do: GenServer.call(server, :size)
+
+  @doc "Returns `{:ok, item}` for the oldest item, or `:error` if empty."
+  @spec peek_oldest(GenServer.server()) :: {:ok, any()} | :error
+  def peek_oldest(server), do: GenServer.call(server, :peek_oldest)
+
+  @doc "Returns `{:ok, item}` for the newest item, or `:error` if empty."
+  @spec peek_newest(GenServer.server()) :: {:ok, any()} | :error
+  def peek_newest(server), do: GenServer.call(server, :peek_newest)
+
+  @doc """
+  Atomically returns all live items (oldest → newest) and empties the buffer.
+  """
+  @spec flush(GenServer.server()) :: list()
+  def flush(server), do: GenServer.call(server, :flush)
+
+  # ---------------------------------------------------------------------------
+  # Server callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(capacity) when is_integer(capacity) and capacity > 0 do
+    {:ok, fresh_state(capacity)}
+  end
+
+  @impl true
+  def handle_call({:push, item}, _from, state) do
+    {:reply, :ok, do_push(state, item)}
+  end
+
+  def handle_call(:to_list, _from, state) do
+    {:reply, do_to_list(state), state}
+  end
+
+  def handle_call(:size, _from, state) do
+    {:reply, state.size, state}
+  end
+
+  def handle_call(:peek_oldest, _from, state) do
+    {:reply, do_peek_oldest(state), state}
+  end
+
+  def handle_call(:peek_newest, _from, state) do
+    {:reply, do_peek_newest(state), state}
+  end
+
+  def handle_call(:flush, _from, state) do
+    {:reply, do_to_list(state), fresh_state(state.capacity)}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal ring-buffer logic (pure, over the state map)
+  # ---------------------------------------------------------------------------
+
+  defp fresh_state(capacity) do
+    %{
+      capacity: capacity,
+      store: :erlang.make_tuple(capacity, nil),
+      read: 0,
+      write: 0,
+      size: 0
+    }
+  end
+
+  defp do_push(state, item) do
+    # TODO
+  end
+
+  defp do_to_list(%{size: 0}), do: []
+
+  defp do_to_list(%{capacity: cap, store: store, read: read, size: size}) do
+    Enum.map(0..(size - 1), fn offset ->
+      :erlang.element(rem(read + offset, cap) + 1, store)
+    end)
+  end
+
+  defp do_peek_oldest(%{size: 0}), do: :error
+
+  defp do_peek_oldest(%{store: store, read: read}) do
+    {:ok, :erlang.element(read + 1, store)}
+  end
+
+  defp do_peek_newest(%{size: 0}), do: :error
+
+  defp do_peek_newest(%{capacity: cap, store: store, write: write}) do
+    newest_index = rem(write - 1 + cap, cap)
+    {:ok, :erlang.element(newest_index + 1, store)}
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp do_push(state, item) do
+    %{capacity: cap, store: store, read: read, write: write, size: size} = state
+    new_store = :erlang.setelement(write + 1, store, item)
+    new_write = rem(write + 1, cap)
+
+    if size == cap do
+      %{state | store: new_store, write: new_write, read: rem(read + 1, cap)}
+    else
+      %{state | store: new_store, write: new_write, size: size + 1}
+    end
+  end
+</file>[0m
+[36m02:44:37.386 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3411, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3411, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3411, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3411, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 2486, "type" => "message"}], "output_tokens" => 2486, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m02:44:37.406 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_078_004_concurrent_ring_buffer_sink_genserver_02/078_004_concurrent_ring_buffer_sink_genserver_02 solution.ex[0m
+[36m02:44:38.048 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":11,"lines_over_98":0,"max_line_length":80,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"078_004_concurrent_ring_buffer_sink_genserver_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_078_004_concurrent_ring_buffer_sink_genserver_02/078_004_concurrent_ring_buffer_sink_genserver_02/solution.ex","task":"078_004_concurrent_ring_buffer_sink_genserver_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-07T00:44:38.028020Z"}[0m
+[36m02:44:38.049 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_078_004_concurrent_ring_buffer_sink_genserver_02/078_004_concurrent_ring_buffer_sink_genserver_02 .gen_staging/fim_078_004_concurrent_ring_buffer_sink_genserver_02/mutant.ex[0m
+[36m02:44:38.721 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":28,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"078_004_concurrent_ring_buffer_sink_genserver_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.4,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 10/12 failed"],"tests":0.17},"shape":"fim","solution_file":".gen_staging/fim_078_004_concurrent_ring_buffer_sink_genserver_02/mutant.ex","task":"078_004_concurrent_ring_buffer_sink_genserver_02","test_failures":[{"message":"{:EXIT, #PID<0.210.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentRingBuffer, :do_push, 2, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 109, error_info: %{module: Exception}]}, {ConcurrentRingBuffer, :handle_call, 3, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 71]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConcurrentRingBufferTest","test":"test can be registered by name"},{"message":"{:EXIT, #PID<0.212.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentRingBuffer, :do_push, 2, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 109, error_info: %{module: Exception}]}, {ConcurrentRingBuffer, :handle_call, 3, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 71]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConcurrentRingBufferTest","test":"test push grows size up to capacity"},{"message":"{:EXIT, #PID<0.214.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentRingBuffer, :do_push, 2, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 109, error_info: %{module: Exception}]}, {ConcurrentRingBuffer, :handle_call, 3, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 71]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConcurrentRingBufferTest","test":"test oldest item is overwritten when full"},{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentRingBuffer, :do_push, 2, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 109, error_info: %{module: Exception}]}, {ConcurrentRingBuffer, :handle_call, 3, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 71]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConcurrentRingBufferTest","test":"test many overwrites keep only the last capacity items"},{"message":"{:EXIT, #PID<0.218.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentRingBuffer, :do_push, 2, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 109, error_info: %{module: Exception}]}, {ConcurrentRingBuffer, :handle_call, 3, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 71]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConcurrentRingBufferTest","test":"test flush returns current items and empties the buffer"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentRingBuffer, :do_push, 2, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 109, error_info: %{module: Exception}]}, {ConcurrentRingBuffer, :handle_call, 3, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 71]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConcurrentRingBufferTest","test":"test buffer is usable again after flush (wraparound preserved)"},{"message":"{:EXIT, #PID<0.224.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentRingBuffer, :do_push, 2, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 109, error_info: %{module: Exception}]}, {ConcurrentRingBuffer, :handle_call, 3, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 71]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConcurrentRingBufferTest","test":"test capacity-1 server always holds exactly one item"},{"message":"{:EXIT, #PID<0.226.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentRingBuffer, :do_push, 2, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 109, error_info: %{module: Exception}]}, {ConcurrentRingBuffer, :handle_call, 3, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 71]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConcurrentRingBufferTest","test":"test concurrent writers never corrupt the buffer"},{"message":"{:EXIT, #PID<0.265.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentRingBuffer, :do_push, 2, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 109, error_info: %{module: Exception}]}, {ConcurrentRingBuffer, :handle_call, 3, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 71]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConcurrentRingBufferTest","test":"test concurrent readers and writers stay consistent"},{"message":"{:EXIT, #PID<0.269.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ConcurrentRingBuffer, :do_push, 2, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 109, error_info: %{module: Exception}]}, {ConcurrentRingBuffer, :handle_call, 3, [file: ~c\"/tmp/evalfim_410360_2628.ex\", line: 71]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ConcurrentRingBufferTest","test":"test works with mixed value types"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-07T00:44:38.694598Z"}[0m
+[36m02:44:38.721 [debug] fim mutation gate: killed[0m
+[22m02:44:38.722 [info] promoted 078_004_concurrent_ring_buffer_sink_genserver_02 -> tasks/078_004_concurrent_ring_buffer_sink_genserver_02[0m

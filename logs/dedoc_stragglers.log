@@ -1,0 +1,50 @@
+=== dedoc full backfill 2026-07-18T16:35:08+02:00
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 7 needing top-up → next: 004_001_job_scheduler_with_cron_like_expressions_01, 034_001_data_reconciliation_engine_01, 039_002_nested_path_addressed_record_diff_01, …
+  2. new bases:      skipped (GEN_ONLY=backfill)
+=============================================
+
+
+Backfill: 7 seed(s) needing derivatives.
+[1/7] 004_001_job_scheduler_with_cron_like_expressions_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_004_001_job_scheduler_with_cron_like_expressions
+      dedoc_004_001_job_scheduler_with_cron_like_expressions (dedoc) ... ACCEPTED (51 passed, inherited coverage, 1 attempt(s))
+[2/7] 034_001_data_reconciliation_engine_01 (backfill) ...
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L84 s237: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L85 s254: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L98 s306: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L126 s396: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L144 s482: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+      bugfix_034_001_data_reconciliation_engine_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_034_001_data_reconciliation_engine_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_034_001_data_reconciliation_engine_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_034_001_data_reconciliation_engine_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_034_001_data_reconciliation_engine_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+[3/7] 039_002_nested_path_addressed_record_diff_01 (backfill) ...
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L67 s271: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+      bugfix_039_002_nested_path_addressed_record_diff_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+[4/7] 063_004_bounded_concurrency_concurrent_fetcher_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_063_004_bounded_concurrency_concurrent_fetcher
+      dedoc_063_004_bounded_concurrency_concurrent_fetcher (dedoc) ... ACCEPTED (18 passed, inherited coverage, 1 attempt(s))
+[5/7] 080_002_weighted_critical_path_dag_scheduler_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_080_002_weighted_critical_path_dag_scheduler
+      dedoc_080_002_weighted_critical_path_dag_scheduler (dedoc) ... ACCEPTED (9 passed, inherited coverage, 1 attempt(s))
+[6/7] 087_002_deny_override_policy_list_access_control_01 (backfill) ...
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L36 s59: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L39 s80: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... FAIL — mutant L40 s95: 1 -> 0 not killed by tests (survives or fails to compile) — not a mintable bug
+      bugfix_087_002_deny_override_policy_list_access_control_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_087_002_deny_override_policy_list_access_control_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_087_002_deny_override_policy_list_access_control_03 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+[7/7] 134_003_chunked_merge_based_schema_inference_01 (backfill) ...
+    gate [5/5] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/dedoc_134_003_chunked_merge_based_schema_inference
+      dedoc_134_003_chunked_merge_based_schema_inference (dedoc) ... ACCEPTED (14 passed, inherited coverage, 1 attempt(s))
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 1098 | mintable (rejected → accepted) pairs: 222 | minted: %{exists: 89, unverified: 133}
+
+Done.
+=== rc=0
+=== dedoc dirs now: 325

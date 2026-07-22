@@ -1,0 +1,404 @@
+04:27:04.044 [info] VARIATIONS gen for 035_001_time_series_resampler_01 (3 slot(s))
+04:27:04.045 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+04:27:04.045 [debug] claude -p USER prompt:
+I have this SFT task (idea #35 — "Time Series Resampler"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 35 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `TimeSeriesResampler` that takes a list of `{timestamp, value}` tuples at irregular intervals and resamples them into fixed-interval buckets.
+
+I need these functions in the public API:
+
+- `TimeSeriesResampler.resample(data, interval_ms, opts)` — the main entry point. `data` is a list of `{timestamp_ms, value}` tuples (integers and numbers). `interval_ms` is the bucket width in milliseconds. `opts` is a keyword list. Returns a list of `{bucket_start_ms, aggregated_value}` tuples sorted ascending by bucket start.
+
+The options are:
+- `:agg` — the aggregation mode, one of `:last`, `:first`, `:mean`, `:sum`, `:count`, `:max`, `:min`. Defaults to `:last`.
+- `:fill` — how to handle buckets with no data points. Either `:nil` (emit `{bucket_start, nil}`) or `:forward` (carry the last known aggregated value forward). Defaults to `:nil`.
+
+Bucketing rules:
+- The first bucket starts at the timestamp of the earliest data point, floored to the nearest `interval_ms` boundary (i.e. `floor(min_ts / interval_ms) * interval_ms`).
+- The last bucket is the one that contains the latest data point.
+- Every bucket between first and last must appear in the output, even if empty.
+- A data point at timestamp `t` belongs to the bucket with start `floor(t / interval_ms) * interval_ms`.
+
+Aggregation rules per mode:
+- `:last` — the value of the latest timestamp in the bucket.
+- `:first` — the value of the earliest timestamp in the bucket.
+- `:mean` — arithmetic mean of all values in the bucket (float).
+- `:sum` — sum of all values.
+- `:count` — number of data points in the bucket (integer).
+- `:max` — maximum value.
+- `:min` — minimum value.
+
+Gap filling:
+- `:nil` — empty buckets get `nil` as their value.
+- `:forward` — empty buckets get the aggregated value of the most recent non-empty bucket to their left. If there is no such bucket (gap at the very start), use `nil`.
+
+Edge cases to handle:
+- Empty input list → return `[]`.
+- Single data point → return a single bucket.
+- All points in the same bucket → return one bucket.
+- Input may be given in any order; sort internally before processing.
+
+Give me the complete module in a single file. Use only the Elixir standard library, no external dependencies.
+
+=== BASE solution.ex ===
+defmodule TimeSeriesResampler do
+  @moduledoc """
+  Resamples a list of `{timestamp_ms, value}` tuples at irregular intervals
+  into fixed-width time buckets with configurable aggregation and gap-filling.
+
+  ## Bucketing
+
+  Given an `interval_ms` width, every timestamp `t` is assigned to the bucket
+  whose start is `floor(t / interval_ms) * interval_ms`.  The output covers
+  every bucket from the one containing the earliest point to the one containing
+  the latest point, inclusive, with no gaps.
+
+  ## Options
+
+  - `:agg`  – aggregation function: `:last` (default), `:first`, `:mean`,
+               `:sum`, `:count`, `:max`, `:min`.
+  - `:fill` – gap-filling strategy: `:nil` (default) or `:forward`.
+
+  ## Example
+
+      iex> data = [{100, 1.0}, {250, 2.0}, {600, 3.0}]
+      iex> TimeSeriesResampler.resample(data, 200, agg: :mean, fill: :nil)
+      [{0, 1.5}, {200, nil}, {400, nil}, {600, 3.0}]
+  """
+
+  @type timestamp_ms :: integer()
+  @type value        :: number()
+  @type datapoint    :: {timestamp_ms(), value()}
+  @type bucket       :: {timestamp_ms(), value() | nil}
+  @type agg_mode     :: :last | :first | :mean | :sum | :count | :max | :min
+  @type fill_mode    :: :nil | :forward
+
+  @valid_agg  [:last, :first, :mean, :sum, :count, :max, :min]
+  @valid_fill [:nil, :forward]
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Resample `data` into fixed `interval_ms` buckets.
+
+  Returns a list of `{bucket_start_ms, aggregated_value}` tuples sorted
+  ascending by bucket start.  Returns `[]` when `data` is empty.
+
+  ## Parameters
+
+  - `data`        – list of `{timestamp_ms, value}` tuples (any order).
+  - `interval_ms` – positive integer bucket width in milliseconds.
+  - `opts`        – keyword list; see module docs for supported keys.
+
+  ## Raises
+
+  - `ArgumentError` when `interval_ms` is not a positive integer, or when
+    `:agg` / `:fill` receive an unsupported value.
+  """
+  @spec resample([datapoint()], pos_integer(), keyword()) :: [bucket()]
+  def resample(data, interval_ms, opts \\ [])
+
+  def resample([], _interval_ms, _opts), do: []
+
+  def resample(data, interval_ms, opts)
+      when is_list(data) and is_integer(interval_ms) and interval_ms > 0 do
+    agg  = fetch_opt!(opts, :agg,  :last,  @valid_agg)
+    fill = fetch_opt!(opts, :fill, :nil,   @valid_fill)
+
+    # 1. Sort ascending by timestamp so :first/:last are well-defined.
+    sorted = Enum.sort_by(data, &elem(&1, 0))
+
+    # 2. Determine the bucket grid.
+    {min_ts, _} = hd(sorted)
+    {max_ts, _} = List.last(sorted)
+
+    first_bucket = floor_bucket(min_ts, interval_ms)
+    last_bucket  = floor_bucket(max_ts, interval_ms)
+
+    # 3. Group data points into their buckets.
+    grouped =
+      Enum.group_by(sorted, fn {ts, _v} -> floor_bucket(ts, interval_ms) end)
+
+    # 4. Walk every bucket in order, aggregate, then fill gaps.
+    first_bucket
+    |> Stream.iterate(&(&1 + interval_ms))
+    |> Stream.take_while(&(&1 <= last_bucket))
+    |> Enum.map_reduce(nil, fn bucket_start, last_value ->
+      agg_value =
+        case Map.fetch(grouped, bucket_start) do
+          {:ok, points} -> aggregate(points, agg)
+          :error        -> nil
+        end
+
+      filled_value =
+        case {agg_value, fill} do
+          {nil, :forward} -> last_value          # carry forward (may still be nil)
+          {nil, :nil}     -> nil
+          {v,   _}        -> v
+        end
+
+      next_last = if agg_value != nil, do: agg_value, else: last_value
+
+      {{bucket_start, filled_value}, next_last}
+    end)
+    |> elem(0)
+  end
+
+  def resample(_data, interval_ms, _opts) when not is_integer(interval_ms) do
+    raise ArgumentError, "interval_ms must be a positive integer, got: #{inspect(interval_ms)}"
+  end
+
+  def resample(_data, interval_ms, _opts) when interval_ms <= 0 do
+    raise ArgumentError, "interval_ms must be positive, got: #{interval_ms}"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Floor a timestamp to the nearest interval boundary.
+  @spec floor_bucket(integer(), pos_integer()) :: integer()
+  defp floor_bucket(ts, interval_ms) do
+    div(ts, interval_ms) * interval_ms
+  end
+
+  # Aggregate a non-empty list of sorted `{ts, value}` pairs.
+  @spec aggregate([datapoint()], agg_mode()) :: value()
+  defp aggregate(points, :last) do
+    # Points are already sorted ascending; last element has the latest ts.
+    points |> List.last() |> elem(1)
+  end
+
+  defp aggregate(points, :first) do
+    points |> hd() |> elem(1)
+  end
+
+  defp aggregate(points, :count) do
+    length(points)
+  end
+
+  defp aggregate(points, :sum) do
+    Enu (truncated)
+04:33:04.370 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `MultiSeriesResampler` that takes **several named time
+series** — each a list of `{timestamp, value}` tuples at irregular intervals — and
+resamples them onto a **single shared fixed-interval grid**, aligning every series so that
+each output row carries one aggregated value per series.
+
+I need this public API:
+
+- `MultiSeriesResampler.resample(series, interval_ms, opts)` — the main entry point.
+  `series` is a map of `%{series_name => [{timestamp_ms, value}]}` (names are any term,
+  usually atoms; timestamps are integers, values are numbers). `interval_ms` is the bucket
+  width in milliseconds. `opts` is a keyword list. Returns a list of
+  `{bucket_start_ms, %{series_name => aggregated_value}}` tuples sorted ascending by bucket
+  start. **Every series name present in the input map appears in every row's value map**,
+  even if that series has no data in that bucket.
+
+The options are:
+- `:agg` — the aggregation mode applied to every series, one of `:last`, `:first`, `:mean`,
+  `:sum`, `:count`, `:max`, `:min`. Defaults to `:last`.
+- `:fill` — how to handle, **per series**, buckets with no data points for that series.
+  Either `:nil` (put `nil` for that series in that row) or `:forward` (carry that series'
+  most recent aggregated value forward). Defaults to `:nil`.
+
+Bucketing rules:
+- The grid spans **all** series jointly. The first bucket starts at the earliest timestamp
+  across all series, floored to the nearest `interval_ms` boundary
+  (`floor(min_ts / interval_ms) * interval_ms`). The last bucket is the one containing the
+  latest timestamp across all series.
+- Every bucket between first and last must appear in the output, even if all series are
+  empty there.
+- A data point at timestamp `t` belongs to the bucket with start
+  `floor(t / interval_ms) * interval_ms`.
+
+Aggregation is computed **independently per series** within each bucket, using the same
+rules as a single-series resampler:
+- `:last` / `:first` — value at the latest / earliest timestamp in the bucket for that series.
+- `:mean` — arithmetic mean of that series' values in the bucket (float).
+- `:sum` — sum of that series' values.
+- `:count` — number of that series' points in the bucket (integer).
+- `:max` / `:min` — max / min of that series' values.
+
+Gap filling is **per series**:
+- `:nil` — a series with no points in a bucket gets `nil` for that bucket.
+- `:forward` — a series with no points in a bucket gets its own most recent non-empty
+  aggregated value. If that series has had no value yet (leading gap), use `nil`.
+
+Edge cases to handle:
+- Empty input map, or a map whose series are all empty lists → return `[]`.
+- A series that is present but empty contributes no timestamps to the grid, yet still
+  appears (as `nil` / forward-filled) in every row.
+- Input for any series may be in any order; sort internally before processing.
+
+Give me the complete module in a single file. Use only the Elixir standard library, no
+external dependencies.
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule MultiSeriesResamplerTest do
+  use ExUnit.Case, async: false
+
+  # Two series aligned onto a 2000ms grid.
+  #
+  #   cpu: t=0→10, t=1500→20, t=3100→5, t=3800→15, t=8200→99
+  #   mem: t=100→1, t=2500→2,  t=9000→7
+  #
+  # Joint grid: min_ts=0, max_ts=9000 → buckets 0,2000,4000,6000,8000
+  #
+  #   bucket 0    : cpu[10,20]  mem[1]
+  #   bucket 2000 : cpu[5,15]   mem[2]
+  #   bucket 4000 : cpu[]       mem[]
+  #   bucket 6000 : cpu[]       mem[]
+  #   bucket 8000 : cpu[99]     mem[7]
+  @series %{
+    cpu: [{0, 10}, {3100, 5}, {8200, 99}, {1500, 20}, {3800, 15}],
+    mem: [{100, 1}, {9000, 7}, {2500, 2}]
+  }
+  @interval 2_000
+
+  defp row(result, bucket) do
+    {^bucket, map} = Enum.find(result, fn {b, _} -> b == bucket end)
+    map
+  end
+
+  test ":sum aggregates each series independently per bucket" do
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :sum, fill: :nil)
+
+    assert row(result, 0) == %{cpu: 30, mem: 1}
+    assert row(result, 2_000) == %{cpu: 20, mem: 2}
+    assert row(result, 8_000) == %{cpu: 99, mem: 7}
+  end
+
+  test ":last picks per-series latest value in the bucket" do
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: :nil)
+
+    assert row(result, 0) == %{cpu: 20, mem: 1}
+    assert row(result, 2_000) == %{cpu: 15, mem: 2}
+    assert row(result, 8_000) == %{cpu: 99, mem: 7}
+  end
+
+  test ":count counts per-series points in the bucket" do
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :count, fill: :nil)
+
+    assert row(result, 0) == %{cpu: 2, mem: 1}
+    assert row(result, 2_000) == %{cpu: 2, mem: 1}
+    assert row(result, 8_000) == %{cpu: 1, mem: 1}
+  end
+
+  test ":mean produces per-series floats" do
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :mean, fill: :nil)
+
+    m0 = row(result, 0)
+    assert_in_delta m0.cpu, 15.0, 0.001
+    assert_in_delta m0.mem, 1.0, 0.001
+
+    m2 = row(result, 2_000)
+    assert_in_delta m2.cpu, 10.0, 0.001
+    assert_in_delta m2.mem, 2.0, 0.001
+  end
+
+  test "fill: :nil leaves each series nil in empty buckets" do
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: :nil)
+
+    assert row(result, 4_000) == %{cpu: nil, mem: nil}
+    assert row(result, 6_000) == %{cpu: nil, mem: nil}
+  end
+
+  test "fill: :forward carries each series' own last value forward" do
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: :forward)
+
+    # cpu last at bucket 2000 = 15, mem last at bucket 2000 = 2
+    assert row(result, 4_000) == %{cpu: 15, mem: 2}
+    assert row(result, 6_000) == %{cpu: 15, mem: 2}
+    # Real data still present at 8000
+    assert row(result, 8_000) == %{cpu: 99, mem: 7}
+  end
+
+  test "every bucket in the joint range is present and sorted" do
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: :nil)
+    buckets = Enum.map(result, fn {b, _} -> b end)
+
+    assert buckets == [0, 2_000, 4_000, 6_000, 8_000]
+    assert buckets == Enum.sort(buckets)
+  end
+
+  test "every row's value map contains every series name" do
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :sum, fill: :nil)
+
+    Enum.each(result, fn {_b, map} ->
+      assert Map.has_key?(map, :cpu)
+      assert Map.has_key?(map, :mem)
+    end)
+  end
+
+  test "a present-but-empty series still appears in every row" do
+    series = %{a: [], b: [{0, 5}, {2_500, 9}]}
+    result = MultiSeriesResampler.resample(series, @interval, agg: :sum, fill: :nil)
+
+    assert row(result, 0) == %{a: nil, b: 5}
+    assert row(result, 2_000) == %{a: nil, b: 9}
+  end
+
+  test "empty series only forward-fills after it first has a value" do
+    # a has a leading gap: no data until bucket 2000
+    series = %{a: [{2_500, 7}], b: [{0, 1}, {2_500, 2}]}
+    result = MultiSeriesResampler.resample(series, @interval, agg: :last, fill: :forward)
+
+    # bucket 0: a has no value yet -> nil even under :forward
+    assert row(result, 0) == %{a: nil, b: 1}
+    assert row(result, 2_000) == %{a: 7, b: 2}
+  end
+
+  test "empty input map returns empty list" do
+    assert MultiSeriesResampler.resample(%{}, @interval, agg: :sum) == []
+  end
+
+  test "map of all-empty series returns empty list" do
+    assert MultiSeriesResampler.resample(%{a: [], b: []}, @interval, agg: :sum) == []
+  end
+
+  test "input order does not matter" do
+    forward = MultiSeriesResampler.resample(@series, @interval, agg: :sum)
+
+    reversed =
+      Map.new(@series, fn {name, pts} -> {name, Enum.reverse(pts)} end)
+
+    backward = MultiSeriesResampler.resample(reversed, @interval, agg: :sum)
+    assert forward == backward
+  end
+
+  test "invalid interval and options raise ArgumentError" do
+    assert_raise ArgumentError, fn ->
+      MultiSeriesResampler.resample(@series, 0, agg: :sum)
+    end
+
+    assert_raise ArgumentError, fn ->
+      MultiSeriesResampler.resample(@series, @interval, agg: :median)
+    end
+
+    assert_raise ArgumentError, fn ->
+       (truncated)
+04:33:04.370 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 25139, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 25139, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 25139, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 25139, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 31340, "type" => "message"}], "output_tokens" => 31340, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

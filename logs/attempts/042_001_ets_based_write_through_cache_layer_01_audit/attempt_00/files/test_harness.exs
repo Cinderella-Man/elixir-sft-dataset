@@ -1,0 +1,293 @@
+defmodule CacheLayerTest do
+  use ExUnit.Case, async: false
+
+  # --- Call-count tracker for mocking the fallback ---
+
+  defmodule CallTracker do
+    use Agent
+
+    def start_link(return_val) do
+      Agent.start_link(fn -> {0, return_val} end, name: __MODULE__)
+    end
+
+    def fallback do
+      Agent.update(__MODULE__, fn {count, val} -> {count + 1, val} end)
+      Agent.get(__MODULE__, fn {_, val} -> val end)
+    end
+
+    def call_count, do: Agent.get(__MODULE__, fn {count, _} -> count end)
+
+    def set_return(val),
+      do: Agent.update(__MODULE__, fn {count, _} -> {count, val} end)
+  end
+
+  setup do
+    start_supervised!({CallTracker, :db_value})
+
+    {:ok, pid} = CacheLayer.start_link([])
+    %{cl: pid}
+  end
+
+  # -------------------------------------------------------
+  # Basic fetch behaviour
+  # -------------------------------------------------------
+
+  test "cache miss calls fallback and returns value", %{cl: cl} do
+    assert {:ok, :db_value} = CacheLayer.fetch(cl, :users, "u:1", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 1
+  end
+
+  test "cache hit does not call fallback a second time", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", &CallTracker.fallback/0)
+    assert {:ok, :db_value} = CacheLayer.fetch(cl, :users, "u:1", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 1
+  end
+
+  test "fallback return value is correctly stored and returned", %{cl: cl} do
+    CallTracker.set_return(%{name: "Alice", age: 30})
+    {:ok, first} = CacheLayer.fetch(cl, :users, "u:2", &CallTracker.fallback/0)
+    {:ok, second} = CacheLayer.fetch(cl, :users, "u:2", &CallTracker.fallback/0)
+
+    assert first == %{name: "Alice", age: 30}
+    assert first == second
+    assert CallTracker.call_count() == 1
+  end
+
+  # -------------------------------------------------------
+  # Invalidate single key
+  # -------------------------------------------------------
+
+  test "invalidate removes the key so the next fetch calls fallback again", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 1
+
+    :ok = CacheLayer.invalidate(cl, :users, "u:1")
+
+    CacheLayer.fetch(cl, :users, "u:1", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 2
+  end
+
+  test "invalidating a non-existent key returns :ok without error", %{cl: cl} do
+    assert :ok = CacheLayer.invalidate(cl, :users, "no-such-key")
+  end
+
+  test "invalidate only removes the targeted key, leaving others intact", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", &CallTracker.fallback/0)
+    CacheLayer.fetch(cl, :users, "u:2", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 2
+
+    CacheLayer.invalidate(cl, :users, "u:1")
+
+    # u:2 still cached — no extra fallback call
+    CacheLayer.fetch(cl, :users, "u:2", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 2
+
+    # u:1 was evicted — fallback fires again
+    CacheLayer.fetch(cl, :users, "u:1", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 3
+  end
+
+  # -------------------------------------------------------
+  # Invalidate all keys for a table
+  # -------------------------------------------------------
+
+  test "invalidate_all clears every key in the table", %{cl: cl} do
+    for i <- 1..5 do
+      CacheLayer.fetch(cl, :users, "u:#{i}", &CallTracker.fallback/0)
+    end
+
+    assert CallTracker.call_count() == 5
+
+    :ok = CacheLayer.invalidate_all(cl, :users)
+
+    for i <- 1..5 do
+      CacheLayer.fetch(cl, :users, "u:#{i}", &CallTracker.fallback/0)
+    end
+
+    assert CallTracker.call_count() == 10
+  end
+
+  test "invalidate_all on an unused table returns :ok without error", %{cl: cl} do
+    assert :ok = CacheLayer.invalidate_all(cl, :never_used_table)
+  end
+
+  # -------------------------------------------------------
+  # Table independence
+  # -------------------------------------------------------
+
+  test "different tables are completely independent namespaces", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "id:1", &CallTracker.fallback/0)
+    CacheLayer.fetch(cl, :posts, "id:1", &CallTracker.fallback/0)
+
+    # Same key, different tables — two misses
+    assert CallTracker.call_count() == 2
+
+    # Both should now be cached independently
+    CacheLayer.fetch(cl, :users, "id:1", &CallTracker.fallback/0)
+    CacheLayer.fetch(cl, :posts, "id:1", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 2
+  end
+
+  test "invalidate_all on one table does not affect another", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "id:1", &CallTracker.fallback/0)
+    CacheLayer.fetch(cl, :posts, "id:1", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 2
+
+    CacheLayer.invalidate_all(cl, :users)
+
+    # posts cache untouched
+    CacheLayer.fetch(cl, :posts, "id:1", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 2
+
+    # users cache cleared
+    CacheLayer.fetch(cl, :users, "id:1", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 3
+  end
+
+  # -------------------------------------------------------
+  # Lazy table creation
+  # -------------------------------------------------------
+
+  test "tables are created on demand and can hold any term as value", %{cl: cl} do
+    CallTracker.set_return([1, 2, 3])
+    assert {:ok, [1, 2, 3]} = CacheLayer.fetch(cl, :lists, "my_list", &CallTracker.fallback/0)
+
+    CallTracker.set_return(nil)
+    # nil is a valid cached value — should NOT trigger a second fallback call
+    assert {:ok, nil} = CacheLayer.fetch(cl, :nullables, "k", &CallTracker.fallback/0)
+    assert {:ok, nil} = CacheLayer.fetch(cl, :nullables, "k", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 2
+  end
+
+  # -------------------------------------------------------
+  # Shutdown cleanup — no :persistent_term leak
+  # -------------------------------------------------------
+
+  test "stopping the server erases its :persistent_term entries and frees its ETS tables" do
+    {:ok, pid} = CacheLayer.start_link([])
+
+    # Touch two tables so the server publishes a tid for each via :persistent_term.
+    {:ok, :db_value} = CacheLayer.fetch(pid, :users, "u:1", &CallTracker.fallback/0)
+    {:ok, :db_value} = CacheLayer.fetch(pid, :posts, "p:1", &CallTracker.fallback/0)
+
+    users_tid = :persistent_term.get({CacheLayer, pid, :users})
+    posts_tid = :persistent_term.get({CacheLayer, pid, :posts})
+    assert :ets.info(users_tid) != :undefined
+
+    :ok = GenServer.stop(pid)
+
+    # :persistent_term is never garbage-collected, so a server that skips its
+    # terminate/2 cleanup leaks an entry on every shutdown — both published tids
+    # must be gone.
+    assert :persistent_term.get({CacheLayer, pid, :users}, :erased) == :erased
+    assert :persistent_term.get({CacheLayer, pid, :posts}, :erased) == :erased
+
+    # The ETS tables owned by the now-dead process are freed as well.
+    assert :ets.info(users_tid) == :undefined
+    assert :ets.info(posts_tid) == :undefined
+  end
+
+  test "concurrent misses on the same key run the fallback only once", %{cl: cl} do
+    parent = self()
+
+    gate = fn ->
+      send(parent, :fallback_entered)
+
+      receive do
+        :release -> :ok
+      after
+        2_000 -> :timeout
+      end
+
+      CallTracker.fallback()
+    end
+
+    first = Task.async(fn -> CacheLayer.fetch(cl, :users, "race", gate) end)
+    assert_receive :fallback_entered, 1_000
+
+    # Second caller misses too and must be serialised behind the GenServer.
+    second = Task.async(fn -> CacheLayer.fetch(cl, :users, "race", gate) end)
+    refute_receive :fallback_entered, 200
+
+    send(cl, :release)
+
+    assert {:ok, :db_value} = Task.await(first, 2_000)
+    assert {:ok, :db_value} = Task.await(second, 2_000)
+    assert CallTracker.call_count() == 1
+  end
+
+  test "the whole public API works through a :name registered server" do
+    name = :cache_layer_named_server
+    {:ok, _pid} = CacheLayer.start_link(name: name)
+
+    assert {:ok, :db_value} = CacheLayer.fetch(name, :users, "u:1", &CallTracker.fallback/0)
+    assert {:ok, :db_value} = CacheLayer.fetch(name, :users, "u:1", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 1
+
+    assert :ok = CacheLayer.invalidate(name, :users, "u:1")
+    assert {:ok, :db_value} = CacheLayer.fetch(name, :users, "u:1", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 2
+
+    assert :ok = CacheLayer.invalidate_all(name, :users)
+    assert {:ok, :db_value} = CacheLayer.fetch(name, :users, "u:1", &CallTracker.fallback/0)
+    assert CallTracker.call_count() == 3
+  end
+
+  test "a cache hit is served while the GenServer is blocked on another miss", %{cl: cl} do
+    parent = self()
+    assert {:ok, :db_value} = CacheLayer.fetch(cl, :users, "warm", &CallTracker.fallback/0)
+
+    blocker = fn ->
+      send(parent, :server_blocked)
+
+      receive do
+        :release -> :ok
+      after
+        2_000 -> :timeout
+      end
+
+      :cold_value
+    end
+
+    slow = Task.async(fn -> CacheLayer.fetch(cl, :users, "cold", blocker) end)
+    assert_receive :server_blocked, 1_000
+
+    reader = Task.async(fn -> CacheLayer.fetch(cl, :users, "warm", &CallTracker.fallback/0) end)
+    assert {:ok, :db_value} = Task.await(reader, 1_000)
+    assert CallTracker.call_count() == 1
+
+    send(cl, :release)
+    assert {:ok, :cold_value} = Task.await(slow, 2_000)
+  end
+
+  test "an ETS table appears only on first use of each table atom", %{cl: cl} do
+    owned = fn ->
+      for t <- :ets.all(), :ets.info(t, :owner) == cl, do: :ets.info(t, :name)
+    end
+
+    assert owned.() == []
+
+    CacheLayer.fetch(cl, :lazy_one, "k", &CallTracker.fallback/0)
+    assert Enum.sort(owned.()) == [:lazy_one]
+
+    # Re-using the same atom must not create a second table.
+    CacheLayer.fetch(cl, :lazy_one, "k2", &CallTracker.fallback/0)
+    assert Enum.sort(owned.()) == [:lazy_one]
+
+    CacheLayer.fetch(cl, :lazy_two, "k", &CallTracker.fallback/0)
+    assert Enum.sort(owned.()) == [:lazy_one, :lazy_two]
+  end
+
+  test "the lazily created ETS table is a :set with public protection", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", &CallTracker.fallback/0)
+
+    tid =
+      Enum.find(:ets.all(), fn t ->
+        :ets.info(t, :owner) == cl and :ets.info(t, :name) == :users
+      end)
+
+    assert tid != nil
+    assert :ets.info(tid, :type) == :set
+    assert :ets.info(tid, :protection) == :public
+  end
+end

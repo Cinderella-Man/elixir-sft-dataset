@@ -1,0 +1,85 @@
+[pre-push] mix format --check-formatted && mix compile --warnings-as-errors && mix test
+     warning: :dialyzer.run/1 is undefined (module :dialyzer is not available or is yet to be defined)
+     │
+ 128 │         :dialyzer.run(
+     │                   ~
+     │
+     └─ lib/gen_task/dialyzer.ex:128:19: GenTask.Dialyzer.dialyze/4
+
+     warning: :dialyzer.format_warning/2 is undefined (module :dialyzer is not available or is yet to be defined)
+     │
+ 330 │     to_string(:dialyzer.format_warning(w, filename_opt: :basename))
+     │                         ~
+     │
+     └─ lib/gen_task/dialyzer.ex:330:25: GenTask.Dialyzer.format_warning/1
+
+     warning: a struct for GenTask.Config is expected on struct update:
+
+         %GenTask.Config{ctx.cfg | dry_run: true}
+
+     but got type:
+
+         dynamic()
+
+     where "ctx" was given the type:
+
+         # type: dynamic(%{..., cfg: term()})
+         # from: test/gen_task/force_test.exs:142:13
+         %GenTask.Config{...}
+
+     you must assign "ctx.cfg" to variable and pattern match on "%GenTask.Config{}"
+
+     type warning found at:
+     │
+ 142 │       cfg = %Config{ctx.cfg | dry_run: true}
+     │             ~
+     │
+     └─ test/gen_task/force_test.exs:142:13: GenTask.ForceTest."test wipe!/2 dry-run prints the plan and deletes nothing"/1
+
+     warning: a struct for GenTask.Config is expected on struct update:
+
+         %GenTask.Config{ctx.cfg | only_idea: nil}
+
+     but got type:
+
+         dynamic()
+
+     where "ctx" was given the type:
+
+         # type: dynamic(%{..., cfg: term()})
+         # from: test/gen_task/force_test.exs:159:13
+         %GenTask.Config{...}
+
+     you must assign "ctx.cfg" to variable and pattern match on "%GenTask.Config{}"
+
+     type warning found at:
+     │
+ 159 │       cfg = %Config{ctx.cfg | only_idea: nil}
+     │             ~
+     │
+     └─ test/gen_task/force_test.exs:159:13: GenTask.ForceTest."test wipe!/2 refuses to run without a single positional idea number"/1
+
+[pre-push] validate touched families: *041_002*,*041_003*,*041_004*,*045_003*,*045_004*,*073_001*,*073_002*,*073_003*,*073_004*,*079_001*,*079_002*,*089_002*,*089_003*,*089_004*,*110_002*,*625_001*
+ALL PERFECT ✓ (every task scores 1.0)
+ALL HARNESSES KILL THEIR MUTANT ✓
+[pre-push] format check (corpus-wide, matching CI)
+total: 0 deviating, 0 errors — GATE (--check: exits 1 when anything deviates; --apply to rewrite)
+[pre-push] bugfix embed staleness check on touched families
+bugfix embeds: %{unchanged: 48} (report only)
+[pre-push] temp-path lint (parallel-eval collisions)
+temp-path lint: 131 shared-path harness(es), 0 violations ✓
+[pre-push] S6 freshness (blind verdicts must match current harnesses)
+screen freshness over 332 root(s): fresh=321, fresh_legacy=6, fresh_via_strengthen=5
+screen freshness: OK ✓ (every root has fresh blind evidence)
+[pre-push] wt_ spec/harness staleness check (all wt_ dirs)
+resync_embeds over 331 dirs: %{unchanged: 331} (report only)
+[pre-push] tfim embed staleness check on touched families
+tfim embeds: %{unchanged: 263} (report only)
+[pre-push] adapt_ embed staleness check on touched families
+adapt embeds: %{unchanged: 13} (report only)
+[pre-push] dedoc_ embed staleness check on touched families
+dedoc embeds: %{unchanged: 16} (report only)
+[pre-push] sfim spec-embed staleness check on touched families
+  would_resync tasks/625_001_mini_s3_like_object_storage_19
+[pre-push] FAIL: sfim children embed a stale parent spec — run: mix run scripts/resync_sfim_specs.exs -- --only "*041_002*,*041_003*,*041_004*,*045_003*,*045_004*,*073_001*,*073_002*,*073_003*,*073_004*,*079_001*,*079_002*,*089_002*,*089_003*,*089_004*,*110_002*,*625_001*" --apply
+error: failed to push some refs to 'github.com:Cinderella-Man/elixir-sft-dataset.git'

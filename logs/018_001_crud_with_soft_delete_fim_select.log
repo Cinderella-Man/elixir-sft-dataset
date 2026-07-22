@@ -1,0 +1,210 @@
+14:01:17.242 [info] FIM candidate-select for 018_001_crud_with_soft_delete_01 (up to 3)
+14:01:17.243 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:01:17.243 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Build me an Elixir Phoenix JSON API for a `Document` resource with soft-delete support. The project should be a standard Mix project using Phoenix and Ecto with PostgreSQL.
+
+## Schema
+
+Create a `Document` schema in a context module called `SoftCrud.Documents` with the following fields:
+
+- `title` — string, required, non-empty
+- `content` — string, required
+- `deleted_at` — utc_datetime, nullable, defaults to nil
+- `inserted_at` / `updated_at` — standard Phoenix timestamps
+
+The Ecto migration should create a `documents` table with these columns. Add an index on `deleted_at` to support efficient filtering.
+
+## Context: `SoftCrud.Documents`
+
+This module should expose the following functions:
+
+- `list_documents(opts \\ [])` — Returns all documents. By default, excludes documents where `deleted_at` is not nil. If `opts` contains `include_deleted: true`, return all documents regardless of `deleted_at`.
+- `get_document(id, opts \\ [])` — Fetches a single document by ID. Returns `{:ok, document}` or `{:error, :not_found}`. By default, a soft-deleted document should return `{:error, :not_found}`. If `opts` contains `include_deleted: true`, return it even if soft-deleted.
+- `create_document(attrs)` — Creates a new document. Returns `{:ok, document}` or `{:error, changeset}`. Validate that `title` is present and non-empty, and `content` is present.
+- `update_document(document, attrs)` — Updates an existing document's `title` and/or `content`. Returns `{:ok, document}` or `{:error, changeset}`. Do not allow updating `deleted_at` through this function.
+- `soft_delete_document(document)` — Sets `deleted_at` to the current UTC time. Returns `{:ok, document}`. If already soft-deleted, this is a no-op that returns the document as-is (still `{:ok, document}`).
+- `restore_document(document)` — Sets `deleted_at` back to nil. Returns `{:ok, document}`. If the document is not soft-deleted, this is a no-op that returns the document as-is (still `{:ok, document}`).
+
+## Router & Controller
+
+Set up a JSON API under the `/api` scope with these endpoints:
+
+- `GET    /api/documents`              — Lists documents. Supports `?include_deleted=true` query param.
+- `POST   /api/documents`              — Creates a document. Expects JSON body `{"document": {"title": "...", "content": "..."}}`.
+- `GET    /api/documents/:id`          — Shows a single document. Supports `?include_deleted=true` query param.
+- `PUT    /api/documents/:id`          — Updates a document. Expects JSON body `{"document": {"title": "...", "content": "..."}}`. Should return 404 for soft-deleted documents (no `include_deleted` support on write endpoints).
+- `DELETE /api/documents/:id`          — Soft-deletes a document (sets `deleted_at`). Should return 200 with the updated document JSON. Should return 404 if already soft-deleted.
+- `POST   /api/documents/:id/restore`  — Restores a soft-deleted document. Returns 200 with the restored document JSON. If the document is not soft-deleted, return 200 as a no-op with the document as-is.
+
+All success responses should render the document as JSON with this shape:
+
+```json
+{
+  "data": {
+    "id": 1,
+    "title": "...",
+    "content": "...",
+    "deleted_at": null,
+    "inserted_at": "...",
+    "updated_at": "..."
+  }
+}
+```
+
+For list endpoints, wrap in `{"data": [...]}`.
+
+Validation errors should return 422 with `{"errors": {...}}` containing field-level error details.
+
+Not-found responses should return 404 with `{"errors": {"detail": "Not found"}}`.
+
+## Project structure
+
+Use the app name `soft_crud` with module prefix `SoftCrud`. Organize the code as:
+
+- `lib/soft_crud/documents.ex` — context module
+- `lib/soft_crud/documents/document.ex` — Ecto schema + changeset
+- `lib/soft_crud_web/router.ex` — routes
+- `lib/soft_crud_web/controllers/document_controller.ex` — controller
+- `lib/soft_crud_web/controllers/document_json.ex` — JSON view/rendering
+- `lib/soft_crud_web/controllers/fallback_controller.ex` — handles `{:error, ...}` tuples from the controller with proper HTTP status codes
+- `priv/repo/migrations/..._create_documents.exs` — migration
+
+Use only standard Phoenix/Ecto dependencies. Give me all the files needed for a working application.
+## Additional interface contract
+
+- Use exactly these module names: router `SoftCrudWeb.Router`, context `SoftCrud.Documents` (with `create_document/1` and `soft_delete_document/1` returning `{:ok, doc}`), repo `SoftCrud.Repo`. The repo itself is provided (already configured and started) by the test environment — do NOT define the repo module or a Phoenix endpoint. Your migration file will be run against it before the tests.
+- The tests dispatch requests straight to `SoftCrudWeb.Router` with `Plug.Test` (no endpoint in front), so every route must be servable by the router pipeline alone.
+- Successful creation returns **201** with the document JSON.
+
+
+=== MODULE ===
+```elixir
+defmodule SoftCrud.Documents.Document do
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  schema "documents" do
+    field(:title, :string)
+    field(:content, :string)
+    field(:deleted_at, :utc_datetime)
+
+    timestamps(type: :utc_datetime)
+  end
+
+  @doc "Changeset for creating and updating title/content."
+  @spec changeset(struct(), map()) :: Ecto.Changeset.t()
+  def changeset(document, attrs) do
+    document
+    |> cast(attrs, [:title, :content])
+    |> validate_required([:title, :content])
+    |> validate_length(:title, min: 1)
+  end
+
+  @doc "Changeset for setting or clearing deleted_at."
+  def soft_delete_changeset(document, attrs) do
+    document
+    |> cast(attrs, [:deleted_at])
+  end
+end
+
+defmodule SoftCrud.Documents do
+  @moduledoc "Context for managing documents with soft-delete support."
+
+  import Ecto.Query
+  alias SoftCrud.Repo
+  alias SoftCrud.Documents.Document
+
+  def list_documents(opts \\ []) do
+    include_deleted = Keyword.get(opts, :include_deleted, false)
+
+    Document
+    |> maybe_exclude_deleted(include_deleted)
+    |> Repo.all()
+  end
+
+  def get_document(id, opts \\ []) do
+    include_deleted = Keyword.get(opts, :include_deleted, false)
+
+    query =
+      Document
+      |> where([d], d.id == ^id)
+      |> maybe_exclude_deleted(include_deleted)
+
+    case Repo.one(query) do
+      nil -> {:error, :not_found}
+      document -> {:ok, document}
+    end
+  end
+
+  def create_document(attrs) do
+    %Document{}
+    |> Document.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  def update_document(%Document{} = document, attrs) do
+    document
+    |> Document.changeset(attrs)
+    |> Repo.update()
+  end
+
+  def soft_delete_document(%Document{deleted_at: deleted_at} = document)
+      when not is_nil(deleted_at) do
+    {:ok, document}
+  end
+
+  def soft_delete_document(%Document{} = document) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    document
+    |> Document.soft_delete_changeset(%{deleted_at: now})
+    |> Repo.update()
+  end
+
+  def restore_document(%Document{deleted_at: nil} = document) do
+    {:ok, document}
+  end
+
+  def restore_document(%Document{} = document) do
+    document
+    |> Document.soft_delete_changeset(%{deleted_at: nil})
+    |> Repo.update()
+  end
+
+  defp maybe_exclude_deleted(query, true), do: query
+  defp maybe_exclude_deleted(query, false), do: where(query, [d], is_nil(d.deleted_at))
+end
+
+defmodule SoftCrudWeb.Router do
+  use SoftCrudWeb, :router
+
+  pipeline :api do
+    plug(:accepts, ["json"])
+  end
+
+  scope "/api", SoftCrudWeb do
+    pipe_through(:api)
+
+    resources("/documents", DocumentController, only: [:index, :create, :show, :update, :delete])
+    post("/ (truncated)
+14:01:20.041 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+soft_delete_document/1
+get_document/2
+restore/2
+</file>
+14:01:20.042 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8341, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8341, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8341, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8341, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 37, "type" => "message"}], "output_tokens" => 37, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

@@ -1,0 +1,458 @@
+13:17:54.501 [info] FIM 624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_fim01 → 624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02: target decode_and_verify/2
+13:17:54.501 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:17:54.501 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `decode_and_verify/2`.
+
+Generate a prompt describing how to implement `decode_and_verify/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `decode_and_verify/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `decode_and_verify/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `decode_and_verify/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer module called `ObjectStore` that implements a content-addressable object store which **persists objects to disk** as compressed "loose object" files (like Git's `.git/objects` directory) and **verifies integrity on read**. The store keeps no in-memory copy of object contents — every read and write goes to the filesystem — so a second process pointed at the same directory sees the same objects, and objects survive process restarts.
+
+I need these functions in the public API:
+
+- `ObjectStore.start_link(opts)` to start the process. It accepts an optional `:name` option for process registration and a **required** `:dir` option giving the directory in which objects are stored. If the directory does not exist it must be created on startup.
+
+- `ObjectStore.store(server, content)` which takes an arbitrary binary/string, computes its SHA-1 hash (lowercase hex), writes the object to disk, and returns `{:ok, hash}`. Storing the same content twice must be idempotent — it returns the same hash and does not rewrite the file if it already exists.
+
+- `ObjectStore.retrieve(server, hash)` which reads the object file for `hash`, decompresses it, and returns `{:ok, content}`. If no file exists for that hash it returns `{:error, :not_found}`. If the file exists but cannot be decompressed, or the SHA-1 of the decompressed bytes does not equal the requested hash, it returns `{:error, :corrupt}`.
+
+- `ObjectStore.has_object?(server, hash)` which returns `true` if an object file exists for `hash`, `false` otherwise.
+
+- `ObjectStore.list_objects(server)` which returns a sorted list of the SHA-1 hex hashes of every object currently present on disk.
+
+On-disk layout (this is a fixed contract):
+- The file path for an object with hash `H` is `<dir>/<first two characters of H>/<remaining 38 characters of H>`. That is, the object is stored in a two-character fan-out subdirectory named by the first two hex characters, in a file named by the remaining 38.
+- The file contents are the **zlib-compressed** raw object bytes. Compress with `:zlib.compress/1` and decompress with `:zlib.uncompress/1`.
+
+Implementation requirements:
+- Use `:crypto.hash(:sha, content)` and `Base.encode16(hash, case: :lower)` for SHA-1 hashing.
+- All object contents live on disk; there is no in-memory content map in the process state.
+
+Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule ObjectStore do
+  @moduledoc """
+  A content-addressable object store that persists objects to disk as
+  compressed "loose object" files, in the style of Git's `.git/objects`
+  directory.
+
+  Objects are addressed by the lowercase hex SHA-1 hash of their raw
+  content. Each object is stored zlib-compressed at the path
+  `<dir>/<first 2 hash chars>/<remaining 38 hash chars>`.
+
+  The process keeps **no in-memory copy** of object contents — every read
+  and write goes to the filesystem. Consequently, two processes pointed at
+  the same directory see the same objects, and objects survive process
+  restarts. Integrity is verified on every read: the decompressed bytes
+  must hash back to the requested address.
+  """
+
+  use GenServer
+
+  @typedoc "Lowercase hex-encoded SHA-1 hash."
+  @type hash :: String.t()
+
+  @typedoc "A running `ObjectStore` server reference."
+  @type server :: GenServer.server()
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the object store process.
+
+  Options:
+
+    * `:dir` (required) — the directory in which objects are stored. It is
+      created on startup if it does not already exist.
+    * `:name` (optional) — a name under which to register the process.
+
+  Returns `{:ok, pid}` on success or `{:error, reason}` on failure.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    dir = Keyword.fetch!(opts, :dir)
+
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, dir, name: name)
+      :error -> GenServer.start_link(__MODULE__, dir)
+    end
+  end
+
+  @doc """
+  Stores `content` and returns `{:ok, hash}`.
+
+  The SHA-1 hash of `content` is computed, and the zlib-compressed bytes are
+  written to the object's path on disk. The operation is idempotent: storing
+  the same content twice yields the same hash and does not rewrite an
+  existing file.
+  """
+  @spec store(server(), iodata()) :: {:ok, hash()} | {:error, term()}
+  def store(server, content) do
+    GenServer.call(server, {:store, IO.iodata_to_binary(content)})
+  end
+
+  @doc """
+  Retrieves the content stored under `hash`.
+
+  Returns `{:ok, content}` on success, `{:error, :not_found}` if no object
+  file exists for `hash`, or `{:error, :corrupt}` if the file cannot be
+  decompressed or its contents do not hash back to `hash`.
+  """
+  @spec retrieve(server(), hash()) ::
+          {:ok, binary()} | {:error, :not_found} | {:error, :corrupt}
+  def retrieve(server, hash) do
+    GenServer.call(server, {:retrieve, hash})
+  end
+
+  @doc """
+  Returns `true` if an object file exists for `hash`, `false` otherwise.
+  """
+  @spec has_object?(server(), hash()) :: boolean()
+  def has_object?(server, hash) do
+    GenServer.call(server, {:has_object?, hash})
+  end
+
+  @doc """
+  Returns a sorted list of the hex SHA-1 hashes of every object on disk.
+  """
+  @spec list_objects(server()) :: [hash()]
+  def list_objects(server) do
+    GenServer.call(server, :list_objects)
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  @spec init(String.t()) :: {:ok, %{dir: String.t()}} | {:stop, term()}
+  def init(dir) do
+    case File.mkdir_p(dir) do
+      :ok -> {:ok, %{dir: dir}}
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  @impl true
+  def handle_call({:store, content}, _from, state) do
+    hash = hash_hex(content)
+    path = object_path(state.dir, hash)
+
+    result =
+      if File.exists?(path) do
+        {:ok, hash}
+      else
+        write_object(path, content, hash)
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:retrieve, hash}, _from, state) do
+    path = object_path(state.dir, hash)
+
+    result =
+      case File.read(path) do
+        {:ok, compressed} -> decode_and_verify(compressed, hash)
+        {:error, :enoent} -> {:error, :not_found}
+        {:error, _reason} -> {:error, :corrupt}
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:has_object?, hash}, _from, state) do
+    {:reply, File.exists?(object_path(state.dir, hash)), state}
+  end
+
+  def handle_call(:list_objects, _from, state) do
+    {:reply, scan_objects(state.dir), state}
+  end
+
+  # ------------------------------------------------------------------------- (truncated)
+13:18:29.952 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Task: Implement `decode_and_verify/2`
+
+You are given the complete `ObjectStore` module below — a content-addressable
+object store that persists zlib-compressed "loose object" files to disk and
+verifies their integrity on read. Every function is fully implemented **except**
+the private helper `decode_and_verify/2`, whose body has been replaced with
+`# TODO`.
+
+Implement the private `decode_and_verify/2` function. It receives the raw
+`compressed` bytes read from an object file and the `hash` (lowercase hex SHA-1)
+under which the caller requested the object. It must decompress the bytes with
+`:zlib.uncompress/1`, then recompute the lowercase hex SHA-1 of the decompressed
+content using the existing `hash_hex/1` helper. If that recomputed hash equals
+the requested `hash`, return `{:ok, content}` with the decompressed bytes.
+Otherwise return `{:error, :corrupt}`. Decompression can fail on malformed input
+by raising an exception or throwing — treat any such failure (via `rescue` and
+`catch`) as `{:error, :corrupt}` as well, so this function never crashes the
+GenServer regardless of what bytes are on disk.
+
+```elixir
+defmodule ObjectStore do
+  @moduledoc """
+  A content-addressable object store that persists objects to disk as
+  compressed "loose object" files, in the style of Git's `.git/objects`
+  directory.
+
+  Objects are addressed by the lowercase hex SHA-1 hash of their raw
+  content. Each object is stored zlib-compressed at the path
+  `<dir>/<first 2 hash chars>/<remaining 38 hash chars>`.
+
+  The process keeps **no in-memory copy** of object contents — every read
+  and write goes to the filesystem. Consequently, two processes pointed at
+  the same directory see the same objects, and objects survive process
+  restarts. Integrity is verified on every read: the decompressed bytes
+  must hash back to the requested address.
+  """
+
+  use GenServer
+
+  @typedoc "Lowercase hex-encoded SHA-1 hash."
+  @type hash :: String.t()
+
+  @typedoc "A running `ObjectStore` server reference."
+  @type server :: GenServer.server()
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the object store process.
+
+  Options:
+
+    * `:dir` (required) — the directory in which objects are stored. It is
+      created on startup if it does not already exist.
+    * `:name` (optional) — a name under which to register the process.
+
+  Returns `{:ok, pid}` on success or `{:error, reason}` on failure.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    dir = Keyword.fetch!(opts, :dir)
+
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, dir, name: name)
+      :error -> GenServer.start_link(__MODULE__, dir)
+    end
+  end
+
+  @doc """
+  Stores `content` and returns `{:ok, hash}`.
+
+  The SHA-1 hash of `content` is computed, and the zlib-compressed bytes are
+  written to the object's path on disk. The operation is idempotent: storing
+  the same content twice yields the same hash and does not rewrite an
+  existing file.
+  """
+  @spec store(server(), iodata()) :: {:ok, hash()} | {:error, term()}
+  def store(server, content) do
+    GenServer.call(server, {:store, IO.iodata_to_binary(content)})
+  end
+
+  @doc """
+  Retrieves the content stored under `hash`.
+
+  Returns `{:ok, content}` on success, `{:error, :not_found}` if no object
+  file exists for `hash`, or `{:error, :corrupt}` if the file cannot be
+  decompressed or its contents do not hash back to `hash`.
+  """
+  @spec retrieve(server(), hash()) ::
+          {:ok, binary()} | {:error, :not_found} | {:error, :corrupt}
+  def retrieve(server, hash) do
+    GenServer.call(server, {:retrieve, hash})
+  end
+
+  @doc """
+  Returns `true` if an object file exists for `hash`, `false` otherwise.
+  """
+  @spec has_object?(server(), hash()) :: boolean()
+  def has_object?(server, hash) do
+    GenServer.call(server, {:has_object?, hash})
+  end
+
+  @doc """
+  Returns a sorted list of the hex SHA-1 hashes of every object on disk.
+  """
+  @spec list_objects(server()) :: [hash()]
+  def list_objects(server) do
+    GenServer.call(server, :list_objects)
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  @spec init(String.t()) :: {:ok, %{dir: String.t()}} | {:stop, term()}
+  def init(dir) do
+    case File.mkdir_p(dir) do
+      :ok -> {:ok, %{dir: dir}}
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  @impl true
+  def handle_call({:store, content}, _from, state) do
+    hash = hash_hex(content)
+    path = object_path(state.dir, hash)
+
+    result =
+      if File.exists?(path) do
+        {:ok, hash}
+      else
+        write_object(path, content, hash)
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:retrieve, hash}, _from, state) do
+    path = object_path(state.dir, hash)
+
+    result =
+      case File.read(path) do
+        {:ok, compressed} -> decode_and_verify(compressed, hash)
+        {:error, :enoent} -> {:error, :not_found}
+        {:error, _reason} -> {:error, :corrupt}
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:has_object?, hash}, _from, state) do
+    {:reply, File.exists?(object_path(state.dir, hash)), state}
+  end
+
+  def handle_call(:list_objects, _from, state) do
+    {:reply, scan_objects(state.dir), state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  @spec hash_hex(binary()) :: hash()
+  defp hash_hex(content) do
+    :sha
+    |> :crypto.hash(content)
+    |> Base.encode16(case: :lower)
+  end
+
+  @spec object_path(String.t(), hash()) :: String.t()
+  defp object_path(dir, hash) do
+    <<prefix::binary-size(2), rest::binary>> = hash
+    Path.join([dir, prefix, rest])
+  end
+
+  @spec write_object(String.t(), binary(), hash()) :: {:ok, hash()} | {:error, term()}
+  defp write_object(path, content, hash) do
+    compressed = :zlib.compress(content)
+
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(path, compressed) do
+      {:ok, hash}
+    end
+  end
+
+  @spec decode_and_verify(binary(), hash()) :: {:ok, binary()} | {:error, :corrupt}
+  defp decode_and_verify(compressed, hash) do
+    # TODO
+  end
+
+  @spec scan_objects(String.t()) :: [hash()]
+  defp scan_objects(dir) do
+    dir
+    |> subdirs()
+    |> Enum.flat_map(fn prefix ->
+      dir
+      |> Path.join(prefix)
+      |> files()
+      |> Enum.map(&(prefix <> &1))
+    end)
+    |> Enum.sort()
+  end
+
+  @spec subdirs(String.t()) :: [String.t()]
+  defp subdirs(dir) do
+    dir
+    |> list_dir()
+    |> Enum.filter(fn entry ->
+      String.length(entry) == 2 and File.dir?(Path.join(dir, entry))
+    end)
+  end
+
+  @spec files(String.t()) :: [String.t()]
+  defp files(dir) do
+    dir
+    |> list_dir()
+    |> Enum.filter(fn entry ->
+      String.length(entry) == 38 and File.regular?(Path.join(dir, entry))
+    end)
+  end
+
+  @spec list_dir(String.t()) :: [String.t()]
+  defp list_dir(dir) do
+    case File.ls(dir) do
+      {:ok, entries} -> entries
+      {:error, _reason} -> []
+    end
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  @spec decode_and_verify(binary(), hash()) :: {:ok, binary()} | {:error, :corrupt}
+  defp decode_and_verify(compressed, hash) do
+    content = :zlib.uncompress(compressed)
+
+    if hash_hex(content) == hash do
+      {:ok, content}
+    else
+      {:error, :corrupt}
+    end
+  rescue
+    _error -> {:error, :corrupt}
+  catch
+    _kind, _reason -> {:error, :corrupt}
+  end
+</file>
+13:18:29.952 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7695, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7695, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7695, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7695, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 3387, "type" => "message"}], "output_tokens" => 3387, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:18:29.971 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02/624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02 solution.ex
+13:18:30.666 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":14,"lines_over_98":0,"max_line_length":83,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02/624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02/solution.ex","task":"624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-11T11:18:30.641911Z"}
+13:18:30.667 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02/624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02 .gen_staging/fim_624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02/mutant.ex
+13:18:31.356 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":81,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 5/12 failed"],"tests":0.58},"shape":"fim","solution_file":".gen_staging/fim_624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02/mutant.ex","task":"624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02","test_failures":[{"message":"{:EXIT, #PID<0.212.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :decode_and_verify, 2, [file: ~c\"/tmp/evalfim_1840240_2632.ex\", line: 171, error_info: %{module: Exception}]}, {ObjectStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_1840240_2632.ex\", line: 126]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test retrieve returns the stored content"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :decode_and_verify, 2, [file: ~c\"/tmp/evalfim_1840240_2632.ex\", line: 171, error_info: %{module: Exception}]}, {ObjectStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_1840240_2632.ex\", line: 126]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test empty and null-byte content round-trip"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :decode_and_verify, 2, [file: ~c\"/tmp/evalfim_1840240_2632.ex\", line: 171, error_info: %{module: Exception}]}, {ObjectStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_1840240_2632.ex\", line: 126]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test retrieve returns corrupt when the file cannot be decompressed"},{"message":"{:EXIT, #PID<0.240.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :decode_and_verify, 2, [file: ~c\"/tmp/evalfim_1840240_2632.ex\", line: 171, error_info: %{module: Exception}]}, {ObjectStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_1840240_2632.ex\", line: 126]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test retrieve returns corrupt when the hash does not match the content"},{"message":"{:EXIT, #PID<0.254.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ObjectStore, :decode_and_verify, 2, [file: ~c\"/tmp/evalfim_1840240_2632.ex\", line: 171, error_info: %{module: Exception}]}, {ObjectStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_1840240_2632.ex\", line: 126]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ObjectStoreTest","test":"test objects persist to a new process using the same directory"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-11T11:18:31.333133Z"}
+13:18:31.356 [debug] fim mutation gate: killed
+13:18:31.357 [info] promoted 624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02 -> tasks/624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_02

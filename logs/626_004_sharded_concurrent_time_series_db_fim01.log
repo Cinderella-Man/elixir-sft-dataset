@@ -1,0 +1,359 @@
+13:22:37.807 [info] FIM 626_004_sharded_concurrent_time_series_db_fim01 → 626_004_sharded_concurrent_time_series_db_04: target apply_agg/2
+13:22:37.807 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:22:37.807 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `apply_agg/2`.
+
+Generate a prompt describing how to implement `apply_agg/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `apply_agg/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `apply_agg/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `apply_agg/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `ShardedTSDB` that implements a time-series storage engine whose data is **horizontally sharded across several worker processes**. A single coordinator GenServer owns a fixed set of shard GenServers; each series lives on exactly one shard, writes route to the owning shard, and reads fan out across all shards and merge.
+
+## Architecture
+
+- Starting the engine starts one coordinator process plus `:shards` independent worker (shard) GenServers. `start_link/1` returns the coordinator; all public functions take the coordinator as their `server` argument.
+- A series is identified by `{metric_name, sorted_labels}` where `sorted_labels = Enum.sort(Map.to_list(labels))`, so label ordering never creates duplicate series.
+- The shard index that owns a series is `:erlang.phash2({metric_name, sorted_labels}, shard_count)`, a 0-based integer in `0..(shard_count - 1)`.
+- Each shard stores its own series independently using the layout: series key → `%{chunk_start => sorted data points}`, with `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms`, and points within a chunk kept sorted by timestamp.
+
+## Public API
+
+- `ShardedTSDB.start_link(opts)` accepting:
+  - `:shards` — the number of shard worker processes to start (default `4`).
+  - `:chunk_duration_ms` — chunk width in milliseconds (default `60_000`).
+  - `:clock` — a zero-arity function returning the current time in milliseconds. Default to `fn -> System.monotonic_time(:millisecond) end`.
+  - `:name` — optional registration name for the coordinator.
+  - `:retention_ms` — how long to keep chunks before cleanup (default `3_600_000`).
+  - `:cleanup_interval_ms` — how often the coordinator triggers cleanup across all shards via `Process.send_after` (default `60_000`). Accept `:infinity` to disable.
+
+- `ShardedTSDB.insert(server, metric_name, labels, timestamp, value)` — routes the point to the owning shard and returns `:ok`.
+
+- `ShardedTSDB.query(server, metric_name, label_matchers, {start_ts, end_ts})` — fans out to all shards and merges results. `label_matchers` is a map; a series matches if it contains **all** the specified key-value pairs (it may have more). `%{}` matches all series with that metric name. Returns a list of `{labels, points}` tuples, where `points` is the `{timestamp, value}` list for that series sorted ascending by timestamp and filtered to `start_ts <= timestamp <= end_ts`. A matched series with no point in range is omitted entirely; when nothing matches, the result is `[]`. The order of series in the merged list is unspecified.
+
+- `ShardedTSDB.query_agg(server, metric_name, label_matchers, {start_ts, end_ts}, aggregation, step_ms)` where:
+  - `aggregation` is one of `:sum`, `:avg`, `:max`.
+  - `step_ms` is the window width. The range `[start_ts, end_ts)` is divided into non-overlapping windows `[start_ts, start_ts + step_ms)`, `[start_ts + step_ms, start_ts + 2*step_ms)`, etc.
+  - For each matched series and each window, take the points whose timestamps fall in `[window_start, window_start + step_ms)` and compute:
+    - `:sum` — the sum of values; omit the window if it has no points.
+    - `:avg` — the arithmetic mean of values; omit the window if it has no points.
+    - `:max` — the maximum value; omit the window if it has no points.
+  - Returns a list of `{labels, agg_points}` tuples, where `agg_points` is a list of `{window_start, aggregated_value}` tuples sorted by window start. A matched series whose windows are all omitted is left out of the result.
+
+## Introspection helpers
+
+- `ShardedTSDB.shard_count(server)` — returns the configured number of shards.
+- `ShardedTSDB.shard_of(server, metric_name, labels)` — returns the 0-based shard index that owns the given series, i.e. `:erlang.phash2({metric_name, Enum.sort(Map.to_list(labels))}, shard_count)`.
+- `ShardedTSDB.series_count(server)` — returns the total number of distinct series stored across all shards.
+- `ShardedTSDB.cleanup(server)` — synchronously runs cleanup across all shards and returns `:ok`. Cleanup removes any chunk whose `chunk_start + chunk_duration_ms` is less than or equal to `now - retention_ms` (where `now` comes from `:clock`), and drops any series left with zero chunks.
+
+## Cleanup
+
+In addition to the `cleanup/1` function, the coordinator schedules cleanup periodically with `Process.send_after` based on `:cleanup_interval_ms` and applies the same rule across all shards.
+
+## Constraints
+
+- Use only OTP standard library — no external dependencies.
+- Give me the complete module in a single file.
+- No ETS — all storage lives in the shard processes' GenServer state.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule ShardedTSDB do
+  @moduledoc """
+  A horizontally sharded time-series storage engine.
+
+  Starting the engine (`start_link/1`) spins up one coordinator `GenServer`
+  that owns a fixed set of shard `GenServer` workers. Each series lives on
+  exactly one shard, chosen by hashing its identity. Writes route to the
+  owning shard; reads fan out across every shard and are merged by the
+  coordinator.
+
+  A series is identified by `{metric_name, sorted_labels}` where
+  `sorted_labels = Enum.sort(Map.to_list(labels))`, so label ordering never
+  produces duplicate series. The owning shard index is
+  `:erlang.phash2({metric_name, sorted_labels}, shard_count)`.
+
+  All storage lives in the shard processes' `GenServer` state (no ETS). Each
+  shard keeps a map of `series_key => %{chunk_start => sorted_points}` where
+  `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms` and
+  points within a chunk are sorted ascending by timestamp.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type labels :: %{optional(term()) => term()}
+  @type point :: {integer(), number()}
+  @type series_result :: {labels(), [point()]}
+
+  # ── Public API ────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the coordinator and its shard workers.
+
+  Options:
+
+    * `:shards` — number of shard workers (default `4`).
+    * `:chunk_duration_ms` — chunk width in ms (default `60_000`).
+    * `:clock` — zero-arity fn returning current time in ms
+      (default `fn -> System.monotonic_time(:millisecond) end`).
+    * `:name` — optional registration name for the coordinator.
+    * `:retention_ms` — how long to keep chunks (default `3_600_000`).
+    * `:cleanup_interval_ms` — periodic cleanup interval, or `:infinity`
+      to disable (default `60_000`).
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    name = Keyword.get(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Inserts a single `{timestamp, value}` point into the series identified by
+  `metric_name` and `labels`, routing it to the owning shard. (truncated)
+13:23:24.626 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `apply_agg/2`
+
+Below is a complete implementation of `ShardedTSDB`, a horizontally sharded
+time-series storage engine, with the body of one private helper removed.
+
+Implement the private `apply_agg/2` function in `ShardedTSDB.Shard`. It takes an
+aggregation name and a non-empty list of numeric values collected from a single
+window, and reduces that list to a single aggregated value. It must handle the
+three supported aggregations:
+
+- `:sum` — the sum of all values in the list.
+- `:avg` — the arithmetic mean, i.e. the sum of the values divided by how many
+  there are (a float, since it uses floating-point division).
+- `:max` — the largest value in the list.
+
+The caller (`aggregate/5`) only ever invokes it with a window that has at least
+one point, so it does not need to handle the empty list. Prefer separate function
+clauses that pattern-match on the aggregation atom rather than a `case` inside a
+single clause, and keep each clause a one-liner using the `Enum` module.
+
+```elixir
+defmodule ShardedTSDB do
+  @moduledoc """
+  A horizontally sharded time-series storage engine.
+
+  Starting the engine (`start_link/1`) spins up one coordinator `GenServer`
+  that owns a fixed set of shard `GenServer` workers. Each series lives on
+  exactly one shard, chosen by hashing its identity. Writes route to the
+  owning shard; reads fan out across every shard and are merged by the
+  coordinator.
+
+  A series is identified by `{metric_name, sorted_labels}` where
+  `sorted_labels = Enum.sort(Map.to_list(labels))`, so label ordering never
+  produces duplicate series. The owning shard index is
+  `:erlang.phash2({metric_name, sorted_labels}, shard_count)`.
+
+  All storage lives in the shard processes' `GenServer` state (no ETS). Each
+  shard keeps a map of `series_key => %{chunk_start => sorted_points}` where
+  `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms` and
+  points within a chunk are sorted ascending by timestamp.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type labels :: %{optional(term()) => term()}
+  @type point :: {integer(), number()}
+  @type series_result :: {labels(), [point()]}
+
+  # ── Public API ────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the coordinator and its shard workers.
+
+  Options:
+
+    * `:shards` — number of shard workers (default `4`).
+    * `:chunk_duration_ms` — chunk width in ms (default `60_000`).
+    * `:clock` — zero-arity fn returning current time in ms
+      (default `fn -> System.monotonic_time(:millisecond) end`).
+    * `:name` — optional registration name for the coordinator.
+    * `:retention_ms` — how long to keep chunks (default `3_600_000`).
+    * `:cleanup_interval_ms` — periodic cleanup interval, or `:infinity`
+      to disable (default `60_000`).
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    name = Keyword.get(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Inserts a single `{timestamp, value}` point into the series identified by
+  `metric_name` and `labels`, routing it to the owning shard.
+  """
+  @spec insert(server(), term(), labels(), integer(), number()) :: :ok
+  def insert(server, metric_name, labels, timestamp, value) do
+    GenServer.call(server, {:insert, metric_name, labels, timestamp, value})
+  end
+
+  @doc """
+  Fans out across all shards and returns the matching series.
+
+  `label_matchers` is a map; a series matches when it contains all of the
+  given key-value pairs (it may contain more). `%{}` matches every series
+  with the metric name. Each result is `{labels, points}` where `points` is
+  the list of `{timestamp, value}` in `start_ts..end_ts` inclusive, sorted
+  ascending. Series with no in-range point are omitted.
+  """
+  @spec query(server(), term(), labels(), {integer(), integer()}) ::
+          [series_result()]
+  def query(server, metric_name, label_matchers, {start_ts, end_ts}) do
+    GenServer.call(server, {:query, metric_name, label_matchers, {start_ts, end_ts}})
+  end
+
+  @doc """
+  Like `query/4`, but aggregates each matched series into fixed windows.
+
+  The range `[start_ts, end_ts)` is split into non-overlapping windows of
+  width `step_ms`. For each window, the points whose timestamps fall in
+  `[window_start, window_start + step_ms)` are reduced with `aggregation`
+  (`:sum`, `:avg` or `:max`); empty windows are omitted. Each result is
+  `{labels, agg_points}` with `agg_points` a list of
+  `{window_start, aggregated_value}` sorted by window start. Series whose
+  windows are all empty are dropped.
+  """
+  @spec query_agg(
+          server(),
+          term(),
+          labels(),
+          {integer(), integer()},
+          :sum | :avg | :max,
+          pos_integer()
+        ) :: [series_result()]
+  def query_agg(server, metric_name, label_matchers, {start_ts, end_ts}, aggregation, step_ms) do
+    msg = {:query_agg, metric_name, label_matchers, {start_ts, end_ts}, aggregation, step_ms}
+    GenServer.call(server, msg)
+  end
+
+  @doc """
+  Returns the configured number of shards.
+  """
+  @spec shard_count(server()) :: non_neg_integer()
+  def shard_count(server) do
+    GenServer.call(server, :shard_count)
+  end
+
+  @doc """
+  Returns the 0-based shard index that owns the given series.
+  """
+  @spec shard_of(server(), term(), labels()) :: non_neg_integer()
+  def shard_of(server, metric_name, labels) do
+    GenServer.call(server, {:shard_of, metric_name, labels})
+  end
+
+  @doc """
+  Returns the total number of distinct series stored across all shards.
+  """
+  @spec series_count(server()) :: non_neg_integer()
+  def series_count(server) do
+    GenServer.call(server, :series_count)
+  end
+
+  @doc """
+  Synchronously runs cleanup across all shards and returns `:ok`.
+
+  Removes any chunk whose `chunk_start + chunk_duration_ms` is less than or
+  equal to `now - retention_ms` (with `now` from `:clock`) and drops any
+  series left with zero chunks.
+  """
+  @spec cleanup(server()) :: :ok
+  def cleanup(server) do
+    GenServer.call(server, :cleanup)
+  end
+
+  # ── Coordinator callbacks ─────────────────────────────────────────────
+
+  @impl true
+  def init(opts) do
+    count = Keyword.get(opts, :shards, 4)
+    chunk = Keyword.get(opts, :chunk_duration_ms, 60_000)
+    clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
+    retention = Keyword.get(opts, :retention_ms, 3_600_000)
+    interval = Keyword.get(opts, :cleanup_interval_ms, 60_000)
+
+    shards =
+      for _ <- 1..count do
+        {:ok, pid} = ShardedTSDB.Shard.start_link(chunk)
+        pid
+      end
+
+    state = %{
+      shards: List.to_tuple(shards),
+      shard_count: count,
+      chunk_duration_ms: chunk,
+      clock: clock,
+      retention_ms: retention,
+      cleanup_interval_ms: interval
+    }
+
+    schedule_cleanup(state)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:insert, metric, labels, ts, value}, _from, state) do
+    key = series_key(metric, labels)
+    idx = :erlang.phash2(key, state.shard_count)
+    pid = elem(state.shards, idx)
+    :ok = GenServer.call(pid, {:insert, key, ts, value})
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:query, metric, matchers, range}, _from, state) do
+    results =
+      state.shards
+      |> Tuple.to_list()
+      |> Enum.flat_map(fn pid -> GenServer.call(pid, {:query, metric, matchers, range}) end)
+
+    {:reply, results, state}
+  end
+
+  def handle_call({:query_agg, metric, matchers, range, agg, step}, _from, state) do
+    msg = {:query_agg, metric, matchers, range, agg, step}
+
+    results =
+      state.shards
+      |> Tuple.to_list()
+      |> Enum.flat_map(fn pid -> GenServer.call(pid, msg) end)
+
+    {:reply, results, state}
+  end
+
+  def handle_call(:shard_count, _from (truncated)
+13:23:24.627 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10649, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10649, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10649, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10649, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 5286, "type" => "message"}], "output_tokens" => 5286, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:23:24.644 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_626_004_sharded_concurrent_time_series_db_04/626_004_sharded_concurrent_time_series_db_04 solution.ex
+13:23:25.480 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":63,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"626_004_sharded_concurrent_time_series_db_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_626_004_sharded_concurrent_time_series_db_04/626_004_sharded_concurrent_time_series_db_04/solution.ex","task":"626_004_sharded_concurrent_time_series_db_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":34,"tests_ran":true,"tests_skipped":0,"tests_total":34,"timestamp":"2026-07-12T11:23:25.454670Z"}
+13:23:25.480 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_626_004_sharded_concurrent_time_series_db_04/626_004_sharded_concurrent_time_series_db_04 .gen_staging/fim_626_004_sharded_concurrent_time_series_db_04/mutant.ex
+13:23:26.375 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":11,"lines_over_98":0,"max_line_length":29,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"parent":"626_004_sharded_concurrent_time_series_db_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.7,"mode":"fim","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 7/34 failed"],"tests":0.79},"shape":"fim","solution_file":".gen_staging/fim_626_004_sharded_concurrent_time_series_db_04/mutant.ex","task":"626_004_sharded_concurrent_time_series_db_04","test_failures":[{"message":"{:EXIT, #PID<0.375.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB.Shard, :apply_agg, 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 352, error_info: %{module: Exception}]}, {ShardedTSDB.Shard, :\"-aggregate/5-fun-1-\", 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {Enum, :\"-map/2-fun-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1733]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {Enum, :map, 2, [file: ~c\"lib/enum.ex\", line: 2634]}, {ShardedTSDB.Shard, :aggregate, 5, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {ShardedTSDB.Shard, :\"-handle_call/3-fun-2-\", 8, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 297]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {ShardedTSDB.Shard, :handle_call, 3, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 294]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query_agg :sum computes the sum per window"},{"message":"{:EXIT, #PID<0.383.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB.Shard, :apply_agg, 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 356, error_info: %{module: Exception}]}, {ShardedTSDB.Shard, :\"-aggregate/5-fun-1-\", 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {Enum, :\"-map/2-fun-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1733]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {Enum, :map, 2, [file: ~c\"lib/enum.ex\", line: 2634]}, {ShardedTSDB.Shard, :aggregate, 5, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {ShardedTSDB.Shard, :\"-handle_call/3-fun-2-\", 8, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 297]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {ShardedTSDB.Shard, :handle_call, 3, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 294]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query_agg :avg computes the mean per window"},{"message":"{:EXIT, #PID<0.391.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB.Shard, :apply_agg, 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 356, error_info: %{module: Exception}]}, {ShardedTSDB.Shard, :\"-aggregate/5-fun-1-\", 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {Enum, :\"-map/2-fun-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1733]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {Enum, :map, 2, [file: ~c\"lib/enum.ex\", line: 2634]}, {ShardedTSDB.Shard, :aggregate, 5, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {ShardedTSDB.Shard, :\"-handle_call/3-fun-2-\", 8, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 297]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {ShardedTSDB.Shard, :handle_call, 3, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 294]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query_agg :avg produces a mean per window across windows"},{"message":"{:EXIT, #PID<0.399.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB.Shard, :apply_agg, 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 360, error_info: %{module: Exception}]}, {ShardedTSDB.Shard, :\"-aggregate/5-fun-1-\", 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {Enum, :\"-map/2-fun-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1733]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {Enum, :map, 2, [file: ~c\"lib/enum.ex\", line: 2634]}, {ShardedTSDB.Shard, :aggregate, 5, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {ShardedTSDB.Shard, :\"-handle_call/3-fun-2-\", 8, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 297]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {ShardedTSDB.Shard, :handle_call, 3, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 294]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query_agg :max returns the maximum per window"},{"message":"{:EXIT, #PID<0.407.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB.Shard, :apply_agg, 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 360, error_info: %{module: Exception}]}, {ShardedTSDB.Shard, :\"-aggregate/5-fun-1-\", 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {Enum, :\"-map/2-fun-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1733]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {Enum, :map, 2, [file: ~c\"lib/enum.ex\", line: 2634]}, {ShardedTSDB.Shard, :aggregate, 5, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {ShardedTSDB.Shard, :\"-handle_call/3-fun-2-\", 8, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 297]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {ShardedTSDB.Shard, :handle_call, 3, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 294]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query_agg :max reports the maximum per window across windows"},{"message":"{:EXIT, #PID<0.415.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB.Shard, :apply_agg, 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 352, error_info: %{module: Exception}]}, {ShardedTSDB.Shard, :\"-aggregate/5-fun-1-\", 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {Enum, :\"-map/2-fun-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1733]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {Enum, :map, 2, [file: ~c\"lib/enum.ex\", line: 2634]}, {ShardedTSDB.Shard, :aggregate, 5, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {ShardedTSDB.Shard, :\"-handle_call/3-fun-2-\", 8, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 297]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {ShardedTSDB.Shard, :handle_call, 3, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 294]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ShardedTSDBTest","test":"test query_agg treats the end of the range as exclusive"},{"message":"{:EXIT, #PID<0.431.0>}: {%RuntimeError{message: \"MUTATION\"}, [{ShardedTSDB.Shard, :apply_agg, 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 352, error_info: %{module: Exception}]}, {ShardedTSDB.Shard, :\"-aggregate/5-fun-1-\", 2, [file: ~c\"/tmp/evalfim_494620_2631.ex\", line: 347]}, {Enum, :\"-map/2-fun-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1733]}, {:maps, :fold_1, 4, [file: ~c\"maps.erl\", line: 894]}, {Enum, :map, 2, [file: ~c\ (truncated)
+13:23:26.375 [debug] fim mutation gate: killed
+13:23:26.376 [info] promoted 626_004_sharded_concurrent_time_series_db_04 -> tasks/626_004_sharded_concurrent_time_series_db_04

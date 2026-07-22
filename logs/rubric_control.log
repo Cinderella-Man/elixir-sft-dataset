@@ -1,0 +1,54 @@
+
+01:22:45.859 [warning] transient error (error_max_turns ) on rubric_judge (prefix_control:control_095_003) — retry 1/5 after 2000ms
+
+01:23:19.089 [warning] transient error (error_max_turns ) on rubric_judge (prefix_control:control_095_003) — retry 2/5 after 4000ms
+
+01:23:37.813 [warning] transient error (error_max_turns ) on rubric_judge (prefix_control:control_095_003) — retry 3/5 after 8000ms
+
+01:23:59.634 [warning] transient error (error_max_turns ) on rubric_judge (prefix_control:control_095_003) — retry 4/5 after 16000ms
+
+01:24:41.045 [warning] transient error (error_max_turns ) on rubric_judge (prefix_control:control_095_003) — retry 5/5 after 32000ms
+{
+  "task": "prefix_control:control_095_003",
+  "era": "control",
+  "judges": [
+    {
+      "issues": [
+        {
+          "axis": "logical_correctness",
+          "evidence": "base = div(amount, n)\n    remainder = rem(amount, n)\n\n    Enum.map(0..(n - 1), fn i ->\n      cents = if i < remainder, do: base + 1, else: base",
+          "file": "solution.ex",
+          "severity": "medium",
+          "why": "For a negative amount `rem/2` returns a negative remainder (e.g. amount -5, n 3: base -1, remainder -2), so `i < remainder` is never true and all shares stay -1, summing to -3 instead of -5 — directly violating the prompt's guarantee that shares 'always sum back to the original amount' even though the struct explicitly says amount 'may be negative'."
+        },
+        {
+          "axis": "edge_case_consideration",
+          "evidence": "for amount <- [0, 1, 7, 100, 101, 999, 12_345], n <- 1..9 do",
+          "file": "test_harness.exs",
+          "severity": "medium",
+          "why": "The sum-back invariant is only pinned for non-negative amounts, so the negative-amount split defect above passes the harness unnoticed, leaving a boundary the prompt implies ('may be negative') unverified."
+        }
+      ],
+      "model": "opus",
+      "scores": {
+        "edge_case_consideration": 3,
+        "logical_correctness": 3,
+        "requirement_conformance": 5
+      }
+    },
+    {
+      "error": "{:transient, \"error_max_turns \"}",
+      "model": "sonnet"
+    }
+  ],
+  "prompt_sha": "e14bd0095a873a18c7d48014d2fd802fef048ec0b783bf519451a221694c2566",
+  "solution_sha": "ac2bb18d168e1bfc082f2f1d11a395a14758e53161fcfbf2d01d729702ae0560",
+  "harness_sha": "56fd4ee168b013280d890ff4128205c63e91ecab4ae03da01154e97c5deb0d1c",
+  "rubric_sha": "e966b856a132493f2e695fac7557dfcf97a8325132e94d9de63ab68cfdeb4213",
+  "agreement": {
+    "edge_case_consideration": null,
+    "logical_correctness": null,
+    "requirement_conformance": null
+  },
+  "ts": "2026-07-14T23:25:34.645104Z"
+}

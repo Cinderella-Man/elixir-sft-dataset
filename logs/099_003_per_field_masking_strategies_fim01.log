@@ -1,0 +1,406 @@
+08:13:57.869 [info] FIM 099_003_per_field_masking_strategies_fim01 → 099_003_per_field_masking_strategies_02: target mask_cc/1
+08:13:57.870 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+08:13:57.870 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `mask_cc/1`.
+
+Generate a prompt describing how to implement `mask_cc/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `mask_cc/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `mask_cc/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `mask_cc/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `FieldMasker` that scrubs sensitive data from log-bound maps, keyword lists, and strings, where **each sensitive key is masked according to its own strategy** rather than every sensitive value being blanked identically.
+
+I need these functions in the public API:
+
+- `FieldMasker.new(policies)` — creates a masker configuration. `policies` is either a map or a keyword list mapping a key (atom and/or string) to a masking strategy. Comparison at mask time must be case-insensitive and work for both atom and string keys. Return an opaque struct or map that can be passed to the other functions. The valid strategies are:
+  - `:redact` — replace the value with the string `"[MASKED]"` regardless of its type.
+  - `:last4` — for a string value, keep the last 4 characters and replace every earlier character with a single `*` (so `"4111111111111234"` → `"************1234"`); if the string has 4 or fewer characters, replace every character with a `*` (so `"ab"` → `"**"` and `""` → `""`); if the value is **not** a string, replace it with `"[MASKED]"`.
+  - `:hash` — replace the value with `"sha256:"` followed by the lowercase hex SHA-256 digest of the value. Use the value itself when it is a string; otherwise use its `inspect/1` representation. For example the masked value for `"hunter2"` is `"sha256:"` concatenated with `Base.encode16(:crypto.hash(:sha256, "hunter2"), case: :lower)`.
+
+- `FieldMasker.mask(masker, data)` — accepts a map, a keyword list, a plain list, or any other term, and returns the same shape with sensitive data scrubbed.
+  - Maps and keyword lists are walked recursively. If a key appears in `policies`, its value is replaced by applying that key's strategy (as described above). Non-policy keys are preserved and their values continue to be walked.
+  - Plain lists (including lists of maps or keyword lists) are walked element-by-element.
+  - Every **string value** encountered under a key that is **not** in `policies` is passed through the same pattern scrubbing as `mask_string/2` (see below), so stray PII in free text is still caught. A value transformed by a strategy is **not** additionally pattern-scanned.
+  - Structs, numbers, atoms, and other terms with no matching policy key are returned unchanged.
+
+- `FieldMasker.mask_string(masker, string)` — scans a raw string and masks these three patterns:
+  - **Credit card numbers**: any sequence of 13–19 digits (optionally separated by single spaces or hyphens) — replace every digit except the last 4 with `*`, keeping separators intact. E.g. `"4111-1111-1111-1234"` → `"****-****-****-1234"`.
+  - **Email addresses**: keep only the first character of the local part and replace the rest with `***`. E.g. `"john.doe@example.com"` → `"j***@example.com"`.
+  - **SSN patterns**: sequences matching `\d{3}-\d{2}-\d{4}` — replace with `"***-**-****"`.
+
+Give me the complete module in a single file. Use only the Elixir standard library and built-in (`:crypto`, regex) support — no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule FieldMasker do
+  @moduledoc """
+  Scrubs sensitive data from log-bound maps, keyword lists, and strings.
+
+  Unlike simple blanket redaction, `FieldMasker` masks **each sensitive key
+  according to its own strategy**. A masker is created with `new/1` from a
+  set of policies mapping keys (atoms and/or strings, matched
+  case-insensitively) to one of the following strategies:
+
+    * `:redact` — replace the value with `"[MASKED]"`.
+    * `:last4`  — keep the last 4 characters of a string, star out the rest.
+    * `:hash`   — replace the value with its lowercase SHA-256 hex digest,
+      prefixed with `"sha256:"`.
+
+  In addition to key-based masking, any string value found under a
+  non-sensitive key is passed through pattern scrubbing (see `mask_string/2`)
+  so that stray credit-card numbers, e-mail addresses, and SSNs in free text
+  are still caught.
+
+  ## Examples
+
+      iex> masker = FieldMasker.new(%{password: :redact, card: :last4})
+      iex> FieldMasker.mask(masker, %{password: "hunter2", card: "4111111111111234"})
+      %{password: "[MASKED]", card: "************1234"}
+
+  """
+
+  @enforce_keys [:policies]
+  defstruct policies: %{}
+
+  @typedoc "A masking strategy applied to a sensitive value."
+  @type strategy :: :redact | :last4 | :hash
+
+  @typedoc "An opaque masker configuration."
+  @type t :: %__MODULE__{policies: %{optional(String.t()) => strategy()}}
+
+  @email_regex ~r/([A-Za-z0-9._%+\-]+)@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})/
+  @cc_regex ~r/\b\d(?:[ \-]?\d){12,18}\b/
+  @ssn_regex ~r/\b\d{3}-\d{2}-\d{4}\b/
+
+  @doc """
+  Builds an opaque masker from `policies`.
+
+  `policies` is a map or keyword list mapping a key (atom and/or string) to a
+  masking strategy (`:redact`, `:last4`, or `:hash`). Keys are normalized so
+  that comparison at mask time is case-insensitive for both atom and string
+  keys.
+
+  Raises `ArgumentError` for unsupported key types or unknown strategies.
+  """
+  @spec new(map() | keyword()) :: t()
+  def new(policies) do
+    normalized =
+      Enum.into(policies, %{}, fn {key, strategy} ->
+        {normalize_policy_key(key), validate_strategy(strategy)}
+      end)
+
+    %__MODULE__{policies: normalized}
+  end
+
+  @doc """
+  Masks `data`, returning the same shape with sensitive data scrubbed.
+
+  Maps and keyword lists are walked recursively; a value whose key matches a
+  policy is replaced using that key's strategy, while other values continue to
+  be walked. Plain lists are walked element-by-element. String values under
+  non-policy keys are pattern-scrubbed via `mask_string/2`. Structs, numbers,
+  atoms, and other terms without a matching policy key are returned unchanged.
+  """
+  @spec mask(t(), term()) :: term()
+  def mask(%__MODULE__{} = masker, data), do: do_mask(masker, data)
+
+  @doc """
+  Scrubs credit-card numbers, e-mail addresses, and SSN patterns from `string`.
+
+  ## Examples
+
+      iex> masker = FieldMasker.new(%{})
+      iex> FieldMasker.mask_string(masker, "call 4111-1111-1111-1234")
+      "call ****-****-****-1234"
+
+  """
+  @spec mask_string(t(), String.t()) :: String.t()
+  def mask_string(%__MODULE__{}, string) when is_binary(string) do
+    string
+    |> mask_emails()
+    |> mask_credit_cards()
+    |> mask_ssns()
+  end
+
+  # -- Recursive walking -----------------------------------------------------
+
+  @spec do_mask(t(), term()) :: term()
+  defp do_mask(_masker, %_{} = value), do: value
+
+  defp do_mask(masker, value) when is_map(value) do
+    Map.new(value, fn {key, val} -> mask_pair(masker, key, val) end)
+  end
+
+  defp do_mask(masker, value) when is_list(value) do
+    if value != [] and Keyword.keyword?(value) do
+      Enum.map(value, fn
+        {key, val} -> mask_pair(masker, key, val)
+        other -> do_mask(masker, other)
+      end)
+    else
+      Enum.map(value, &do_mask(masker, &1))
+    end
+  end
+
+  defp do_mask(masker, value) when is_binary(value) do
+    mask_string(masker, value)
+  end
+
+  defp do_mask(_ (truncated)
+08:14:35.790 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `mask_cc/1` function. It receives a single credit-card `match` — a string of 13–19 digits that may be separated by single spaces or hyphens (as captured by the credit-card regex). It must star out every digit except the last 4, while leaving any separators (spaces or hyphens) exactly where they are. Concretely: split the match into graphemes, count how many of them are digits (`total`), then walk the graphemes left to right tracking the index of each digit seen so far. Replace a digit with `"*"` when its digit-index is less than `total - 4`, otherwise keep the digit as-is; non-digit characters are always kept unchanged. Finally join the resulting characters back into a string. For example `"4111-1111-1111-1234"` → `"****-****-****-1234"`. Use the existing `digit?/1` helper to test each grapheme.
+
+```elixir
+defmodule FieldMasker do
+  @moduledoc """
+  Scrubs sensitive data from log-bound maps, keyword lists, and strings.
+
+  Unlike simple blanket redaction, `FieldMasker` masks **each sensitive key
+  according to its own strategy**. A masker is created with `new/1` from a
+  set of policies mapping keys (atoms and/or strings, matched
+  case-insensitively) to one of the following strategies:
+
+    * `:redact` — replace the value with `"[MASKED]"`.
+    * `:last4`  — keep the last 4 characters of a string, star out the rest.
+    * `:hash`   — replace the value with its lowercase SHA-256 hex digest,
+      prefixed with `"sha256:"`.
+
+  In addition to key-based masking, any string value found under a
+  non-sensitive key is passed through pattern scrubbing (see `mask_string/2`)
+  so that stray credit-card numbers, e-mail addresses, and SSNs in free text
+  are still caught.
+
+  ## Examples
+
+      iex> masker = FieldMasker.new(%{password: :redact, card: :last4})
+      iex> FieldMasker.mask(masker, %{password: "hunter2", card: "4111111111111234"})
+      %{password: "[MASKED]", card: "************1234"}
+
+  """
+
+  @enforce_keys [:policies]
+  defstruct policies: %{}
+
+  @typedoc "A masking strategy applied to a sensitive value."
+  @type strategy :: :redact | :last4 | :hash
+
+  @typedoc "An opaque masker configuration."
+  @type t :: %__MODULE__{policies: %{optional(String.t()) => strategy()}}
+
+  @email_regex ~r/([A-Za-z0-9._%+\-]+)@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})/
+  @cc_regex ~r/\b\d(?:[ \-]?\d){12,18}\b/
+  @ssn_regex ~r/\b\d{3}-\d{2}-\d{4}\b/
+
+  @doc """
+  Builds an opaque masker from `policies`.
+
+  `policies` is a map or keyword list mapping a key (atom and/or string) to a
+  masking strategy (`:redact`, `:last4`, or `:hash`). Keys are normalized so
+  that comparison at mask time is case-insensitive for both atom and string
+  keys.
+
+  Raises `ArgumentError` for unsupported key types or unknown strategies.
+  """
+  @spec new(map() | keyword()) :: t()
+  def new(policies) do
+    normalized =
+      Enum.into(policies, %{}, fn {key, strategy} ->
+        {normalize_policy_key(key), validate_strategy(strategy)}
+      end)
+
+    %__MODULE__{policies: normalized}
+  end
+
+  @doc """
+  Masks `data`, returning the same shape with sensitive data scrubbed.
+
+  Maps and keyword lists are walked recursively; a value whose key matches a
+  policy is replaced using that key's strategy, while other values continue to
+  be walked. Plain lists are walked element-by-element. String values under
+  non-policy keys are pattern-scrubbed via `mask_string/2`. Structs, numbers,
+  atoms, and other terms without a matching policy key are returned unchanged.
+  """
+  @spec mask(t(), term()) :: term()
+  def mask(%__MODULE__{} = masker, data), do: do_mask(masker, data)
+
+  @doc """
+  Scrubs credit-card numbers, e-mail addresses, and SSN patterns from `string`.
+
+  ## Examples
+
+      iex> masker = FieldMasker.new(%{})
+      iex> FieldMasker.mask_string(masker, "call 4111-1111-1111-1234")
+      "call ****-****-****-1234"
+
+  """
+  @spec mask_string(t(), String.t()) :: String.t()
+  def mask_string(%__MODULE__{}, string) when is_binary(string) do
+    string
+    |> mask_emails()
+    |> mask_credit_cards()
+    |> mask_ssns()
+  end
+
+  # -- Recursive walking -----------------------------------------------------
+
+  @spec do_mask(t(), term()) :: term()
+  defp do_mask(_masker, %_{} = value), do: value
+
+  defp do_mask(masker, value) when is_map(value) do
+    Map.new(value, fn {key, val} -> mask_pair(masker, key, val) end)
+  end
+
+  defp do_mask(masker, value) when is_list(value) do
+    if value != [] and Keyword.keyword?(value) do
+      Enum.map(value, fn
+        {key, val} -> mask_pair(masker, key, val)
+        other -> do_mask(masker, other)
+      end)
+    else
+      Enum.map(value, &do_mask(masker, &1))
+    end
+  end
+
+  defp do_mask(masker, value) when is_binary(value) do
+    mask_string(masker, value)
+  end
+
+  defp do_mask(_masker, value), do: value
+
+  @spec mask_pair(t(), term(), term()) :: {term(), term()}
+  defp mask_pair(masker, key, value) do
+    case lookup(masker, key) do
+      {:ok, strategy} -> {key, apply_strategy(strategy, value)}
+      :error -> {key, do_mask(masker, value)}
+    end
+  end
+
+  # -- Strategy application --------------------------------------------------
+
+  @spec apply_strategy(strategy(), term()) :: term()
+  defp apply_strategy(:redact, _value), do: "[MASKED]"
+  defp apply_strategy(:last4, value), do: last4(value)
+  defp apply_strategy(:hash, value), do: hash(value)
+
+  @spec last4(term()) :: String.t()
+  defp last4(value) when is_binary(value) do
+    len = String.length(value)
+
+    if len <= 4 do
+      String.duplicate("*", len)
+    else
+      String.duplicate("*", len - 4) <> String.slice(value, len - 4, 4)
+    end
+  end
+
+  defp last4(_value), do: "[MASKED]"
+
+  @spec hash(term()) :: String.t()
+  defp hash(value) do
+    data = if is_binary(value), do: value, else: inspect(value)
+    digest = Base.encode16(:crypto.hash(:sha256, data), case: :lower)
+    "sha256:" <> digest
+  end
+
+  # -- Pattern scrubbing -----------------------------------------------------
+
+  @spec mask_emails(String.t()) :: String.t()
+  defp mask_emails(str) do
+    Regex.replace(@email_regex, str, fn _full, local, domain ->
+      String.first(local) <> "***@" <> domain
+    end)
+  end
+
+  @spec mask_credit_cards(String.t()) :: String.t()
+  defp mask_credit_cards(str) do
+    Regex.replace(@cc_regex, str, fn match -> mask_cc(match) end)
+  end
+
+  @spec mask_ssns(String.t()) :: String.t()
+  defp mask_ssns(str) do
+    Regex.replace(@ssn_regex, str, "***-**-****")
+  end
+
+  @spec mask_cc(String.t()) :: String.t()
+  defp mask_cc(match) do
+    # TODO
+  end
+
+  @spec digit?(String.t()) :: boolean()
+  defp digit?(<<c>>) when c >= ?0 and c <= ?9, do: true
+  defp digit?(_ch), do: false
+
+  # -- Key handling ----------------------------------------------------------
+
+  @spec lookup(t(), term()) :: {:ok, strategy()} | :error
+  defp lookup(%__MODULE__{policies: policies}, key) do
+    case norm_key(key) do
+      {:ok, normalized} -> Map.fetch(policies, normalized)
+      :error -> :error
+    end
+  end
+
+  @spec norm_key(term()) :: {:ok, String.t()} | :error
+  defp norm_key(key) when is_atom(key) do
+    {:ok, key |> Atom.to_string() |> String.downcase()}
+  end
+
+  defp norm_key(key) when is_binary(key), do: {:ok, String.downcase(key)}
+  defp norm_key(_key), do: :error
+
+  @spec normalize_policy_key(term()) :: String.t()
+  defp normalize_policy_key(key) when is_atom(key) do
+    key |> Atom.to_string() |> String.downcase()
+  end
+
+  defp normalize_policy_key(key) when is_binary(key), do: String.downcase(key)
+
+  defp normalize_policy_key(key) do
+    raise ArgumentError, "policy key must be an atom or string, got: #{inspect(key)}"
+  end
+
+  @spec validate_strategy(term()) :: strategy()
+  defp validate_strategy(strategy) when strategy in [:redact, :last4, :hash] do
+    strategy
+  end
+
+  defp validate_strategy(strategy) do
+    raise ArgumentError, "invalid masking strategy: #{inspect(strategy)}"
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  @spec mask_cc(String.t()) :: String.t()
+  defp mask_cc(match) do
+    graphemes = String.graphemes(match)
+    total = Enu (truncated)
+08:14:35.790 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5308, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5308, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5308, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5308, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 3721, "type" => "message"}], "output_tokens" => 3721, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:14:35.810 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_099_003_per_field_masking_strategies_02/099_003_per_field_masking_strategies_02 solution.ex
+08:14:36.486 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":17,"lines_over_98":0,"max_line_length":56,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"099_003_per_field_masking_strategies_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_099_003_per_field_masking_strategies_02/099_003_per_field_masking_strategies_02/solution.ex","task":"099_003_per_field_masking_strategies_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-10T06:14:36.462875Z"}
+08:14:36.487 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_099_003_per_field_masking_strategies_02/099_003_per_field_masking_strategies_02 .gen_staging/fim_099_003_per_field_masking_strategies_02/mutant.ex
+08:14:37.142 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":39,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"099_003_per_field_masking_strategies_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 1/17 failed"],"tests":0.94},"shape":"fim","solution_file":".gen_staging/fim_099_003_per_field_masking_strategies_02/mutant.ex","task":"099_003_per_field_masking_strategies_02","test_failures":[{"message":"MUTATION","module":"FieldMaskerTest","test":"test mask_string masks a dashed credit card"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-10T06:14:37.119176Z"}
+08:14:37.142 [debug] fim mutation gate: killed
+08:14:37.144 [info] promoted 099_003_per_field_masking_strategies_02 -> tasks/099_003_per_field_masking_strategies_02

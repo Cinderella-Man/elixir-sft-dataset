@@ -1,0 +1,314 @@
+Blind-solve screen: 5 task(s) to screen (294 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/5] 007_004_cusumanomaly_01 ... RED (test reset on unknown stream returns :ok without creating it: function CusumAnomaly.start_link/0 is undefined or private)
+[2/5] 071_001_factory_module_for_test_data_generation_01 ... GREEN
+[3/5] 073_001_database_cleaner_for_integration_tests_01 ... RED (test transaction: start/2 begins a transaction: function DBCleanerTest.FakeRepo.get_dynamic_repo/0 is undefined or private)
+[4/5] 074_001_custom_exunit_assertion_helpers_01 ... GREEN
+[5/5] 086_001_shopping_cart_with_price_calculations_01 ... RED (test add_item adds a new product: no match of right hand side value:
+
+    %Cart{
+      tax_rate: 0.0,
+      items: %{"prod:1" => %{product_id: "prod:1", quantity: 2, unit_price: 5.0}}
+    }
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 5   green: 2   RED: 3   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 007_004_cusumanomaly_01: test reset on unknown stream returns :ok without creating it: function CusumAnomaly.start_link/0 is undefined or private
+    - 073_001_database_cleaner_for_integration_tests_01: test transaction: start/2 begins a transaction: function DBCleanerTest.FakeRepo.get_dynamic_repo/0 is undefined or private
+    - 086_001_shopping_cart_with_price_calculations_01: test add_item adds a new product: no match of right hand side value:
+
+    %Cart{
+      tax_rate: 0.0,
+      items: %{"prod:1" => %{product_id: "prod:1", quantity: 2, unit_price: 5.0}}
+    }
+
+======== rescreen 020_002_content_addressable_deduplicating_upload_01
+keep_land: 020_002_content_addressable_deduplicating_upload_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — compile: .gen_staging/keep_land_020_002_content_addressable_deduplicating_upload_01/solution.ex: cannot compile file (errors have been logged)
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+
+20:58:42.794 [warning] transient error (error_max_turns ) on keep_land_judge (020_002_content_addressable_deduplicating_upload_01) — retry 1/5 after 2000ms
+
+20:58:56.842 [warning] transient error (error_max_turns ) on keep_land_judge (020_002_content_addressable_deduplicating_upload_01) — retry 2/5 after 4000ms
+
+20:59:09.051 [warning] transient error (error_max_turns ) on keep_land_judge (020_002_content_addressable_deduplicating_upload_01) — retry 3/5 after 8000ms
+
+20:59:27.748 [warning] transient error (error_max_turns ) on keep_land_judge (020_002_content_addressable_deduplicating_upload_01) — retry 4/5 after 16000ms
+
+20:59:55.558 [warning] transient error (error_max_turns ) on keep_land_judge (020_002_content_addressable_deduplicating_upload_01) — retry 5/5 after 32000ms
+  ERROR — judge call failed: {:transient, "error_max_turns "}
+======== rescreen 020_003_per_tenant_quota_enforced_upload_01
+keep_land: 020_003_per_tenant_quota_enforced_upload_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test quota is enforced per-account and independent: failed to start child with the spec {FileUpload.Store, [name: :q16, quota_bytes: 16]}.
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "`start_link(opts)` accepts `:name` and `:quota_bytes` (the per-account budget; default `10_000_000`)."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/020_003_per_tenant_quota_enforced_upload_01
+  To land: mix run scripts/keep_land.exs -- --approve 020_003_per_tenant_quota_enforced_upload_01
+
+======== rescreen 022_002_role_scoped_nested_membership_endpoint_01
+keep_land: 022_002_role_scoped_nested_membership_endpoint_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test GET returns 200 with roles for a member: :exit: {:noproc, {GenServer, :call, [nil, {:get_user_by_token, "token-alice"}, 5000]}}
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "**`TeamRouter`** — a `Plug.Router` accepting a `:store` option, plugging `AuthPlug` before matching. ... **`AuthPlug`** — reads the `authorization` header, expects `Bearer <token>`, looks the user up via `TeamStore.get_user_by_token/2`, and assigns `:current_user`. ... Accepts a `:store` option at init; `AuthPlug.init/1` must return the given options unchanged (so the same value can be passed straight to `call/2`)."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/022_002_role_scoped_nested_membership_endpoint_01
+  To land: mix run scripts/keep_land.exs -- --approve 022_002_role_scoped_nested_membership_endpoint_01
+
+======== rescreen 025_002_cursor_resumable_gap_free_long_poll_01
+keep_land: 025_002_cursor_resumable_gap_free_long_poll_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test buffer retains only the most recent :buffer_size events: failed to start child with the spec {Notifications, [name: :notifications_5894, buffer_size: 3]}.
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "`Notifications.start_link(opts)` — starts the backing process. Accept a `:name` option for registration (default `Notifications`) and a `:buffer_size` option (max retained events per user, default `100`)."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/025_002_cursor_resumable_gap_free_long_poll_01
+  To land: mix run scripts/keep_land.exs -- --approve 025_002_cursor_resumable_gap_free_long_poll_01
+
+======== rescreen 045_003_versioned_feature_flag_store_with_rollback_01
+keep_land: 045_003_versioned_feature_flag_store_with_rollback_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test enable then read at version 1: FeatureFlags server is not running
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+
+21:05:09.032 [warning] usage limit / out of credits on keep_land_judge (045_003_versioned_feature_flag_store_with_rollback_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+
+21:20:41.813 [warning] transient error (error_max_turns ) on keep_land_judge (045_003_versioned_feature_flag_store_with_rollback_01) — retry 1/5 after 2000ms
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "`FeatureFlags.start_link(opts)` to start the process. It should accept an optional `:table_name` for the primary ETS table (default `:feature_flags`), and an optional `:name` for process registration (pass `nil` to skip registration). ... All state-changing operations (`enable`, `disable`, `enable_for_percentage`, `rollback`) must go through the GenServer via `call` to serialise updates and keep version numbers consistent."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/045_003_versioned_feature_flag_store_with_rollback_01
+  To land: mix run scripts/keep_land.exs -- --approve 045_003_versioned_feature_flag_store_with_rollback_01
+
+======== rescreen 108_003_capacity_bounded_bimap_with_lru_eviction_01
+keep_land: 108_003_capacity_bounded_bimap_with_lru_eviction_01 — rescreen of the CURRENT pair (1 solver call)
+  GREEN — S6 evidence row appended; nothing to land.
+======== rescreen 005_003_replayeventbus_01
+keep_land: 005_003_replayeventbus_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test cleanup drops topics with empty history and no subscribers: 
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "Topics whose history becomes empty AND who have zero subscribers are dropped entirely (indistinguishable from a never-seen topic)."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/005_003_replayeventbus_01
+  To land: mix run scripts/keep_land.exs -- --approve 005_003_replayeventbus_01
+
+======== rescreen 043_001_ets_based_leaderboard_01
+keep_land: 043_001_ets_based_leaderboard_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test match-spec-significant atoms work as ordinary player ids: errors were found at the given arguments:
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "`Leaderboard.submit_score(board, player_id, score)` to submit a score for a player.\n  `player_id` can be any term (string, integer, atom)."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/043_001_ets_based_leaderboard_01
+  To land: mix run scripts/keep_land.exs -- --approve 043_001_ets_based_leaderboard_01
+
+======== close_gaps 102_001 (new mold rule)
+closing gaps in 1 family(ies), sequential, ledger logs/close_gaps.jsonl
+
+[1/1] 102_001_genserver_based_state_machine_with_persistence_01 ... rejected — blind solver fails ADDED test(s) — either the added test pins more than the prompt states (the gap finding may be wrong) or the solver slipped on documented behavior (rule 10 — hand-check before retrying). 3 added + 18 pre-existing failing; added: transition/3 reports a failed DB write as {:error, {:db_error, reason}}; a failed DB write leaves the in-memory state at its previous value; invalid transitions are rejected before any DB write is attempted
+
+=== CLOSE-GAPS LEDGER (322 row(s)) === %{"applied" => 206, "rejected" => 115, "reverted_tfim_resync_failed" => 1}
+  021_002_media_type_content_negotiation_with_quality_values_01: 0.89 → 0.94 (+5 test(s) for 2 gap(s))
+  015_001_heartbeat_monitor_01: 0.9 → 0.9 (+3 test(s) for 1 gap(s))
+  031_001_csv_importer_with_validation_and_error_report_01: 0.77 → 0.77 (+1 test(s) for 1 gap(s))
+  034_003_rule_driven_tolerant_reconciler_with_compiled_config_01: 0.91 → 0.91 (+7 test(s) for 2 gap(s))
+  043_001_ets_based_leaderboard_01: 0.8 → 0.87 (+5 test(s) for 1 gap(s))
+  079_002_counting_bloom_filter_01: 0.63 → 0.7 (+3 test(s) for 1 gap(s))
+  092_004_bayesian_weighted_rating_ranking_01: 0.94 → 0.94 (+2 test(s) for 2 gap(s))
+  105_003_max_wait_debouncer_with_flush_and_cancel_01: 0.83 → 0.83 (+2 test(s) for 2 gap(s))
+  011_002_priority_worker_pool_with_starvation_prevention_01: 0.79 → 0.96 (+3 test(s) for 2 gap(s))
+  004_003_retryscheduler_01: 0.7 → 0.7 (+6 test(s) for 2 gap(s))
+  009_003_retry_aware_request_deduplicator_01: 0.77 → 0.9 (+2 test(s) for 2 gap(s))
+  011_003_cancellable_worker_pool_01: 0.77 → 0.9 (+3 test(s) for 2 gap(s))
+  022_003_etag_versioned_nested_membership_with_optimistic_concurrency_01: 0.75 → 0.82 (+4 test(s) for 2 gap(s))
+  024_004_ordered_stream_webhook_receiver_with_gap_buffering_01: 0.88 → 0.97 (+4 test(s) for 2 gap(s))
+  035_002_multi_series_aligned_resampler_01: 0.63 → 0.92 (+5 test(s) for 2 gap(s))
+  035_004_counter_rate_resampler_01: 0.9 → 0.9 (+1 test(s) for 1 gap(s))
+  037_003_reversible_tokenization_vault_anonymizer_01: 0.67 → 1.0 (+4 test(s) for 1 gap(s))
+  039_004_three_way_record_merge_with_conflict_detection_01: 0.84 → 0.92 (+3 test(s) for 2 gap(s))
+  041_001_lru_cache_backed_by_ets_01: 0.46 → 0.54 (+6 test(s) for 1 gap(s))
+  044_004_sliding_window_rate_metrics_collector_01: 0.69 → 0.69 (+3 test(s) for 1 gap(s))
+  062_002_retryable_pipeline_with_per_stage_retry_policies_01: 0.83 → 0.83 (+2 test(s) for 1 gap(s))
+  070_003_nested_sub_saga_composition_01: 0.87 → 0.87 (+2 test(s) for 2 gap(s))
+  073_003_sandbox_ownership_cleaner_for_async_tests_01: 0.8 → 0.8 (+2 test(s) for 1 gap(s))
+  075_001_property_based_test_generators_01: 1.0 → 1.0 (+5 test(s) for 2 gap(s))
+  080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01: 1.0 → 1.0 (+4 test(s) for 1 gap(s))
+  089_001_promo_code_system_01: 0.87 → 0.87 (+1 test(s) for 1 gap(s))
+  095_003_currency_precision_money_module_01: 0.89 → 0.89 (+1 test(s) for 1 gap(s))
+  098_004_replay_protected_single_use_token_01: 0.8 → 0.8 (+4 test(s) for 2 gap(s))
+  101_002_sliding_window_distinct_cardinality_counter_01: 0.54 → 0.69 (+6 test(s) for 2 gap(s))
+  103_002_backoff_scheduled_retry_dead_letter_queue_01: 0.63 → 0.66 (+3 test(s) for 2 gap(s))
+  103_003_deduplicating_dead_letter_queue_01: 0.74 → 0.81 (+2 test(s) for 2 gap(s))
+  107_001_event_aggregator_with_flushing_01: 0.53 → 0.76 (+4 test(s) for 2 gap(s))
+  623_001_mini_elasticsearch_like_inverted_index_01: 0.56 → 0.59 (+2 test(s) for 1 gap(s))
+  624_001_mini_git_like_object_store_01: 0.96 → 0.96 (+3 test(s) for 1 gap(s))
+  626_003_reset_aware_counter_time_series_db_01: 0.69 → 0.72 (+2 test(s) for 2 gap(s))
+  025_004_multi_channel_fan_in_long_poll_01: 0.93 → 0.93 (+3 test(s) for 2 gap(s))
+  045_001_ets_based_feature_flag_store_01: 0.87 → 0.87 (+3 test(s) for 2 gap(s))
+  045_002_multivariate_a_b_c_feature_flag_store_01: 0.88 → 0.94 (+4 test(s) for 1 gap(s))
+  071_004_validation_aware_factory_with_compensating_rollback_01: 0.78 → 0.94 (+5 test(s) for 2 gap(s))
+  086_004_concurrent_genserver_backed_cart_01: 1.0 → 1.0 (+3 test(s) for 1 gap(s))
+  104_003_overflow_connection_pool_01: 0.65 → 0.72 (+2 test(s) for 2 gap(s))
+  105_002_leading_trailing_edge_debouncer_01: 0.57 → 0.57 (+2 test(s) for 1 gap(s))
+  106_002_grace_count_watchdog_timer_01: 0.77 → 0.77 (+3 test(s) for 1 gap(s))
+  018_003_cascading_archive_tree_with_origin_aware_restore_01: 0.97 → 0.97 (+3 test(s) for 1 gap(s))
+  104_003_overflow_connection_pool_01: 0.72 → 0.78 (+1 test(s) for 1 gap(s))
+  043_001_ets_based_leaderboard_01: 0.87 → 0.87 (+3 test(s) for 2 gap(s))
+  037_003_reversible_tokenization_vault_anonymizer_01: 1.0 → 1.0 (+1 test(s) for 1 gap(s))
+  001_001_rate_limiter_01: 0.91 → 0.91 (+1 test(s) for 1 gap(s))
+  003_003_lease_based_bucket_01: 0.53 → 0.7 (+3 test(s) for 2 gap(s))
+  004_001_job_scheduler_with_cron_like_expressions_01: 0.7 → 0.7 (+1 test(s) for 1 gap(s))
+  004_002_intervalscheduler_01: 0.72 → 0.72 (+1 test(s) for 1 gap(s))
+  004_004_calendarscheduler_01: 0.65 → 0.65 (+1 test(s) for 1 gap(s))
+  005_004_filteredeventbus_01: 1.0 → 1.0 (+2 test(s) for 1 gap(s))
+  011_002_priority_worker_pool_with_starvation_prevention_01: 0.96 → 0.96 (+2 test(s) for 2 gap(s))
+  013_001_exponential_backoff_retry_worker_01: 0.71 → 0.75 (+3 test(s) for 2 gap(s))
+  013_004_classified_error_retry_worker_with_on_retry_callback_01: 0.62 → 0.62 (+1 test(s) for 1 gap(s))
+  015_002_rolling_window_failure_rate_monitor_01: 0.71 → 0.71 (+3 test(s) for 3 gap(s))
+  015_003_async_check_monitor_with_timeouts_01: 0.8 → 0.87 (+3 test(s) for 2 gap(s))
+  031_004_logfmt_record_validator_with_hand_written_parser_01: 0.84 → 0.87 (+3 test(s) for 2 gap(s))
+  032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_01: 0.72 → 0.72 (+1 test(s) for 1 gap(s))
+  034_003_rule_driven_tolerant_reconciler_with_compiled_config_01: 1.0 → 1.0 (+2 test(s) for 2 gap(s))
+  042_001_ets_based_write_through_cache_layer_01: 0.5 → 0.5 (+1 test(s) for 1 gap(s))
+  042_002_failure_aware_write_through_cache_with_negative_caching_01: 0.71 → 0.86 (+2 test(s) for 2 gap(s))
+  061_002_fail_fast_parallel_map_with_cancellation_01: 0.71 → 0.71 (+2 test(s) for 2 gap(s))
+  064_001_work_stealing_task_queue_01: 0.54 → 0.58 (+1 test(s) for 1 gap(s))
+  064_002_fault_tolerant_result_tagged_work_stealing_queue_01: 0.63 → 0.83 (+1 test(s) for 1 gap(s))
+  071_003_bulk_list_factory_with_concurrent_insertion_01: 0.89 → 0.89 (+2 test(s) for 1 gap(s))
+  076_002_compressed_radix_trie_with_path_compression_01: 0.81 → 0.89 (+1 test(s) for 1 gap(s))
+  079_002_counting_bloom_filter_01: 0.7 → 0.7 (+2 test(s) for 1 gap(s))
+  086_003_coupon_stacking_cart_with_order_level_discounts_01: 0.88 → 0.94 (+2 test(s) for 1 gap(s))
+  092_004_bayesian_weighted_rating_ranking_01: 0.94 → 0.94 (+2 test(s) for 2 gap(s))
+  097_003_severity_classified_password_audit_with_strict_mode_01: 0.55 → 0.66 (+5 test(s) for 1 gap(s))
+  101_004_sliding_window_threshold_alerter_01: 0.63 → 0.63 (+1 test(s) for 1 gap(s))
+  109_003_fail_fast_task_runner_with_skip_propagation_01: 0.95 → 0.95 (+2 test(s) for 1 gap(s))
+  001_002_fixed_window_counter_01: 0.72 → 0.72 (+3 test(s) for 1 gap(s))
+  003_002_gcra_01: 0.63 → 0.63 (+1 test(s) for 1 gap(s))
+  004_003_retryscheduler_01: 0.82 → 0.82 (+2 test(s) for 1 gap(s))
+  005_002_priorityeventbus_01: 0.91 → 0.91 (+3 test(s) for 2 gap(s))
+  006_001_ttl_cache_with_lazy_expiration_01: 0.71 → 0.71 (+1 test(s) for 1 gap(s))
+  006_002_lrucache_01: 0.89 → 1.0 (+1 test(s) for 1 gap(s))
+  007_001_moving_average_calculator_01: 0.79 → 0.79 (+2 test(s) for 1 gap(s))
+  007_004_cusumanomaly_01: 0.72 → 0.78 (+2 test(s) for 1 gap(s))
+  009_003_retry_aware_request_deduplicator_01: 0.94 → 0.94 (+3 test(s) for 2 gap(s))
+  010_001_session_store_with_inactivity_timeout_01: 0.86 → 0.86 (+1 test(s) for 1 gap(s))
+  010_003_exclusive_lease_manager_with_ownership_01: 0.94 → 0.94 (+1 test(s) for 1 gap(s))
+  011_003_cancellable_worker_pool_01: 1.0 → 1.0 (+1 test(s) for 1 gap(s))
+  012_002_subscription_lifecycle_event_sourced_aggregate_01: 1.0 → 1.0 (+2 test(s) for 1 gap(s))
+  014_002_expiring_priority_queue_with_per_task_ttl_01: 1.0 → 1.0 (+1 test(s) for 1 gap(s))
+  014_003_cancellable_priority_queue_with_numeric_priorities_01: 0.82 → 0.82 (+1 test(s) for 1 gap(s))
+  015_004_monitor_with_maintenance_windows_and_pause_resume_01: 0.76 → 0.76 (+3 test(s) for 1 gap(s))
+  016_003_validated_sortable_filterable_list_pagination_01: 0.79 → 0.79 (+1 test(s) for 1 gap(s))
+  017_002_keyset_cursor_pagination_search_01: 0.76 → 0.76 (+5 test(s) for 2 gap(s))
+  017_003_faceted_search_with_facet_counts_01: 0.82 → 0.82 (+2 test(s) for 1 gap(s))
+  019_003_bulk_upsert_with_conflict_resolution_policies_01: 0.75 → 0.92 (+6 test(s) for 2 gap(s))
+  019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01: 0.53 → 0.56 (+3 test(s) for 1 gap(s))
+  021_001_versioned_api_with_content_negotiation_01: 0.91 → 0.91 (+3 test(s) for 1 gap(s))
+  021_002_media_type_content_negotiation_with_quality_values_01: 0.94 → 1.0 (+2 test(s) for 1 gap(s))
+  021_003_url_path_versioning_with_downgrade_migration_chain_01: 1.0 → 1.0 (+3 test(s) for 1 gap(s))
+  023_001_idempotent_post_endpoint_01: 1.0 → 1.0 (+1 test(s) for 1 gap(s))
+  023_004_lru_bounded_idempotent_payments_01: 0.72 → 0.83 (+2 test(s) for 1 gap(s))
+  024_002_replay_protected_timestamped_webhook_receiver_01: 0.95 → 0.95 (+2 test(s) for 1 gap(s))
+  024_004_ordered_stream_webhook_receiver_with_gap_buffering_01: 0.97 → 0.97 (+2 test(s) for 2 gap(s))
+  025_001_long_polling_endpoint_01: 0.91 → 0.91 (+2 test(s) for 2 gap(s))
+  025_004_multi_channel_fan_in_long_poll_01: 0.93 → 0.93 (+0 test(s) for 2 gap(s))
+  033_001_log_file_analyzer_01: 0.9 → 0.9 (+2 test(s) for 1 gap(s))
+  033_003_http_access_log_analyzer_01: 0.88 → 0.88 (+2 test(s) for 1 gap(s))
+  033_004_financial_transaction_analyzer_01: 0.91 → 0.91 (+2 test(s) for 2 gap(s))
+  034_001_data_reconciliation_engine_01: 1.0 → 1.0 (+4 test(s) for 1 gap(s))
+  035_001_time_series_resampler_01: 0.84 → 0.84 (+1 test(s) for 1 gap(s))
+  035_002_multi_series_aligned_resampler_01: 0.92 → 0.92 (+2 test(s) for 2 gap(s))
+  035_004_counter_rate_resampler_01: 0.94 → 0.94 (+3 test(s) for 1 gap(s))
+  038_002_materialized_path_tree_annotator_01: 0.83 → 0.83 (+1 test(s) for 1 gap(s))
+  038_004_diagnostic_tree_validator_with_best_effort_repair_01: 0.91 → 0.91 (+3 test(s) for 1 gap(s))
+  039_004_three_way_record_merge_with_conflict_detection_01: 1.0 → 1.0 (+3 test(s) for 1 gap(s))
+  040_001_configuration_merger_with_override_rules_01: 1.0 → 1.0 (+2 test(s) for 1 gap(s))
+  040_002_provenance_tracking_layered_config_merger_01: 1.0 → 1.0 (+1 test(s) for 1 gap(s))
+  040_003_stateful_layered_config_store_genserver_01: 1.0 → 1.0 (+2 test(s) for 1 gap(s))
+  040_004_conflict_detecting_strict_config_merger_01: 0.78 → 0.78 (+4 test(s) for 1 gap(s))
+  041_001_lru_cache_backed_by_ets_01: 1.0 → 1.0 (+3 test(s) for 1 gap(s))
+  041_002_lfu_cache_backed_by_ets_01: 0.79 → 0.79 (+3 test(s) for 1 gap(s))
+  041_003_sharded_lru_cache_with_consistent_key_routing_01: 0.61 → 0.61 (+2 test(s) for 2 gap(s))
+  042_004_single_flight_non_blocking_write_through_cache_01: 0.55 → 0.64 (+1 test(s) for 1 gap(s))
+  044_002_histogram_metrics_collector_01: 0.85 → 0.85 (+3 test(s) for 1 gap(s))
+  044_004_sliding_window_rate_metrics_collector_01: 0.81 → 0.81 (+1 test(s) for 1 gap(s))
+  045_004_dependency_aware_feature_flag_store_01: 0.57 → 0.57 (+2 test(s) for 1 gap(s))
+  061_003_timeout_and_retry_parallel_map_01: 0.81 → 0.81 (+2 test(s) for 1 gap(s))
+  061_004_weight_budget_parallel_map_01: 0.8 → 0.83 (+2 test(s) for 1 gap(s))
+  062_002_retryable_pipeline_with_per_stage_retry_policies_01: 0.83 → 0.83 (+3 test(s) for 1 gap(s))
+  063_003_fallback_chain_concurrent_fetcher_01: 0.72 → 0.72 (+2 test(s) for 1 gap(s))
+  063_004_bounded_concurrency_concurrent_fetcher_01: 0.77 → 0.77 (+1 test(s) for 1 gap(s))
+  064_003_priority_aware_work_stealing_queue_01: 0.56 → 0.63 (+2 test(s) for 1 gap(s))
+  070_003_nested_sub_saga_composition_01: 0.87 → 0.87 (+4 test(s) for 2 gap(s))
+  070_004_resumable_journaled_saga_01: 0.79 → 0.79 (+2 test(s) for 1 gap(s))
+  071_004_validation_aware_factory_with_compensating_rollback_01: 0.94 → 0.94 (+5 test(s) for 2 gap(s))
+  072_001_test_helper_for_time_dependent_code_01: 1.0 → 1.0 (+5 test(s) for 2 gap(s))
+  072_003_monotonic_measurement_clock_01: 0.74 → 1.0 (+3 test(s) for 1 gap(s))
+  072_004_scripted_sequence_clock_01: 0.95 → 0.95 (+2 test(s) for 1 gap(s))
+  073_002_savepoint_stack_nested_transaction_cleaner_01: 0.5 → 0.55 (+1 test(s) for 1 gap(s))
+  073_003_sandbox_ownership_cleaner_for_async_tests_01: 0.8 → 0.8 (+2 test(s) for 1 gap(s))
+  074_001_custom_exunit_assertion_helpers_01: 0.82 → 0.82 (+6 test(s) for 3 gap(s))
+  074_004_numeric_tolerance_and_exception_assertion_helpers_01: 0.6 → 0.65 (+2 test(s) for 1 gap(s))
+  076_003_weighted_autocomplete_trie_with_top_k_ranking_01: 0.96 → 0.96 (+3 test(s) for 1 gap(s))
+  078_003_double_ended_ring_buffer_deque_01: 0.97 → 0.97 (+2 test(s) for 1 gap(s))
+  079_003_scalable_bloom_filter_01: 0.65 → 0.7 (+4 test(s) for 2 gap(s))
+  079_004_concurrent_bloom_filter_01: 0.65 → 0.65 (+2 test(s) for 1 gap(s))
+  086_004_concurrent_genserver_backed_cart_01: 1.0 → 1.0 (+1 test(s) for 1 gap(s))
+  089_001_promo_code_system_01: 0.92 → 0.92 (+1 test(s) for 1 gap(s))
+  091_002_reversible_order_workflow_with_undo_history_01: 1.0 → 1.0 (+4 test(s) for 1 gap(s))
+  092_001_scoring_ranking_algorithm_01: 0.92 → 0.92 (+2 test(s) for 1 gap(s))
+  095_003_currency_precision_money_module_01: 1.0 → 1.0 (+1 test(s) for 1 gap(s))
+  095_004_multi_currency_money_with_fx_conversion_01: 0.87 → 0.87 (+1 test(s) for 1 gap(s))
+  097_001_password_policy_enforcer_01: 0.8 → 0.8 (+2 test(s) for 1 gap(s))
+  098_001_token_generator_and_validator_01: 0.88 → 0.88 (+3 test(s) for 1 gap(s))
+  099_001_data_masking_for_logs_01: 0.67 → 0.67 (+3 test(s) for 1 gap(s))
+  099_002_redaction_with_match_count_reporting_01: 0.68 → 0.68 (+3 test(s) for 1 gap(s))
+  099_003_per_field_masking_strategies_01: 0.64 → 0.64 (+3 test(s) for 1 gap(s))
+  099_004_concurrent_masking_server_with_runtime_patterns_01: 0.75 → 0.79 (+7 test(s) for 1 gap(s))
+  101_001_sliding_window_counter_01: 0.82 → 0.82 (+1 test(s) for 1 gap(s))
+  101_003_weighted_sliding_sum_counter_01: 1.0 → 1.0 (+1 test(s) for 1 gap(s))
+  102_002_optimistic_concurrency_persisted_state_machine_01: 0.7 → 0.78 (+2 test(s) for 2 gap(s))
+  103_001_dead_letter_queue_01: 0.86 → 0.86 (+1 test(s) for 1 gap(s))
+  103_002_backoff_scheduled_retry_dead_letter_queue_01: 0.8 → 0.8 (+1 test(s) for 1 gap(s))
+  103_003_deduplicating_dead_letter_queue_01: 0.89 → 0.89 (+2 test(s) for 2 gap(s))
+  104_002_health_validated_connection_pool_01: 0.72 → 0.72 (+3 test(s) for 1 gap(s))
+  104_003_overflow_connection_pool_01: 0.82 → 0.82 (+3 test(s) for 1 gap(s))
+  104_004_usage_recycling_connection_pool_01: 0.79 → 0.79 (+1 test(s) for 1 gap(s))
+  105_001_genserver_based_debouncer_01: 0.8 → 0.8 (+2 test(s) for 1 gap(s))
+  105_002_leading_trailing_edge_debouncer_01: 0.71 → 0.71 (+3 test(s) for 1 gap(s))
+  105_003_max_wait_debouncer_with_flush_and_cancel_01: 0.83 → 0.83 (+2 test(s) for 1 gap(s))
+  107_001_event_aggregator_with_flushing_01: 0.76 → 0.76 (+4 test(s) for 2 gap(s))
+  107_003_weighted_event_aggregator_with_byte_budget_01: 0.7 → 0.7 (+1 test(s) for 1 gap(s))
+  107_004_debounced_event_aggregator_with_max_wait_01: 0.8 → 0.8 (+1 test(s) for 1 gap(s))
+  108_001_bidirectional_map_genserver_01: 0.67 → 0.67 (+2 test(s) for 1 gap(s))
+  110_001_rolling_percentile_calculator_01: 0.88 → 0.88 (+1 test(s) for 1 gap(s))
+  131_003_parallel_streaming_json_array_parser_01: 0.88 → 0.88 (+1 test(s) for 1 gap(s))
+  131_004_resumable_streaming_json_array_parser_with_error_budget_01: 0.86 → 0.89 (+3 test(s) for 1 gap(s))
+  623_001_mini_elasticsearch_like_inverted_index_01: 0.59 → 0.76 (+5 test(s) for 1 gap(s))
+  623_004_fuzzy_edit_distance_inverted_index_01: 0.89 → 0.89 (+2 test(s) for 1 gap(s))
+  624_001_mini_git_like_object_store_01: 0.96 → 0.96 (+3 test(s) for 1 gap(s))
+  625_001_mini_s3_like_object_storage_01: 0.8 → 0.8 (+1 test(s) for 1 gap(s))
+  625_003_lifecycle_ttl_object_store_with_lazy_expiration_01: 0.97 → 0.97 (+1 test(s) for 1 gap(s))
+  625_004_conditional_write_object_store_with_etags_01: 1.0 → 1.0 (+2 test(s) for 1 gap(s))
+  626_001_mini_prometheus_like_time_series_db_01: 0.71 → 0.71 (+3 test(s) for 2 gap(s))
+  626_002_pre_aggregated_rollup_time_series_db_01: 0.9 → 0.9 (+4 test(s) for 2 gap(s))
+  626_003_reset_aware_counter_time_series_db_01: 0.86 → 0.86 (+2 test(s) for 1 gap(s))
+  006_003_refreshaheadcache_01: 0.69 → 0.73 (+1 test(s) for 1 gap(s))
+  009_002_write_behind_batch_coalescer_01: 0.94 → 0.94 (+2 test(s) for 1 gap(s))
+  017_004_relevance_ranked_full_text_search_01: 0.7 → 0.72 (+2 test(s) for 1 gap(s))
+  018_003_cascading_archive_tree_with_origin_aware_restore_01: 1.0 → 1.0 (+2 test(s) for 1 gap(s))
+  019_002_dependency_ordered_bulk_create_with_cascade_skip_01: 0.91 → 0.91 (+3 test(s) for 1 gap(s))
+  044_003_labeled_dimensional_metrics_collector_01: 0.67 → 0.67 (+2 test(s) for 1 gap(s))
+  045_001_ets_based_feature_flag_store_01: 1.0 → 1.0 (+2 test(s) for 2 gap(s))
+  061_001_parallel_map_with_concurrency_limit_01: 0.86 → 0.93 (+4 test(s) for 1 gap(s))
+  073_001_database_cleaner_for_integration_tests_01: 0.92 → 0.92 (+2 test(s) for 1 gap(s))
+  080_002_weighted_critical_path_dag_scheduler_01: 0.87 → 0.87 (+4 test(s) for 2 gap(s))
+  092_003_wilson_lower_bound_confidence_ranking_01: 0.84 → 0.97 (+2 test(s) for 2 gap(s))
+  101_002_sliding_window_distinct_cardinality_counter_01: 0.77 → 0.77 (+3 test(s) for 2 gap(s))
+  102_004_threshold_approval_persisted_state_machine_01: 0.76 → 0.82 (+2 test(s) for 1 gap(s))
+  106_002_grace_count_watchdog_timer_01: 0.77 → 0.77 (+2 test(s) for 1 gap(s))
+  134_003_chunked_merge_based_schema_inference_01: 0.76 → 0.85 (+5 test(s) for 1 gap(s))
+  015_001_heartbeat_monitor_01: 0.71 → 0.71 (+3 test(s) for 2 gap(s))
+  023_002_in_flight_coalescing_idempotent_payments_01: 0.81 → 0.86 (+2 test(s) for 1 gap(s))
+  024_001_webhook_receiver_with_signature_verification_01: 0.97 → 0.97 (+2 test(s) for 1 gap(s))
+  032_004_multi_table_json_ingestion_with_type_discriminator_routing_01: 0.91 → 0.91 (+1 test(s) for 1 gap(s))
+  080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01: 1.0 → 1.0 (+4 test(s) for 1 gap(s))
+  100_002_provisioning_uri_driven_multi_algorithm_totp_verifier_01: 0.85 → 0.85 (+3 test(s) for 1 gap(s))

@@ -1,0 +1,85 @@
+======== rescreen 020_002_content_addressable_deduplicating_upload_01
+** (ArgumentError) candidate is byte-identical to the current prompt
+    scripts/keep_land.exs:105: KeepLand.candidate/3
+    scripts/keep_land.exs:504: (file)
+======== rescreen 020_003_per_tenant_quota_enforced_upload_01
+** (ArgumentError) candidate is byte-identical to the current prompt
+    scripts/keep_land.exs:105: KeepLand.candidate/3
+    scripts/keep_land.exs:504: (file)
+======== rescreen 022_002_role_scoped_nested_membership_endpoint_01
+** (ArgumentError) candidate is byte-identical to the current prompt
+    scripts/keep_land.exs:105: KeepLand.candidate/3
+    scripts/keep_land.exs:504: (file)
+======== rescreen 022_003_etag_versioned_nested_membership_with_optimistic_concurrency_01
+** (ArgumentError) candidate is byte-identical to the current prompt
+    scripts/keep_land.exs:105: KeepLand.candidate/3
+    scripts/keep_land.exs:504: (file)
+======== rescreen 025_002_cursor_resumable_gap_free_long_poll_01
+** (ArgumentError) candidate is byte-identical to the current prompt
+    scripts/keep_land.exs:105: KeepLand.candidate/3
+    scripts/keep_land.exs:504: (file)
+======== rescreen 045_003_versioned_feature_flag_store_with_rollback_01
+** (ArgumentError) candidate is byte-identical to the current prompt
+    scripts/keep_land.exs:105: KeepLand.candidate/3
+    scripts/keep_land.exs:504: (file)
+======== rescreen 108_003_capacity_bounded_bimap_with_lru_eviction_01
+** (ArgumentError) candidate is byte-identical to the current prompt
+    scripts/keep_land.exs:105: KeepLand.candidate/3
+    scripts/keep_land.exs:504: (file)
+======== rescreen 020_002_content_addressable_deduplicating_upload_01
+keep_land: 020_002_content_addressable_deduplicating_upload_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test rejects files larger than 5MB with 413: 
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "Enforces a maximum file size of 5MB (`5_242_880` bytes). If a request exceeds this, return HTTP 413 with JSON body `{\"error\": \"File too large\", \"max_bytes\": 5242880}`."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/020_002_content_addressable_deduplicating_upload_01
+  To land: mix run scripts/keep_land.exs -- --approve 020_002_content_addressable_deduplicating_upload_01
+
+======== rescreen 020_003_per_tenant_quota_enforced_upload_01
+keep_land: 020_003_per_tenant_quota_enforced_upload_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test quota is enforced per-account and independent: failed to start child with the spec {FileUpload.Store, [name: :q16, quota_bytes: 16]}.
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "`start_link(opts)` accepts `:name` and `:quota_bytes` (the per-account budget; default `10_000_000`)."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/020_003_per_tenant_quota_enforced_upload_01
+  To land: mix run scripts/keep_land.exs -- --approve 020_003_per_tenant_quota_enforced_upload_01
+
+======== rescreen 022_002_role_scoped_nested_membership_endpoint_01
+keep_land: 022_002_role_scoped_nested_membership_endpoint_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test GET returns 200 with roles for a member: :exit: {:noproc, {GenServer, :call, [nil, {:get_user_by_token, "token-alice"}, 5000]}}
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "**`TeamRouter`** — a `Plug.Router` accepting a `:store` option, plugging `AuthPlug` before matching. ... Accepts a `:store` option at init; `AuthPlug.init/1` must return the given options unchanged (so the same value can be passed straight to `call/2`)."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/022_002_role_scoped_nested_membership_endpoint_01
+  To land: mix run scripts/keep_land.exs -- --approve 022_002_role_scoped_nested_membership_endpoint_01
+
+======== rescreen 022_003_etag_versioned_nested_membership_with_optimistic_concurrency_01
+keep_land: 022_003_etag_versioned_nested_membership_with_optimistic_concurrency_01 — rescreen of the CURRENT pair (1 solver call)
+  GREEN — S6 evidence row appended; nothing to land.
+======== rescreen 025_002_cursor_resumable_gap_free_long_poll_01
+keep_land: 025_002_cursor_resumable_gap_free_long_poll_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test buffer retains only the most recent :buffer_size events: failed to start child with the spec {Notifications, [name: :notifications_6020, buffer_size: 3]}.
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "`Notifications.start_link(opts)` — starts the backing process. Accept a `:name` option for registration (default `Notifications`) and a `:buffer_size` option (max retained events per user, default `100`)."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/025_002_cursor_resumable_gap_free_long_poll_01
+  To land: mix run scripts/keep_land.exs -- --approve 025_002_cursor_resumable_gap_free_long_poll_01
+
+======== rescreen 045_003_versioned_feature_flag_store_with_rollback_01
+keep_land: 045_003_versioned_feature_flag_store_with_rollback_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test enable then read at version 1: :exit: {:noproc, {GenServer, :call, [FeatureFlags, {:put, :f, {:on}}, 5000]}}
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "`FeatureFlags.start_link(opts)` to start the process. It should accept an optional `:table_name` for the primary ETS table (default `:feature_flags`), and an optional `:name` for process registration (pass `nil` to skip registration)."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/045_003_versioned_feature_flag_store_with_rollback_01
+  To land: mix run scripts/keep_land.exs -- --approve 045_003_versioned_feature_flag_store_with_rollback_01
+
+======== rescreen 108_003_capacity_bounded_bimap_with_lru_eviction_01
+keep_land: 108_003_capacity_bounded_bimap_with_lru_eviction_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test put then look up in both directions: :exit: {{:function_clause, [{:gb_trees, :insert, [{0, nil}, 0, :a], [file: ~c"gb_trees.erl", line: 320]}, {BoundedBiMap, :install, 3, [file: ~c".gen_staging/keep_land_108_003_capacity_bounded_bimap_wi
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "`BoundedBiMap.put(name, key, value)` — inserts or updates the association between `key` and `value`, preserving the bijection. Always returns `:ok`. ... `BoundedBiMap.get_by_key(name, key)` — returns `{:ok, value}` if `key` is present, otherwise `:error`. ... `BoundedBiMap.get_by_value(name, value)` — returns `{:ok, key}` if `value` is present, otherwise `:error`. ... The structure is always a true bijection: every `get_by_key(name, k)` returning `{:ok, v}` implies `get_by_value(name, v)` returns `{:ok, k}`, and vice versa."). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/108_003_capacity_bounded_bimap_with_lru_eviction_01
+  To land: mix run scripts/keep_land.exs -- --approve 108_003_capacity_bounded_bimap_with_lru_eviction_01
+

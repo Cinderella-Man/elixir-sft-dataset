@@ -1,0 +1,405 @@
+13:05:09.221 [info] FIM 098_004_replay_protected_single_use_token_fim02 → 098_004_replay_protected_single_use_token_03: target build_token/3
+13:05:09.221 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:05:09.221 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `build_token/3`.
+
+Generate a prompt describing how to implement `build_token/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `build_token/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `build_token/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `build_token/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer called `SingleUseToken` that issues and redeems
+signed, expiring, *single-use* tokens. Unlike a purely stateless token, each
+token may be redeemed at most once: the server remembers which tokens have been
+consumed (in memory, no database) and rejects any replay. Because redemption
+mutates shared state, all of it runs through one serializing GenServer.
+
+I need this public API:
+
+- `SingleUseToken.start_link(opts)` where `opts` is a keyword list. It
+  recognizes:
+  - `:secret` (required) — a binary HMAC signing key used for every token this
+    server issues and redeems.
+  - `:clock` (optional) — a zero-arity function returning a Unix epoch second.
+    When omitted, the current time is read from `System.os_time(:second)`. This
+    is purely a test seam for deterministic expiry testing.
+  - `:name` (optional) — a name to register the server under.
+  It returns `{:ok, pid}`.
+
+- `SingleUseToken.issue(server, payload, ttl_seconds)` where `payload` is any
+  Elixir term and `ttl_seconds` is a positive integer. It returns a URL-safe
+  binary token (no padding issues, safe to embed in URLs or headers) that
+  encodes a fresh unique nonce, the payload, the issue timestamp, the
+  expiration timestamp, and an HMAC-SHA256 signature over all of that data.
+  Every call produces a token with a distinct random nonce, so two tokens are
+  always independent of each other.
+
+- `SingleUseToken.redeem(server, token)` which decodes, validates, and — on
+  success — *consumes* the token. Return `{:ok, payload}` the first time a
+  valid, unexpired, not-yet-consumed token is redeemed; that redemption marks
+  the token's nonce as consumed. Return `{:error, :replayed}` on any subsequent
+  redemption of the same token (its nonce is already consumed). Return
+  `{:error, :expired}` if the signature is valid and the token has not been
+  consumed but the current time is at or past the expiration. Return
+  `{:error, :invalid_signature}` if the token structure parses cleanly but the
+  HMAC (computed with the server's secret) does not match. Return
+  `{:error, :malformed}` for anything that cannot be decoded at all: bad
+  base64, too short to contain an HMAC, a header that doesn't match the
+  remaining bytes, non-binary token input, and so on.
+
+The check order inside `redeem` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header (nonce, issue time,
+expiry time) and payload → HMAC verification → replay check → expiry check →
+consume the nonce and deserialize the payload. Any failure before HMAC
+verification yields `:malformed`. HMAC mismatch yields `:invalid_signature`.
+The replay check happens *before* the expiry check, which means a token that
+has already been consumed returns `:replayed` forever — even after it would
+otherwise have expired. A token that is unexpired-but-consumed returns
+`:replayed`; a token that is expired-but-never-consumed returns `:expired`. A
+token whose `expires_at` equals the current time is already expired (use strict
+`<` on the validity check, not `<=`). The nonce is consumed only on the fully
+successful path — none of the failure results (`:malformed`,
+`:invalid_signature`, `:replayed`, `:expired`) consume anything.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Generate the nonce with `:crypto.strong_rand_bytes/1`.
+- Use `Base.url_encode64/2` with `padding: false` so the output is URL-safe
+  without `=` characters.
+- The signed region must cover all fields (the nonce, payload bytes, issue
+  time, expiry time, plus any length prefix you include for framing) so that
+  none of them can be tampered with independently.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Deserialize the payload with `:erlang.binary_to_term/2` using the `[:safe]`
+  option.
+- Do not use any external dependencies — only the Elixir standard library and
+  OTP.
+
+Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule SingleUseToken do
+  @moduledoc """
+  A GenServer that issues and redeems signed, expiring, **single-use** tokens.
+
+  Each token carries a fresh random nonce, an arbitrary Elixir payload, an issue
+  timestamp, an expiry timestamp, and an HMAC-SHA256 signature computed over all
+  of those fields. Tokens are URL-safe base64 strings with no padding.
+
+  Unlike a purely stateless signed token, a token issued by this server may be
+  redeemed *at most once*. The server keeps the set of consumed nonces in memory
+  (there is no database) and rejects any replay. Because redemption mutates that
+  shared state, every redemption is serialized through the single GenServer
+  process.
+
+  ## Wire format
+
+      token = url_encode64(header <> payload_bytes <> mac, padding: false)
+
+      header  = <<nonce::binary-size(16), issued_at::64, expires_at::64,
+                  payload_size::32>>
+      mac     = hmac_sha256(secret, header <> payload_bytes)   # 32 bytes
+
+  The MAC covers the nonce, both timestamps, the payload length prefix and the
+  payload bytes, so no field can be tampered with independently.
+
+  ## Redemption order
+
+  `redeem/2` performs its checks in exactly this order:
+
+  base64 decode → split off the trailing 32-byte MAC → structural parse of the
+  header and payload → HMAC verification → replay check → expiry check → consume
+  the nonce and deserialize the payload.
+
+  Any failure before HMAC verification yields `{:error, :malformed}`; an HMAC
+  mismatch yields `{:error, :invalid_signature}`. Because the replay check runs
+  before the expiry check, an already-consumed token returns `{:error, :replayed}`
+  forever, even long after it would otherwise have expired. The nonce is consumed
+  only on the fully successful path.
+
+  ## Example
+
+      {:ok, pid} = SingleUseToken.start_link(secret: "s3cr3t")
+      token = SingleUseToken.issue(pid, %{user_id: 7}, 300)
+      {:ok, %{user_id: 7}} = SingleUseToken.redeem(pid, token)
+      {:error, :replayed} = SingleUseToken.redeem(pid, token)
+  """
+
+  use GenServer
+
+  @nonce_size 16
+  @mac_size 32
+
+  @typedoc "An opaque, URL-safe, single-use token."
+  @type token :: binary()
+
+  @typedoc "Reasons a redemption can fail."
+  @type error :: :malformed | :invalid_signature | :replayed | :expired
+
+  defmodule State do
+    @moduledoc false
+
+    defstruct [:secret, :clock, consumed: MapSet.new()]
+
+    @type t :: %__MODULE__{
+            secret: binary(),
+            clock: (-> integer()),
+            consumed: MapSet.t(binary())
+          }
+  end
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the token server.
+
+  Options:
+
+    * `:secret` (required) — a binary HMAC signing key used for every token this
+      server issues and redeems.
+    * `:clock` (optional) — a zero-arity function returning a Unix epoch second.
+       (truncated)
+13:05:53.982 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `build_token/3` function. It takes the server `State`
+(from which it needs `secret` and `clock`), an arbitrary Elixir `payload`, and a
+positive integer `ttl_seconds`, and returns the finished URL-safe token binary.
+
+It must generate a fresh random nonce of `@nonce_size` bytes with
+`:crypto.strong_rand_bytes/1`, read the current Unix epoch second by calling the
+state's zero-arity `clock` function to get `issued_at`, compute `expires_at` as
+`issued_at + ttl_seconds`, and serialize the payload with
+`:erlang.term_to_binary/1`.
+
+It then builds the signed region as a binary laid out exactly as the wire format
+in the module doc: the nonce (`@nonce_size` bytes), `issued_at` as a signed
+64-bit integer, `expires_at` as a signed 64-bit integer, the payload's byte size
+as an unsigned 32-bit integer length prefix, followed by the payload bytes
+themselves.
+
+Finally it appends the 32-byte HMAC-SHA256 of that signed region — computed with
+the server's secret via the existing `mac/2` helper — to the signed region, and
+returns the whole thing encoded with `Base.url_encode64/2` using
+`padding: false`, so the token is URL-safe and free of `=` characters. Because
+each call draws a distinct random nonce, two calls never produce the same token
+even for identical payloads and TTLs.
+
+```elixir
+defmodule SingleUseToken do
+  @moduledoc """
+  A GenServer that issues and redeems signed, expiring, **single-use** tokens.
+
+  Each token carries a fresh random nonce, an arbitrary Elixir payload, an issue
+  timestamp, an expiry timestamp, and an HMAC-SHA256 signature computed over all
+  of those fields. Tokens are URL-safe base64 strings with no padding.
+
+  Unlike a purely stateless signed token, a token issued by this server may be
+  redeemed *at most once*. The server keeps the set of consumed nonces in memory
+  (there is no database) and rejects any replay. Because redemption mutates that
+  shared state, every redemption is serialized through the single GenServer
+  process.
+
+  ## Wire format
+
+      token = url_encode64(header <> payload_bytes <> mac, padding: false)
+
+      header  = <<nonce::binary-size(16), issued_at::64, expires_at::64,
+                  payload_size::32>>
+      mac     = hmac_sha256(secret, header <> payload_bytes)   # 32 bytes
+
+  The MAC covers the nonce, both timestamps, the payload length prefix and the
+  payload bytes, so no field can be tampered with independently.
+
+  ## Redemption order
+
+  `redeem/2` performs its checks in exactly this order:
+
+  base64 decode → split off the trailing 32-byte MAC → structural parse of the
+  header and payload → HMAC verification → replay check → expiry check → consume
+  the nonce and deserialize the payload.
+
+  Any failure before HMAC verification yields `{:error, :malformed}`; an HMAC
+  mismatch yields `{:error, :invalid_signature}`. Because the replay check runs
+  before the expiry check, an already-consumed token returns `{:error, :replayed}`
+  forever, even long after it would otherwise have expired. The nonce is consumed
+  only on the fully successful path.
+
+  ## Example
+
+      {:ok, pid} = SingleUseToken.start_link(secret: "s3cr3t")
+      token = SingleUseToken.issue(pid, %{user_id: 7}, 300)
+      {:ok, %{user_id: 7}} = SingleUseToken.redeem(pid, token)
+      {:error, :replayed} = SingleUseToken.redeem(pid, token)
+  """
+
+  use GenServer
+
+  @nonce_size 16
+  @mac_size 32
+
+  @typedoc "An opaque, URL-safe, single-use token."
+  @type token :: binary()
+
+  @typedoc "Reasons a redemption can fail."
+  @type error :: :malformed | :invalid_signature | :replayed | :expired
+
+  defmodule State do
+    @moduledoc false
+
+    defstruct [:secret, :clock, consumed: MapSet.new()]
+
+    @type t :: %__MODULE__{
+            secret: binary(),
+            clock: (-> integer()),
+            consumed: MapSet.t(binary())
+          }
+  end
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the token server.
+
+  Options:
+
+    * `:secret` (required) — a binary HMAC signing key used for every token this
+      server issues and redeems.
+    * `:clock` (optional) — a zero-arity function returning a Unix epoch second.
+      Defaults to reading `System.os_time(:second)`. This exists purely as a test
+      seam for deterministic expiry testing.
+    * `:name` (optional) — a name to register the server under.
+
+  Returns `{:ok, pid}`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) when is_list(opts) do
+    secret = Keyword.fetch!(opts, :secret)
+
+    if not is_binary(secret) do
+      raise ArgumentError, ":secret must be a binary, got: #{inspect(secret)}"
+    end
+
+    clock = Keyword.get(opts, :clock, fn -> System.os_time(:second) end)
+
+    if not is_function(clock, 0) do
+      raise ArgumentError, ":clock must be a zero-arity function, got: #{inspect(clock)}"
+    end
+
+    server_opts =
+      case Keyword.fetch(opts, :name) do
+        {:ok, name} -> [name: name]
+        :error -> []
+      end
+
+    GenServer.start_link(__MODULE__, {secret, clock}, server_opts)
+  end
+
+  @doc """
+  Issues a fresh single-use token for `payload`, valid for `ttl_seconds` seconds.
+
+  `payload` may be any Elixir term; `ttl_seconds` must be a positive integer. The
+  returned binary is URL-safe base64 without padding and encodes a fresh random
+  nonce, the payload, the issue time, the expiry time and an HMAC-SHA256
+  signature over all of them. Two calls never produce the same token, even for
+  identical payloads, because each carries a distinct nonce.
+  """
+  @spec issue(GenServer.server(), term(), pos_integer()) :: token()
+  def issue(server, payload, ttl_seconds)
+      when is_integer(ttl_seconds) and ttl_seconds > 0 do
+    GenServer.call(server, {:issue, payload, ttl_seconds})
+  end
+
+  @doc """
+  Decodes, validates and consumes `token`.
+
+  Returns `{:ok, payload}` the first time a valid, unexpired, not-yet-consumed
+  token is redeemed, marking its nonce consumed. Subsequent redemptions of the
+  same token return `{:error, :replayed}`.
+
+  Failure reasons:
+
+    * `{:error, :malformed}` — the token cannot be decoded at all (bad base64,
+      too short to hold a MAC, header inconsistent with the remaining bytes,
+      non-binary input, …).
+    * `{:error, :invalid_signature}` — the structure parses but the HMAC computed
+      with this server's secret does not match.
+    * `{:error, :replayed}` — the nonce has already been consumed.
+    * `{:error, :expired}` — the signature is valid and the nonce is unconsumed,
+      but the current time is at or past `expires_at`.
+
+  No failure path consumes anything.
+  """
+  @spec redeem(GenServer.server(), term()) :: {:ok, term()} | {:error, error()}
+  def redeem(server, token) do
+    GenServer.call(server, {:redeem, token})
+  end
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  def init({secret, clock}) do
+    {:ok, %State{secret: secret, clock: clock, consumed: MapSet.new()}}
+  end
+
+  @impl true
+  def handle_call({:issue, payload, ttl_seconds}, _from, %State{} = state) do
+    {:reply, build_token(state, payload, ttl_seconds), state}
+  end
+
+  def handle_call({:redeem, token}, _from, %State{} = state) do
+    case verify(state, token) do
+      {:ok, nonce, payload_bytes} ->
+        consumed = MapSet.put(state.consumed, nonce)
+        {:reply, {:ok, deserialize(payload_bytes)}, %State{state | consumed: consumed}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  # ------------------------------------------------------------------
+  # Internals
+  # ------------------------------------------------------------------
+
+  @spec build_token(State.t(), term(), pos_integer()) :: token()
+  defp build_token(%State{secret: secret, clock: clock}, payload, ttl_seconds) do
+    # TODO
+  end
+
+  # Runs the full check pipel (truncated)
+13:05:53.982 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9691, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9691, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9691, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9691, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 4858, "type" => "message"}], "output_tokens" => 4858, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:05:54.000 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_098_004_replay_protected_single_use_token_03/098_004_replay_protected_single_use_token_03 solution.ex
+13:05:54.768 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":14,"lines_over_98":0,"max_line_length":85,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"098_004_replay_protected_single_use_token_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_098_004_replay_protected_single_use_token_03/098_004_replay_protected_single_use_token_03/solution.ex","task":"098_004_replay_protected_single_use_token_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-12T11:05:54.743590Z"}
+13:05:54.768 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_098_004_replay_protected_single_use_token_03/098_004_replay_protected_single_use_token_03 .gen_staging/fim_098_004_replay_protected_single_use_token_03/mutant.ex
+13:05:55.529 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":79,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"parent":"098_004_replay_protected_single_use_token_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.6,"mode":"fim","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 17/21 failed"],"tests":0.19},"shape":"fim","solution_file":".gen_staging/fim_098_004_replay_protected_single_use_token_03/mutant.ex","task":"098_004_replay_protected_single_use_token_03","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{SingleUseToken, :build_token, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 183, error_info: %{module: Exception}]}, {SingleUseToken, :handle_call, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 163]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.217.0>, {:issue, %{user_id: 42}, 300}, 5000]}}","module":"SingleUseTokenTest","test":"test issued token redeems successfully"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{SingleUseToken, :build_token, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 183, error_info: %{module: Exception}]}, {SingleUseToken, :handle_call, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 163]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.222.0>, {:issue, %{meta: [1, 2, 3], sub: \"user:99\", role: \"admin\"}, 60}, 5000]}}","module":"SingleUseTokenTest","test":"test payload is preserved exactly through round-trip"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{SingleUseToken, :build_token, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 183, error_info: %{module: Exception}]}, {SingleUseToken, :handle_call, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 163]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.227.0>, {:issue, \"hello\", 60}, 5000]}}","module":"SingleUseTokenTest","test":"test token is URL-safe (no +, /, or = characters)"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{SingleUseToken, :build_token, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 183, error_info: %{module: Exception}]}, {SingleUseToken, :handle_call, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 163]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.232.0>, {:issue, \"once\", 300}, 5000]}}","module":"SingleUseTokenTest","test":"test a token can be redeemed only once; the second redemption is :replayed"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{SingleUseToken, :build_token, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 183, error_info: %{module: Exception}]}, {SingleUseToken, :handle_call, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 163]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.237.0>, {:issue, \"a\", 300}, 5000]}}","module":"SingleUseTokenTest","test":"test consuming one token does not consume an independently issued token"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{SingleUseToken, :build_token, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 183, error_info: %{module: Exception}]}, {SingleUseToken, :handle_call, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 163]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.242.0>, {:issue, \"x\", 100}, 5000]}}","module":"SingleUseTokenTest","test":"test replay check takes precedence over expiry"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{SingleUseToken, :build_token, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 183, error_info: %{module: Exception}]}, {SingleUseToken, :handle_call, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 163]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.247.0>, {:issue, \"data\", 100}, 5000]}}","module":"SingleUseTokenTest","test":"test token is valid just before expiry"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{SingleUseToken, :build_token, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 183, error_info: %{module: Exception}]}, {SingleUseToken, :handle_call, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 163]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.252.0>, {:issue, \"data\", 100}, 5000]}}","module":"SingleUseTokenTest","test":"test expired, never-consumed token returns :expired"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{SingleUseToken, :build_token, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 183, error_info: %{module: Exception}]}, {SingleUseToken, :handle_call, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 163]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.257.0>, {:issue, \"data\", 50}, 5000]}}","module":"SingleUseTokenTest","test":"test token expires exactly at ttl boundary"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{SingleUseToken, :build_token, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 183, error_info: %{module: Exception}]}, {SingleUseToken, :handle_call, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 163]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.262.0>, {:issue, \"data\", 100}, 5000]}}","module":"SingleUseTokenTest","test":"test an expired token is not consumed, so it never becomes :replayed"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{SingleUseToken, :build_token, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 183, error_info: %{module: Exception}]}, {SingleUseToken, :handle_call, 3, [file: ~c\"/tmp/evalfim_477603_2630.ex\", line: 163]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.267.0>, {:issue, \"x\", 300}, 5000]}}","module":"SingleUseTokenTest","test":"test a token issued by another server (different secret) is :invalid_signature"},{"message":" (truncated)
+13:05:55.529 [debug] fim mutation gate: killed
+13:05:55.530 [info] promoted 098_004_replay_protected_single_use_token_03 -> tasks/098_004_replay_protected_single_use_token_03

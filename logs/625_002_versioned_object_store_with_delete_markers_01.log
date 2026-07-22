@@ -1,0 +1,959 @@
+13:33:27.570 [info] VARIATION 625_002_versioned_object_store_with_delete_markers_01: Versioned Object Store with Delete Markers
+13:33:27.570 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:33:27.570 [debug] claude -p USER prompt:
+# Versioned Object Store with Delete Markers
+
+Write me an Elixir GenServer module called `VersionedObjectStorage` that provides an S3-like object store where **every write keeps history** — like S3 bucket versioning. It is backed by the local filesystem so history survives a restart.
+
+## Public API
+
+- `VersionedObjectStorage.start_link(opts)` — start the process. Accepts a `:root_dir` option (base directory for all storage, default `"./versioned_object_storage_data"`) and a `:name` option for process registration.
+
+- `VersionedObjectStorage.create_bucket(server, name)` — create a bucket. Return `:ok`, or `{:error, :already_exists}` if it already exists. Bucket names must be non-empty strings containing only lowercase alphanumeric characters, hyphens, and dots — otherwise return `{:error, :invalid_name}`.
+
+- `VersionedObjectStorage.list_buckets(server)` — return `{:ok, [bucket_name]}`, a sorted list of bucket names.
+
+- `VersionedObjectStorage.put_object(server, bucket, key, data, metadata \\ %{})` — store a new **version** of an object. `data` is a binary; `metadata` is a map of arbitrary key-value pairs. Each call creates a brand-new version and never destroys earlier versions. Return `{:ok, version_id}` where `version_id` is a unique binary string, or `{:error, :bucket_not_found}` if the bucket does not exist.
+
+- `VersionedObjectStorage.get_object(server, bucket, key)` — retrieve the **latest** version of a key. Return `{:ok, %{data: binary, metadata: map, size: integer, version_id: string, last_modified: DateTime.t()}}`. Return `{:error, :bucket_not_found}` if the bucket is missing, or `{:error, :not_found}` if the key has no versions **or** its latest version is a delete marker (see below).
+
+- `VersionedObjectStorage.get_object_version(server, bucket, key, version_id)` — retrieve one specific version by its id. Return `{:ok, %{data: binary, metadata: map, size: integer, version_id: string, is_delete_marker: boolean, last_modified: DateTime.t()}}`. For a delete marker, `data` is the empty binary `""` and `is_delete_marker` is `true`. Return `{:error, :bucket_not_found}` or `{:error, :not_found}` (unknown version) on failure.
+
+- `VersionedObjectStorage.delete_object(server, bucket, key)` — perform a **soft delete** by appending a new *delete marker* version. This hides the object from `get_object` and `list_objects` but preserves all earlier versions. Return `{:ok, version_id}` (the delete marker's version id), or `{:error, :bucket_not_found}`.
+
+- `VersionedObjectStorage.list_versions(server, bucket, key)` — return `{:ok, [%{version_id: string, is_delete_marker: boolean, size: integer, last_modified: DateTime.t()}]}` ordered **newest first** (most recently written version at the head). Return `{:error, :bucket_not_found}`. If the key has no versions, return `{:ok, []}`.
+
+- `VersionedObjectStorage.delete_version(server, bucket, key, version_id)` — **permanently** remove one specific version by id. Return `:ok` (idempotent — succeed even if that version does not exist), or `{:error, :bucket_not_found}`. Permanently deleting the latest delete marker effectively *restores* the object: whatever version now has the highest recency becomes the latest again.
+
+- `VersionedObjectStorage.list_objects(server, bucket)` — return `{:ok, [%{key: string, size: integer, version_id: string, last_modified: DateTime.t()}]}` describing the **current** state of the bucket: only keys whose latest version is a real object (not a delete marker), sorted lexicographically by key. Return `{:error, :bucket_not_found}`.
+
+## Persistence
+
+Store everything under `root_dir`. Buckets, all object versions (data + metadata), and delete markers must survive a GenServer restart if the same `root_dir` is reused. You may use any internal layout and `:erlang.term_to_binary` / `:erlang.binary_to_term` for serialization.
+
+Give me the complete module in a single file. Use only the OTP standard library — no external dependencies.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+13:35:02.009 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule VersionedObjectStorage do
+  @moduledoc """
+  An S3-like, versioned object store backed by the local filesystem.
+
+  Every `put_object/5` call creates a brand-new immutable version of a key and
+  never destroys earlier versions, mirroring S3 bucket versioning. Deletes are
+  *soft*: `delete_object/3` appends a special *delete marker* version that hides
+  the object from `get_object/3` and `list_objects/2` while preserving all
+  earlier versions. Individual versions (including delete markers) can be
+  permanently removed with `delete_version/4`; removing the latest delete marker
+  effectively restores the object.
+
+  All state (buckets, versions, data, metadata, and delete markers) is persisted
+  under a configurable `:root_dir` so that history survives a restart of the
+  GenServer as long as the same directory is reused. One file per bucket is
+  written using `:erlang.term_to_binary/1` for serialization.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type version_summary :: %{
+          version_id: String.t(),
+          is_delete_marker: boolean(),
+          size: non_neg_integer(),
+          last_modified: DateTime.t()
+        }
+
+  @default_root "./versioned_object_storage_data"
+  @bucket_suffix ".bin"
+  @name_regex ~r/^[a-z0-9.\-]+$/
+
+  # ── Public API ──────────────────────────────────────────────────────────
+
+  @doc """
+  Start the storage process.
+
+  Options:
+
+    * `:root_dir` — base directory for all storage (default
+      `#{inspect(@default_root)}`).
+    * `:name` — optional name for process registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Create a bucket named `name`.
+
+  Returns `:ok`, `{:error, :already_exists}` if the bucket already exists, or
+  `{:error, :invalid_name}` if the name is not a non-empty string of lowercase
+  alphanumeric characters, hyphens, and dots.
+  """
+  @spec create_bucket(server(), String.t()) ::
+          :ok | {:error, :already_exists | :invalid_name}
+  def create_bucket(server, name) do
+    GenServer.call(server, {:create_bucket, name})
+  end
+
+  @doc """
+  Return `{:ok, buckets}` where `buckets` is a sorted list of bucket names.
+  """
+  @spec list_buckets(server()) :: {:ok, [String.t()]}
+  def list_buckets(server) do
+    GenServer.call(server, :list_buckets)
+  end
+
+  @doc """
+  Store a new version of `key` in `bucket` with binary `data` and `metadata`.
+
+  Each call creates a fresh version and never destroys earlier versions.
+  Returns `{:ok, version_id}` or `{:error, :bucket_not_found}`.
+  """
+  @spec put_object(server(), String.t(), String.t(), binary(), map()) ::
+          {:ok, String.t()} | {:error, :bucket_not_found}
+  def put_object(server, bucket, key, data, metadata \\ %{}) do
+    GenServer.call(server, {:put_object, bucket, key, data, metadata})
+  end
+
+  @doc """
+  Retrieve the latest version of `key` in `bucket`.
+
+  Returns `{:ok, object}` where `object` has `:data`, `:metadata`, `:size`,
+  `:version_id`, and `:last_modified`. Returns `{:error, :bucket_not_found}` if
+  the bucket is missing, or `{:error, :not_found}` if the key has no versions or
+  its latest version is a delete marker.
+  """
+  @spec get_object(server(), String.t(), String.t()) ::
+          {:ok, map()} | {:error, :bucket_not_found | :not_found}
+  def get_object(server, bucket, key) do
+    GenServer.call(server, {:get_object, bucket, key})
+  end
+
+  @doc """
+  Retrieve one specific version of `key` in `bucket` by `version_id`.
+
+  Returns `{:ok, object}` where `object` also includes `:is_delete_marker`. For
+  a delete marker, `:data` is `""` and `:is_delete_marker` is `true`. Returns
+  `{:error, :bucket_not_found}` or `{:error, :not_found}` on failure.
+  """
+  @spec get_object_version(server(), String.t(), String.t(), String.t()) ::
+          {:ok, map()} | {:error, :bucket_not_found | :not_found}
+  def get_object_version(server, bucket, key, version_id) do
+    GenServer.call(server, {:get_object_version, bucket, key, version_id})
+  end
+
+  @doc """
+  Soft-delete `key` in `bucket` by appending a new delete marker version.
+
+  The object is hidden from `get_object/3` and `list_objects/2` but all earlier
+  versions are preserved. Returns `{:ok, version_id}` (the delete marker's id)
+  or `{:error, :bucket_not_found}`.
+  """
+  @spec delete_object(server(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, :bucket_not_found}
+  def delete_object(server, bucket, key) do
+    GenServer.call(server, {:delete_object, bucket, key})
+  end
+
+  @doc """
+  List all versions of `key` in `bucket`, ordered newest first.
+
+  Returns `{:ok, summaries}` where each summary has `:version_id`,
+  `:is_delete_marker`, `:size`, and `:last_modified`. Returns `{:ok, []}` if the
+  key has no versions, or `{:error, :bucket_not_found}`.
+  """
+  @spec list_versions(server(), String.t(), String.t()) ::
+          {:ok, [version_summary()]} | {:error, :bucket_not_found}
+  def list_versions(server, bucket, key) do
+    GenServer.call(server, {:list_versions, bucket, key})
+  end
+
+  @doc """
+  Permanently remove one specific version of `key` in `bucket` by `version_id`.
+
+  Idempotent: succeeds even if the version does not exist. Removing the latest
+  delete marker restores the object (the next-highest version becomes latest).
+  Returns `:ok` or `{:error, :bucket_not_found}`.
+  """
+  @spec delete_version(server(), String.t(), String.t(), String.t()) ::
+          :ok | {:error, :bucket_not_found}
+  def delete_version(server, bucket, key, version_id) do
+    GenServer.call(server, {:delete_version, bucket, key, version_id})
+  end
+
+  @doc """
+  List the current state of `bucket`.
+
+  Returns `{:ok, objects}` describing only keys whose latest version is a real
+  object (not a delete marker), sorted lexicographically by key. Each entry has
+  `:key`, `:size`, `:version_id`, and `:last_modified`. Returns
+  `{:error, :bucket_not_found}`.
+  """
+  @spec list_objects(server(), String.t()) ::
+          {:ok, [map()]} | {:error, :bucket_not_found}
+  def list_objects(server, bucket) do
+    GenServer.call(server, {:list_objects, bucket})
+  end
+
+  # ── GenServer callbacks ─────────────────────────────────────────────────
+
+  @impl true
+  def init(opts) do
+    root = Keyword.get(opts, :root_dir, @default_root)
+    File.mkdir_p!(root)
+    {:ok, %{root_dir: root, buckets: load_buckets(root)}}
+  end
+
+  @impl true
+  def handle_call({:create_bucket, name}, _from, state) do
+    cond do
+      not valid_name?(name) ->
+        {:reply, {:error, :invalid_name}, state}
+
+      Map.has_key?(state.buckets, name) ->
+        {:reply, {:error, :already_exists}, state}
+
+      true ->
+        persist_bucket(state.root_dir, name, %{})
+        {:reply, :ok, put_in(state.buckets[name], %{})}
+    end
+  end
+
+  def handle_call(:list_buckets, _from, state) do
+    {:reply, {:ok, state.buckets |> Map.keys() |> Enum.sort()}, state}
+  end
+
+  def handle_call({:put_object, bucket, key, data, metadata}, _from, state) do
+    with_bucket(state, bucket, fn keys ->
+      version = build_version(data, metadata, false)
+      new_keys = prepend_version(keys, key, version)
+      {{:ok, version.version_id}, new_keys}
+    end)
+  end
+
+  def handle_call({:get_object, bucket, key}, _from, state) do
+    reply =
+      case fetch_bucket(state, bucket) do
+        {:ok, keys} -> latest_object(keys, key)
+        error -> error
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:get_object_version, bucket, key, version_id}, _from, state) do
+    reply =
+      case fetch_bucket(state, bucket) do
+        {:ok, keys} -> fetch_version(keys, key, version_id)
+        error -> error
+      end
+
+    {:reply, rep (truncated)
+13:35:02.009 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5379, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5379, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5379, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5379, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 8315, "type" => "message"}], "output_tokens" => 8315, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:35:02.040 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01 solution.ex
+13:35:02.683 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":422,"lines_over_98":0,"max_line_length":82,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.0,"reasons":["tests: no tests ran → hard fail (overall 0.0)"],"tests":0.0},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01","test_failures":[{"message":"Test harness compilation failed: invalid expression in match, and is not allowed in patterns such as function clauses, case clauses or on the left side of the = operator","test":"harness_load"}],"tests_errors":1,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-11T11:35:02.658693Z"}
+13:35:02.684 [info] cycle 625_002_versioned_object_store_with_delete_markers_01: repairing — Tests failed (0 failed, 1 errors):
+  - harness_load (): Test harness compilation failed: invalid expression in match, and is not allowed in patterns such as function clauses, case clauses or on the left side of the = operator
+13:35:02.684 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:35:02.684 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Tests failed (0 failed, 1 errors):
+  - harness_load (): Test harness compilation failed: invalid expression in match, and is not allowed in patterns such as function clauses, case clauses or on the left side of the = operator
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+# Versioned Object Store with Delete Markers
+
+Write me an Elixir GenServer module called `VersionedObjectStorage` that provides an S3-like object store where **every write keeps history** — like S3 bucket versioning. It is backed by the local filesystem so history survives a restart.
+
+## Public API
+
+- `VersionedObjectStorage.start_link(opts)` — start the process. Accepts a `:root_dir` option (base directory for all storage, default `"./versioned_object_storage_data"`) and a `:name` option for process registration.
+
+- `VersionedObjectStorage.create_bucket(server, name)` — create a bucket. Return `:ok`, or `{:error, :already_exists}` if it already exists. Bucket names must be non-empty strings containing only lowercase alphanumeric characters, hyphens, and dots — otherwise return `{:error, :invalid_name}`.
+
+- `VersionedObjectStorage.list_buckets(server)` — return `{:ok, [bucket_name]}`, a sorted list of bucket names.
+
+- `VersionedObjectStorage.put_object(server, bucket, key, data, metadata \\ %{})` — store a new **version** of an object. `data` is a binary; `metadata` is a map of arbitrary key-value pairs. Each call creates a brand-new version and never destroys earlier versions. Return `{:ok, version_id}` where `version_id` is a unique binary string, or `{:error, :bucket_not_found}` if the bucket does not exist.
+
+- `VersionedObjectStorage.get_object(server, bucket, key)` — retrieve the **latest** version of a key. Return `{:ok, %{data: binary, metadata: map, size: integer, version_id: string, last_modified: DateTime.t()}}`. Return `{:error, :bucket_not_found}` if the bucket is missing, or `{:error, :not_found}` if the key has no versions **or** its latest version is a delete marker (see below).
+
+- `VersionedObjectStorage.get_object_version(server, bucket, key, version_id)` — retrieve one specific version by its id. Return `{:ok, %{data: binary, metadata: map, size: integer, version_id: string, is_delete_marker: boolean, last_modified: DateTime.t()}}`. For a delete marker, `data` is the empty binary `""` and `is_delete_marker` is `true`. Return `{:error, :bucket_not_found}` or `{:error, :not_found}` (unknown version) on failure.
+
+- `VersionedObjectStorage.delete_object(server, bucket, key)` — perform a **soft delete** by appending a new *delete marker* version. This hides the object from `get_object` and `list_objects` but preserves all earlier versions. Return `{:ok, version_id}` (the delete marker's version id), or `{:error, :bucket_not_found}`.
+
+- `VersionedObjectStorage.list_versions(server, bucket, key)` — return `{:ok, [%{version_id: string, is_delete_marker: boolean, size: integer, last_modified: DateTime.t()}]}` ordered **newest first** (most recently written version at the head). Return `{:error, :bucket_not_found}`. If the key has no versions, return `{:ok, []}`.
+
+- `VersionedObjectStorage.delete_version(server, bucket, key, version_id)` — **permanently** remove one specific version by id. Return `:ok` (idempotent — succeed even if that version does not exist), or `{:error, :bucket_not_found}`. Permanently deleting the latest delete marker effectively *restores* the object: whatever version now has the highest recency becomes the latest again.
+
+- `VersionedObjectStorage.list_objects(server, bucket)` — return `{:ok, [%{key: string, size: integer, version_id: string, last_modified: DateTime.t()}]}` describing the **current** state of the bucket: only keys whose latest version is a real object (not a delete marker), sorted lexicographically by key. Return `{:error, :bucket_not_found}`.
+
+## Persistence
+
+Store everything under `root_dir`. Buckets, all object versions (data + metadata), and delete markers must survive a GenServer restart if the same `root_dir` is reused. You may use any internal layout and `:erlang.term_to_binary` / `:erlang.binary_to_term` for serialization.
+
+Give me the complete module in a single file. Use only the OTP standard library — no external dependencies.
+
+----- solution.ex -----
+defmodule VersionedObjectStorage do
+  @moduledoc """
+  An S3-like, versioned object store backed by the local filesystem.
+
+  Every `put_object/5` call creates a brand-new immutable version of a key and
+  never destroys earlier versions, mirroring S3 bucket versioning. Deletes are
+  *soft*: `delete_object/3` appends a special *delete marker* version that hides
+  the object from `get_object/3` and `list_objects/2` while preserving all
+  earlier versions. Individual versions (including delete markers) can be
+  permanently removed with `delete_version/4`; removing the latest delete marker
+  effectively restores the object.
+
+  All state (buckets, versions, data, metadata, and delete markers) is persisted
+  under a configurable `:root_dir` so that history survives a restart of the
+  GenServer as long as the same directory is reused. One file per bucket is
+  written using `:erlang.term_to_binary/1` for serialization.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type version_summary :: %{
+          version_id: String.t(),
+          is_delete_marker: boolean(),
+          size: non_neg_integer(),
+          last_modified: DateTime.t()
+        }
+
+  @default_root "./versioned_object_storage_data"
+  @bucket_suffix ".bin"
+  @name_regex ~r/^[a-z0-9.\-]+$/
+
+  # ── Public API ──────────────────────────────────────────────────────────
+
+  @doc """
+  Start the storage process.
+
+  Options:
+
+    * `:root_dir` — base directory for all storage (default
+      `#{inspect(@default_root)}`).
+    * `:name` — optional name for process registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Create a bucket named `name`.
+
+  Returns `:ok`, `{:error, :already_exists}` if the bucket already exists, or
+  `{:error, :invalid_name}` if the name is not a non-empty string of lowercase
+  alphanumeric characters, hyphens, and dots.
+  """
+  @spec create_bucket(server(), String.t()) ::
+          :ok | {:error, :already_exists | :invalid_name}
+  def create_bucket(server, name) do
+    GenServer.call(server, {:create_bucket, name})
+  end
+
+  @doc """
+  Return `{:ok, buckets}` where `buckets` is a sorted list of bucket names.
+  """
+  @spec list_buckets(server()) :: {:ok, [String.t()]}
+  def list_buckets(server) do
+    GenServer.call(server, :list_buckets)
+  end
+
+  @doc """
+  Store a new version of `key` in `bucket` with binary `data` and `metadata`.
+
+  Each call creates a fresh version and never destroys earlier versions.
+  Returns `{:ok, version_id}` or `{:error, :bucket_not_found}`.
+  """
+  @spec put_object(server(), String.t(), String.t(), binary(), map()) ::
+          {:ok, String.t()} | {:error, :bucket_not_found}
+  def put_object(server, bucket, key, data, metadata \\ %{}) do
+    GenSer (truncated)
+13:35:44.370 [debug] claude -p RESULT (stop="end_turn"):
+<file path="test_harness.exs">
+defmodule VersionedObjectStorageTest do
+  use ExUnit.Case, async: false
+
+  # Build a per-run unique root so concurrent OS processes sharing a CWD do not
+  # collide. System.pid/0 separates BEAM instances; the random suffix guards
+  # against OS pid reuse. Cleanup uses the non-raising rm_rf/1.
+  setup do
+    unique =
+      "#{System.pid()}-#{System.unique_integer([:positive])}-" <>
+        Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+
+    tmp_dir = Path.expand(Path.join(["tmp", "versioned_object_storage_test", unique]))
+    File.mkdir_p!(tmp_dir)
+    on_exit(fn -> File.rm_rf(tmp_dir) end)
+
+    {:ok, pid} = VersionedObjectStorage.start_link(root_dir: tmp_dir)
+    %{os: pid, tmp_dir: tmp_dir}
+  end
+
+  # -------------------------------------------------------
+  # Buckets
+  # -------------------------------------------------------
+
+  test "create and list buckets sorted", %{os: os} do
+    assert :ok = VersionedObjectStorage.create_bucket(os, "beta")
+    assert :ok = VersionedObjectStorage.create_bucket(os, "alpha")
+    assert {:ok, ["alpha", "beta"]} = VersionedObjectStorage.list_buckets(os)
+  end
+
+  test "invalid and duplicate bucket names", %{os: os} do
+    assert {:error, :invalid_name} = VersionedObjectStorage.create_bucket(os, "")
+    assert {:error, :invalid_name} = VersionedObjectStorage.create_bucket(os, "UPPER")
+    assert {:error, :invalid_name} = VersionedObjectStorage.create_bucket(os, "has space")
+    assert :ok = VersionedObjectStorage.create_bucket(os, "my-bucket.v2")
+    assert {:error, :already_exists} = VersionedObjectStorage.create_bucket(os, "my-bucket.v2")
+  end
+
+  # -------------------------------------------------------
+  # Put / get / versions
+  # -------------------------------------------------------
+
+  test "put returns a unique version id and get returns the latest version", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+
+    assert {:ok, vid} = VersionedObjectStorage.put_object(os, "b", "k", "one", %{"n" => "1"})
+    assert is_binary(vid)
+
+    assert {:ok, obj} = VersionedObjectStorage.get_object(os, "b", "k")
+    assert obj.data == "one"
+    assert obj.metadata == %{"n" => "1"}
+    assert obj.size == byte_size("one")
+    assert obj.version_id == vid
+    assert %DateTime{} = obj.last_modified
+  end
+
+  test "each put creates a new retained version; get returns the newest", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, vid1} = VersionedObjectStorage.put_object(os, "b", "k", "one")
+    {:ok, vid2} = VersionedObjectStorage.put_object(os, "b", "k", "two")
+
+    assert vid1 != vid2
+
+    assert {:ok, %{data: "two", version_id: ^vid2}} =
+             VersionedObjectStorage.get_object(os, "b", "k")
+
+    assert {:ok, versions} = VersionedObjectStorage.list_versions(os, "b", "k")
+    assert length(versions) == 2
+
+    # newest first
+    assert [%{version_id: ^vid2, is_delete_marker: false} | _] = versions
+  end
+
+  test "get_object_version fetches a specific historical version", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, vid1} = VersionedObjectStorage.put_object(os, "b", "k", "one")
+    {:ok, _vid2} = VersionedObjectStorage.put_object(os, "b", "k", "two")
+
+    assert {:ok, v} = VersionedObjectStorage.get_object_version(os, "b", "k", vid1)
+    assert v.data == "one"
+    assert v.version_id == vid1
+    assert v.is_delete_marker == false
+  end
+
+  test "get_object_version on unknown version returns not_found", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    VersionedObjectStorage.put_object(os, "b", "k", "one")
+    assert {:error, :not_found} = VersionedObjectStorage.get_object_version(os, "b", "k", "bogus")
+  end
+
+  # -------------------------------------------------------
+  # Delete markers
+  # -------------------------------------------------------
+
+  test "delete_object writes a delete marker and hides the object", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, _} = VersionedObjectStorage.put_object(os, "b", "k", "one")
+
+    assert {:ok, marker} = VersionedObjectStorage.delete_object(os, "b", "k")
+    assert is_binary(marker)
+
+    assert {:error, :not_found} = VersionedObjectStorage.get_object(os, "b", "k")
+
+    assert {:ok, versions} = VersionedObjectStorage.list_versions(os, "b", "k")
+    assert length(versions) == 2
+    assert [%{version_id: ^marker, is_delete_marker: true, size: 0} | _] = versions
+
+    assert {:ok, %{is_delete_marker: true, data: ""}} =
+             VersionedObjectStorage.get_object_version(os, "b", "k", marker)
+  end
+
+  test "delete_version permanently removes one version", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, vid1} = VersionedObjectStorage.put_object(os, "b", "k", "one")
+    {:ok, _vid2} = VersionedObjectStorage.put_object(os, "b", "k", "two")
+
+    assert :ok = VersionedObjectStorage.delete_version(os, "b", "k", vid1)
+    assert {:ok, [one]} = VersionedObjectStorage.list_versions(os, "b", "k")
+    refute one.version_id == vid1
+    assert {:ok, %{data: "two"}} = VersionedObjectStorage.get_object(os, "b", "k")
+  end
+
+  test "delete_version is idempotent", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    assert :ok = VersionedObjectStorage.delete_version(os, "b", "never", "nope")
+  end
+
+  test "deleting the delete marker restores the previous version", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, _} = VersionedObjectStorage.put_object(os, "b", "k", "one")
+    {:ok, _} = VersionedObjectStorage.put_object(os, "b", "k", "two")
+    {:ok, marker} = VersionedObjectStorage.delete_object(os, "b", "k")
+
+    assert {:error, :not_found} = VersionedObjectStorage.get_object(os, "b", "k")
+    assert :ok = VersionedObjectStorage.delete_version(os, "b", "k", marker)
+    assert {:ok, %{data: "two"}} = VersionedObjectStorage.get_object(os, "b", "k")
+  end
+
+  # -------------------------------------------------------
+  # list_objects reflects current state
+  # -------------------------------------------------------
+
+  test "list_objects shows only live keys, sorted", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    VersionedObjectStorage.put_object(os, "b", "a", "1")
+    VersionedObjectStorage.put_object(os, "b", "b", "22")
+    VersionedObjectStorage.put_object(os, "b", "c", "333")
+    VersionedObjectStorage.delete_object(os, "b", "b")
+
+    assert {:ok, objs} = VersionedObjectStorage.list_objects(os, "b")
+    assert Enum.map(objs, & &1.key) == ["a", "c"]
+
+    assert Enum.all?(objs, fn o ->
+             is_integer(o.size) and match?(%DateTime{}, o.last_modified)
+           end)
+  end
+
+  test "list_objects on empty bucket returns empty list", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "empty")
+    assert {:ok, []} = VersionedObjectStorage.list_objects(os, "empty")
+  end
+
+  # -------------------------------------------------------
+  # Errors
+  # -------------------------------------------------------
+
+  test "operations on a missing bucket report bucket_not_found", %{os: os} do
+    assert {:error, :bucket_not_found} = VersionedObjectStorage.put_object(os, "nope", "k", "v")
+    assert {:error, :bucket_not_found} = VersionedObjectStorage.get_object(os, "nope", "k")
+    assert {:error, :bucket_not_found} = VersionedObjectStorage.delete_object(os, "nope", "k")
+    assert {:error, :bucket_not_found} = VersionedObjectStorage.list_versions(os, "nope", "k")
+    assert {:error, :bucket_not_found} = VersionedObjectStorage.list_objects(os, "nope")
+  end
+
+  test "get on a key with no versions returns not_found", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    assert {:error, :not_found} = VersionedObjectStorage.get_object(os, "b", "missing")
+  end
+
+  # -------------------------------------------------------
+  # Persistence
+  # -------------------------------------------------------
+
+  test "versions and restore survive a restart", %{os: os, tmp_dir: tmp_dir} do
+    VersionedObjectStorage.create_bucket(os, "persist")
+    { (truncated)
+13:35:44.370 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 15138, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 15138, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 15138, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 15138, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 4458, "type" => "message"}], "output_tokens" => 4458, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:35:44.402 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01 solution.ex
+13:35:45.217 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":422,"lines_over_98":0,"max_line_length":82,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-11T11:35:45.195214Z"}
+13:35:45.220 [info] cycle 625_002_versioned_object_store_with_delete_markers_01: repairing — The files graded green but fall short of the house style / harness standard: only 15 test(s) — the harness needs at least 20 (max of 3 and the 20 public function(s)). Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+13:35:45.220 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:35:45.220 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: only 15 test(s) — the harness needs at least 20 (max of 3 and the 20 public function(s)). Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+# Versioned Object Store with Delete Markers
+
+Write me an Elixir GenServer module called `VersionedObjectStorage` that provides an S3-like object store where **every write keeps history** — like S3 bucket versioning. It is backed by the local filesystem so history survives a restart.
+
+## Public API
+
+- `VersionedObjectStorage.start_link(opts)` — start the process. Accepts a `:root_dir` option (base directory for all storage, default `"./versioned_object_storage_data"`) and a `:name` option for process registration.
+
+- `VersionedObjectStorage.create_bucket(server, name)` — create a bucket. Return `:ok`, or `{:error, :already_exists}` if it already exists. Bucket names must be non-empty strings containing only lowercase alphanumeric characters, hyphens, and dots — otherwise return `{:error, :invalid_name}`.
+
+- `VersionedObjectStorage.list_buckets(server)` — return `{:ok, [bucket_name]}`, a sorted list of bucket names.
+
+- `VersionedObjectStorage.put_object(server, bucket, key, data, metadata \\ %{})` — store a new **version** of an object. `data` is a binary; `metadata` is a map of arbitrary key-value pairs. Each call creates a brand-new version and never destroys earlier versions. Return `{:ok, version_id}` where `version_id` is a unique binary string, or `{:error, :bucket_not_found}` if the bucket does not exist.
+
+- `VersionedObjectStorage.get_object(server, bucket, key)` — retrieve the **latest** version of a key. Return `{:ok, %{data: binary, metadata: map, size: integer, version_id: string, last_modified: DateTime.t()}}`. Return `{:error, :bucket_not_found}` if the bucket is missing, or `{:error, :not_found}` if the key has no versions **or** its latest version is a delete marker (see below).
+
+- `VersionedObjectStorage.get_object_version(server, bucket, key, version_id)` — retrieve one specific version by its id. Return `{:ok, %{data: binary, metadata: map, size: integer, version_id: string, is_delete_marker: boolean, last_modified: DateTime.t()}}`. For a delete marker, `data` is the empty binary `""` and `is_delete_marker` is `true`. Return `{:error, :bucket_not_found}` or `{:error, :not_found}` (unknown version) on failure.
+
+- `VersionedObjectStorage.delete_object(server, bucket, key)` — perform a **soft delete** by appending a new *delete marker* version. This hides the object from `get_object` and `list_objects` but preserves all earlier versions. Return `{:ok, version_id}` (the delete marker's version id), or `{:error, :bucket_not_found}`.
+
+- `VersionedObjectStorage.list_versions(server, bucket, key)` — return `{:ok, [%{version_id: string, is_delete_marker: boolean, size: integer, last_modified: DateTime.t()}]}` ordered **newest first** (most recently written version at the head). Return `{:error, :bucket_not_found}`. If the key has no versions, return `{:ok, []}`.
+
+- `VersionedObjectStorage.delete_version(server, bucket, key, version_id)` — **permanently** remove one specific version by id. Return `:ok` (idempotent — succeed even if that version does not exist), or `{:error, :bucket_not_found}`. Permanently deleting the latest delete marker effectively *restores* the object: whatever version now has the highest recency becomes the latest again.
+
+- `VersionedObjectStorage.list_objects(server, bucket)` — return `{:ok, [%{key: string, size: integer, version_id: string, last_modified: DateTime.t()}]}` describing the **current** state of the bucket: only keys whose latest version is a real object (not a delete marker), sorted lexicographically by key. Return `{:error, :bucket_not_found}`.
+
+## Persistence
+
+Store everything under `root_dir`. Buckets, all object versions (data + metadata), and delete markers must survive a GenServer restart if the same `root_dir` is reused. You may use any internal layout and `:erlang.term_to_binary` / `:erlang.binary_to_term` for serialization.
+
+Give me the complete module in a single file. Use only the OTP standard library — no external dependencies.
+
+----- solution.ex -----
+defmodule VersionedObjectStorage do
+  @moduledoc """
+  An S3-like, versioned object store backed by the local filesystem.
+
+  Every `put_object/5` call creates a brand-new immutable version of a key and
+  never destroys earlier versions, mirroring S3 bucket versioning. Deletes are
+  *soft*: `delete_object/3` appends a special *delete marker* version that hides
+  the object from `get_object/3` and `list_objects/2` while preserving all
+  earlier versions. Individual versions (including delete markers) can be
+  permanently removed with `delete_version/4`; removing the latest delete marker
+  effectively restores the object.
+
+  All state (buckets, versions, data, metadata, and delete markers) is persisted
+  under a configurable `:root_dir` so that history survives a restart of the
+  GenServer as long as the same directory is reused. One file per bucket is
+  written using `:erlang.term_to_binary/1` for serialization.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type version_summary :: %{
+          version_id: String.t(),
+          is_delete_marker: boolean(),
+          size: non_neg_integer(),
+          last_modified: DateTime.t()
+        }
+
+  @default_root "./versioned_object_storage_data"
+  @bucket_suffix ".bin"
+  @name_regex ~r/^[a-z0-9.\-]+$/
+
+  # ── Public API ──────────────────────────────────────────────────────────
+
+  @doc """
+  Start the storage process.
+
+  Options:
+
+    * `:root_dir` — base directory for all storage (default
+      `#{inspect(@default_root)}`).
+    * `:name` — optional name for process registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Create a bucket named `name`.
+
+  Returns `:ok`, `{:error, :already_exists}` if the bucket already exists, or
+  `{:error, :invalid_name}` if the name is not a non-empty string of lowercase
+  alphanumeric characters, hyphens, and dots.
+  """
+  @spec create_bucket(server(), String.t()) ::
+          :ok | {:error, :already_exists | :invalid_name}
+  def create_bucket(server, name) do
+    GenServer.call(server, {:create_bucket, name})
+  end
+
+  @doc """
+  Return `{:ok, buckets}` where `buckets` is a sorted list of bucket names.
+  """
+  @spec list_buckets(server()) :: {:ok, [String.t()]}
+  def list_buckets(server) do
+    GenServer.call(server, :list_buckets)
+  end
+
+  @doc """
+  Store a new version of `key` in `bucket` with binary `data` and `metadata`.
+
+  Each call creates a fresh version and never destroys earlier versions.
+  Returns `{:ok, version_id}` or `{:erro (truncated)
+13:36:51.100 [debug] claude -p RESULT (stop="end_turn"):
+<file path="test_harness.exs">
+defmodule VersionedObjectStorageTest do
+  use ExUnit.Case, async: false
+
+  # Build a per-run unique root so concurrent OS processes sharing a CWD do not
+  # collide. System.pid/0 separates BEAM instances; the random suffix guards
+  # against OS pid reuse. Cleanup uses the non-raising rm_rf/1.
+  setup do
+    unique =
+      "#{System.pid()}-#{System.unique_integer([:positive])}-" <>
+        Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+
+    tmp_dir = Path.expand(Path.join(["tmp", "versioned_object_storage_test", unique]))
+    File.mkdir_p!(tmp_dir)
+    on_exit(fn -> File.rm_rf(tmp_dir) end)
+
+    {:ok, pid} = VersionedObjectStorage.start_link(root_dir: tmp_dir)
+    %{os: pid, tmp_dir: tmp_dir}
+  end
+
+  # -------------------------------------------------------
+  # Buckets
+  # -------------------------------------------------------
+
+  test "create and list buckets sorted", %{os: os} do
+    assert :ok = VersionedObjectStorage.create_bucket(os, "beta")
+    assert :ok = VersionedObjectStorage.create_bucket(os, "alpha")
+    assert {:ok, ["alpha", "beta"]} = VersionedObjectStorage.list_buckets(os)
+  end
+
+  test "invalid and duplicate bucket names", %{os: os} do
+    assert {:error, :invalid_name} = VersionedObjectStorage.create_bucket(os, "")
+    assert {:error, :invalid_name} = VersionedObjectStorage.create_bucket(os, "UPPER")
+    assert {:error, :invalid_name} = VersionedObjectStorage.create_bucket(os, "has space")
+    assert :ok = VersionedObjectStorage.create_bucket(os, "my-bucket.v2")
+    assert {:error, :already_exists} = VersionedObjectStorage.create_bucket(os, "my-bucket.v2")
+  end
+
+  test "list_buckets is empty for a fresh store", %{os: os} do
+    assert {:ok, []} = VersionedObjectStorage.list_buckets(os)
+  end
+
+  test "underscore and slash bucket names are rejected", %{os: os} do
+    assert {:error, :invalid_name} = VersionedObjectStorage.create_bucket(os, "bad_name")
+    assert {:error, :invalid_name} = VersionedObjectStorage.create_bucket(os, "bad/name")
+    assert {:error, :invalid_name} = VersionedObjectStorage.create_bucket(os, "MiXeD")
+  end
+
+  test "buckets are isolated from one another", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "one")
+    VersionedObjectStorage.create_bucket(os, "two")
+    VersionedObjectStorage.put_object(os, "one", "k", "in-one")
+
+    assert {:ok, %{data: "in-one"}} = VersionedObjectStorage.get_object(os, "one", "k")
+    assert {:error, :not_found} = VersionedObjectStorage.get_object(os, "two", "k")
+    assert {:ok, []} = VersionedObjectStorage.list_objects(os, "two")
+  end
+
+  # -------------------------------------------------------
+  # Put / get / versions
+  # -------------------------------------------------------
+
+  test "put returns a unique version id and get returns the latest version", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+
+    assert {:ok, vid} = VersionedObjectStorage.put_object(os, "b", "k", "one", %{"n" => "1"})
+    assert is_binary(vid)
+
+    assert {:ok, obj} = VersionedObjectStorage.get_object(os, "b", "k")
+    assert obj.data == "one"
+    assert obj.metadata == %{"n" => "1"}
+    assert obj.size == byte_size("one")
+    assert obj.version_id == vid
+    assert %DateTime{} = obj.last_modified
+  end
+
+  test "put_object defaults metadata to an empty map", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, _vid} = VersionedObjectStorage.put_object(os, "b", "k", "payload")
+
+    assert {:ok, obj} = VersionedObjectStorage.get_object(os, "b", "k")
+    assert obj.metadata == %{}
+    assert obj.data == "payload"
+  end
+
+  test "each put creates a new retained version; get returns the newest", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, vid1} = VersionedObjectStorage.put_object(os, "b", "k", "one")
+    {:ok, vid2} = VersionedObjectStorage.put_object(os, "b", "k", "two")
+
+    assert vid1 != vid2
+
+    assert {:ok, %{data: "two", version_id: ^vid2}} =
+             VersionedObjectStorage.get_object(os, "b", "k")
+
+    assert {:ok, versions} = VersionedObjectStorage.list_versions(os, "b", "k")
+    assert length(versions) == 2
+
+    # newest first
+    assert [%{version_id: ^vid2, is_delete_marker: false} | _] = versions
+  end
+
+  test "list_versions is ordered strictly newest first", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, v1} = VersionedObjectStorage.put_object(os, "b", "k", "one")
+    {:ok, v2} = VersionedObjectStorage.put_object(os, "b", "k", "two")
+    {:ok, v3} = VersionedObjectStorage.put_object(os, "b", "k", "three")
+
+    assert {:ok, versions} = VersionedObjectStorage.list_versions(os, "b", "k")
+    assert Enum.map(versions, & &1.version_id) == [v3, v2, v1]
+  end
+
+  test "list_versions on a key with no versions returns empty list", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    assert {:ok, []} = VersionedObjectStorage.list_versions(os, "b", "ghost")
+  end
+
+  test "each version records its own size", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, small} = VersionedObjectStorage.put_object(os, "b", "k", "hi")
+    {:ok, big} = VersionedObjectStorage.put_object(os, "b", "k", "hello world")
+
+    assert {:ok, sv} = VersionedObjectStorage.get_object_version(os, "b", "k", small)
+    assert {:ok, bv} = VersionedObjectStorage.get_object_version(os, "b", "k", big)
+    assert sv.size == byte_size("hi")
+    assert bv.size == byte_size("hello world")
+  end
+
+  test "get_object_version fetches a specific historical version", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, vid1} = VersionedObjectStorage.put_object(os, "b", "k", "one")
+    {:ok, _vid2} = VersionedObjectStorage.put_object(os, "b", "k", "two")
+
+    assert {:ok, v} = VersionedObjectStorage.get_object_version(os, "b", "k", vid1)
+    assert v.data == "one"
+    assert v.version_id == vid1
+    assert v.is_delete_marker == false
+  end
+
+  test "get_object_version preserves per-version metadata", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, v1} = VersionedObjectStorage.put_object(os, "b", "k", "one", %{"tag" => "a"})
+    {:ok, v2} = VersionedObjectStorage.put_object(os, "b", "k", "two", %{"tag" => "b"})
+
+    assert {:ok, %{metadata: %{"tag" => "a"}}} =
+             VersionedObjectStorage.get_object_version(os, "b", "k", v1)
+
+    assert {:ok, %{metadata: %{"tag" => "b"}}} =
+             VersionedObjectStorage.get_object_version(os, "b", "k", v2)
+  end
+
+  test "get_object_version on unknown version returns not_found", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    VersionedObjectStorage.put_object(os, "b", "k", "one")
+    assert {:error, :not_found} = VersionedObjectStorage.get_object_version(os, "b", "k", "bogus")
+  end
+
+  # -------------------------------------------------------
+  # Delete markers
+  # -------------------------------------------------------
+
+  test "delete_object writes a delete marker and hides the object", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, _} = VersionedObjectStorage.put_object(os, "b", "k", "one")
+
+    assert {:ok, marker} = VersionedObjectStorage.delete_object(os, "b", "k")
+    assert is_binary(marker)
+
+    assert {:error, :not_found} = VersionedObjectStorage.get_object(os, "b", "k")
+
+    assert {:ok, versions} = VersionedObjectStorage.list_versions(os, "b", "k")
+    assert length(versions) == 2
+    assert [%{version_id: ^marker, is_delete_marker: true, size: 0} | _] = versions
+
+    assert {:ok, %{is_delete_marker: true, data: ""}} =
+             VersionedObjectStorage.get_object_version(os, "b", "k", marker)
+  end
+
+  test "delete marker still hides the object after re-put then re-delete", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, _} = VersionedObjectStorage.put_object(os, "b", "k", "one")
+    {:ok, _} = VersionedObjectStorage.delete_object(os, "b", "k")
+    {:ok, _} = VersionedObjectStorage.put_object(os, "b", "k", "two")
+
+    assert {:ok, %{data: "two"}} = VersionedObje (truncated)
+13:36:51.101 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 15223, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 15223, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 15223, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 15223, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 7163, "type" => "message"}], "output_tokens" => 7163, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:36:51.128 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01 solution.ex
+13:36:52.062 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":422,"lines_over_98":0,"max_line_length":82,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":29,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-11T11:36:52.038646Z"}
+13:36:52.079 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut solution.ex
+13:36:53.003 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":332,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 29/29 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01_mut","test_failures":[{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test create and list buckets sorted"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test invalid and duplicate bucket names"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_buckets is empty for a fresh store"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test underscore and slash bucket names are rejected"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test buckets are isolated from one another"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test put returns a unique version id and get returns the latest version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test put_object defaults metadata to an empty map"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test each put creates a new retained version; get returns the newest"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_versions is ordered strictly newest first"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_versions on a key with no versions returns empty list"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test each version records its own size"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get_object_version fetches a specific historical version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get_object_version preserves per-version metadata"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get_object_version on unknown version returns not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_object writes a delete marker and hides the object"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete marker still hides the object after re-put then re-delete"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version permanently removes one version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version of an old version leaves it unreadable afterward"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version is idempotent"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test deleting the delete marker restores the previous version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_objects shows only live keys, sorted"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_objects reports the latest version id per key"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_objects on empty bucket returns empty list"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test operations on a missing bucket report bucket_not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test version operations on a missing bucket report bucket_not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get on a key with no versions returns not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test versions and restore survive a restart"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test an empty bucket survives a restart"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test metadata and version ids survive a restart"}],"tests_errors":0,"tests_excluded":0,"tests_failed":29,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-11T11:36:52.976599Z"}
+13:36:53.011 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut solution.ex
+13:36:53.885 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":341,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 26/29 failed"],"tests":0.1},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01_mut","test_failures":[{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test create and list buckets sorted"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test invalid and duplicate bucket names"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test underscore and slash bucket names are rejected"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test buckets are isolated from one another"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test put returns a unique version id and get returns the latest version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test put_object defaults metadata to an empty map"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test each put creates a new retained version; get returns the newest"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_versions is ordered strictly newest first"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_versions on a key with no versions returns empty list"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test each version records its own size"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get_object_version fetches a specific historical version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get_object_version preserves per-version metadata"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get_object_version on unknown version returns not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_object writes a delete marker and hides the object"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete marker still hides the object after re-put then re-delete"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version permanently removes one version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version of an old version leaves it unreadable afterward"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version is idempotent"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test deleting the delete marker restores the previous version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_objects shows only live keys, sorted"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_objects reports the latest version id per key"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_objects on empty bucket returns empty list"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get on a key with no versions returns not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test versions and restore survive a restart"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test an empty bucket survives a restart"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test metadata and version ids survive a restart"}],"tests_errors":0,"tests_excluded":0,"tests_failed":26,"tests_passed":3,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-11T11:36:53.860934Z"}
+13:36:53.893 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut solution.ex
+13:36:54.813 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":341,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 4/29 failed"],"tests":0.86},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01_mut","test_failures":[{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test create and list buckets sorted"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_buckets is empty for a fresh store"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test versions and restore survive a restart"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test an empty bucket survives a restart"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":25,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-11T11:36:54.790220Z"}
+13:36:54.821 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut solution.ex
+13:36:55.733 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":341,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 19/29 failed"],"tests":0.34},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01_mut","test_failures":[{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test buckets are isolated from one another"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test put returns a unique version id and get returns the latest version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test put_object defaults metadata to an empty map"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test each put creates a new retained version; get returns the newest"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_versions is ordered strictly newest first"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test each version records its own size"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get_object_version fetches a specific historical version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get_object_version preserves per-version metadata"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get_object_version on unknown version returns not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_object writes a delete marker and hides the object"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete marker still hides the object after re-put then re-delete"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version permanently removes one version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version of an old version leaves it unreadable afterward"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test deleting the delete marker restores the previous version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_objects shows only live keys, sorted"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_objects reports the latest version id per key"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test operations on a missing bucket report bucket_not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test versions and restore survive a restart"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test metadata and version ids survive a restart"}],"tests_errors":0,"tests_excluded":0,"tests_failed":19,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-11T11:36:55.705946Z"}
+13:36:55.741 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut solution.ex
+13:36:56.667 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":341,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 12/29 failed"],"tests":0.59},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01_mut","test_failures":[{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test buckets are isolated from one another"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test put returns a unique version id and get returns the latest version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test put_object defaults metadata to an empty map"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test each put creates a new retained version; get returns the newest"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_object writes a delete marker and hides the object"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete marker still hides the object after re-put then re-delete"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version permanently removes one version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test deleting the delete marker restores the previous version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test operations on a missing bucket report bucket_not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get on a key with no versions returns not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test versions and restore survive a restart"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test metadata and version ids survive a restart"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-11T11:36:56.645967Z"}
+13:36:56.675 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut solution.ex
+13:36:57.609 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":341,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 7/29 failed"],"tests":0.76},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01_mut","test_failures":[{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test each version records its own size"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get_object_version fetches a specific historical version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get_object_version preserves per-version metadata"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test get_object_version on unknown version returns not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_object writes a delete marker and hides the object"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version of an old version leaves it unreadable afterward"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test version operations on a missing bucket report bucket_not_found"}],"tests_errors":0,"tests_excluded":0,"tests_failed":7,"tests_passed":22,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-11T11:36:57.585230Z"}
+13:36:57.618 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut solution.ex
+13:36:58.536 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":341,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 6/29 failed"],"tests":0.79},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01_mut","test_failures":[{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_object writes a delete marker and hides the object"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete marker still hides the object after re-put then re-delete"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test deleting the delete marker restores the previous version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_objects shows only live keys, sorted"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test operations on a missing bucket report bucket_not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test versions and restore survive a restart"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-11T11:36:58.513991Z"}
+13:36:58.544 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut solution.ex
+13:36:59.452 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":341,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 8/29 failed"],"tests":0.72},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01_mut","test_failures":[{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test each put creates a new retained version; get returns the newest"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_versions is ordered strictly newest first"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_versions on a key with no versions returns empty list"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_object writes a delete marker and hides the object"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete marker still hides the object after re-put then re-delete"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version permanently removes one version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test operations on a missing bucket report bucket_not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test versions and restore survive a restart"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-11T11:36:59.428000Z"}
+13:36:59.460 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut solution.ex
+13:37:00.395 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":341,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 6/29 failed"],"tests":0.79},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01_mut","test_failures":[{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version permanently removes one version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version of an old version leaves it unreadable afterward"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test delete_version is idempotent"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test deleting the delete marker restores the previous version"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test version operations on a missing bucket report bucket_not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test versions and restore survive a restart"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-11T11:37:00.370610Z"}
+13:37:00.403 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut solution.ex
+13:37:01.301 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":341,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 6/29 failed"],"tests":0.79},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01_mut","test_failures":[{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test buckets are isolated from one another"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_objects shows only live keys, sorted"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_objects reports the latest version id per key"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test list_objects on empty bucket returns empty list"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test operations on a missing bucket report bucket_not_found"},{"message":"MUTATION","module":"VersionedObjectStorageTest","test":"test an empty bucket survives a restart"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-11T11:37:01.279128Z"}
+13:37:01.310 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut solution.ex
+13:37:02.207 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":339,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 29/29 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test create and list buckets sorted"},{"message":"{:EXIT, #PID<0.210.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test invalid and duplicate bucket names"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test list_buckets is empty for a fresh store"},{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test underscore and slash bucket names are rejected"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test buckets are isolated from one another"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test put returns a unique version id and get returns the latest version"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test put_object defaults metadata to an empty map"},{"message":"{:EXIT, #PID<0.228.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test each put creates a new retained version; get returns the newest"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test list_versions is ordered strictly newest first"},{"message":"{:EXIT, #PID<0.234.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test list_versions on a key with no versions returns empty list"},{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test each version records its own size"},{"message":"{:EXIT, #PID<0.240.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test get_object_version fetches a specific historical version"},{"message":"{:EXIT, #PID<0.243.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :init, 1, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 91, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test get_object_version preser (truncated)
+13:37:02.214 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut solution.ex
+13:37:03.120 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":294,"lines_over_98":0,"max_line_length":94,"mode":"full","pipe_chain_count":4,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":39,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 39 warning(s) → hard fail (overall 0.0)","tests: 29/29 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 98, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test create and list buckets sorted"},{"message":"{:EXIT, #PID<0.210.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 98, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test invalid and duplicate bucket names"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 102, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test list_buckets is empty for a fresh store"},{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 98, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test underscore and slash bucket names are rejected"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 98, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test buckets are isolated from one another"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 98, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test put returns a unique version id and get returns the latest version"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 98, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test put_object defaults metadata to an empty map"},{"message":"{:EXIT, #PID<0.228.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 98, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test each put creates a new retained version; get returns the newest"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 98, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test list_versions is ordered strictly newest first"},{"message":"{:EXIT, #PID<0.234.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 98, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test list_versions on a key with no versions returns empty list"},{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 98, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test each version records its own size"},{"message":"{:EXIT, #PID<0.240.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 98, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"VersionedObjectStorageTest","test":"test get_object_version fetches a specific historical version"},{"message":"{:EXIT, #PID<0.243.0>}: {%RuntimeError{message: \"MUTATION\"}, [{VersionedObjectStorage, :handle_call, 3, [file: ~c\".gen_staging/625_002_versioned_object_store_with_delete_markers_01_mut/solution.ex\", line: 98, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", l (truncated)
+13:37:03.120 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/625_002_versioned_object_store_with_delete_markers_01 solution.ex (seed 1279118187)
+13:37:04.048 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":422,"lines_over_98":0,"max_line_length":82,"mode":"full","pipe_chain_count":6,"public_fn_count":20,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/625_002_versioned_object_store_with_delete_markers_01/solution.ex","task":"625_002_versioned_object_store_with_delete_markers_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":29,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-11T11:37:04.024435Z"}
+13:37:04.053 [info] cycle 625_002_versioned_object_store_with_delete_markers_01: ACCEPTED on attempt 2
+13:37:04.054 [info] promoted 625_002_versioned_object_store_with_delete_markers_01 -> tasks/625_002_versioned_object_store_with_delete_markers_01

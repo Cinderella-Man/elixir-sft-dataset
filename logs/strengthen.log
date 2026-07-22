@@ -1,0 +1,175 @@
+strengthening 30 family(ies), sequential, ledger logs/strengthen_harnesses.jsonl
+
+[1/30] 075_004_schema_driven_generator_interpreter_01 (ledgered 0.0) ... already_ok
+[2/30] 073_001_database_cleaner_for_integration_tests_01 (ledgered 0.17) ... already_ok
+[3/30] 074_003_concurrency_and_message_assertion_helpers_01 (ledgered 0.2) ... already_ok
+[4/30] 107_003_weighted_event_aggregator_with_byte_budget_01 (ledgered 0.22) ... already_ok
+[5/30] 623_001_mini_elasticsearch_like_inverted_index_01 (ledgered 0.28) ... already_ok
+[6/30] 075_002_recursive_json_value_generators_with_bounded_depth_01 (ledgered 0.29) ... already_ok
+[7/30] 105_003_max_wait_debouncer_with_flush_and_cancel_01 (ledgered 0.29) ... already_ok
+[8/30] 077_001_interval_tree_for_overlapping_range_queries_01 (ledgered 0.29) ... rejected — still below floor after strengthening (0.42)
+[9/30] 075_003_stateful_command_sequence_generators_01 (ledgered 0.32) ... warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_13251.ex:7: CommandGenerators.stack_program/1
+  .gen_staging/strengthen_075_003_stateful_command_sequence_generators_01/test_harness.exs:221: CommandGeneratorsTest."test max_length 0 is a valid argument and produces only the empty program"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_14531.ex:53: CommandGenerators.account_program/1
+  .gen_staging/strengthen_075_003_stateful_command_sequence_generators_01/test_harness.exs:222: CommandGeneratorsTest."test max_length 0 is a valid argument and produces only the empty program"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_15107.ex:70: CommandGenerators.account_command/1
+  /tmp/strn_15107.ex:61: CommandGenerators.account_build/3
+  (stream_data 1.3.0) lib/stream_data.ex:434: anonymous fn/2 in StreamData.bind/2
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:67: StreamData.LazyTree.filter_map/2
+  (stream_data 1.3.0) lib/stream_data.ex:384: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: StreamData.check_all/7
+  .gen_staging/strengthen_075_003_stateful_command_sequence_generators_01/test_harness.exs:93: CommandGeneratorsTest."property CommandGenerators.account_program always produces a valid account program (balance never negative)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_15235.ex:70: CommandGenerators.account_command/1
+  /tmp/strn_15235.ex:61: CommandGenerators.account_build/3
+  (stream_data 1.3.0) lib/stream_data.ex:434: anonymous fn/2 in StreamData.bind/2
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:67: StreamData.LazyTree.filter_map/2
+  (stream_data 1.3.0) lib/stream_data.ex:384: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+
+already_ok
+[10/30] 005_003_replayeventbus_01 (ledgered 0.33) ... already_ok
+[11/30] 037_002_path_addressed_nested_record_anonymizer_01 (ledgered 0.35) ... already_ok
+[12/30] 002_003_progressive_recovery_cb_01 (ledgered 0.4) ... applied
+[13/30] 105_001_genserver_based_debouncer_01 (ledgered 0.4) ... 
+01:41:37.455 [warning] usage limit / out of credits on strengthen_harness (105_001_genserver_based_debouncer_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+
+01:56:39.207 [warning] usage limit / out of credits on strengthen_harness (105_001_genserver_based_debouncer_01) — waiting 900000ms (attempt 2, ~15 min waited so far)
+
+02:11:41.032 [warning] usage limit / out of credits on strengthen_harness (105_001_genserver_based_debouncer_01) — waiting 900000ms (attempt 3, ~30 min waited so far)
+
+02:26:42.808 [warning] usage limit / out of credits on strengthen_harness (105_001_genserver_based_debouncer_01) — waiting 900000ms (attempt 4, ~45 min waited so far)
+
+02:41:44.893 [warning] usage limit / out of credits on strengthen_harness (105_001_genserver_based_debouncer_01) — waiting 900000ms (attempt 5, ~60 min waited so far)
+
+02:56:46.618 [warning] usage limit / out of credits on strengthen_harness (105_001_genserver_based_debouncer_01) — waiting 900000ms (attempt 6, ~75 min waited so far)
+rejected — blind solver fails the strengthened harness — an added test demands something the prompt does not state: tests failed
+[14/30] 013_001_exponential_backoff_retry_worker_01 (ledgered 0.41) ... rejected — reference not green vs new harness: tests failed
+[15/30] 074_001_custom_exunit_assertion_helpers_01 (ledgered 0.41) ... rejected — blind solver fails the strengthened harness — an added test demands something the prompt does not state: tests failed
+[16/30] 013_002_timeout_guarded_retry_worker_01 (ledgered 0.42) ... rejected — blind solver fails the strengthened harness — an added test demands something the prompt does not state: tests failed
+[17/30] 107_002_keyed_event_aggregator_with_per_key_batching_01 (ledgered 0.43) ... rejected — blind solver fails the strengthened harness — an added test demands something the prompt does not state: tests failed
+[18/30] 041_001_lru_cache_backed_by_ets_01 (ledgered 0.45) ... rejected — blind solver fails the strengthened harness — an added test demands something the prompt does not state: tests failed
+[19/30] 001_001_rate_limiter_01 (ledgered 0.47) ... rejected — blind solver fails the strengthened harness — an added test demands something the prompt does not state: tests failed
+[20/30] 023_002_in_flight_coalescing_idempotent_payments_01 (ledgered 0.47) ... rejected — house/harness lint: test_harness.exs reaches into internal state via `:sys.get_state`/`:sys.replace_state` (2 call(s)) — assert observable behavior through the public API instead
+[21/30] 063_004_bounded_concurrency_concurrent_fetcher_01 (ledgered 0.47) ... rejected — blind solver fails the strengthened harness — an added test demands something the prompt does not state: tests failed
+[22/30] 101_001_sliding_window_counter_01 (ledgered 0.47) ... rejected — house/harness lint: test_harness.exs reaches into internal state via `:sys.get_state`/`:sys.replace_state` (6 call(s)) — assert observable behavior through the public API instead
+[23/30] 002_002_rolling_window_error_rate_cb_01 (ledgered 0.47) ... rejected — blind solver fails the strengthened harness — an added test demands something the prompt does not state: tests failed
+[24/30] 097_002_weighted_strength_score_password_policy_01 (ledgered 0.47) ... applied
+[25/30] 104_004_usage_recycling_connection_pool_01 (ledgered 0.47) ... rejected — reference not green vs new harness: tests failed
+[26/30] 041_002_lfu_cache_backed_by_ets_01 (ledgered 0.48) ... rejected — blind solver fails the strengthened harness — an added test demands something the prompt does not state: tests failed
+[27/30] 041_003_sharded_lru_cache_with_consistent_key_routing_01 (ledgered 0.48) ... warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_43266.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_43330.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_44354.ex:57: LRUCacheSharded.size/1
+  .gen_staging/strengthen_041_003_sharded_lru_cache_with_consistent_key_routing_01/test_harness.exs:205: LRUCacheShardedTest."test a per-shard capacity of 1 is accepted and retains exactly one entry"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_44418.ex:57: LRUCacheSharded.size/1
+  .gen_staging/strengthen_041_003_sharded_lru_cache_with_consistent_key_routing_01/test_harness.exs:205: LRUCacheShardedTest."test a per-shard capacity of 1 is accepted and retains exactly one entry"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_44610.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_44930.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_44994.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+rejected — blind solver fails the strengthened harness — an added test demands something the prompt does not state: tests failed
+[28/30] 079_001_bloom_filter_01 (ledgered 0.48) ... warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_48322.ex:22: BloomFilter.add/2
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  .gen_staging/strengthen_079_001_bloom_filter_01/test_harness.exs:244: BloomFilterHardeningTest."test member?/2 has no false negatives when k is 1"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_48386.ex:22: BloomFilter.add/2
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  .gen_staging/strengthen_079_001_bloom_filter_01/test_harness.exs:244: BloomFilterHardeningTest."test member?/2 has no false negatives when k is 1"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_48514.ex:33: BloomFilter.member?/2
+  .gen_staging/strengthen_079_001_bloom_filter_01/test_harness.exs:247: anonymous fn/2 in BloomFilterHardeningTest."test member?/2 has no false negatives when k is 1"/1
+  (elixir 1.20.2) lib/enum.ex:1725: Enum."-map/2-lists^map/1-1-"/2
+  .gen_staging/strengthen_079_001_bloom_filter_01/test_harness.exs:246: BloomFilterHardeningTest."test member?/2 has no false negatives when k is 1"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_48578.ex:33: BloomFilter.member?/2
+  .gen_staging/strengthen_079_001_bloom_filter_01/test_harness.exs:247: anonymous fn/2 in BloomFilterHardeningTest."test member?/2 has no false negatives when k is 1"/1
+  (elixir 1.20.2) lib/enum.ex:1725: Enum."-map/2-lists^map/1-1-"/2
+  .gen_staging/strengthen_079_001_bloom_filter_01/test_harness.exs:246: BloomFilterHardeningTest."test member?/2 has no false negatives when k is 1"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+rejected — blind solver fails the strengthened harness — an added test demands something the prompt does not state: tests failed
+[29/30] 077_004_max_overlap_interval_tree_01 (ledgered 0.48) ... applied
+[30/30] 075_001_property_based_test_generators_01 (ledgered 0.49) ... rejected — blind solver fails the strengthened harness — an added test demands something the prompt does not state: tests failed
+
+=== STRENGTHEN LEDGER (30 row(s)) === %{"already_ok" => 10, "applied" => 3, "rejected" => 17}
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))

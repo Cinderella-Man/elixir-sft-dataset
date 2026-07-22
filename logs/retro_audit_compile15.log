@@ -1,0 +1,870 @@
+retro audit: 1 root(s) — 1 to audit, 0 already audited at this content+gate, 0 bundle-skipped, 0 postgres-skipped
+
+=== 078_001_ring_buffer_01 (base)
+    gate [7/9] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "peek_newest is correct when the write head wraps to slot zero" ... KEPT (coverage)
+      promise test "push leaves the source buffer untouched and branches independently" ... KEPT (coverage)
+      promise test "nil is stored and reported like any other pushed item" ... KEPT (coverage)
+      promise test "backing store is a pre-allocated tuple with one slot per capacity unit" ... KEPT (coverage)
+      merging 4 vetted test(s) (4 coverage, 0 defect-proving; dropped 0: none dropped) — re-running the full cycle on the grown harness
+    gate [1/9] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [2/9] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 21/21 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [3/9] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [4/9] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 6 public function(s) must each be killed) ...
+      mutant [1/6] new/1 gutted to raise ... killed
+      mutant [2/6] push/2 gutted to raise ... killed
+      mutant [3/6] to_list/1 gutted to raise ... killed
+      mutant [4/6] size/1 gutted to raise ... killed
+      mutant [5/6] peek_oldest/1 gutted to raise ... killed
+      mutant [6/6] peek_newest/1 gutted to raise ... killed
+    gate [4/9] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 6 public function(s) must each be killed
+    gate [5/9] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 988364616) ...
+    gate [5/9] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 988364616
+    gate [6/9] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/floor_488404_8582.ex:46: RingBuffer.to_list/1
+  .gen_staging/078_001_ring_buffer_01_audit/test_harness.exs:51: RingBufferTest."test to_list returns items in insertion order when under capacity"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/floor_488404_8774.ex:46: RingBuffer.to_list/1
+  .gen_staging/078_001_ring_buffer_01_audit/test_harness.exs:25: RingBufferTest."test new buffer returns empty list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/floor_488404_8838.ex:46: RingBuffer.to_list/1
+  .gen_staging/078_001_ring_buffer_01_audit/test_harness.exs:175: RingBufferTest."test capacity-1 buffer always holds exactly one item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+    gate [6/9] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.97 (39/40) >= floor 0.6
+    · attempt 0: green (21/21) — all gates passed
+
+12:23:44.851 [info] cycle 078_001_ring_buffer_01_audit: ACCEPTED on attempt 0
+    gate [7/9] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 4 test(s) (4 coverage, 0 proven-defect); harness 17→21 tests; grown cycle green
+  WRITTEN (blind-verified) — changed: test_harness.exs
+
+retro audit summary: %{changed: 1}
+CHANGED roots need their child embeds cascaded — run:
+  mix run scripts/resync_embeds.exs -- --wt-all --apply
+  mix run scripts/resync_bugfix_embeds.exs -- --apply
+  mix run scripts/resync_tfim_embeds.exs -- --apply
+  mix run scripts/resync_adapt_embeds.exs -- --apply
+  elixir scripts/check_embeds.exs   # then hand-fix any fix_child_gold rows
+and re-run scripts/audit_bugfix.exs on any family whose SOLUTION changed
+(a redesigned gold invalidates its bugfix pairs — delete + remint those).
+
+retro audit: 14 root(s) — 14 to audit, 0 already audited at this content+gate, 0 bundle-skipped, 0 postgres-skipped
+
+=== 043_004_ordered_set_leaderboard_with_deterministic_tie_breaking_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "resubmitting the exact same score does not re-timestamp arrival" ... KEPT (coverage)
+      promise test "improving a score leaves no stale row behind for other players' ranks" ... dropped — no # PROMISE anchor comment
+      promise test "submit_score returns :ok for insert, improvement, tie and regression" ... dropped — anchor quote not found verbatim in prompt.md (or shorter than 25 chars)
+      promise test "float and integer scores of equal value tie and break by arrival" ... KEPT (coverage)
+      promise test "top returns every player when n exceeds the population" ... KEPT (coverage)
+      merging 3 vetted test(s) (3 coverage, 0 defect-proving; dropped 2: 1× anchor quote not found verbatim in prompt.md, 1× no # PROMISE anchor comment) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 16/16 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 6 public function(s) must each be killed) ...
+      mutant [1/6] new/1 gutted to raise ... killed
+      mutant [2/6] submit_score/3 gutted to raise ... killed
+      mutant [3/6] top/2 gutted to raise ... killed
+      mutant [4/6] rank/2 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 6 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 1850000767) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 1850000767
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.7 (19/27) >= floor 0.6
+    · attempt 0: green (16/16) — all gates passed
+
+12:26:46.464 [info] cycle 043_004_ordered_set_leaderboard_with_deterministic_tie_breaking_01_audit: ACCEPTED on attempt 0
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 3 test(s) (3 coverage, 0 proven-defect); harness 13→16 tests; grown cycle green
+  WRITTEN (blind-verified) — changed: test_harness.exs
+
+=== 061_003_timeout_and_retry_parallel_map_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "a timed-out attempt is really killed and produces no late side effect" ... KEPT (coverage)
+      promise test "a timeout in one element does not affect the others" ... KEPT (coverage)
+      promise test "max_attempts defaults to 1 so a timed-out element is attempted exactly once" ... KEPT (coverage)
+      promise test "a queued element does not start while a timed-out element is retrying" ... KEPT (coverage)
+      promise test "max_concurrency defaults to 5 when the option is omitted" ... KEPT (coverage)
+      promise test "ConcurrencyCounter honours the :name option and returns new values" ... KEPT (coverage)
+      merging 6 vetted test(s) (6 coverage, 0 defect-proving; dropped 0: none dropped) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 15/15 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 7 public function(s) must each be killed) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] increment/1 gutted to raise ... killed
+      mutant [3/7] decrement/1 gutted to raise ... killed
+      mutant [4/7] peak/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] pmap/3 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 7 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 189557375) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 189557375
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/floor_496168_10884.ex:97: RetryMap.pmap/3
+  .gen_staging/061_003_timeout_and_retry_parallel_map_01_audit/test_harness.exs:9: RetryMapTest."test empty collection returns []"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/floor_496168_10948.ex:97: RetryMap.pmap/3
+  .gen_staging/061_003_timeout_and_retry_parallel_map_01_audit/test_harness.exs:56: RetryMapTest."test an element that always times out returns {:error, :timeout} after exhausting attempts"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.81 (29/36) >= floor 0.6
+    · attempt 0: green (15/15) — all gates passed
+
+12:34:39.802 [info] cycle 061_003_timeout_and_retry_parallel_map_01_audit: ACCEPTED on attempt 0
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 6 test(s) (6 coverage, 0 proven-defect); harness 9→15 tests; grown cycle green
+  WRITTEN (blind-verified) — changed: test_harness.exs
+
+=== 063_004_bounded_concurrency_concurrent_fetcher_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "a killed fetch does not crash a caller that is not trapping exits" ... KEPT (defect)
+      promise test "a queued source starts only once a running slot frees up" ... KEPT (coverage)
+      promise test "duplicate names collapse into one key holding the last recorded value" ... KEPT (coverage)
+      promise test "nothing reaches the caller's mailbox after a timed-out call returns" ... KEPT (coverage)
+      promise test "max_concurrency equal to the source count starts every source immediately" ... KEPT (coverage)
+      promise test "a call made right after a timed-out call gets an independent result map" ... KEPT (coverage)
+      merging 6 vetted test(s) (5 coverage, 1 defect-proving; dropped 0: none dropped) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... FAIL — tests failed (18/19 passed, 1 failed, 0 errored)
+    · attempt 0: tests failed (18/19 passed) — asking for a fix
+
+12:38:03.788 [info] cycle 063_004_bounded_concurrency_concurrent_fetcher_01_audit: repairing — Tests failed (1 failed, 0 errors):
+  - test a killed fetch does not crash a caller that is not trapping exits (PooledFetcherTest): 
+
+Assertion failed, no matching message after 2000ms
+     Showing 1 of 1 message in the mailbox
+code: assert_receive {:fetch_result, result}
+mailbox:
+       pattern: {:fetch_result, result}
+       value:   {:DOWN, #Reference<0.4035442680.2410151937.71241>, :process, #PID<0.318.0>, :killed}
+
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 19/19 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 1 public function(s) must each be killed) ...
+      mutant [1/1] fetch_all/3 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 1 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 84972343) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 84972343
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.8 (16/20) >= floor 0.6
+    · attempt 1: green (19/19) — all gates passed
+
+12:39:45.871 [info] cycle 063_004_bounded_concurrency_concurrent_fetcher_01_audit: ACCEPTED on attempt 1
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 6 test(s) (5 coverage, 1 proven-defect); harness 13→19 tests; grown cycle green (module repaired against the proven defect(s))
+  blind candidate failed to COMPILE (solver artifact) — one retry
+
+=== 071_001_factory_module_for_test_data_generation_01 (base)
+    gate [7/9] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "build(:post, user_id: id) creates no user record at all" ... KEPT (coverage)
+      promise test "build(:post) user_id matches the id of the user it persisted" ... KEPT (coverage)
+      promise test "start/0 called again while running keeps existing counters intact" ... KEPT (coverage)
+      promise test "build(:post) populates non-empty title and body defaults" ... KEPT (coverage)
+      promise test "insert/1 returns the very struct that was stored in the repo" ... KEPT (coverage)
+      merging 5 vetted test(s) (5 coverage, 0 defect-proving; dropped 0: none dropped) — re-running the full cycle on the grown harness
+    gate [1/9] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [2/9] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 19/19 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [3/9] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [4/9] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 6 public function(s) must each be killed) ...
+      mutant [1/6] start/0 gutted to raise ... killed
+      mutant [2/6] sequence/2 gutted to raise ... killed
+      mutant [3/6] build/1 gutted to raise ... killed
+      mutant [4/6] build/2 gutted to raise ... killed
+      mutant [5/6] insert/1 gutted to raise ... killed
+      mutant [6/6] insert/2 gutted to raise ... killed
+    gate [4/9] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 6 public function(s) must each be killed
+    gate [5/9] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 1325376297) ...
+    gate [5/9] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 1325376297
+    gate [6/9] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [6/9] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... FAIL — kill rate 0.58 (7/12) < floor 0.6; survivors: L141 s349: return :ok -> :error, L141 s351: {:ok, _} -> {:error, _}, L142 s355: return :ok -> :error, L142 s357: {:error, _} -> {:ok, _}, L145 s363: return :ok -> :error
+    · attempt 0: semantic floor: kill rate 0.58 with 5 surviving behavior mutant(s) — asking for a fix
+
+12:42:20.329 [info] cycle 071_001_factory_module_for_test_data_generation_01_audit: repairing — The files graded green, but the harness kills only 58% of seeded behavior mutants — each survivor below is a single behavior change NO test caught:
+  - L141 s349: return :ok -> :error
+  - L141 s351: {:ok, _} -> {:error, _}
+  - L142 s355: return :ok -> :error
+  - L142 s357: {:error, _} -> {:ok, _}
+  - L145 s363: return :ok -> :error
+Add tests that discriminate the DOCUMENTED behavior each survivor touches — assert through the public API (never internal state), keep every existing test, and do not weaken the implementation.
+    gate [2/9] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 22/22 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [3/9] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [4/9] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 6 public function(s) must each be killed) ...
+      mutant [1/6] start/0 gutted to raise ... killed
+      mutant [2/6] sequence/2 gutted to raise ... killed
+      mutant [3/6] build/1 gutted to raise ... killed
+      mutant [4/6] build/2 gutted to raise ... killed
+      mutant [5/6] insert/1 gutted to raise ... killed
+      mutant [6/6] insert/2 gutted to raise ... killed
+    gate [4/9] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 6 public function(s) must each be killed
+    gate [5/9] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 1325376297) ...
+    gate [5/9] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 1325376297
+    gate [6/9] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [6/9] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 1.0 (9/9) >= floor 0.6
+    · attempt 1: green (22/22) — all gates passed
+
+12:44:23.968 [info] cycle 071_001_factory_module_for_test_data_generation_01_audit: ACCEPTED on attempt 1
+    gate [7/9] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 5 test(s) (5 coverage, 0 proven-defect); harness 14→22 tests; grown cycle green
+  blind candidate failed to COMPILE (solver artifact) — one retry
+
+=== 071_002_trait_composable_factory_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "insert/1 persists a post row plus its association row" ... KEPT (coverage)
+      promise test "build(:post) populates user_id with the id of the user actually inserted" ... KEPT (coverage)
+      promise test "distinct sequence names keep independent counters" ... KEPT (coverage)
+      promise test "insert(:post) with a user_id override creates only the post row" ... KEPT (coverage)
+      promise test "an explicit false override beats a trait that sets the flag true" ... KEPT (coverage)
+      promise test "unknown trait raises through the inferred two-arity trait form" ... KEPT (coverage)
+      merging 6 vetted test(s) (6 coverage, 0 defect-proving; dropped 0: none dropped) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 22/22 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 8 public function(s) must each be killed) ...
+      mutant [1/8] start/0 gutted to raise ... killed
+      mutant [2/8] sequence/2 gutted to raise ... killed
+      mutant [3/8] build/1 gutted to raise ... killed
+      mutant [4/8] build/2 gutted to raise ... killed
+      mutant [5/8] build/3 gutted to raise ... killed
+      mutant [6/8] insert/1 gutted to raise ... killed
+      mutant [7/8] insert/2 gutted to raise ... killed
+      mutant [8/8] insert/3 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 8 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 245198738) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 245198738
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.92 (11/12) >= floor 0.6
+    · attempt 0: green (22/22) — all gates passed
+
+12:46:59.616 [info] cycle 071_002_trait_composable_factory_01_audit: ACCEPTED on attempt 0
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 6 test(s) (6 coverage, 0 proven-defect); harness 16→22 tests; grown cycle green
+  WRITTEN (blind-verified) — changed: test_harness.exs
+
+=== 071_003_bulk_list_factory_with_concurrent_insertion_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "insert(:post) with a user_id override inserts no extra user" ... dropped — no # PROMISE anchor comment
+      promise test "insert_list/3 applies overrides to every persisted element" ... dropped — no # PROMISE anchor comment
+      promise test "sequence/2 starts a fresh named counter at 1 and increases by one" ... dropped — no # PROMISE anchor comment
+      promise test "sequence/2 counters are independent per name" ... KEPT (coverage)
+      promise test "params_for(:post) user_id matches a user actually persisted in the repo" ... KEPT (coverage)
+      promise test "start/0 returns an Agent.start_link/2 result naming the already-running agent" ... dropped — no # PROMISE anchor comment
+      merging 2 vetted test(s) (2 coverage, 0 defect-proving; dropped 4: 4× no # PROMISE anchor comment) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 19/19 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 12 public function(s) must each be killed) ...
+      mutant [1/12] start/0 gutted to raise ... killed
+      mutant [2/12] sequence/2 gutted to raise ... killed
+      mutant [3/12] build/1 gutted to raise ... killed
+      mutant [4/12] build/2 gutted to raise ... killed
+      mutant [5/12] insert/1 gutted to raise ... killed
+      mutant [6/12] insert/2 gutted to raise ... killed
+      mutant [7/12] build_list/2 gutted to raise ... killed
+      mutant [8/12] build_list/3 gutted to raise ... killed
+      mutant [9/12] insert_list/2 gutted to raise ... killed
+      mutant [10/12] insert_list/3 gutted to raise ... killed
+      mutant [11/12] params_for/1 gutted to raise ... killed
+      mutant [12/12] params_for/2 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 12 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 406931833) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 406931833
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.89 (17/19) >= floor 0.6
+    · attempt 0: green (19/19) — all gates passed
+
+12:48:29.900 [info] cycle 071_003_bulk_list_factory_with_concurrent_insertion_01_audit: ACCEPTED on attempt 0
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 2 test(s) (2 coverage, 0 proven-defect); harness 17→19 tests; grown cycle green
+  WRITTEN (blind-verified) — changed: test_harness.exs
+
+=== 100_001_totp_time_based_one_time_password_implementation_01 (base)
+    gate [7/9] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "generate_secret encodes exactly 160 bits as 32 unpadded base32 characters" ... KEPT (coverage)
+      promise test "valid? without a window option tolerates exactly one step of drift in each direction" ... KEPT (coverage)
+      promise test "valid? accepts an integer code whose decimal form is shorter than six digits" ... KEPT (coverage)
+      promise test "provisioning_uri label decodes back to issuer colon account_name" ... KEPT (coverage)
+      merging 4 vetted test(s) (4 coverage, 0 defect-proving; dropped 0: none dropped) — re-running the full cycle on the grown harness
+    gate [1/9] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [2/9] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 30/30 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [3/9] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [4/9] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 4 public function(s) must each be killed) ...
+      mutant [1/4] generate_secret/0 gutted to raise ... killed
+      mutant [2/4] generate_code/2 gutted to raise ... killed
+      mutant [3/4] valid?/3 gutted to raise ... killed
+      mutant [4/4] provisioning_uri/3 gutted to raise ... killed
+    gate [4/9] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 4 public function(s) must each be killed
+    gate [5/9] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 638345498) ...
+    gate [5/9] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 638345498
+    gate [6/9] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [6/9] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.78 (31/40) >= floor 0.6
+    · attempt 0: green (30/30) — all gates passed
+
+12:50:27.552 [info] cycle 100_001_totp_time_based_one_time_password_implementation_01_audit: ACCEPTED on attempt 0
+    gate [7/9] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 4 test(s) (4 coverage, 0 proven-defect); harness 21→25 tests; grown cycle green
+  WRITTEN (blind-verified) — changed: test_harness.exs
+
+=== 100_002_provisioning_uri_driven_multi_algorithm_totp_verifier_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "parse rejects a period that is not the exact decimal string of the integer" ... KEPT (defect)
+      promise test "parse strips embedded whitespace from the secret" ... KEPT (coverage)
+      promise test "verify rejects a code longer than the configured digit count" ... KEPT (coverage)
+      promise test "parse accepts an uppercase scheme" ... KEPT (coverage)
+      promise test "parse accepts an uppercase totp type" ... KEPT (coverage)
+      promise test "parse rejects a URI with no query string at all" ... KEPT (coverage)
+      merging 6 vetted test(s) (5 coverage, 1 defect-proving; dropped 0: none dropped) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... FAIL — tests failed (58/59 passed, 1 failed, 0 errored)
+    · attempt 0: tests failed (58/59 passed) — asking for a fix
+
+12:52:22.622 [info] cycle 100_002_provisioning_uri_driven_multi_algorithm_totp_verifier_01_audit: repairing — Tests failed (1 failed, 0 errors):
+  - test parse rejects a period that is not the exact decimal string of the integer (AuthenticatorURITest): 
+
+Assertion with == failed
+code:  assert AuthenticatorURI.parse("otpauth://totp/Acme:alice?secret=#{@sha1_secret}&period=%2B30") ==
+              {:error, :invalid_period}
+left:  {:ok, %{period: 30, algorithm: :sha1, issuer: "Acme", account: "alice", secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", digits: 6}}
+right: {:error, :invalid_period}
+
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 59/59 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 5 public function(s) must each be killed) ...
+      mutant [1/5] parse/1 gutted to raise ... killed
+      mutant [2/5] code_at/2 gutted to raise ... killed
+      mutant [3/5] seconds_remaining/2 gutted to raise ... killed
+      mutant [4/5] verify/3 gutted to raise ... killed
+      mutant [5/5] base32_decode/1 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 5 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 167463532) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 167463532
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.85 (34/40) >= floor 0.6
+    · attempt 1: green (59/59) — all gates passed
+
+12:53:38.650 [info] cycle 100_002_provisioning_uri_driven_multi_algorithm_totp_verifier_01_audit: ACCEPTED on attempt 1
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 6 test(s) (5 coverage, 1 proven-defect); harness 38→44 tests; grown cycle green (module repaired against the proven defect(s))
+  blind candidate failed to COMPILE (solver artifact) — one retry
+
+=== 100_003_counter_based_hotp_with_resynchronization_window_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "valid? returns the lowest matching counter when a code collides in the window" ... KEPT (coverage)
+      promise test "valid? left-pads short codes before comparing them" ... KEPT (coverage)
+      promise test "generate_code zero-pads codes whose numeric value has fewer than six digits" ... KEPT (coverage)
+      promise test "valid? accepts a code at exactly counter plus look_ahead" ... KEPT (coverage)
+      promise test "valid? rejects a replay of an accepted code once the returned counter is stored" ... KEPT (coverage)
+      promise test "generate_code refuses a negative counter" ... dropped — vacuous (bite-proof failed: the isolated test block kills no raise-mutant of the module — it asserts nothing about behavior)
+      merging 5 vetted test(s) (5 coverage, 0 defect-proving; dropped 1: 1× vacuous) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 21/21 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 4 public function(s) must each be killed) ...
+      mutant [1/4] generate_secret/0 gutted to raise ... killed
+      mutant [2/4] generate_code/2 gutted to raise ... killed
+      mutant [3/4] valid?/4 gutted to raise ... killed
+      mutant [4/4] provisioning_uri/4 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 4 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 1324922250) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 1324922250
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/floor_496168_7106.ex:35: HOTP.valid?/4
+  .gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01_audit/test_harness.exs:92: HOTPTest."test valid? resynchronizes forward within the look-ahead window"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.9 (36/40) >= floor 0.6
+    · attempt 0: green (21/21) — all gates passed
+
+12:56:49.568 [info] cycle 100_003_counter_based_hotp_with_resynchronization_window_01_audit: ACCEPTED on attempt 0
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 5 test(s) (5 coverage, 0 proven-defect); harness 16→21 tests; grown cycle green
+  blind candidate failed to COMPILE (solver artifact) — one retry
+
+=== 100_004_stateful_totp_vault_genserver_with_replay_protection_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "a rejected replay leaves the highest consumed step intact" ... KEPT (coverage)
+      promise test "a spent step stays rejected later even under a much wider window" ... KEPT (coverage)
+      promise test "an integer code whose string form has a leading zero is accepted" ... KEPT (coverage)
+      promise test "a code numerically below 100000 is still six characters wide" ... KEPT (coverage)
+      merging 4 vetted test(s) (4 coverage, 0 defect-proving; dropped 0: none dropped) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 26/26 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 7 public function(s) must each be killed) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] register/2 gutted to raise ... killed
+      mutant [3/7] secret/2 gutted to raise ... killed
+      mutant [4/7] current_code/3 gutted to raise ... killed
+      mutant [5/7] consume/4 gutted to raise ... killed
+      mutant [6/7] init/1 gutted to raise ... killed
+      mutant [7/7] handle_call/3 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 7 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 694715498) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 694715498
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/floor_496168_9922.ex:130: TOTPVault.match_step/4
+  /tmp/floor_496168_9922.ex:97: TOTPVault.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.9 (36/40) >= floor 0.6
+    · attempt 0: green (26/26) — all gates passed
+
+13:00:41.389 [info] cycle 100_004_stateful_totp_vault_genserver_with_replay_protection_01_audit: ACCEPTED on attempt 0
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 4 test(s) (4 coverage, 0 proven-defect); harness 22→26 tests; grown cycle green
+  WRITTEN (blind-verified) — changed: test_harness.exs
+
+=== 104_004_usage_recycling_connection_pool_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "a returned connection goes to the longest-waiting caller first" ... KEPT (coverage)
+      promise test "the fresh replacement for a retired connection goes to the longest-waiting caller" ... KEPT (coverage)
+      promise test "a crash while holding retires the connection and hands a waiter a fresh one" ... KEPT (coverage)
+      promise test "a returned connection is not charged a second use when its old holder later dies" ... KEPT (coverage)
+      promise test "a waiter served before its deadline gets no timeout reply after that deadline" ... KEPT (defect)
+      promise test "a max_uses that is not a positive integer or :infinity is rejected at startup" ... KEPT (coverage)
+      merging 6 vetted test(s) (5 coverage, 1 defect-proving; dropped 0: none dropped) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... FAIL — tests failed (22/23 passed, 1 failed, 0 errored)
+    · attempt 0: tests failed (22/23 passed) — asking for a fix
+
+13:05:57.007 [info] cycle 104_004_usage_recycling_connection_pool_01_audit: repairing — Tests failed (1 failed, 0 errors):
+  - test a waiter served before its deadline gets no timeout reply after that deadline (RecyclingPoolTest): 
+
+Assertion with == failed
+code:  assert s.in_use == 1
+left:  0
+right: 1
+
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 23/23 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 7 public function(s) must each be killed) ...
+      mutant [1/7] start_link/1 gutted to raise ... killed
+      mutant [2/7] checkout/2 gutted to raise ... killed
+      mutant [3/7] checkin/2 gutted to raise ... killed
+      mutant [4/7] stats/1 gutted to raise ... killed
+      mutant [5/7] init/1 gutted to raise ... killed
+      mutant [6/7] handle_call/3 gutted to raise ... killed
+      mutant [7/7] handle_info/2 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 7 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 74335446) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 74335446
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.79 (31/39) >= floor 0.6
+    · attempt 1: green (23/23) — all gates passed
+
+13:11:49.807 [info] cycle 104_004_usage_recycling_connection_pool_01_audit: ACCEPTED on attempt 1
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 6 test(s) (5 coverage, 1 proven-defect); harness 17→23 tests; grown cycle green (module repaired against the proven defect(s))
+  WRITTEN (blind-verified) — changed: solution.ex, test_harness.exs
+
+=== 110_002_histogram_based_approximate_rolling_percentile_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "reusing a ring slot in a later cycle drops the previous cycle's counts" ... KEPT (defect)
+      promise test "out-of-range values land in the first and last buckets, not merely at the edges" ... dropped — no # PROMISE anchor comment
+      promise test "percentile 1.0 returns the high edge even when only the lowest bucket has counts" ... KEPT (defect)
+      promise test "missing, too-short and non-numeric edges all raise ArgumentError" ... KEPT (coverage)
+      promise test "omitting slots divides the window into sixty slices" ... KEPT (coverage)
+      promise test "a value equal to an interior edge falls into the bucket above it" ... dropped — no # PROMISE anchor comment
+      merging 4 vetted test(s) (2 coverage, 2 defect-proving; dropped 2: 2× no # PROMISE anchor comment) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... FAIL — tests failed (10/12 passed, 2 failed, 0 errored)
+    · attempt 0: tests failed (10/12 passed) — asking for a fix
+
+13:14:33.672 [info] cycle 110_002_histogram_based_approximate_rolling_percentile_01_audit: repairing — Tests failed (2 failed, 0 errors):
+  - test reusing a ring slot in a later cycle drops the previous cycle's counts (HistogramPercentileTest): 
+
+Expected the difference between 5.0 and 5.5 (0.5) to be less than or equal to 0.001
+
+  - test percentile 1.0 returns the high edge even when only the lowest bucket has counts (HistogramPercentileTest): 
+
+Expected the difference between 10.0 and 100.0 (90.0) to be less than or equal to 0.001
+
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 12/12 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 6 public function(s) must each be killed) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] record/2 gutted to raise ... killed
+      mutant [3/6] query/2 gutted to raise ... killed
+      mutant [4/6] reset/1 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 6 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 338948487) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 338948487
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.68 (26/38) >= floor 0.6
+    · attempt 1: green (12/12) — all gates passed
+
+13:16:22.573 [info] cycle 110_002_histogram_based_approximate_rolling_percentile_01_audit: ACCEPTED on attempt 1
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 4 test(s) (2 coverage, 2 proven-defect); harness 8→12 tests; grown cycle green (module repaired against the proven defect(s))
+
+=== 110_003_sla_percentile_monitor_with_inverse_queries_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "time and count windows both apply when combined" ... KEPT (coverage)
+      promise test "a fully expired series behaves exactly like a never-recorded one" ... KEPT (coverage)
+      promise test "a sample stays live until elapsed time reaches window_ms exactly" ... KEPT (coverage)
+      promise test "query rejects percentiles outside the documented range" ... KEPT (coverage)
+      promise test "duplicate sample values each count toward the empirical CDF" ... KEPT (coverage)
+      promise test "the process registers under the default name when none is given" ... KEPT (coverage)
+      merging 6 vetted test(s) (6 coverage, 0 defect-proving; dropped 0: none dropped) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 16/16 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 8 public function(s) must each be killed) ...
+      mutant [1/8] start_link/1 gutted to raise ... killed
+      mutant [2/8] record/2 gutted to raise ... killed
+      mutant [3/8] query/2 gutted to raise ... killed
+      mutant [4/8] rank/2 gutted to raise ... killed
+      mutant [5/8] count_above/2 gutted to raise ... killed
+      mutant [6/8] reset/1 gutted to raise ... killed
+      mutant [7/8] init/1 gutted to raise ... killed
+      mutant [8/8] handle_call/3 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 8 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 1903032373) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 1903032373
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.9 (19/21) >= floor 0.6
+    · attempt 0: green (16/16) — all gates passed
+
+13:19:21.779 [info] cycle 110_003_sla_percentile_monitor_with_inverse_queries_01_audit: ACCEPTED on attempt 0
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 6 test(s) (6 coverage, 0 proven-defect); harness 10→16 tests; grown cycle green
+  WRITTEN (blind-verified) — changed: test_harness.exs
+
+=== 134_003_chunked_merge_based_schema_inference_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "merging an empty fragment is commutative at the finalized level" ... KEPT (defect)
+      promise test "unquoted empty cells contribute no category for that column" ... KEPT (coverage)
+      promise test "a quoted empty field is a non-null string cell" ... KEPT (coverage)
+      promise test "headerless partial has nil names and exactly the documented keys" ... KEPT (coverage)
+      promise test "quoted fields keep embedded commas and doubled quotes in one cell" ... KEPT (coverage)
+      promise test "boolean classification is case-insensitive across merged chunks" ... KEPT (coverage)
+      merging 6 vetted test(s) (5 coverage, 1 defect-proving; dropped 0: none dropped) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... FAIL — tests failed (16/17 passed, 1 failed, 0 errored)
+    · attempt 0: tests failed (16/17 passed) — asking for a fix
+
+13:20:54.316 [info] cycle 134_003_chunked_merge_based_schema_inference_01_audit: repairing — Tests failed (1 failed, 0 errors):
+  - test merging an empty fragment is commutative at the finalized level (MergeSchemaTest): 
+
+Assertion with == failed
+code:  assert MergeSchema.finalize(MergeSchema.merge(empty, header)) ==
+              MergeSchema.finalize(MergeSchema.merge(header, empty))
+left:  %{}
+right: %{"n" => :integer}
+
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 17/17 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 4 public function(s) must each be killed) ...
+      mutant [1/4] partial/2 gutted to raise ... killed
+      mutant [2/4] merge/2 gutted to raise ... killed
+      mutant [3/4] finalize/1 gutted to raise ... killed
+      mutant [4/4] infer_string/2 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 4 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 490827433) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 490827433
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.88 (30/34) >= floor 0.6
+    · attempt 1: green (17/17) — all gates passed
+
+13:21:59.219 [info] cycle 134_003_chunked_merge_based_schema_inference_01_audit: ACCEPTED on attempt 1
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 6 test(s) (5 coverage, 1 proven-defect); harness 11→17 tests; grown cycle green (module repaired against the proven defect(s))
+  blind candidate failed to COMPILE (solver artifact) — one retry
+
+retro audit summary: %{changed: 8, needs_triage: 6}
+CHANGED roots need their child embeds cascaded — run:
+  mix run scripts/resync_embeds.exs -- --wt-all --apply
+  mix run scripts/resync_bugfix_embeds.exs -- --apply
+  mix run scripts/resync_tfim_embeds.exs -- --apply
+  mix run scripts/resync_adapt_embeds.exs -- --apply
+  elixir scripts/check_embeds.exs   # then hand-fix any fix_child_gold rows
+and re-run scripts/audit_bugfix.exs on any family whose SOLUTION changed
+(a redesigned gold invalidates its bugfix pairs — delete + remint those).
+

@@ -1,0 +1,377 @@
+19:15:24.744 [info] FIM 074_002_collection_and_structural_assertion_helpers_fim03 → 074_002_collection_and_structural_assertion_helpers_03: target assert_has_keys/2
+19:15:24.744 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+19:15:24.744 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `assert_has_keys/2`.
+
+Generate a prompt describing how to implement `assert_has_keys/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `assert_has_keys/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `assert_has_keys/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `assert_has_keys/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `AssertHelpers` that provides three custom ExUnit assertion macros intended to be `use`d inside test modules. This set focuses on **collections and structural data** rather than time or processes.
+
+I need these macros:
+
+- `assert_subset(subset, superset)` — asserts that every element of the enumerable `subset` also appears in the enumerable `superset` (set membership, so duplicates in `subset` are fine). On failure, the message should list exactly which elements are missing, plus show both collections so the developer can see what happened.
+
+- `assert_has_keys(map, keys)` — asserts that `map` contains every key in `keys`. Accept either a list of keys or a single bare key. On failure, the message should list the missing keys, the keys that were expected, and the keys actually present on the map.
+
+- `assert_sorted_by(enumerable, key_fun)` — asserts that `enumerable` is sorted in ascending order (non-strict, so equal adjacent keys are allowed) according to the 1-arity `key_fun` applied to each element. On failure, report the index of the first out-of-order pair together with both offending elements and their computed keys.
+
+All three must be macros (not plain functions) so that ExUnit can report the correct file and line number on failure. Use `ExUnit.Assertions.flunk/1` for surfacing failure messages. The module should be a single file with no external dependencies beyond `ExUnit`.
+
+Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule AssertHelpers do
+  @moduledoc """
+  Custom ExUnit assertion macros for collection and structural data.
+
+  ## Usage
+
+      defmodule MyApp.SomeTest do
+        use ExUnit.Case
+        use AssertHelpers
+
+        test "example" do
+          assert_subset([:a, :b], [:a, :b, :c])
+          assert_has_keys(record, [:id, :name])
+          assert_sorted_by(rows, & &1.position)
+        end
+      end
+  """
+
+  @doc false
+  @spec __using__(Macro.t()) :: Macro.t()
+  defmacro __using__(_opts) do
+    quote do
+      import AssertHelpers
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # assert_subset/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Asserts that every element of `subset` also appears in `superset`.
+
+  Membership is set-based, so duplicate elements in `subset` are fine. On
+  failure the message lists the missing elements and shows both collections.
+  """
+  @spec assert_subset(Macro.t(), Macro.t()) :: Macro.t()
+  defmacro assert_subset(subset, superset) do
+    quote bind_quoted: [subset: subset, superset: superset] do
+      sub_list = Enum.to_list(subset)
+      sup_list = Enum.to_list(superset)
+      sup_set = MapSet.new(sup_list)
+
+      missing =
+        sub_list
+        |> Enum.reject(fn el -> MapSet.member?(sup_set, el) end)
+        |> Enum.uniq()
+
+      unless missing == [] do
+        ExUnit.Assertions.flunk("""
+        assert_subset failed
+
+          expected every element of the subset to appear in the superset
+          missing elements: #{inspect(missing)}
+          subset          : #{inspect(sub_list)}
+          superset        : #{inspect(sup_list)}
+        """)
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # assert_has_keys/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Asserts that `map` contains every key in `keys`.
+
+  `keys` may be a list of keys or a single bare key. On failure the message
+  lists the missing keys, the expected keys, and the keys present on the map.
+  """
+  @spec assert_has_keys(Macro.t(), Macro.t()) :: Macro.t()
+  defmacro assert_has_keys(map, keys) do
+    quote bind_quoted: [map: map, keys: keys] do
+      key_list = List.wrap(keys)
+      missing = Enum.reject(key_list, fn k -> Map.has_key?(map, k) end)
+
+      unless missing == [] do
+        ExUnit.Assertions.flunk("""
+        assert_has_keys failed
+
+          missing keys  : #{inspect(missing)}
+          expected keys : #{inspect(key_list)}
+          present keys  : #{inspect(Map.keys(map))}
+        """)
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # assert_sorted_by/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Asserts that `enumerable` is sorted in ascending (non-strict) order according
+  to `key_fun` applied to each element.
+
+  On failure the message reports the index of the first out-of-order pair,
+  both offending elements, and their computed keys.
+  """
+  @spec assert_sorted_by(Macro.t(), Macro.t()) :: Macro.t()
+  defmacro assert_sorted_by(enumerable, key_fun) do
+    quote bind_quoted: [enumerable: enumerable, key_fun: key_fun] do
+      list = Enum.to_list(enumerable)
+
+      case AssertHelpers.__first_unsorted__(list, key_fun) do
+        :ok ->
+          :ok
+
+        {:unsorted, index, a, b} ->
+          ExUnit.Assertions.flunk("""
+          assert_sorted_by failed
+
+            list is not sorted in ascending order by the given key function
+            first out-of-order pair at index #{index}:
+              element #{index}     : #{inspect(a)} (key: #{inspect(key_fun.(a))})
+              element #{index + 1} : #{inspect(b)} (key: #{inspect(key_fun.(b))})
+            full list: #{inspect(list)}
+          """)
+      end
+    end
+  end
+
+  @doc """
+  Returns the first out-of-order adjacent pair in `list` according to `key_fun`.
+
+  Yields `:ok` when the list is sorted (non-strict ascending), or
+  `{:unsorted, index, a, b}` for the first pair where `key_fun.(a) > key_fun.(b)`.
+  Intended for internal use by `assert_sorted_by/2`.
+  """
+  @spec __first_unsorted__([term()], (term() -> term())) ::
+          :ok | {:unsorted, non_neg_integer(), term(), term()}
+  def __first_unsorted__(list, key_fun) do
+    list
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.with_index()
+    |> Enum.find_value(:ok, fn {[a, b], i} ->
+      if key_fun.(a) > key_fun.(b), do: {:unsorted, i, a, b}, else: false
+    end)
+  end
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description + skeleton module with a `# TODO` for assert_has_keys/2
+  - solution.ex — just the assert_has_keys/2 function
+
+
+19:15:48.889 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the `assert_has_keys/2` macro.
+
+`assert_has_keys(map, keys)` asserts that `map` contains every key in `keys`.
+The `keys` argument may be a list of keys or a single bare key, so it must be
+normalized into a list first (use `List.wrap/1`). Determine which keys are
+missing by rejecting the ones for which `Map.has_key?/2` returns true. If no
+keys are missing, the assertion passes. Otherwise, call
+`ExUnit.Assertions.flunk/1` with a message that lists the missing keys, the
+expected keys (the normalized list), and the keys actually present on the map
+(via `Map.keys/1`).
+
+Because it is a macro (not a plain function), ExUnit can report the correct
+file and line number on failure. Use `quote bind_quoted: [...]` so the `map`
+and `keys` expressions are each evaluated exactly once.
+
+```elixir
+defmodule AssertHelpers do
+  @moduledoc """
+  Custom ExUnit assertion macros for collection and structural data.
+
+  ## Usage
+
+      defmodule MyApp.SomeTest do
+        use ExUnit.Case
+        use AssertHelpers
+
+        test "example" do
+          assert_subset([:a, :b], [:a, :b, :c])
+          assert_has_keys(record, [:id, :name])
+          assert_sorted_by(rows, & &1.position)
+        end
+      end
+  """
+
+  @doc false
+  @spec __using__(Macro.t()) :: Macro.t()
+  defmacro __using__(_opts) do
+    quote do
+      import AssertHelpers
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # assert_subset/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Asserts that every element of `subset` also appears in `superset`.
+
+  Membership is set-based, so duplicate elements in `subset` are fine. On
+  failure the message lists the missing elements and shows both collections.
+  """
+  @spec assert_subset(Macro.t(), Macro.t()) :: Macro.t()
+  defmacro assert_subset(subset, superset) do
+    quote bind_quoted: [subset: subset, superset: superset] do
+      sub_list = Enum.to_list(subset)
+      sup_list = Enum.to_list(superset)
+      sup_set = MapSet.new(sup_list)
+
+      missing =
+        sub_list
+        |> Enum.reject(fn el -> MapSet.member?(sup_set, el) end)
+        |> Enum.uniq()
+
+      unless missing == [] do
+        ExUnit.Assertions.flunk("""
+        assert_subset failed
+
+          expected every element of the subset to appear in the superset
+          missing elements: #{inspect(missing)}
+          subset          : #{inspect(sub_list)}
+          superset        : #{inspect(sup_list)}
+        """)
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # assert_has_keys/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Asserts that `map` contains every key in `keys`.
+
+  `keys` may be a list of keys or a single bare key. On failure the message
+  lists the missing keys, the expected keys, and the keys present on the map.
+  """
+  @spec assert_has_keys(Macro.t(), Macro.t()) :: Macro.t()
+  defmacro assert_has_keys(map, keys) do
+    # TODO
+  end
+
+  # ---------------------------------------------------------------------------
+  # assert_sorted_by/2
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Asserts that `enumerable` is sorted in ascending (non-strict) order according
+  to `key_fun` applied to each element.
+
+  On failure the message reports the index of the first out-of-order pair,
+  both offending elements, and their computed keys.
+  """
+  @spec assert_sorted_by(Macro.t(), Macro.t()) :: Macro.t()
+  defmacro assert_sorted_by(enumerable, key_fun) do
+    quote bind_quoted: [enumerable: enumerable, key_fun: key_fun] do
+      list = Enum.to_list(enumerable)
+
+      case AssertHelpers.__first_unsorted__(list, key_fun) do
+        :ok ->
+          :ok
+
+        {:unsorted, index, a, b} ->
+          ExUnit.Assertions.flunk("""
+          assert_sorted_by failed
+
+            list is not sorted in ascending order by the given key function
+            first out-of-order pair at index #{index}:
+              element #{index}     : #{inspect(a)} (key: #{inspect(key_fun.(a))})
+              element #{index + 1} : #{inspect(b)} (key: #{inspect(key_fun.(b))})
+            full list: #{inspect(list)}
+          """)
+      end
+    end
+  end
+
+  @doc """
+  Returns the first out-of-order adjacent pair in `list` according to `key_fun`.
+
+  Yields `:ok` when the list is sorted (non-strict ascending), or
+  `{:unsorted, index, a, b}` for the first pair where `key_fun.(a) > key_fun.(b)`.
+  Intended for internal use by `assert_sorted_by/2`.
+  """
+  @spec __first_unsorted__([term()], (term() -> term())) ::
+          :ok | {:unsorted, non_neg_integer(), term(), term()}
+  def __first_unsorted__(list, key_fun) do
+    list
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.with_index()
+    |> Enum.find_value(:ok, fn {[a, b], i} ->
+      if key_fun.(a) > key_fun.(b), do: {:unsorted, i, a, b}, else: false
+    end)
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defmacro assert_has_keys(map, keys) do
+    quote bind_quoted: [map: map, keys: keys] do
+      key_list = List.wrap(keys)
+      missing = Enum.reject(key_list, fn k -> Map.has_key?(map, k) end)
+
+      unless missing == [] do
+        ExUnit.Assertions.flunk("""
+        assert_has_keys failed
+
+          missing keys  : #{inspect(missing)}
+          expected keys : #{inspect(key_list)}
+          present keys  : #{inspect(Map.keys(map))}
+        """)
+      end
+    end
+  end
+</file>
+19:15:48.889 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3119, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3119, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3119, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3119, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2188, "type" => "message"}], "output_tokens" => 2188, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+19:15:48.909 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_074_002_collection_and_structural_assertion_helpers_03/074_002_collection_and_structural_assertion_helpers_03 solution.ex
+19:15:49.609 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":16,"lines_over_98":0,"max_line_length":71,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"074_002_collection_and_structural_assertion_helpers_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_074_002_collection_and_structural_assertion_helpers_03/074_002_collection_and_structural_assertion_helpers_03/solution.ex","task":"074_002_collection_and_structural_assertion_helpers_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-04T17:15:49.585856Z"}
+19:15:49.610 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_074_002_collection_and_structural_assertion_helpers_03/074_002_collection_and_structural_assertion_helpers_03 .gen_staging/fim_074_002_collection_and_structural_assertion_helpers_03/mutant.ex
+19:15:50.163 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":38,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"074_002_collection_and_structural_assertion_helpers_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.28,"reasons":["compilation: 2 warning(s) → -0.2 pts"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_074_002_collection_and_structural_assertion_helpers_03/mutant.ex","task":"074_002_collection_and_structural_assertion_helpers_03","test_failures":[{"message":"Test harness compilation failed: MUTATION","test":"harness_load"}],"tests_errors":1,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-04T17:15:50.141889Z"}
+19:15:50.163 [debug] fim mutation gate: inconclusive
+19:15:50.164 [info] fim 074_002_collection_and_structural_assertion_helpers_fim03: parent harness does not cover assert_has_keys/2 — rejecting candidate

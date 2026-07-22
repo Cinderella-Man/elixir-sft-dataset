@@ -1,0 +1,422 @@
+[22m02:33:31.536 [info] VARIATIONS gen for 078_001_ring_buffer_01 (3 slot(s))[0m
+[36m02:33:31.538 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m02:33:31.538 [debug] claude -p USER prompt:
+I have this SFT task (idea #78 — "Ring Buffer"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 78 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `RingBuffer` that implements a fixed-size ring buffer as a pure data structure (no GenServer — just a plain struct with functions).
+
+I need these functions in the public API:
+- `RingBuffer.new(capacity)` — creates a new empty ring buffer with the given fixed capacity.
+- `RingBuffer.push(buffer, item)` — inserts an item. When the buffer is full, it silently overwrites the oldest item.
+- `RingBuffer.to_list(buffer)` — returns all current items in insertion order (oldest to newest).
+- `RingBuffer.size(buffer)` — returns the number of items currently stored (not the capacity). This is 0 for an empty buffer and at most `capacity`.
+- `RingBuffer.peek_oldest(buffer)` — returns `{:ok, item}` for the oldest item, or `:error` if the buffer is empty.
+- `RingBuffer.peek_newest(buffer)` — returns `{:ok, item}` for the most recently pushed item, or `:error` if the buffer is empty.
+
+The internal representation must use a fixed-size tuple (pre-allocated to `capacity` slots) as the backing store, with integer read/write head indices that wrap around using `rem/2`. Do not use a list or a `Enum`-grown structure as the primary store.
+
+Give me the complete module in a single file. Use only the Elixir standard library — no external dependencies.
+
+=== BASE solution.ex ===
+defmodule RingBuffer do
+  @moduledoc """
+  A fixed-size ring buffer implemented as a pure data structure.
+
+  Internally, items are stored in a fixed-size tuple pre-allocated to
+  `capacity` slots. Two integer indices — `write` (next slot to write)
+  and `read` (oldest readable slot) — advance with `rem/2` so they wrap
+  around automatically. `size` tracks the live item count independently,
+  capping at `capacity`.
+
+  When the buffer is full, `push/2` silently advances the read head
+  alongside the write head, effectively discarding the oldest item.
+  """
+
+  @enforce_keys [:capacity, :store, :read, :write, :size]
+  defstruct [:capacity, :store, :read, :write, :size]
+
+  @type t :: %__MODULE__{
+          capacity: pos_integer(),
+          store: tuple(),
+          read: non_neg_integer(),
+          write: non_neg_integer(),
+          size: non_neg_integer()
+        }
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Creates a new empty ring buffer with the given fixed `capacity`.
+
+  ## Examples
+
+      iex> RingBuffer.new(4)
+      %RingBuffer{capacity: 4, read: 0, write: 0, size: 0, ...}
+  """
+  @spec new(pos_integer()) :: t()
+  def new(capacity) when is_integer(capacity) and capacity > 0 do
+    %__MODULE__{
+      capacity: capacity,
+      store: :erlang.make_tuple(capacity, nil),
+      read: 0,
+      write: 0,
+      size: 0
+    }
+  end
+
+  @doc """
+  Inserts `item` into the buffer.
+
+  If the buffer is full, the oldest item is silently overwritten and the
+  read head advances so `size` stays equal to `capacity`.
+
+  ## Examples
+
+      iex> buf = RingBuffer.new(3) |> RingBuffer.push(1) |> RingBuffer.push(2)
+      iex> RingBuffer.size(buf)
+      2
+  """
+  @spec push(t(), any()) :: t()
+  def push(%__MODULE__{} = buf, item) do
+    %{capacity: cap, store: store, read: read, write: write, size: size} = buf
+
+    # Write the item into the current write slot.
+    new_store = :erlang.setelement(write + 1, store, item)
+    new_write = rem(write + 1, cap)
+
+    # If the buffer was already full, the write head just trampled the oldest
+    # slot, so we must advance the read head to keep it pointing at the new
+    # oldest item.  size stays at `cap`.
+    if size == cap do
+      %{buf | store: new_store, write: new_write, read: rem(read + 1, cap)}
+    else
+      %{buf | store: new_store, write: new_write, size: size + 1}
+    end
+  end
+
+  @doc """
+  Returns all live items in insertion order (oldest → newest).
+
+  ## Examples
+
+      iex> RingBuffer.new(4) |> RingBuffer.push(1) |> RingBuffer.push(2) |> RingBuffer.to_list()
+      [1, 2]
+  """
+  @spec to_list(t()) :: list()
+  def to_list(%__MODULE__{size: 0}), do: []
+
+  def to_list(%__MODULE__{capacity: cap, store: store, read: read, size: size}) do
+    # Walk `size` slots starting from the read head, wrapping as needed.
+    Enum.map(0..(size - 1), fn offset ->
+      :erlang.element(rem(read + offset, cap) + 1, store)
+    end)
+  end
+
+  @doc """
+  Returns the number of items currently stored in the buffer (0..capacity).
+
+  ## Examples
+
+      iex> RingBuffer.new(4) |> RingBuffer.size()
+      0
+  """
+  @spec size(t()) :: non_neg_integer()
+  def size(%__MODULE__{size: size}), do: size
+
+  @doc """
+  Returns `{:ok, item}` for the oldest (first-inserted) live item,
+  or `:error` if the buffer is empty.
+
+  ## Examples
+
+      iex> RingBuffer.new(3) |> RingBuffer.push(:a)
+      ...> |> RingBuffer.push(:b) |> RingBuffer.peek_oldest()
+      {:ok, :a}
+
+      iex> RingBuffer.new(3) |> RingBuffer.peek_oldest()
+      :error
+  """
+  @spec peek_oldest(t()) :: {:ok, any()} | :error
+  def peek_oldest(%__MODULE__{size: 0}), do: :error
+
+  def peek_oldest(%__MODULE__{store: store, read: read}) do
+    {:ok, :erlang.element(read + 1, store)}
+  end
+
+  @doc """
+  Returns `{:ok, item}` for the most recently pushed item,
+  or `:error` if the buffer is empty.
+
+  ## Examples
+
+      iex> RingBuffer.new(3) |> RingBuffer.push(:a)
+      ...> |> RingBuffer.push(:b) |> RingBuffer.peek_newest()
+      {:ok, :b}
+
+      iex> RingBuffer.new(3) |> RingBuffer.peek_newest()
+      :error
+  """
+  @spec peek_newest(t()) :: {:ok, any()} | :error
+  def peek_newest(%__MODULE__{size: 0}), do: :error
+
+  def peek_newest(%__MODULE__{capacity: cap, store: store, write: write}) do
+    # `write` points to the *next* slot to be written, so the newest item
+    # sits one position behind it (with wraparound).
+    newest_index = rem(write - 1 + cap, cap)
+    {:ok, :erlang.element(newest_index + 1, store)}
+  end
+end
+
+
+=== BASE test_harness.exs ===
+defmodule RingBufferTest do
+  use ExUnit.Case, async: true
+
+  # -------------------------------------------------------
+  # Construction
+  # -------------------------------------------------------
+
+  test "new buffer has size 0" do
+    buf = RingBuffer.new(4)
+    assert RingBuffer.size(buf) == 0
+  end
+
+  test "new buffer returns :error for peek_oldest" do
+    buf = RingBuffer.new(4)
+    assert :error = RingBuffer.peek_oldest(buf)
+  end
+
+  test "new buffer returns :error for peek_newest" do
+    buf = RingBuffer.new(4)
+    assert :error = RingBuffer.peek_newest(buf)
+  end
+
+  test "new buffer returns empty list" do
+    buf = RingBuffer.new(4)
+    assert [] = RingBuffer.to_list(buf)
+  end
+
+  # -------------------------------------------------------
+  # Filling below capacity
+  # -------------------------------------------------------
+
+  test "size grows with each push up to capacity" do
+    buf = RingBuffer.new(4)
+    buf = RingBuffer.push(buf, :a)
+    assert RingBuffer.size(buf) == 1
+    buf = RingBuffer.push(buf, :b)
+    assert RingBuffer.size(buf) == 2
+    buf = RingBuffer.push(buf, :c)
+    assert RingBuffer.size(buf) == 3
+    buf = RingBuffer.push(buf, :d)
+    assert RingB (truncated)[0m
+[36m02:37:38.855 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `RejectingRingBuffer` that implements a fixed-size ring buffer as a pure data structure (no GenServer — just a plain struct with functions).
+
+Unlike a classic overwriting ring buffer, this one **rejects** new items when it is full instead of silently discarding the oldest. It behaves as a bounded FIFO queue: you can `pop` items off the front to make room again.
+
+I need these functions in the public API:
+- `RejectingRingBuffer.new(capacity)` — creates a new empty buffer with the given fixed capacity.
+- `RejectingRingBuffer.push(buffer, item)` — attempts to insert an item at the back. Returns `{:ok, new_buffer}` on success, or `{:error, :full}` (and does NOT mutate) when the buffer is already at capacity.
+- `RejectingRingBuffer.pop(buffer)` — removes and returns the oldest item. Returns `{:ok, item, new_buffer}`, or `:empty` if the buffer holds no items.
+- `RejectingRingBuffer.to_list(buffer)` — returns all current items in insertion order (oldest to newest).
+- `RejectingRingBuffer.size(buffer)` — returns the number of items currently stored (0 to capacity).
+- `RejectingRingBuffer.full?(buffer)` — returns `true` when `size == capacity`, else `false`.
+- `RejectingRingBuffer.peek_oldest(buffer)` — returns `{:ok, item}` for the oldest item, or `:error` if empty.
+- `RejectingRingBuffer.peek_newest(buffer)` — returns `{:ok, item}` for the most recently pushed item, or `:error` if empty.
+
+The internal representation must use a fixed-size tuple (pre-allocated to `capacity` slots) as the backing store, with integer read/write head indices that wrap around using `rem/2`. Interleaving `push` and `pop` must correctly reuse freed slots via wraparound. Do not use a list or an `Enum`-grown structure as the primary store.
+
+Give me the complete module in a single file. Use only the Elixir standard library — no external dependencies.
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule RejectingRingBufferTest do
+  use ExUnit.Case, async: false
+
+  # -------------------------------------------------------
+  # Construction
+  # -------------------------------------------------------
+
+  test "new buffer has size 0 and is not full" do
+    buf = RejectingRingBuffer.new(4)
+    assert RejectingRingBuffer.size(buf) == 0
+    refute RejectingRingBuffer.full?(buf)
+  end
+
+  test "new buffer returns :error for peeks and :empty for pop" do
+    buf = RejectingRingBuffer.new(4)
+    assert :error = RejectingRingBuffer.peek_oldest(buf)
+    assert :error = RejectingRingBuffer.peek_newest(buf)
+    assert :empty = RejectingRingBuffer.pop(buf)
+    assert [] = RejectingRingBuffer.to_list(buf)
+  end
+
+  # -------------------------------------------------------
+  # Pushing below capacity
+  # -------------------------------------------------------
+
+  test "push returns {:ok, buffer} and grows size" do
+    buf = RejectingRingBuffer.new(3)
+    assert {:ok, buf} = RejectingRingBuffer.push(buf, :a)
+    assert RejectingRingBuffer.size(buf) == 1
+    assert {:ok, buf} = RejectingRingBuffer.push(buf, :b)
+    assert RejectingRingBuffer.size(buf) == 2
+    assert RejectingRingBuffer.to_list(buf) == [:a, :b]
+  end
+
+  test "peek_oldest and peek_newest reflect ends" do
+    {:ok, buf} = RejectingRingBuffer.new(4) |> RejectingRingBuffer.push(:first)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :second)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :third)
+
+    assert {:ok, :first} = RejectingRingBuffer.peek_oldest(buf)
+    assert {:ok, :third} = RejectingRingBuffer.peek_newest(buf)
+  end
+
+  # -------------------------------------------------------
+  # Rejection when full
+  # -------------------------------------------------------
+
+  test "push is rejected with {:error, :full} at capacity" do
+    {:ok, buf} = RejectingRingBuffer.new(2) |> RejectingRingBuffer.push(1)
+    {:ok, buf} = RejectingRingBuffer.push(buf, 2)
+    assert RejectingRingBuffer.full?(buf)
+    assert {:error, :full} = RejectingRingBuffer.push(buf, 3)
+  end
+
+  test "rejected push leaves buffer contents unchanged" do
+    {:ok, buf} = RejectingRingBuffer.new(2) |> RejectingRingBuffer.push(1)
+    {:ok, full} = RejectingRingBuffer.push(buf, 2)
+
+    assert {:error, :full} = RejectingRingBuffer.push(full, 99)
+    # original 'full' buffer is untouched
+    assert RejectingRingBuffer.to_list(full) == [1, 2]
+    assert RejectingRingBuffer.size(full) == 2
+  end
+
+  # -------------------------------------------------------
+  # FIFO pop semantics
+  # -------------------------------------------------------
+
+  test "pop removes items oldest-first" do
+    {:ok, buf} = RejectingRingBuffer.new(3) |> RejectingRingBuffer.push(:a)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :b)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :c)
+
+    assert {:ok, :a, buf} = RejectingRingBuffer.pop(buf)
+    assert {:ok, :b, buf} = RejectingRingBuffer.pop(buf)
+    assert RejectingRingBuffer.to_list(buf) == [:c]
+    assert {:ok, :c, buf} = RejectingRingBuffer.pop(buf)
+    assert :empty = RejectingRingBuffer.pop(buf)
+  end
+
+  # -------------------------------------------------------
+  # Wraparound via interleaved push/pop
+  # -------------------------------------------------------
+
+  test "freed slots are reused via wraparound" do
+    buf = RejectingRingBuffer.new(3)
+    {:ok, buf} = RejectingRingBuffer.push(buf, 1)
+    {:ok, buf} = RejectingRingBuffer.push(buf, 2)
+    {:ok, buf} = RejectingRingBuffer.push(buf, 3)
+    assert {:error, :full} = RejectingRingBuffer.push(buf, 4)
+
+    {:ok, 1, buf} = RejectingRingBuffer.pop(buf)
+    # Now there is room again; the new slot wraps around the tuple
+    {:ok, buf} = RejectingRingBuffer.push(buf, 4)
+    assert RejectingRingBuffer.to_list(buf) == [2, 3, 4]
+
+    {:ok, 2, buf} = RejectingRingBuffer.pop(buf)
+    {:ok, buf} = RejectingRingBuffer.push(buf, 5)
+    assert RejectingRingBuffer.to_list(buf) == [3, 4, 5]
+    assert {:ok, 3} = RejectingRingBuffer.peek_oldest(buf)
+    assert {:ok, 5} = RejectingRingBuffer.peek_newest(buf)
+  end
+
+  test "many cycles preserve FIFO correctness" do
+    buf = RejectingRingBuffer.new(4)
+
+    final =
+      Enum.reduce(1..20, buf, fn i, acc ->
+        acc =
+          case RejectingRingBuffer.push(acc, i) do
+            {:ok, next} -> next
+            {:error, :full} -> acc
+          end
+
+        # Drain one every other step to force wraparound
+        if rem(i, 2) == 0 do
+          case RejectingRingBuffer.pop(acc) do
+            {:ok, _item, next} -> next
+            :empty -> acc
+          end
+        else
+          acc
+        end
+      end)
+
+    assert RejectingRingBuffer.size(final) <= 4
+    assert RejectingRingBuffer.to_list(final) |> Enum.sort() ==
+             RejectingRingBuffer.to_list(final)
+  end
+
+  # -------------------------------------------------------
+  # Capacity of 1
+  # -------------------------------------------------------
+
+  test "capacity-1 buffer accepts then rejects until popped" do
+    buf = RejectingRingBuffer.new(1)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :only)
+    assert {:error, :full} = RejectingRingBuffer.push(buf, :nope)
+    {:ok, :only, buf} = RejectingRingBuffer.pop(buf)
+    assert {:ok, buf} = RejectingRingBuffer.push(buf, :again)
+    assert RejectingRingBuffer.to_list(buf) == [:again]
+  end
+
+  # -------------------------------------------------------
+  # Type variety
+  # -------------------------------------------------------
+
+  test "works with mixed value types" do
+    buf = RejectingRingBuffer.new(5)
+    {:ok, buf} = RejectingRingBuffer.push(buf, 42)
+    {:ok, buf} = RejectingRingBuffer.push(buf, "hello")
+    {:ok, buf} = RejectingRingBuffer.push(buf, :atom)
+    {:ok, buf} = RejectingRingBuffer.push(buf, {:tuple, 1})
+    {:ok, buf} = RejectingRingBuffer.push(buf, [1, 2, 3])
+
+    assert RejectingRingBuffer.to_list(buf) == [42, "hello", :atom, {:tuple, 1}, [1, 2, 3]]
+  end
+end
+</file>
+
+<file path="v1/solution.ex">
+defmodule RejectingRingBuffer do
+  @moduledoc """
+  A fixed-size ring buffer that behaves as a bounded FIFO queue.
+
+  Unlike an overwritin (truncated)[0m
+[36m02:37:38.855 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 25113, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 25113, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 25113, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 25113, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 24152, "type" => "message"}], "output_tokens" => 24152, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m

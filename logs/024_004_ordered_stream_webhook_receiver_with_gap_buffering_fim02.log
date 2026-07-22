@@ -1,0 +1,420 @@
+02:44:45.839 [info] FIM 024_004_ordered_stream_webhook_receiver_with_gap_buffering_fim02 → 024_004_ordered_stream_webhook_receiver_with_gap_buffering_03: target handle_call/3
+02:44:45.839 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+02:44:45.839 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `handle_call/3`.
+
+Generate a prompt describing how to implement `handle_call/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `handle_call/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `handle_call/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `handle_call/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `WebhookReceiver` that implements a Plug-based HTTP endpoint for receiving webhook payloads with HMAC-SHA256 signature verification **and ordered, per-stream delivery with gap buffering**.
+
+Each webhook belongs to a logical stream and carries a monotonically increasing sequence number. Events must be applied strictly in order per stream; an out-of-order (future) event is buffered until the gap fills, then drained.
+
+I need these modules:
+
+1. `WebhookReceiver.Signature` — `verify(payload, signature, secret)` computes lowercase hex HMAC-SHA256 of the raw `payload` and constant-time compares to `signature`. Returns `:ok` or `:error` (non-binary input → `:error`).
+
+2. `WebhookReceiver.Store` — a behaviour with callbacks:
+   - `deliver(store, event)` where `event` is a map with `:event_id`, `:stream_id`, `:sequence`, `:payload`, `:status`. Per stream it tracks the last delivered sequence (starting at `0`). Returns:
+     - `{:ok, :received}` when `sequence == last_seq + 1` (deliver it, then drain any consecutive buffered events).
+     - `{:ok, :duplicate}` when `sequence <= last_seq`, or when that exact sequence is already buffered.
+     - `{:ok, :buffered}` when `sequence > last_seq + 1` (store it for later).
+   - `last_sequence(store, stream_id)` — the last delivered sequence (default `0`).
+   - `delivered_events(store, stream_id)` — delivered events in delivery order.
+   - `buffered_sequences(store, stream_id)` — sorted list of currently-buffered sequence numbers.
+
+3. `WebhookReceiver.MemoryStore` — a GenServer implementing the behaviour. Delivered events should have `:status` `:delivered`; buffered events `:status` `:pending`. Draining must apply buffered events in ascending, gapless order and stop at the first gap.
+
+4. `WebhookReceiver.Router` — a `Plug.Router` exposing `POST /api/webhooks/stripe`. Options `:secret` and `:store`.
+   - Read the raw body once and the `stripe-signature` header; missing/empty header or bad signature → **401** `{"error": "invalid_signature"}`.
+   - Decode the JSON and require `"id"` (string), `"stream_id"` (string), and `"sequence"` (integer). Any missing/wrong-typed field or malformed JSON → **400** `{"error": "bad_payload"}`.
+   - Build the event and call `deliver/2`:
+     - `:received` → **200** `{"status": "received"}`
+     - `:duplicate` → **200** `{"status": "duplicate"}`
+     - `:buffered` → **202** `{"status": "buffered"}`
+
+Use only Plug and Jason (plus `:crypto`). No Phoenix, no Ecto. Give me all modules in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule WebhookReceiver.Signature do
+  @moduledoc """
+  HMAC-SHA256 signature verification for webhook payloads.
+  """
+
+  @doc """
+  Verifies `signature` against the lowercase hex HMAC-SHA256 of `payload`
+  computed with `secret`, using a constant-time comparison.
+
+  Returns `:ok` on match and `:error` otherwise, including when any argument is
+  not a binary.
+  """
+  @spec verify(term(), term(), term()) :: :ok | :error
+  def verify(payload, signature, secret)
+      when is_binary(payload) and is_binary(signature) and is_binary(secret) do
+    expected = :crypto.mac(:hmac, :sha256, secret, payload) |> Base.encode16(case: :lower)
+
+    if Plug.Crypto.secure_compare(expected, signature) do
+      :ok
+    else
+      :error
+    end
+  end
+
+  def verify(_payload, _signature, _secret), do: :error
+end
+
+defmodule WebhookReceiver.Store do
+  @moduledoc """
+  Behaviour describing an ordered, per-stream webhook delivery store.
+  """
+
+  @callback deliver(store :: pid() | atom(), event :: map()) ::
+              {:ok, :received | :duplicate | :buffered}
+  @callback last_sequence(store :: pid() | atom(), stream_id :: String.t()) :: non_neg_integer()
+  @callback delivered_events(store :: pid() | atom(), stream_id :: String.t()) :: [map()]
+  @callback buffered_sequences(store :: pid() | atom(), stream_id :: String.t()) :: [integer()]
+
+  @doc """
+  Delivers `event` to `store`, returning the delivery outcome tuple.
+  """
+  @spec deliver(pid() | atom(), map()) :: {:ok, :received | :duplicate | :buffered}
+  def deliver(store, event), do: GenServer.call(store, {:deliver, event})
+
+  @doc """
+  Returns the last delivered sequence for `stream_id` (default `0`).
+  """
+  @spec last_sequence(pid() | atom(), String.t()) :: non_neg_integer()
+  def last_sequence(store, stream_id), do: GenServer.call(store, {:last_sequence, stream_id})
+
+  @doc """
+  Returns the delivered events for `stream_id` in delivery order.
+  """
+  @spec delivered_events(pid() | atom(), String.t()) :: [map()]
+  def delivered_events(store, stream_id) do
+    GenServer.call(store, {:delivered_events, stream_id})
+  end
+
+  @doc """
+  Returns the sorted list of currently-buffered sequence numbers for `stream_id`.
+  """
+  @spec buffered_sequences(pid() | atom(), String.t()) :: [integer()]
+  def buffered_sequences(store, stream_id),
+    do: GenServer.call(store, {:buffered_sequences, stream_id})
+end
+
+defmodule WebhookReceiver.MemoryStore do
+  @moduledoc """
+  In-memory `GenServer` implementation of `WebhookReceiver.Store` with per-stream
+  ordering and gap buffering.
+  """
+
+  @behaviour WebhookReceiver.Store
+  use GenServer
+
+  @doc """
+  Starts the store. Accepts standard `GenServer` options such as `:name`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc """
+  Delivers `event` to `store`, returning the delivery outcome tuple.
+  """
+  @spec deliver(pid() | atom(), map()) :: {:ok, :received | :duplicate | :buffered}
+  @impl WebhookReceiver.Store
+  def deliver(store, event), do: GenServer.call(store, {:deliver, event})
+
+  @doc """
+  Returns the last delivered sequence for `stream_id` (default `0`).
+  """
+  @spec last_sequence(pid() | atom(), String.t()) :: non_neg_integer()
+  @impl WebhookReceiver.Store
+  def last_sequence(store, stream_id), do: GenServer.call(store, {:last_sequence, stream_id})
+
+  @doc """
+  Returns the delivered events for `stream_id` in delivery order.
+  """
+  @spec delivered_events(pid() | atom(), String.t()) :: [map()]
+  @impl WebhookReceiver.Store
+  def delivered_events(store, stream_id),
+    do: GenServer.call(store, {:delivered_events, stream_id})
+
+  @doc """
+  Returns the sorted list of currently-buffered sequence numbers for `stream_id`.
+  """
+  @spec buffered_sequences(pid() | atom(), String.t()) :: [integer()]
+  @impl WebhookReceiver.Store
+  def buffered_sequences(store, stream_id),
+    do: GenServer.call(store, {:buffered_sequences, stream_id})
+
+  @doc """
+  Initializes the store state with an empty stream registry.
+  """
+  @spec init(keyword()) :: {:ok, map()}
+  @impl GenServer
+  def init(_opts), do: {:ok, %{streams: %{}}}
+
+  @doc """
+  Handles synchronous store operations: delivery and per-stream inspection.
+  """
+  @spec handle_call(term(), GenServer.from(), map()) :: {:reply, term(), map()}
+  @impl GenServer
+  def handle_call( (truncated)
+02:45:39.919 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the `handle_call/3` GenServer callbacks for `WebhookReceiver.MemoryStore`.
+This callback backs the ordered, per-stream delivery store and must handle four
+distinct request tuples. State is `%{streams: %{stream_id => %{last_seq: non_neg_integer(),
+buffer: %{sequence => event}, delivered: [event]}}}`. A stream that has never been
+seen defaults to `%{last_seq: 0, buffer: %{}, delivered: []}` (use the `stream/2`
+helper where convenient).
+
+1. `{:deliver, event}` — extract the event's `stream_id` and `sequence` and look up
+   (or default) that stream's `last_seq`, `buffer`, and `delivered`. Then decide the
+   outcome in this order:
+   - If `sequence <= last_seq`, or the exact `sequence` is already present in `buffer`,
+     reply `{:ok, :duplicate}` and leave state unchanged.
+   - If `sequence == last_seq + 1`, deliver it: call `drain/4` with the current
+     `last_seq`, `buffer`, `delivered`, and the event marked `%{event | status: :delivered}`.
+     `drain/4` applies this event and any consecutive buffered events (stopping at the
+     first gap), returning the new `last_seq`, `buffer`, and `delivered`. Store the
+     updated stream back into `streams` and reply `{:ok, :received}`.
+   - Otherwise (`sequence > last_seq + 1`), buffer the event under its sequence as
+     `%{event | status: :pending}`, store the updated stream, and reply `{:ok, :buffered}`.
+
+2. `{:last_sequence, stream_id}` — reply with that stream's `last_seq` (default `0`).
+
+3. `{:delivered_events, stream_id}` — reply with that stream's `delivered` list, in
+   delivery order.
+
+4. `{:buffered_sequences, stream_id}` — reply with the sorted list of sequence numbers
+   currently held in that stream's `buffer`.
+
+Every clause returns `{:reply, reply, state}`.
+
+```elixir
+defmodule WebhookReceiver.Signature do
+  @moduledoc """
+  HMAC-SHA256 signature verification for webhook payloads.
+  """
+
+  @doc """
+  Verifies `signature` against the lowercase hex HMAC-SHA256 of `payload`
+  computed with `secret`, using a constant-time comparison.
+
+  Returns `:ok` on match and `:error` otherwise, including when any argument is
+  not a binary.
+  """
+  @spec verify(term(), term(), term()) :: :ok | :error
+  def verify(payload, signature, secret)
+      when is_binary(payload) and is_binary(signature) and is_binary(secret) do
+    expected = :crypto.mac(:hmac, :sha256, secret, payload) |> Base.encode16(case: :lower)
+
+    if Plug.Crypto.secure_compare(expected, signature) do
+      :ok
+    else
+      :error
+    end
+  end
+
+  def verify(_payload, _signature, _secret), do: :error
+end
+
+defmodule WebhookReceiver.Store do
+  @moduledoc """
+  Behaviour describing an ordered, per-stream webhook delivery store.
+  """
+
+  @callback deliver(store :: pid() | atom(), event :: map()) ::
+              {:ok, :received | :duplicate | :buffered}
+  @callback last_sequence(store :: pid() | atom(), stream_id :: String.t()) :: non_neg_integer()
+  @callback delivered_events(store :: pid() | atom(), stream_id :: String.t()) :: [map()]
+  @callback buffered_sequences(store :: pid() | atom(), stream_id :: String.t()) :: [integer()]
+
+  @doc """
+  Delivers `event` to `store`, returning the delivery outcome tuple.
+  """
+  @spec deliver(pid() | atom(), map()) :: {:ok, :received | :duplicate | :buffered}
+  def deliver(store, event), do: GenServer.call(store, {:deliver, event})
+
+  @doc """
+  Returns the last delivered sequence for `stream_id` (default `0`).
+  """
+  @spec last_sequence(pid() | atom(), String.t()) :: non_neg_integer()
+  def last_sequence(store, stream_id), do: GenServer.call(store, {:last_sequence, stream_id})
+
+  @doc """
+  Returns the delivered events for `stream_id` in delivery order.
+  """
+  @spec delivered_events(pid() | atom(), String.t()) :: [map()]
+  def delivered_events(store, stream_id) do
+    GenServer.call(store, {:delivered_events, stream_id})
+  end
+
+  @doc """
+  Returns the sorted list of currently-buffered sequence numbers for `stream_id`.
+  """
+  @spec buffered_sequences(pid() | atom(), String.t()) :: [integer()]
+  def buffered_sequences(store, stream_id),
+    do: GenServer.call(store, {:buffered_sequences, stream_id})
+end
+
+defmodule WebhookReceiver.MemoryStore do
+  @moduledoc """
+  In-memory `GenServer` implementation of `WebhookReceiver.Store` with per-stream
+  ordering and gap buffering.
+  """
+
+  @behaviour WebhookReceiver.Store
+  use GenServer
+
+  @doc """
+  Starts the store. Accepts standard `GenServer` options such as `:name`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc """
+  Delivers `event` to `store`, returning the delivery outcome tuple.
+  """
+  @spec deliver(pid() | atom(), map()) :: {:ok, :received | :duplicate | :buffered}
+  @impl WebhookReceiver.Store
+  def deliver(store, event), do: GenServer.call(store, {:deliver, event})
+
+  @doc """
+  Returns the last delivered sequence for `stream_id` (default `0`).
+  """
+  @spec last_sequence(pid() | atom(), String.t()) :: non_neg_integer()
+  @impl WebhookReceiver.Store
+  def last_sequence(store, stream_id), do: GenServer.call(store, {:last_sequence, stream_id})
+
+  @doc """
+  Returns the delivered events for `stream_id` in delivery order.
+  """
+  @spec delivered_events(pid() | atom(), String.t()) :: [map()]
+  @impl WebhookReceiver.Store
+  def delivered_events(store, stream_id),
+    do: GenServer.call(store, {:delivered_events, stream_id})
+
+  @doc """
+  Returns the sorted list of currently-buffered sequence numbers for `stream_id`.
+  """
+  @spec buffered_sequences(pid() | atom(), String.t()) :: [integer()]
+  @impl WebhookReceiver.Store
+  def buffered_sequences(store, stream_id),
+    do: GenServer.call(store, {:buffered_sequences, stream_id})
+
+  @doc """
+  Initializes the store state with an empty stream registry.
+  """
+  @spec init(keyword()) :: {:ok, map()}
+  @impl GenServer
+  def init(_opts), do: {:ok, %{streams: %{}}}
+
+  @doc """
+  Handles synchronous store operations: delivery and per-stream inspection.
+  """
+  @spec handle_call(term(), GenServer.from(), map()) :: {:reply, term(), map()}
+  @impl GenServer
+  def handle_call({:deliver, event}, _from, %{streams: streams} = state) do
+    # TODO
+  end
+
+  @impl GenServer
+  def handle_call({:last_sequence, sid}, _from, %{streams: streams} = state) do
+    # TODO
+  end
+
+  @impl GenServer
+  def handle_call({:delivered_events, sid}, _from, %{streams: streams} = state) do
+    # TODO
+  end
+
+  @impl GenServer
+  def handle_call({:buffered_sequences, sid}, _from, %{streams: streams} = state) do
+    # TODO
+  end
+
+  defp stream(streams, sid), do: Map.get(streams, sid, %{last_seq: 0, buffer: %{}, delivered: []})
+
+  # Applies `event` (whose sequence is last_seq + 1), then keeps applying
+  # consecutive buffered events until the first gap.
+  defp drain(last_seq, buffer, delivered, event) do
+    delivered = delivered ++ [event]
+    last_seq = last_seq + 1
+
+    case Map.pop(buffer, last_seq + 1) do
+      {nil, _buffer} -> {last_seq, buffer, delivered}
+      {next, rest} -> drain(last_seq, rest, delivered, %{next | status: :delivered})
+    end
+  end
+end
+
+defmodule WebhookReceiver.Router do
+  @moduledoc """
+  `Plug.Router` receiving Stripe-style webhooks with per-stream ordered delivery.
+  """
+
+  use Plug.Router, copy_opts_to_assign: :webhook_opts
+
+  alias WebhookReceiver.{Signature, Store}
+
+  plug :match
+  plug :dispatch
+
+  post "/api/webhooks/stripe" do
+    opts = conn.assigns.webhook_opts
+    secret = Keyword.fetch!(opts, :secret)
+    store = Keyword.fetch!(opts, :store)
+
+    {:ok, body, conn} = read_body(conn)
+    signature = conn |> get_req_header("stripe-signature") |> List.first()
+
+    cond do
+      is_nil(signature) or signature == "" ->
+        send_json(conn, 401, %{error: "invalid_signature"})
+
+      Signature.verify(body, signature, secret) != :ok ->
+        send_json(conn, 401, %{error: "invalid_signature"})
+
+      true ->
+        handle_verified(conn, body, store)
+    end
+  end
+
+  match _ do
+    send_resp(conn, 404,  (truncated)
+02:45:39.919 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5432, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5432, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5432, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5432, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 5378, "type" => "message"}], "output_tokens" => 5378, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:45:39.938 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_024_004_ordered_stream_webhook_receiver_with_gap_buffering_03/024_004_ordered_stream_webhook_receiver_with_gap_buffering_03 solution.ex
+02:45:40.722 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":true,"has_moduledoc":false,"has_typespecs":true,"line_count":45,"lines_over_98":0,"max_line_length":93,"mode":"fim","pipe_chain_count":4,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":17,"compiled":true,"parent":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.9,"reasons":["compilation: 17 warning(s) → -1.7 pts"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_024_004_ordered_stream_webhook_receiver_with_gap_buffering_03/024_004_ordered_stream_webhook_receiver_with_gap_buffering_03/solution.ex","task":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:45:40.697635Z"}
+02:45:40.723 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_024_004_ordered_stream_webhook_receiver_with_gap_buffering_03/024_004_ordered_stream_webhook_receiver_with_gap_buffering_03 .gen_staging/fim_024_004_ordered_stream_webhook_receiver_with_gap_buffering_03/mutant.ex
+02:45:41.506 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":true,"has_moduledoc":false,"has_typespecs":true,"line_count":21,"lines_over_98":0,"max_line_length":82,"mode":"fim","pipe_chain_count":0,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":31,"compiled":true,"parent":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.53,"reasons":["compilation: 31 warning(s) → -3.1 pts","tests: 8/15 failed"],"tests":0.47},"shape":"fim","solution_file":".gen_staging/fim_024_004_ordered_stream_webhook_receiver_with_gap_buffering_03/mutant.ex","task":"024_004_ordered_stream_webhook_receiver_with_gap_buffering_03","test_failures":[{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_312648_5.ex\", line: 130, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test in-order deliveries are all received"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_312648_5.ex\", line: 130, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test delivered events are marked :delivered"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_312648_5.ex\", line: 130, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test future event is buffered with 202 then drained when gap fills"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_312648_5.ex\", line: 130, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test long gap drains multiple buffered events in order"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_312648_5.ex\", line: 130, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test already-delivered sequence returns duplicate"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_312648_5.ex\", line: 130, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test re-sending an already-buffered sequence returns duplicate"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_312648_5.ex\", line: 130, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test streams are independent"},{"message":"{:EXIT, #PID<0.241.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WebhookReceiver.MemoryStore, :handle_call, 3, [file: ~c\"/tmp/evalfim_312648_5.ex\", line: 130, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WebhookReceiverOrderedTest","test":"test Store.deliver/2 directly buffers and drains"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T00:45:41.482300Z"}
+02:45:41.506 [debug] fim mutation gate: killed
+02:45:41.508 [info] promoted 024_004_ordered_stream_webhook_receiver_with_gap_buffering_03 -> tasks/024_004_ordered_stream_webhook_receiver_with_gap_buffering_03

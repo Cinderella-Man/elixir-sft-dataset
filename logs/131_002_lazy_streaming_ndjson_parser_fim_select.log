@@ -1,0 +1,169 @@
+09:09:01.021 [info] FIM candidate-select for 131_002_lazy_streaming_ndjson_parser_01 (up to 1)
+09:09:01.021 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+09:09:01.021 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 1 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+Do NOT pick any of these — they are already covered or known to be untested by the harness:
+  - decode_line/1
+  - stream/1
+
+=== ORIGINAL PROMPT ===
+# Lazy Streaming NDJSON Parser
+
+Write me an Elixir module called `NdjsonStreamer` that parses a **very large
+NDJSON file** (newline-delimited JSON — think gigabytes) by exposing it as a
+**lazy stream** of decoded values. The whole point is composability: the caller
+gets back a normal Elixir `Stream` they can pipe through `Stream`/`Enum`
+functions, and nothing is read from disk until (and only as far as) the caller
+actually consumes it.
+
+## Public API
+
+Implement two public functions:
+
+```elixir
+NdjsonStreamer.stream(file_path)   # => a lazy Enumerable
+NdjsonStreamer.decode_line(line)   # => {:ok, value} | {:error, {:invalid_json, raw}}
+```
+
+- `stream/1` returns a **lazy** `Enumerable` (do not eagerly read the file, do
+  not build a list). Enumerating it yields, in file order, one result per
+  **non-blank** line:
+  - `{:ok, value}` for a line that decodes as a single JSON value, or
+  - `{:error, {:invalid_json, raw_line}}` for a malformed line, where `raw_line`
+    is the trimmed line text.
+- `decode_line/1` decodes a single trimmed line and returns the same
+  `{:ok, value}` / `{:error, {:invalid_json, raw}}` shape. It must never raise
+  on malformed input.
+
+## Input file format
+
+The file is **NDJSON**: one complete JSON value per line. There are **no**
+array brackets, and **no** trailing commas — every line stands alone:
+
+```
+{"id":1,"value":"a"}
+{"id":2,"value":"b"}
+
+{"id":3,"value":"c"}
+```
+
+For each line:
+
+1. Trim surrounding whitespace.
+2. Skip the line entirely if it is empty after trimming (blank lines produce
+   **no** element in the stream — not an `{:ok, _}` and not an `{:error, _}`).
+3. Decode the remaining text as a single JSON value.
+
+Use the standard library `JSON` module (Elixir 1.18+) for decoding, so JSON
+objects become maps with **string keys** (e.g. `%{"id" => 1, "value" => "a"}`).
+
+## Error handling (malformed lines)
+
+A malformed line does **not** abort the stream. It surfaces as an inline
+`{:error, {:invalid_json, raw_line}}` element and enumeration continues with the
+next line. This lets the caller decide what to do (filter them out, log them,
+count them) rather than the parser deciding for them.
+
+## Memory constraints
+
+Because the returned stream is lazy and line-based, memory must stay roughly
+constant regardless of file size — do **not** read the whole file into a binary
+or build a list of all items. Read the file lazily with `File.stream!/2`
+(line-based) so that, at any moment, only a single line (plus its decoded value)
+is in memory. A caller doing `stream(path) |> Stream.take(3) |> Enum.to_list()`
+must not force the entire file.
+
+## Constraints
+
+- Use only the Elixir/OTP standard library. No external dependencies.
+- Provide the complete module in a single file.
+
+=== MODULE ===
+```elixir
+defmodule NdjsonStreamer do
+  @moduledoc """
+  Lazy streaming parser for very large NDJSON (newline-delimited JSON) files.
+
+  Unlike an eager parser that folds over the file and calls a handler,
+  `stream/1` returns a plain lazy `Enumerable`. Callers compose it with
+  `Stream`/`Enum` functions and decide themselves what to do with malformed
+  lines, which surface inline as `{:error, {:invalid_json, raw}}` elements.
+
+  The file is read lazily with `File.stream!/2`, so only a single line (plus its
+  decoded value) is ever in memory, regardless of file size.
+
+  Expected layout — one complete JSON value per line, no brackets, no commas:
+
+      {"id":1,"value":"a"}
+      {"id":2,"value":"b"}
+      {"id":3,"value":"c"}
+  """
+
+  @type result :: {:ok, term()} | {:error, {:invalid_json, String.t()}}
+
+  @doc """
+  Returns a lazy enumerable yielding one `t:result/0` per non-blank line.
+
+  Blank lines (empty after trimming) are dropped and produce no element.
+  Nothing is read from disk until the returned stream is enumerated, and only
+  as far as it is consumed.
+  """
+  @spec stream(Path.t()) :: Enumerable.t()
+  def stream(file_path) do
+    file_path
+    |> File.stream!(:line, [])
+    |> Stream.map(&String.trim/1)
+    |> Stream.reject(&(&1 == ""))
+    |> Stream.map(&decode_line/1)
+  end
+
+  @doc """
+  Decodes a single line, returning `{:ok, value}` or
+  `{:error, {:invalid_json, raw}}`. Never raises on malformed input.
+  """
+  @spec decode_line(String.t()) :: result()
+  def decode_line(line) do
+    trimmed = String.trim(line)
+
+    case JSON.decode(trimmed) do
+      {:ok, value} -> {:ok, value}
+      {:error, _reason} -> {:error, {:invalid_json, trimmed}}
+    end
+  end
+end
+
+```
+
+Return ONE file `candidates.md` containing at most 1 lines, each a single
+function target written as `name/arity` (e.g. `refill_and_expire/2`), most valuable
+first, and NOTHING else.
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - candidates.md — one function target (name/arity) per line
+
+
+09:09:14.897 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+</file>
+09:09:14.897 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5930, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5930, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5930, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5930, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 772, "type" => "message"}], "output_tokens" => 772, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

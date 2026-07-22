@@ -1,0 +1,191 @@
+08:01:26.753 [info] FIM candidate-select for 108_004_priority_resolved_bimap_01 (up to 3)
+08:01:26.753 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+08:01:26.753 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+# Priority-Resolved BiMap
+
+Write me an Elixir GenServer module called `PriorityBiMap` that maintains a **bidirectional mapping** (a bijection between keys and values) where every pair carries a **priority**, and conflicts are resolved by priority rather than by last-write-wins. Unlike a classic BiMap — where a new `put` always evicts whatever collides with it — here a lower-priority write is **rejected** and leaves the existing mappings untouched.
+
+## Public API
+
+- `PriorityBiMap.start_link(opts)` — starts the process. It must accept a `:name` option used to register the process (all other functions take that name — or any valid GenServer server reference — as their first argument). Return the usual `{:ok, pid}`.
+
+- `PriorityBiMap.put(name, key, value, priority)` — attempts to install the association `{key, value}` with the given integer `priority`. A `put` can conflict with **up to two** existing pairs: the pair currently at `key` (if `key` maps to a *different* value) and the pair currently at `value` (if `value` maps to a *different* key). Resolution:
+  - **Same pair already present** (`key` already maps to exactly `value`): accept and update the stored priority to `priority`. Returns `{:ok, []}` (nothing displaced).
+  - **No conflict** (both `key` and `value` are free): install the pair. Returns `{:ok, []}`.
+  - **Conflict(s) exist**: the new pair is accepted **only if `priority` is strictly greater than every conflicting pair's priority**. On acceptance, all conflicting pairs are evicted and the new pair installed; returns `{:ok, evicted}` where `evicted` is the list of displaced `{key, value}` pairs. If `priority` is **not** strictly greater than some conflicting pair (including ties), the put is **rejected**: nothing changes and it returns `{:error, :rejected}`.
+
+- `PriorityBiMap.get_by_key(name, key)` — returns `{:ok, value}` if `key` is present, otherwise `:error`.
+
+- `PriorityBiMap.get_by_value(name, value)` — returns `{:ok, key}` if `value` is present, otherwise `:error`.
+
+- `PriorityBiMap.priority(name, key)` — returns `{:ok, priority}` for the pair at `key`, otherwise `:error`.
+
+- `PriorityBiMap.delete(name, key)` — removes `key` and its associated value (both directions), including its priority. Returns `:ok`. Deleting an absent key is a harmless no-op.
+
+## The invariant
+
+- The structure is always a true bijection: every `get_by_key(name, k)` returning `{:ok, v}` implies `get_by_value(name, v)` returns `{:ok, k}`, and vice versa; each key/value is associated with at most one partner.
+- A rejected `put` is a complete no-op: no mapping, no priority, no partial change.
+- An accepted conflicting `put` evicts every conflicting pair (both the key-side and the value-side pair when they differ) so the bijection is preserved, and reports exactly those displaced pairs.
+
+Keys and values can be any term (priorities are integers). Use only the OTP standard library — no external dependencies. Give me the complete module in a single file.
+
+=== MODULE ===
+```elixir
+defmodule PriorityBiMap do
+  @moduledoc """
+  A GenServer maintaining a bijective bidirectional mapping where each pair
+  carries an integer priority and conflicts are resolved by priority.
+
+  A `put/4` may conflict with the pair currently at `key` and/or the pair
+  currently at `value`. It succeeds only when its priority is strictly greater
+  than every conflicting pair's priority, in which case the conflicting pairs are
+  evicted and reported; otherwise (including ties) it is rejected and nothing
+  changes. Re-putting the exact same pair simply updates its stored priority.
+
+  Keys and values may be any term; priorities are integers.
+  """
+
+  use GenServer
+
+  ## Client API
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    GenServer.start_link(__MODULE__, :ok, [name: name] ++ opts)
+  end
+
+  @doc "Stores the `key`<->`value` pair at `priority`, resolving conflicts by priority."
+  @spec put(GenServer.server(), term(), term(), integer()) ::
+          {:ok, [{term(), term()}]} | {:error, :rejected}
+  def put(name, key, value, priority) do
+    GenServer.call(name, {:put, key, value, priority})
+  end
+
+  @spec get_by_key(GenServer.server(), term()) :: {:ok, term()} | :error
+  def get_by_key(name, key), do: GenServer.call(name, {:get_by_key, key})
+
+  @spec get_by_value(GenServer.server(), term()) :: {:ok, term()} | :error
+  def get_by_value(name, value), do: GenServer.call(name, {:get_by_value, value})
+
+  @spec priority(GenServer.server(), term()) :: {:ok, integer()} | :error
+  def priority(name, key), do: GenServer.call(name, {:priority, key})
+
+  @spec delete(GenServer.server(), term()) :: :ok
+  def delete(name, key), do: GenServer.call(name, {:delete, key})
+
+  ## Server callbacks
+
+  @impl true
+  def init(:ok) do
+    # forward: key => value, reverse: value => key, prio: key => priority
+    {:ok, %{forward: %{}, reverse: %{}, prio: %{}}}
+  end
+
+  @impl true
+  def handle_call({:put, key, value, priority}, _from, state) do
+    %{forward: f, reverse: r, prio: p} = state
+
+    # The pair currently sitting at `key`, if it binds a *different* value.
+    key_conflict =
+      case Map.fetch(f, key) do
+        {:ok, ^value} -> nil
+        {:ok, oldv} -> {key, oldv, Map.fetch!(p, key)}
+        :error -> nil
+      end
+
+    # The pair currently sitting at `value`, if it binds a *different* key.
+    value_conflict =
+      case Map.fetch(r, value) do
+        {:ok, ^key} -> nil
+        {:ok, oldk} -> {oldk, value, Map.fetch!(p, oldk)}
+        :error -> nil
+      end
+
+    conflicts = Enum.reject([key_conflict, value_conflict], &is_nil/1)
+
+    cond do
+      conflicts == [] ->
+        # Same pair (priority update) or a fully free slot: install.
+        {:reply, {:ok, []}, install(state, key, value, priority)}
+
+      priority > Enum.max(Enum.map(conflicts, fn {_k, _v, cp} -> cp end)) ->
+        state = Enum.reduce(conflicts, state, fn {ck, cv, _cp}, acc -> evict(acc, ck, cv) end)
+        evicted = Enum.map(conflicts, fn {ck, cv, _cp} -> {ck, cv} end)
+        {:reply, {:ok, evicted}, install(state, key, value, priority)}
+
+      true ->
+        {:reply, {:error, :rejected}, state}
+    end
+  end
+
+  def handle_call({:get_by_key, key}, _from, state) do
+    {:reply, Map.fetch(state.forward, key), state}
+  end
+
+  def handle_call({:get_by_value, value}, _from, state) do
+    {:reply, Map.fetch(state.reverse, value), state}
+  end
+
+  def handle_call({:priority, key}, _from, state) do
+    {:reply, Map.fetch(state.prio, key), state}
+  end
+
+  def handle_call({:delete, key}, _from, state) do
+    case Map.fetch(state.forward, key) do
+      {:ok, value} -> {:reply, :ok, evict(state, key, value)}
+      :error -> {:reply, :ok, state}
+    end
+  end
+
+  ## Helpers
+
+  defp install(state, key, value, priority) do
+    %{
+      state
+      | forward: Map.put(state.forward, key, value),
+        reverse: Map.put(state.reverse, value, key),
+        prio: Map.put(state.prio, key, priority)
+    }
+  end
+
+  defp evict(state, key, value) do
+    %{
+      state
+      | forward: Map.delete(state.forward, key),
+        reverse: Map.delete(state.reverse, value),
+        prio: Map.delete(state.prio, key)
+    }
+  end
+end
+
+```
+
+Return ONE file `candidates.md` containing at most 3 lines, each a single
+function target written as `name/arity` (e.g. `refill_and_expire/2`), most valuable
+first, and NOTHING else.
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in y (truncated)
+08:01:35.812 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+handle_call/3
+evict/3
+install/4
+</file>
+08:01:35.813 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6879, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6879, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6879, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6879, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 217, "type" => "message"}], "output_tokens" => 217, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

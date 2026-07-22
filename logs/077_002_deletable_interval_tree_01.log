@@ -1,0 +1,449 @@
+20:07:26.002 [info] VARIATION 077_002_deletable_interval_tree_01: Deletable Interval Tree
+20:07:26.003 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/077_002_deletable_interval_tree_01 solution.ex
+20:07:26.665 [debug] grade JSON: {"analysis":{"defp_count":29,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":true,"line_count":217,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":2,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.97,"reasons":["analysis: @doc on public functions → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/077_002_deletable_interval_tree_01/solution.ex","task":"077_002_deletable_interval_tree_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T18:07:26.638828Z"}
+20:07:26.665 [info] cycle 077_002_deletable_interval_tree_01: repairing — The solution is green but does not meet the house style: no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+20:07:26.666 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+20:07:26.666 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `DeletableIntervalTree` that implements a persistent, purely-functional interval tree supporting **removal** of intervals with explicit success/failure semantics.
+
+I need these functions in the public API:
+- `DeletableIntervalTree.new()` which returns an empty interval tree.
+- `DeletableIntervalTree.insert(tree, {start, finish})` which inserts an interval and returns the updated tree. Both `start` and `finish` are integers and `start <= finish` is guaranteed. Duplicate intervals are allowed (inserting `{2, 8}` twice stores two copies).
+- `DeletableIntervalTree.delete(tree, {start, finish})` which removes **one** occurrence of the given interval. It returns `{:ok, new_tree}` if the interval was present, or `{:error, :not_found}` if it was not. When two identical intervals are stored, a single `delete` removes only one of them.
+- `DeletableIntervalTree.member?(tree, {start, finish})` which returns `true` if at least one copy of the interval is stored, `false` otherwise.
+- `DeletableIntervalTree.overlapping(tree, {start, finish})` which returns a list of all stored intervals that overlap the query range. Two intervals overlap if they share at least one point, so `{1, 3}` and `{3, 5}` overlap (touching counts).
+- `DeletableIntervalTree.enclosing(tree, point)` which returns a list of all stored intervals that contain the integer `point` (`s <= point <= f`).
+- `DeletableIntervalTree.size(tree)` which returns the number of stored intervals.
+
+The tree must be a persistent purely-functional data structure — every `insert` and every successful `delete` returns a new tree value without mutating the input, and the original tree must remain queryable. It should not be a GenServer or process; it's a plain data structure module.
+
+The internal representation must be a proper self-balancing interval tree (an augmented balanced BST where each node stores the maximum `finish` value in its subtree) so that `overlapping` and `enclosing` prune branches efficiently, and so that `insert`/`delete` stay O(log n) with the tree kept balanced after every removal. The `max_finish` augmentation must remain correct after deletions and rebalancing.
+
+Support degenerate intervals where `start == finish`. An empty tree must return `[]` for any query and `0` for `size`.
+
+Give me the complete module in a single file. Use only the Elixir standard library, no external dependencies.
+
+----- solution.ex -----
+defmodule DeletableIntervalTree do
+  @moduledoc """
+  A persistent, purely-functional interval tree implemented as an augmented AVL
+  tree that supports removal with explicit success/failure semantics.
+
+  Each node stores:
+
+    * `interval`   — the `{start, finish}` tuple; nodes are ordered by the full
+      tuple so that `delete/2` can locate an exact interval deterministically.
+    * `max_finish` — the maximum `finish` across the subtree, used to prune
+      `overlapping/2` and `enclosing/2`.
+    * `height`     — the AVL height, maintained across `insert/2` and `delete/2`.
+
+  Two intervals overlap when they share at least one point, so `{1, 3}` and
+  `{3, 5}` overlap. Every `insert/2` and every successful `delete/2` returns a
+  new tree value; the input tree is never mutated.
+  """
+
+  @type interval :: {integer(), integer()}
+  @type t :: nil | map()
+
+  # -------------------------------------------------------------------------
+  # Public API
+  # -------------------------------------------------------------------------
+
+  @spec new() :: t()
+  def new(), do: nil
+
+  @spec insert(t(), interval()) :: t()
+  def insert(tree, {s, f} = interval) when is_integer(s) and is_integer(f) and s <= f do
+    do_insert(tree, interval)
+  end
+
+  @spec member?(t(), interval()) :: boolean()
+  def member?(tree, {_s, _f} = interval), do: do_member?(tree, interval)
+
+  @spec delete(t(), interval()) :: {:ok, t()} | {:error, :not_found}
+  def delete(tree, {_s, _f} = interval) do
+    case do_delete(tree, interval) do
+      {new_tree, true} -> {:ok, new_tree}
+      {_unchanged, false} -> {:error, :not_found}
+    end
+  end
+
+  @spec overlapping(t(), interval()) :: [interval()]
+  def overlapping(nil, _query), do: []
+  def overlapping(tree, {qs, qf}), do: do_overlapping(tree, qs, qf, [])
+
+  @spec enclosing(t(), integer()) :: [interval()]
+  def enclosing(nil, _point), do: []
+  def enclosing(tree, point) when is_integer(point), do: do_enclosing(tree, point, [])
+
+  @spec size(t()) :: non_neg_integer()
+  def size(tree), do: do_size(tree)
+
+  # -------------------------------------------------------------------------
+  # Node construction
+  # -------------------------------------------------------------------------
+
+  defp height(nil), do: 0
+  defp height(%{height: h}), do: h
+
+  defp make_node({_s, f} = interval, left, right) do
+    h = 1 + max(height(left), height(right))
+    mf = f |> max_with_child(left) |> max_with_child(right)
+    %{interval: interval, max_finish: mf, height: h, left: left, right: right}
+  end
+
+  defp max_with_child(acc, nil), do: acc
+  defp max_with_child(acc, %{max_finish: mf}), do: max(acc, mf)
+
+  # -------------------------------------------------------------------------
+  # AVL rotations / rebalance
+  # -------------------------------------------------------------------------
+
+  defp rotate_right(%{interval: xi, left: %{interval: yi, left: a, right: b}, right: c}) do
+    make_node(yi, a, make_node(xi, b, c))
+  end
+
+  defp rotate_left(%{interval: xi, left: a, right: %{interval: yi, left: b, right: c}}) do
+    make_node(yi, make_node(xi, a, b), c)
+  end
+
+  defp balance_factor(nil), do: 0
+  defp balance_factor(%{left: l, right: r}), do: height(l) - height(r)
+
+  defp rebalance(%{interval: xi, left: l, right: r} = node) do
+    lh = height(l)
+    rh = height(r)
+
+    cond do
+      lh - rh > 1 ->
+        if balance_factor(l) >= 0 do
+          rotate_right(node)
+        else
+          rotate_right(make_node(xi, rotate_left(l), r))
+        end
+
+      rh - lh > 1 ->
+        if balance_factor(r) <= 0 do
+          rotate_left(node)
+        else
+          rotate_left(make_node(xi, l, rotate_right(r)))
+        end
+
+      true ->
+        node
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Insertion (ordered by the full {start, finish} tuple; duplicates go left)
+  # -------------------------------------------------------------------------
+
+  defp do_insert(nil, interval), do: make_node(interval, nil, nil)
+
+  defp do_insert(%{interval: ni} = node, interval) do
+    updated =
+      if interval <= ni do
+        make_node(node.interval, do_insert(node.left, interval), node.right)
+      else
+        make_node(node.interval, node.left, do_insert(node.right, interval))
+      end
+
+    rebalance(updated)
+  end
+
+  # -------------------------------------------------------------------------
+  # Membership
+  # -------------------------------------------------------------------------
+
+  defp do_member?(nil, _target), do: false
+
+  defp do_member?(%{interval: iv, left: l, right: r}, target) do
+    cond do
+      target == iv -> true
+      target < iv -> do_member?(l, target)
+      true -> d (truncated)
+20:07:58.915 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule DeletableIntervalTree do
+  @moduledoc """
+  A persistent, purely-functional interval tree implemented as an augmented AVL
+  tree that supports removal with explicit success/failure semantics.
+
+  Each node stores:
+
+    * `interval`   — the `{start, finish}` tuple; nodes are ordered by the full
+      tuple so that `delete/2` can locate an exact interval deterministically.
+    * `max_finish` — the maximum `finish` across the subtree, used to prune
+      `overlapping/2` and `enclosing/2`.
+    * `height`     — the AVL height, maintained across `insert/2` and `delete/2`.
+
+  Two intervals overlap when they share at least one point, so `{1, 3}` and
+  `{3, 5}` overlap. Every `insert/2` and every successful `delete/2` returns a
+  new tree value; the input tree is never mutated.
+  """
+
+  @type interval :: {integer(), integer()}
+  @type t :: nil | map()
+
+  # -------------------------------------------------------------------------
+  # Public API
+  # -------------------------------------------------------------------------
+
+  @doc """
+  Returns a new, empty interval tree.
+  """
+  @spec new() :: t()
+  def new(), do: nil
+
+  @doc """
+  Inserts `interval` into `tree` and returns the updated tree.
+
+  Both endpoints must be integers with `start <= finish`. Duplicate intervals
+  are permitted; each copy is stored independently.
+  """
+  @spec insert(t(), interval()) :: t()
+  def insert(tree, {s, f} = interval) when is_integer(s) and is_integer(f) and s <= f do
+    do_insert(tree, interval)
+  end
+
+  @doc """
+  Returns `true` if at least one copy of `interval` is stored in `tree`.
+  """
+  @spec member?(t(), interval()) :: boolean()
+  def member?(tree, {_s, _f} = interval), do: do_member?(tree, interval)
+
+  @doc """
+  Removes a single occurrence of `interval` from `tree`.
+
+  Returns `{:ok, new_tree}` when the interval was present, or
+  `{:error, :not_found}` otherwise. When two identical intervals are stored,
+  only one of them is removed.
+  """
+  @spec delete(t(), interval()) :: {:ok, t()} | {:error, :not_found}
+  def delete(tree, {_s, _f} = interval) do
+    case do_delete(tree, interval) do
+      {new_tree, true} -> {:ok, new_tree}
+      {_unchanged, false} -> {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Returns all stored intervals that overlap the query range `{start, finish}`.
+
+  Two intervals overlap when they share at least one point, so touching
+  intervals are included.
+  """
+  @spec overlapping(t(), interval()) :: [interval()]
+  def overlapping(nil, _query), do: []
+  def overlapping(tree, {qs, qf}), do: do_overlapping(tree, qs, qf, [])
+
+  @doc """
+  Returns all stored intervals that contain the integer `point`
+  (that is, `start <= point <= finish`).
+  """
+  @spec enclosing(t(), integer()) :: [interval()]
+  def enclosing(nil, _point), do: []
+  def enclosing(tree, point) when is_integer(point), do: do_enclosing(tree, point, [])
+
+  @doc """
+  Returns the number of intervals stored in `tree`.
+  """
+  @spec size(t()) :: non_neg_integer()
+  def size(tree), do: do_size(tree)
+
+  # -------------------------------------------------------------------------
+  # Node construction
+  # -------------------------------------------------------------------------
+
+  defp height(nil), do: 0
+  defp height(%{height: h}), do: h
+
+  defp make_node({_s, f} = interval, left, right) do
+    h = 1 + max(height(left), height(right))
+    mf = f |> max_with_child(left) |> max_with_child(right)
+    %{interval: interval, max_finish: mf, height: h, left: left, right: right}
+  end
+
+  defp max_with_child(acc, nil), do: acc
+  defp max_with_child(acc, %{max_finish: mf}), do: max(acc, mf)
+
+  # -------------------------------------------------------------------------
+  # AVL rotations / rebalance
+  # -------------------------------------------------------------------------
+
+  defp rotate_right(%{interval: xi, left: %{interval: yi, left: a, right: b}, right: c}) do
+    make_node(yi, a, make_node(xi, b, c))
+  end
+
+  defp rotate_left(%{interval: xi, left: a, right: %{interval: yi, left: b, right: c}}) do
+    make_node(yi, make_node(xi, a, b), c)
+  end
+
+  defp balance_factor(nil), do: 0
+  defp balance_factor(%{left: l, right: r}), do: height(l) - height(r)
+
+  defp rebalance(%{interval: xi, left: l, right: r} = node) do
+    lh = height(l)
+    rh = height(r)
+
+    cond do
+      lh - rh > 1 ->
+        if balance_factor(l) >= 0 do
+          rotate_right(node)
+        else
+          rotate_right(make_node(xi, rotate_left(l), r))
+        end
+
+      rh - lh > 1 ->
+        if balance_factor(r) <= 0 do
+          rotate_left(node)
+        else
+          rotate_left(make_node(xi, l, rotate_right(r)))
+        end
+
+      true ->
+        node
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Insertion (ordered by the full {start, finish} tuple; duplicates go left)
+  # -------------------------------------------------------------------------
+
+  defp do_insert(nil, interval), do: make_node(interval, nil, nil)
+
+  defp do_insert(%{interval: ni} = node, interval) do
+    updated =
+      if interval <= ni do
+        make_node(node.interval, do_insert(node.left, interval), node.right)
+      else
+        make_node(node.interval, node.left, do_insert(node.right, interval))
+      end
+
+    rebalance(updated)
+  end
+
+  # -------------------------------------------------------------------------
+  # Membership
+  # -------------------------------------------------------------------------
+
+  defp do_member?(nil, _target), do: false
+
+  defp do_member?(%{interval: iv, left: l, right: r}, target) do
+    cond do
+      target == iv -> true
+      target < iv -> do_member?(l, target)
+      true -> do_member?(r, target)
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Deletion (returns {tree, found?})
+  # -------------------------------------------------------------------------
+
+  defp do_delete(nil, _target), do: {nil, false}
+
+  defp do_delete(%{interval: iv, left: l, right: r}, target) do
+    cond do
+      target < iv ->
+        {nl, found} = do_delete(l, target)
+        {rebalance(make_node(iv, nl, r)), found}
+
+      target > iv ->
+        {nr, found} = do_delete(r, target)
+        {rebalance(make_node(iv, l, nr)), found}
+
+      true ->
+        {delete_here(make_node(iv, l, r)), true}
+    end
+  end
+
+  defp delete_here(%{left: nil, right: r}), do: r
+  defp delete_here(%{left: l, right: nil}), do: l
+
+  defp delete_here(%{left: l, right: r}) do
+    successor = min_interval(r)
+    {nr, _found} = do_delete(r, successor)
+    rebalance(make_node(successor, l, nr))
+  end
+
+  defp min_interval(%{left: nil, interval: iv}), do: iv
+  defp min_interval(%{left: l}), do: min_interval(l)
+
+  # -------------------------------------------------------------------------
+  # Overlap query
+  # -------------------------------------------------------------------------
+
+  defp do_overlapping(nil, _qs, _qf, acc), do: acc
+  defp do_overlapping(%{max_finish: mf}, qs, _qf, acc) when mf < qs, do: acc
+
+  defp do_overlapping(%{interval: {s, f} = iv, left: left, right: right}, qs, qf, acc) do
+    acc = if s <= qf and f >= qs, do: [iv | acc], else: acc
+    acc = do_overlapping(left, qs, qf, acc)
+
+    if s <= qf do
+      do_overlapping(right, qs, qf, acc)
+    else
+      acc
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Enclosing query
+  # -------------------------------------------------------------------------
+
+  defp do_enclosing(nil, _point, acc), do: acc
+  defp do_enclosing(%{max_finish: mf}, point, acc) when mf < point, do: acc
+
+  defp do_enclosing(%{interval: {s, f} = iv, left: left, right: right}, point, acc) do
+    acc = if s <= point and point <= f, do: [iv | acc], else: acc
+    acc = do_enclosing(left, point, acc)
+
+    if s <= point do
+      do_enclosing(right, point, acc)
+    else
+      acc
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Size
+  # ---------------------------------------------- (truncated)
+20:07:58.915 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6688, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6688, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6688, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6688, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 3350, "type" => "message"}], "output_tokens" => 3350, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+20:07:58.934 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/077_002_deletable_interval_tree_01 solution.ex
+20:07:59.590 [debug] grade JSON: {"analysis":{"defp_count":29,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":249,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":2,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/077_002_deletable_interval_tree_01/solution.ex","task":"077_002_deletable_interval_tree_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T18:07:59.565842Z"}
+20:07:59.596 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/077_002_deletable_interval_tree_01_mut solution.ex
+20:08:00.250 [debug] grade JSON: {"analysis":{"defp_count":29,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":245,"lines_over_98":5,"max_line_length":744,"mode":"full","pipe_chain_count":2,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 13/13 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/077_002_deletable_interval_tree_01_mut/solution.ex","task":"077_002_deletable_interval_tree_01_mut","test_failures":[{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test empty tree queries"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete on empty tree reports not_found"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test overlapping returns only matching intervals"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test touching intervals overlap"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test enclosing returns all intervals covering the point"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test degenerate interval found by exact point"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test member? reflects presence"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete removes an existing interval and returns :ok tuple"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete of absent interval returns error and leaves tree usable"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete removes only one of two identical intervals"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete is non-destructive"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test queries stay correct after interleaved inserts and deletes at scale"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test deleting the root repeatedly keeps the tree valid"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T18:08:00.226990Z"}
+20:08:00.255 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/077_002_deletable_interval_tree_01_mut solution.ex
+20:08:00.914 [debug] grade JSON: {"analysis":{"defp_count":29,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":245,"lines_over_98":5,"max_line_length":744,"mode":"full","pipe_chain_count":2,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.35,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 11/13 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.15},"shape":"single","solution_file":".gen_staging/077_002_deletable_interval_tree_01_mut/solution.ex","task":"077_002_deletable_interval_tree_01_mut","test_failures":[{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test overlapping returns only matching intervals"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test touching intervals overlap"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test enclosing returns all intervals covering the point"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test degenerate interval found by exact point"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test member? reflects presence"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete removes an existing interval and returns :ok tuple"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete of absent interval returns error and leaves tree usable"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete removes only one of two identical intervals"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete is non-destructive"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test queries stay correct after interleaved inserts and deletes at scale"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test deleting the root repeatedly keeps the tree valid"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T18:08:00.889783Z"}
+20:08:00.917 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/077_002_deletable_interval_tree_01_mut solution.ex
+20:08:01.596 [debug] grade JSON: {"analysis":{"defp_count":29,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":245,"lines_over_98":5,"max_line_length":744,"mode":"full","pipe_chain_count":2,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.57,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 7/13 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.46},"shape":"single","solution_file":".gen_staging/077_002_deletable_interval_tree_01_mut/solution.ex","task":"077_002_deletable_interval_tree_01_mut","test_failures":[{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test empty tree queries"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test member? reflects presence"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete removes an existing interval and returns :ok tuple"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete of absent interval returns error and leaves tree usable"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete removes only one of two identical intervals"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete is non-destructive"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test queries stay correct after interleaved inserts and deletes at scale"}],"tests_errors":0,"tests_excluded":0,"tests_failed":7,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T18:08:01.572966Z"}
+20:08:01.600 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/077_002_deletable_interval_tree_01_mut solution.ex
+20:08:02.237 [debug] grade JSON: {"analysis":{"defp_count":29,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":242,"lines_over_98":5,"max_line_length":744,"mode":"full","pipe_chain_count":2,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.55,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 7/13 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.46},"shape":"single","solution_file":".gen_staging/077_002_deletable_interval_tree_01_mut/solution.ex","task":"077_002_deletable_interval_tree_01_mut","test_failures":[{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete on empty tree reports not_found"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete removes an existing interval and returns :ok tuple"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete of absent interval returns error and leaves tree usable"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete removes only one of two identical intervals"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete is non-destructive"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test queries stay correct after interleaved inserts and deletes at scale"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test deleting the root repeatedly keeps the tree valid"}],"tests_errors":0,"tests_excluded":0,"tests_failed":7,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T18:08:02.216140Z"}
+20:08:02.241 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/077_002_deletable_interval_tree_01_mut solution.ex
+20:08:02.901 [debug] grade JSON: {"analysis":{"defp_count":29,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":245,"lines_over_98":5,"max_line_length":744,"mode":"full","pipe_chain_count":2,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.5,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 8/13 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.38},"shape":"single","solution_file":".gen_staging/077_002_deletable_interval_tree_01_mut/solution.ex","task":"077_002_deletable_interval_tree_01_mut","test_failures":[{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test empty tree queries"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test overlapping returns only matching intervals"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test touching intervals overlap"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete removes an existing interval and returns :ok tuple"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete removes only one of two identical intervals"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete is non-destructive"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test queries stay correct after interleaved inserts and deletes at scale"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test deleting the root repeatedly keeps the tree valid"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T18:08:02.877837Z"}
+20:08:02.905 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/077_002_deletable_interval_tree_01_mut solution.ex
+20:08:03.552 [debug] grade JSON: {"analysis":{"defp_count":29,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":245,"lines_over_98":5,"max_line_length":744,"mode":"full","pipe_chain_count":2,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.74,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 4/13 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.69},"shape":"single","solution_file":".gen_staging/077_002_deletable_interval_tree_01_mut/solution.ex","task":"077_002_deletable_interval_tree_01_mut","test_failures":[{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test empty tree queries"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test enclosing returns all intervals covering the point"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test degenerate interval found by exact point"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test queries stay correct after interleaved inserts and deletes at scale"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T18:08:03.529812Z"}
+20:08:03.556 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/077_002_deletable_interval_tree_01_mut solution.ex
+20:08:04.215 [debug] grade JSON: {"analysis":{"defp_count":29,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":245,"lines_over_98":5,"max_line_length":744,"mode":"full","pipe_chain_count":2,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.63,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 6/13 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.54},"shape":"single","solution_file":".gen_staging/077_002_deletable_interval_tree_01_mut/solution.ex","task":"077_002_deletable_interval_tree_01_mut","test_failures":[{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test empty tree queries"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete removes an existing interval and returns :ok tuple"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete of absent interval returns error and leaves tree usable"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test delete removes only one of two identical intervals"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test queries stay correct after interleaved inserts and deletes at scale"},{"message":"MUTATION","module":"DeletableIntervalTreeTest","test":"test deleting the root repeatedly keeps the tree valid"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-04T18:08:04.191490Z"}
+20:08:04.215 [info] cycle 077_002_deletable_interval_tree_01: ACCEPTED on attempt 1
+20:08:04.216 [info] promoted 077_002_deletable_interval_tree_01 -> tasks/077_002_deletable_interval_tree_01

@@ -1,0 +1,1140 @@
+[22m00:23:06.237 [info] VARIATION 022_003_invitation_workflow_nested_membership_endpoint_01: Invitation-Workflow Nested Membership Endpoint[0m
+[36m00:23:06.238 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01 solution.ex[0m
+[36m00:23:07.076 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":false,"line_count":307,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.63,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.92,"reasons":["analysis: @doc on public functions → 0/1 pts","analysis: @spec annotations present → 0/2 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:23:07.055256Z"}[0m
+[22m00:23:07.077 [info] cycle 022_003_invitation_workflow_nested_membership_endpoint_01: repairing — The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m00:23:07.077 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m00:23:07.078 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement **invitation-based** nested resource endpoints for team membership, using only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Unlike a plain "add member" endpoint, joining a team here is a two-step lifecycle: an existing member *invites* a user (creating a **pending** invitation), and the invited user must *accept* it before they become a member.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer that holds all application state in memory (users, teams, memberships, and pending invitations). It should support these public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option for registration.
+- `TeamStore.create_user(server, id, token)` — stores a user with the given ID and bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id)` — creates a team. Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — adds a user to a team directly (for seeding). Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true` or `false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true` or `false`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, list_of_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.list_invitations(server, team_id)` — returns `{:ok, list_of_pending_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.has_pending_invite?(server, team_id, user_id)` — returns `true` or `false`.
+- `TeamStore.invite(server, team_id, user_id)` — records a pending invitation. Returns `{:ok, user_id}`, `{:error, :not_found}` if the team doesn't exist, or `{:error, :conflict}` if the user is already a member OR already has a pending invitation.
+- `TeamStore.accept_invitation(server, team_id, user_id)` — promotes a pending invitation into full membership (removing the invitation). Returns `{:ok, user_id}`, `{:error, :not_found}` if the team doesn't exist or there is no pending invitation for that user.
+
+**`AuthPlug`** — a Plug that reads the `authorization` header, expects `Bearer <token>`, looks the user up via `TeamStore.get_user_by_token/2`, and assigns `:current_user` to the conn. If the token is missing or invalid, it halts the connection with a 401 JSON response `{"error": "unauthorized"}`. It should accept a `:store` option at init time to know which TeamStore process to call.
+
+**`TeamRouter`** — a `Plug.Router` that serves the following endpoints. It should accept a `:store` option and plug `AuthPlug` before route matching.
+
+- `GET /api/teams/:team_id/members` — If the team doesn't exist, return 404 `{"error": "not_found"}`. If the current user is not a member, return 403 `{"error": "forbidden"}`. Otherwise return 200 `{"members": [list_of_user_ids]}`.
+
+- `GET /api/teams/:team_id/invitations` — Same 404 / 403 rules (must be a member to view). Otherwise return 200 `{"invitations": [list_of_pending_user_ids]}`.
+
+- `POST /api/teams/:team_id/invitations` — Reads a JSON body with `{"user_id": "..."}`. If the team doesn't exist, return 404. If the current user is not a member, return 403 (only members may invite). If the body is malformed / missing `user_id`, return 400 `{"error": "bad_request"}`. If the invited user is already a member or already has a pending invitation, return 409 `{"error": "conflict"}`. On success, return 201 `{"invited": user_id, "status": "pending"}`.
+
+- `POST /api/teams/:team_id/invitations/:user_id/accept` — The invited user accepts their own invitation. If the team doesn't exist, return 404. If the authenticated user is **not** the `:user_id` in the path, return 403 `{"error": "forbidden"}` (you cannot accept someone else's invitation). If there is no pending invitation for that user, return 404 `{"error": "not_found"}`. On success, return 200 `{"joined": user_id}` and the user becomes a full member.
+
+All error and success responses must be `application/json`. Give me all modules in a single file. Use only `plug`, `jason`, and the OTP standard library.
+
+----- solution.ex -----
+defmodule TeamStore do
+  @moduledoc """
+  In-memory `GenServer` holding users, teams, memberships and pending
+  invitations. Joining a team is a two-step lifecycle: `invite/3` records a
+  pending invitation and `accept_invitation/3` promotes it to membership.
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
+
+  def create_team(server, team_id), do: GenServer.call(server, {:create_team, team_id})
+
+  def add_member(server, team_id, user_id),
+    do: GenServer.call(server, {:add_member, team_id, user_id})
+
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})
+
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})
+
+  def is_member?(server, team_id, user_id),
+    do: GenServer.call(server, {:is_member?, team_id, user_id})
+
+  def list_members(server, team_id), do: GenServer.call(server, {:list_members, team_id})
+
+  def list_invitations(server, team_id), do: GenServer.call(server, {:list_invitations, team_id})
+
+  def has_pending_invite?(server, team_id, user_id),
+    do: GenServer.call(server, {:has_pending_invite?, team_id, user_id})
+
+  def invite(server, team_id, user_id),
+    do: GenServer.call(server, {:invite, team_id, user_id})
+
+  def accept_invitation(server, team_id, user_id),
+    do: GenServer.call(server, {:accept_invitation, team_id, user_id})
+
+  # ---------------------------------------------------------------------------
+  # Callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(_opts) do
+    {:ok, %{tokens: %{}, teams: %{}, invites: %{}}}
+  end
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    {:reply, :ok, put_in(state.tokens[token], id)}
+  end
+
+  def handle_call({:create_team, team_id}, _from, state) do
+    teams = Map.put_new(state.teams, team_id, [])
+    invites = Map.put_new(state.invites, team_id, [])
+    {:reply, :ok, %{state | teams: teams, invites: invites}}
+  end
+
+  def handle_call({:add_member, team_id, user_id}, _from, state) do
+    members = Map.get(state.teams, team_id, [])
+    members = if user_id in members, do: members, else: members ++ [user_id]
+    {:reply, :ok, %{state | teams: Map.put(state.teams, team_id, members)}}
+  end
+
+  def handle_call({:get_user_by_token, token}, _from, state) do
+    case Map.fetch(state.tokens, token) do
+      {:ok, user_id} -> {:reply, {:ok, user_id}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:team_exists?, team_id}, _from, state) do
+    {:reply, Map. (truncated)[0m
+[36m00:24:23.185 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TeamStore do
+  @moduledoc """
+  In-memory `GenServer` holding users, teams, memberships and pending
+  invitations. Joining a team is a two-step lifecycle: `invite/3` records a
+  pending invitation and `accept_invitation/3` promotes it to membership.
+  """
+
+  use GenServer
+
+  @typedoc "A `GenServer` reference: a pid, a registered name, or a `{:via, ...}` tuple."
+  @type server :: GenServer.server()
+
+  @typedoc "An opaque identifier (user id, team id, or bearer token)."
+  @type id :: String.t()
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option (forwarded to `GenServer.start_link/3`) for
+  registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc "Stores a user with the given `id` and bearer `token`."
+  @spec create_user(server(), id(), id()) :: :ok
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
+
+  @doc "Creates a team identified by `team_id`."
+  @spec create_team(server(), id()) :: :ok
+  def create_team(server, team_id), do: GenServer.call(server, {:create_team, team_id})
+
+  @doc "Adds `user_id` to `team_id` directly (used for seeding)."
+  @spec add_member(server(), id(), id()) :: :ok
+  def add_member(server, team_id, user_id),
+    do: GenServer.call(server, {:add_member, team_id, user_id})
+
+  @doc "Looks up a user id by bearer `token`, returning `{:ok, user_id}` or `:error`."
+  @spec get_user_by_token(server(), id()) :: {:ok, id()} | :error
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})
+
+  @doc "Returns whether a team with `team_id` exists."
+  @spec team_exists?(server(), id()) :: boolean()
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})
+
+  @doc "Returns whether `user_id` is a member of `team_id`."
+  @spec is_member?(server(), id(), id()) :: boolean()
+  def is_member?(server, team_id, user_id),
+    do: GenServer.call(server, {:is_member?, team_id, user_id})
+
+  @doc "Lists members of `team_id`, or `{:error, :not_found}` if the team is unknown."
+  @spec list_members(server(), id()) :: {:ok, [id()]} | {:error, :not_found}
+  def list_members(server, team_id), do: GenServer.call(server, {:list_members, team_id})
+
+  @doc "Lists pending invited user ids for `team_id`, or `{:error, :not_found}`."
+  @spec list_invitations(server(), id()) :: {:ok, [id()]} | {:error, :not_found}
+  def list_invitations(server, team_id), do: GenServer.call(server, {:list_invitations, team_id})
+
+  @doc "Returns whether `user_id` has a pending invitation to `team_id`."
+  @spec has_pending_invite?(server(), id(), id()) :: boolean()
+  def has_pending_invite?(server, team_id, user_id),
+    do: GenServer.call(server, {:has_pending_invite?, team_id, user_id})
+
+  @doc """
+  Records a pending invitation of `user_id` to `team_id`.
+
+  Returns `{:ok, user_id}`, `{:error, :not_found}` if the team does not exist,
+  or `{:error, :conflict}` if the user is already a member or already invited.
+  """
+  @spec invite(server(), id(), id()) :: {:ok, id()} | {:error, :not_found | :conflict}
+  def invite(server, team_id, user_id),
+    do: GenServer.call(server, {:invite, team_id, user_id})
+
+  @doc """
+  Promotes a pending invitation for `user_id` on `team_id` into membership.
+
+  Returns `{:ok, user_id}`, or `{:error, :not_found}` if the team does not
+  exist or there is no pending invitation for that user.
+  """
+  @spec accept_invitation(server(), id(), id()) :: {:ok, id()} | {:error, :not_found}
+  def accept_invitation(server, team_id, user_id),
+    do: GenServer.call(server, {:accept_invitation, team_id, user_id})
+
+  # ---------------------------------------------------------------------------
+  # Callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(_opts) do
+    {:ok, %{tokens: %{}, teams: %{}, invites: %{}}}
+  end
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    {:reply, :ok, put_in(state.tokens[token], id)}
+  end
+
+  def handle_call({:create_team, team_id}, _from, state) do
+    teams = Map.put_new(state.teams, team_id, [])
+    invites = Map.put_new(state.invites, team_id, [])
+    {:reply, :ok, %{state | teams: teams, invites: invites}}
+  end
+
+  def handle_call({:add_member, team_id, user_id}, _from, state) do
+    members = Map.get(state.teams, team_id, [])
+    members = if user_id in members, do: members, else: members ++ [user_id]
+    {:reply, :ok, %{state | teams: Map.put(state.teams, team_id, members)}}
+  end
+
+  def handle_call({:get_user_by_token, token}, _from, state) do
+    case Map.fetch(state.tokens, token) do
+      {:ok, user_id} -> {:reply, {:ok, user_id}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:team_exists?, team_id}, _from, state) do
+    {:reply, Map.has_key?(state.teams, team_id), state}
+  end
+
+  def handle_call({:is_member?, team_id, user_id}, _from, state) do
+    {:reply, user_id in Map.get(state.teams, team_id, []), state}
+  end
+
+  def handle_call({:list_members, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, members} -> {:reply, {:ok, members}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:list_invitations, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, _} -> {:reply, {:ok, Map.get(state.invites, team_id, [])}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:has_pending_invite?, team_id, user_id}, _from, state) do
+    {:reply, user_id in Map.get(state.invites, team_id, []), state}
+  end
+
+  def handle_call({:invite, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, members} ->
+        pending = Map.get(state.invites, team_id, [])
+
+        cond do
+          user_id in members ->
+            {:reply, {:error, :conflict}, state}
+
+          user_id in pending ->
+            {:reply, {:error, :conflict}, state}
+
+          true ->
+            invites = Map.put(state.invites, team_id, pending ++ [user_id])
+            {:reply, {:ok, user_id}, %{state | invites: invites}}
+        end
+    end
+  end
+
+  def handle_call({:accept_invitation, team_id, user_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, members} ->
+        pending = Map.get(state.invites, team_id, [])
+
+        if user_id in pending do
+          new_pending = List.delete(pending, user_id)
+          new_members = if user_id in members, do: members, else: members ++ [user_id]
+
+          state = %{
+            state
+            | invites: Map.put(state.invites, team_id, new_pending),
+              teams: Map.put(state.teams, team_id, new_members)
+          }
+
+          {:reply, {:ok, user_id}, state}
+        else
+          {:reply, {:error, :not_found}, state}
+        end
+    end
+  end
+end
+
+defmodule AuthPlug do
+  @moduledoc """
+  Plug that authenticates a bearer token via `TeamStore` and assigns
+  `:current_user`, or halts with a 401 JSON response.
+  """
+
+  import Plug.Conn
+
+  @behaviour Plug
+
+  @impl true
+  @doc "Initializes the plug, returning the options unchanged."
+  @spec init(keyword()) :: keyword()
+  def init(opts), do: opts
+
+  @impl true
+  @doc """
+  Authenticates the request's `Bearer` token and assigns `:current_user`,
+  halting with a 401 JSON response when the token is missing or invalid.
+  """
+  @spec call(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
+  def call(conn, opts) do
+    store = resolve_store(conn, opts)
+
+    case get_req_header(conn, "authorization") do
+      ["Bearer " <> token] ->
+     (truncated)[0m
+[36m00:24:23.185 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9648, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9648, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9648, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9648, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 7236, "type" => "message"}], "output_tokens" => 7236, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m00:24:23.203 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01 solution.ex[0m
+[36m00:24:24.010 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":363,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:24:23.988491Z"}[0m
+[36m00:24:24.018 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:24.830 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 24/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"failed to start child with the spec {TeamStore, [name: :store_515]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_579]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_643]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_707]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test GET members 401 with missing header"},{"message":"failed to start child with the spec {TeamStore, [name: :store_771]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"failed to start child with the spec {TeamStore, [name: :store_835]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"failed to start child with the spec {TeamStore, [name: :store_899]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"failed to start child with the spec {TeamStore, [name: :store_963]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"failed to start child with the spec {TeamStore, [name: :store_1027]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_s (truncated)[0m
+[36m00:24:24.838 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:25.624 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 24/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with missing header"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"}],"tests_errors":0,"tests_excluded":0,"tests_failed":24,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:24:25.603242Z"}[0m
+[36m00:24:25.632 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:26.436 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.26,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 24/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with missing header"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"}],"tests_errors":0,"tests_excluded":0,"tests_failed":24,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:24:26.414372Z"}[0m
+[36m00:24:26.445 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:27.250 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.24,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 24/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with missing header"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"}],"tests_errors":0,"tests_excluded":0,"tests_failed":24,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:24:27.227957Z"}[0m
+[36m00:24:27.258 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:28.078 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.38,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 19/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.21},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"}],"tests_errors":0,"tests_excluded":0,"tests_failed":19,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:24:28.055801Z"}[0m
+[36m00:24:28.088 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:28.918 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.42,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 17/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.29},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test responses are application/json"}],"tests_errors":0,"tests_excluded":0,"tests_failed":17,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:24:28.897919Z"}[0m
+[36m00:24:28.926 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:29.747 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.54,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 13/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.46},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test responses are application/json"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:24:29.725685Z"}[0m
+[36m00:24:29.757 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:30.583 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.83,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 4/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.83},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test responses are application/json"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:24:30.562322Z"}[0m
+[36m00:24:30.591 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:31.412 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.89,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 2/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.92},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":22,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:24:31.391118Z"}[0m
+[36m00:24:31.420 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:32.236 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.86,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 3/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.88},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:24:32.213858Z"}[0m
+[36m00:24:32.245 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:33.056 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.62,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 10/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.58},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:24:33.034208Z"}[0m
+[36m00:24:33.066 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:33.877 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.78,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 5/24 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.79},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-06T22:24:33.856561Z"}[0m
+[36m00:24:33.887 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:24:34.396 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"MUTATION","type":"RuntimeError"}],"compile_warnings":1,"compiled":false,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: failed to compile (0.0)","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-06T22:24:34.377736Z"}[0m
+[36m00:24:34.396 [debug] base mutation gate (per-fn): init/1 inconclusive[0m
+[22m00:24:34.397 [info] cycle 022_003_invitation_workflow_nested_membership_endpoint_01: repairing — Mutation gate failed: the raise-mutant of `init/1` graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.[0m
+[36m00:24:34.397 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m00:24:34.397 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Mutation gate failed: the raise-mutant of `init/1` graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement **invitation-based** nested resource endpoints for team membership, using only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Unlike a plain "add member" endpoint, joining a team here is a two-step lifecycle: an existing member *invites* a user (creating a **pending** invitation), and the invited user must *accept* it before they become a member.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer that holds all application state in memory (users, teams, memberships, and pending invitations). It should support these public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option for registration.
+- `TeamStore.create_user(server, id, token)` — stores a user with the given ID and bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id)` — creates a team. Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — adds a user to a team directly (for seeding). Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true` or `false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true` or `false`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, list_of_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.list_invitations(server, team_id)` — returns `{:ok, list_of_pending_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.has_pending_invite?(server, team_id, user_id)` — returns `true` or `false`.
+- `TeamStore.invite(server, team_id, user_id)` — records a pending invitation. Returns `{:ok, user_id}`, `{:error, :not_found}` if the team doesn't exist, or `{:error, :conflict}` if the user is already a member OR already has a pending invitation.
+- `TeamStore.accept_invitation(server, team_id, user_id)` — promotes a pending invitation into full membership (removing the invitation). Returns `{:ok, user_id}`, `{:error, :not_found}` if the team doesn't exist or there is no pending invitation for that user.
+
+**`AuthPlug`** — a Plug that reads the `authorization` header, expects `Bearer <token>`, looks the user up via `TeamStore.get_user_by_token/2`, and assigns `:current_user` to the conn. If the token is missing or invalid, it halts the connection with a 401 JSON response `{"error": "unauthorized"}`. It should accept a `:store` option at init time to know which TeamStore process to call.
+
+**`TeamRouter`** — a `Plug.Router` that serves the following endpoints. It should accept a `:store` option and plug `AuthPlug` before route matching.
+
+- `GET /api/teams/:team_id/members` — If the team doesn't exist, return 404 `{"error": "not_found"}`. If the current user is not a member, return 403 `{"error": "forbidden"}`. Otherwise return 200 `{"members": [list_of_user_ids]}`.
+
+- `GET /api/teams/:team_id/invitations` — Same 404 / 403 rules (must be a member to view). Otherwise return 200 `{"invitations": [list_of_pending_user_ids]}`.
+
+- `POST /api/teams/:team_id/invitations` — Reads a JSON body with `{"user_id": "..."}`. If the team doesn't exist, return 404. If the current user is not a member, return 403 (only members may invite). If the body is malformed / missing `user_id`, return 400 `{"error": "bad_request"}`. If the invited user is already a member or already has a pending invitation, return 409 `{"error": "conflict"}`. On success, return 201 `{"invited": user_id, "status": "pending"}`.
+
+- `POST /api/teams/:team_id/invitations/:user_id/accept` — The invited user accepts their own invitation. If the team doesn't exist, return 404. If the authenticated user is **not** the `:user_id` in the path, return 403 `{"error": "forbidden"}` (you cannot accept someone else's invitation). If there is no pending invitation for that user, return 404 `{"error": "not_found"}`. On success, return 200 `{"joined": user_id}` and the user becomes a full member.
+
+All error and success responses must be `application/json`. Give me all modules in a single file. Use only `plug`, `jason`, and the OTP standard library.
+
+----- solution.ex -----
+defmodule TeamStore do
+  @moduledoc """
+  In-memory `GenServer` holding users, teams, memberships and pending
+  invitations. Joining a team is a two-step lifecycle: `invite/3` records a
+  pending invitation and `accept_invitation/3` promotes it to membership.
+  """
+
+  use GenServer
+
+  @typedoc "A `GenServer` reference: a pid, a registered name, or a `{:via, ...}` tuple."
+  @type server :: GenServer.server()
+
+  @typedoc "An opaque identifier (user id, team id, or bearer token)."
+  @type id :: String.t()
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option (forwarded to `GenServer.start_link/3`) for
+  registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc "Stores a user with the given `id` and bearer `token`."
+  @spec create_user(server(), id(), id()) :: :ok
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
+
+  @doc "Creates a team identified by `team_id`."
+  @spec create_team(server(), id()) :: :ok
+  def create_team(server, team_id), do: GenServer.call(server, {:create_team, team_id})
+
+  @doc "Adds `user_id` to `team_id` directly (used for seeding)."
+  @spec add_member(server(), id(), id()) :: :ok
+  def add_member(server, team_id, user_id),
+    do: GenServer.call(server, {:add_member, team_id, user_id})
+
+  @doc "Looks up a user id by bearer `token`, returning `{:ok, user_id}` or `:error`."
+  @spec get_user_by_token(server(), id()) :: {:ok, id()} | :error
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})
+
+  @doc "Returns whether a team with `team_id` exists."
+  @spec team_exists?(server(), id()) :: boolean()
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})
+
+  @doc "Returns whether `user_id` is a member of `team_id`."
+  @spec is_member?(server(), id(), id()) :: boolean()
+  def is_member?(server, team_id, user_id),
+    do: GenServer.call(server, {:is_member?, team_id, user_id})
+
+  @doc "Lists members of `team_id`, or `{:error, :not_found}` if the team is unknown."
+  @spec list_members(server(), id()) :: {:ok, [id()]} | {:error, :not_found}
+  def list_members(server, team_id), do: GenServer.call(server, {:list_members, team_id})
+
+  @doc "Lists pending invited user ids for `team_id`, or `{:error, :not_found}`."
+  @spec list_invitations(server(), id()) :: {:ok, [id()]} | {:error, :not_found}
+  def list_invitations(server, team_id), do: GenServer.call(server, {:list_invitations, team_id})
+
+  @doc "Returns whether `user_id` has a pending invitation to `team_id`."
+  @spec has_pending_invite?(server(), id(), id()) : (truncated)[0m
+[36m00:25:55.402 [debug] claude -p RESULT (stop="end_turn"):
+The `init/1` raise-mutant graded inconclusively because every test crashes in the shared `setup` (via `start_supervised!`), which the grader treats as timeout/inconclusive rather than a clean kill. I'll add a separate, setup-free test module that exercises `init/1` (and `start_link`) directly — under the raise-mutant these fail cleanly and instantly, with no supervisor retry/timeout.
+
+<file path="test_harness.exs">
+defmodule TeamRouterTest do
+  use ExUnit.Case, async: false
+
+  import Plug.Conn
+  import Plug.Test
+
+  setup do
+    store = start_supervised!({TeamStore, name: :"store_#{System.unique_integer([:positive])}"})
+
+    # Seed users
+    :ok = TeamStore.create_user(store, "alice", "token-alice")
+    :ok = TeamStore.create_user(store, "bob", "token-bob")
+    :ok = TeamStore.create_user(store, "carol", "token-carol")
+    :ok = TeamStore.create_user(store, "dave", "token-dave")
+
+    # Seed teams
+    :ok = TeamStore.create_team(store, "team-1")
+    :ok = TeamStore.create_team(store, "team-2")
+
+    # alice and bob are on team-1; carol is on team-2
+    :ok = TeamStore.add_member(store, "team-1", "alice")
+    :ok = TeamStore.add_member(store, "team-1", "bob")
+    :ok = TeamStore.add_member(store, "team-2", "carol")
+
+    %{store: store}
+  end
+
+  # -------------------------------------------------------
+  # Helpers
+  # -------------------------------------------------------
+
+  defp get_members(store, team_id, token) do
+    :get
+    |> conn("/api/teams/#{team_id}/members")
+    |> put_req_header("authorization", "Bearer #{token}")
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp get_invitations(store, team_id, token) do
+    :get
+    |> conn("/api/teams/#{team_id}/invitations")
+    |> put_req_header("authorization", "Bearer #{token}")
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp invite(store, team_id, user_id, token) do
+    body = Jason.encode!(%{"user_id" => user_id})
+
+    :post
+    |> conn("/api/teams/#{team_id}/invitations", body)
+    |> put_req_header("authorization", "Bearer #{token}")
+    |> put_req_header("content-type", "application/json")
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp accept(store, team_id, user_id, token) do
+    :post
+    |> conn("/api/teams/#{team_id}/invitations/#{user_id}/accept", "")
+    |> put_req_header("authorization", "Bearer #{token}")
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp json_body(conn), do: Jason.decode!(conn.resp_body)
+
+  # -------------------------------------------------------
+  # GET members
+  # -------------------------------------------------------
+
+  test "GET returns 200 with members for a member", %{store: store} do
+    conn = get_members(store, "team-1", "token-alice")
+    assert conn.status == 200
+    body = json_body(conn)
+    assert "alice" in body["members"]
+    assert "bob" in body["members"]
+    refute "carol" in body["members"]
+  end
+
+  test "GET members 403 for non-member", %{store: store} do
+    conn = get_members(store, "team-1", "token-carol")
+    assert conn.status == 403
+    assert json_body(conn)["error"] == "forbidden"
+  end
+
+  test "GET members 404 for missing team", %{store: store} do
+    conn = get_members(store, "ghost", "token-alice")
+    assert conn.status == 404
+  end
+
+  test "GET members 401 with missing header", %{store: store} do
+    conn =
+      :get
+      |> conn("/api/teams/team-1/members")
+      |> put_private(:team_store, store)
+      |> TeamRouter.call(TeamRouter.init(store: store))
+
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "unauthorized"
+  end
+
+  test "GET members 401 with invalid token", %{store: store} do
+    conn = get_members(store, "team-1", "token-nobody")
+    assert conn.status == 401
+  end
+
+  # -------------------------------------------------------
+  # POST invitations (create pending)
+  # -------------------------------------------------------
+
+  test "member can invite a user, creating a pending invitation", %{store: store} do
+    conn = invite(store, "team-1", "carol", "token-alice")
+    assert conn.status == 201
+    body = json_body(conn)
+    assert body["invited"] == "carol"
+    assert body["status"] == "pending"
+
+    # carol is NOT yet a member — only pending
+    refute TeamStore.is_member?(store, "team-1", "carol")
+    assert TeamStore.has_pending_invite?(store, "team-1", "carol")
+  end
+
+  test "pending invitation shows up in GET invitations", %{store: store} do
+    invite(store, "team-1", "carol", "token-alice")
+    conn = get_invitations(store, "team-1", "token-bob")
+    assert conn.status == 200
+    assert "carol" in json_body(conn)["invitations"]
+  end
+
+  test "non-member cannot invite", %{store: store} do
+    conn = invite(store, "team-1", "dave", "token-carol")
+    assert conn.status == 403
+    assert json_body(conn)["error"] == "forbidden"
+  end
+
+  test "inviting to a missing team returns 404", %{store: store} do
+    conn = invite(store, "ghost", "carol", "token-alice")
+    assert conn.status == 404
+  end
+
+  test "inviting an existing member returns 409", %{store: store} do
+    conn = invite(store, "team-1", "bob", "token-alice")
+    assert conn.status == 409
+    assert json_body(conn)["error"] == "conflict"
+  end
+
+  test "inviting a user twice returns 409 on the second call", %{store: store} do
+    assert invite(store, "team-1", "carol", "token-alice").status == 201
+    assert invite(store, "team-1", "carol", "token-bob").status == 409
+  end
+
+  test "malformed invite body returns 400", %{store: store} do
+    body = Jason.encode!(%{"wrong" => "carol"})
+
+    conn =
+      :post
+      |> conn("/api/teams/team-1/invitations", body)
+      |> put_req_header("authorization", "Bearer token-alice")
+      |> put_req_header("content-type", "application/json")
+      |> put_private(:team_store, store)
+      |> TeamRouter.call(TeamRouter.init(store: store))
+
+    assert conn.status == 400
+    assert json_body(conn)["error"] == "bad_request"
+  end
+
+  # -------------------------------------------------------
+  # POST accept
+  # -------------------------------------------------------
+
+  test "invited user can accept and become a member", %{store: store} do
+    invite(store, "team-1", "carol", "token-alice")
+    conn = accept(store, "team-1", "carol", "token-carol")
+    assert conn.status == 200
+    assert json_body(conn)["joined"] == "carol"
+
+    assert TeamStore.is_member?(store, "team-1", "carol")
+    refute TeamStore.has_pending_invite?(store, "team-1", "carol")
+  end
+
+  test "accepted member appears in GET members", %{store: store} do
+    invite(store, "team-1", "carol", "token-alice")
+    accept(store, "team-1", "carol", "token-carol")
+    conn = get_members(store, "team-1", "token-alice")
+    assert "carol" in json_body(conn)["members"]
+  end
+
+  test "cannot accept someone else's invitation (403)", %{store: store} do
+    invite(store, "team-1", "carol", "token-alice")
+    conn = accept(store, "team-1", "carol", "token-bob")
+    assert conn.status == 403
+    assert json_body(conn)["error"] == "forbidden"
+    # still pending, not joined
+    assert TeamStore.has_pending_invite?(store, "team-1", "carol")
+  end
+
+  test "accepting with no pending invitation returns 404", %{store: store} do
+    conn = accept(store, "team-1", "dave", "token-dave")
+    assert conn.status == 404
+    assert json_body(conn)["error"] == "not_found"
+  end
+
+  test "accepting on a missing team returns 404", %{store: store} do
+    conn = accept(store, "ghost", "carol", "token-carol")
+    assert conn.status == 404
+  end
+
+  # -------------------------------------------------------
+  # Isolation / content-type
+  # -------------------------------------------------------
+
+  test "operations on team-1 do not affect team-2", %{store: store} do
+    invite(store, "team-1", "carol", "token-alice")
+    accept(store, "team-1", "carol", "token-carol")
+
+    conn = get_members(store, "team-2", "tok (truncated)[0m
+[36m00:25:55.402 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10761, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10761, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10761, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10761, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 6933, "type" => "message"}], "output_tokens" => 6933, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m00:25:55.422 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01 solution.ex[0m
+[36m00:25:56.266 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":363,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":27,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:25:56.244281Z"}[0m
+[36m00:25:56.278 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:25:57.123 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.32,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 25/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.07},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"failed to start child with the spec {TeamStore, [name: :store_261]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_325]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_389]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_453]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test GET members 401 with missing header"},{"message":"failed to start child with the spec {TeamStore, [name: :store_517]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"failed to start child with the spec {TeamStore, [name: :store_4]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"failed to start child with the spec {TeamStore, [name: :store_68]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"failed to start child with the spec {TeamStore, [name: :store_132]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"failed to start child with the spec {TeamStore, [name: :store_581]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex:11: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_star (truncated)[0m
+[36m00:25:57.131 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:25:57.950 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.3,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 25/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.07},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with missing header"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":25,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:25:57.928246Z"}[0m
+[36m00:25:57.958 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:25:58.789 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.31,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 25/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.07},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with missing header"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":25,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:25:58.766969Z"}[0m
+[36m00:25:58.798 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:25:59.626 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.32,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 24/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.11},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with missing header"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"}],"tests_errors":0,"tests_excluded":0,"tests_failed":24,"tests_passed":3,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:25:59.605910Z"}[0m
+[36m00:25:59.634 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:26:00.470 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.42,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 20/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.26},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":20,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:26:00.447769Z"}[0m
+[36m00:26:00.479 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:26:01.311 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.45,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 18/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.33},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":18,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:26:01.289842Z"}[0m
+[36m00:26:01.319 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:26:02.155 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.55,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 14/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.48},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":14,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:26:02.135258Z"}[0m
+[36m00:26:02.165 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:26:03.005 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.82,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 5/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.81},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":22,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:26:02.985106Z"}[0m
+[36m00:26:03.013 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:26:03.849 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.87,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 3/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.89},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:26:03.829655Z"}[0m
+[36m00:26:03.858 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:26:04.695 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.87,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 3/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.89},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:26:04.673597Z"}[0m
+[36m00:26:04.704 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:26:05.570 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.66,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 10/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.63},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:26:05.547612Z"}[0m
+[36m00:26:05.580 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:26:06.418 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.8,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 5/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.81},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":22,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:26:06.398034Z"}[0m
+[36m00:26:06.427 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:26:06.927 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"MUTATION","type":"RuntimeError"}],"compile_warnings":1,"compiled":false,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: failed to compile (0.0)","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-06T22:26:06.910723Z"}[0m
+[36m00:26:06.927 [debug] base mutation gate (per-fn): init/1 inconclusive[0m
+[22m00:26:06.928 [info] cycle 022_003_invitation_workflow_nested_membership_endpoint_01: repairing — Mutation gate failed: the raise-mutant of `init/1` graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.[0m
+[36m00:26:06.928 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m00:26:06.928 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Mutation gate failed: the raise-mutant of `init/1` graded inconclusively (mutant compile failure, harness load error, or eval timeout) — coverage cannot be verified. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement **invitation-based** nested resource endpoints for team membership, using only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Unlike a plain "add member" endpoint, joining a team here is a two-step lifecycle: an existing member *invites* a user (creating a **pending** invitation), and the invited user must *accept* it before they become a member.
+
+I need these modules:
+
+**`TeamStore`** — a GenServer that holds all application state in memory (users, teams, memberships, and pending invitations). It should support these public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option for registration.
+- `TeamStore.create_user(server, id, token)` — stores a user with the given ID and bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id)` — creates a team. Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — adds a user to a team directly (for seeding). Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true` or `false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true` or `false`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, list_of_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.list_invitations(server, team_id)` — returns `{:ok, list_of_pending_user_ids}` or `{:error, :not_found}`.
+- `TeamStore.has_pending_invite?(server, team_id, user_id)` — returns `true` or `false`.
+- `TeamStore.invite(server, team_id, user_id)` — records a pending invitation. Returns `{:ok, user_id}`, `{:error, :not_found}` if the team doesn't exist, or `{:error, :conflict}` if the user is already a member OR already has a pending invitation.
+- `TeamStore.accept_invitation(server, team_id, user_id)` — promotes a pending invitation into full membership (removing the invitation). Returns `{:ok, user_id}`, `{:error, :not_found}` if the team doesn't exist or there is no pending invitation for that user.
+
+**`AuthPlug`** — a Plug that reads the `authorization` header, expects `Bearer <token>`, looks the user up via `TeamStore.get_user_by_token/2`, and assigns `:current_user` to the conn. If the token is missing or invalid, it halts the connection with a 401 JSON response `{"error": "unauthorized"}`. It should accept a `:store` option at init time to know which TeamStore process to call.
+
+**`TeamRouter`** — a `Plug.Router` that serves the following endpoints. It should accept a `:store` option and plug `AuthPlug` before route matching.
+
+- `GET /api/teams/:team_id/members` — If the team doesn't exist, return 404 `{"error": "not_found"}`. If the current user is not a member, return 403 `{"error": "forbidden"}`. Otherwise return 200 `{"members": [list_of_user_ids]}`.
+
+- `GET /api/teams/:team_id/invitations` — Same 404 / 403 rules (must be a member to view). Otherwise return 200 `{"invitations": [list_of_pending_user_ids]}`.
+
+- `POST /api/teams/:team_id/invitations` — Reads a JSON body with `{"user_id": "..."}`. If the team doesn't exist, return 404. If the current user is not a member, return 403 (only members may invite). If the body is malformed / missing `user_id`, return 400 `{"error": "bad_request"}`. If the invited user is already a member or already has a pending invitation, return 409 `{"error": "conflict"}`. On success, return 201 `{"invited": user_id, "status": "pending"}`.
+
+- `POST /api/teams/:team_id/invitations/:user_id/accept` — The invited user accepts their own invitation. If the team doesn't exist, return 404. If the authenticated user is **not** the `:user_id` in the path, return 403 `{"error": "forbidden"}` (you cannot accept someone else's invitation). If there is no pending invitation for that user, return 404 `{"error": "not_found"}`. On success, return 200 `{"joined": user_id}` and the user becomes a full member.
+
+All error and success responses must be `application/json`. Give me all modules in a single file. Use only `plug`, `jason`, and the OTP standard library.
+
+----- solution.ex -----
+defmodule TeamStore do
+  @moduledoc """
+  In-memory `GenServer` holding users, teams, memberships and pending
+  invitations. Joining a team is a two-step lifecycle: `invite/3` records a
+  pending invitation and `accept_invitation/3` promotes it to membership.
+  """
+
+  use GenServer
+
+  @typedoc "A `GenServer` reference: a pid, a registered name, or a `{:via, ...}` tuple."
+  @type server :: GenServer.server()
+
+  @typedoc "An opaque identifier (user id, team id, or bearer token)."
+  @type id :: String.t()
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option (forwarded to `GenServer.start_link/3`) for
+  registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc "Stores a user with the given `id` and bearer `token`."
+  @spec create_user(server(), id(), id()) :: :ok
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
+
+  @doc "Creates a team identified by `team_id`."
+  @spec create_team(server(), id()) :: :ok
+  def create_team(server, team_id), do: GenServer.call(server, {:create_team, team_id})
+
+  @doc "Adds `user_id` to `team_id` directly (used for seeding)."
+  @spec add_member(server(), id(), id()) :: :ok
+  def add_member(server, team_id, user_id),
+    do: GenServer.call(server, {:add_member, team_id, user_id})
+
+  @doc "Looks up a user id by bearer `token`, returning `{:ok, user_id}` or `:error`."
+  @spec get_user_by_token(server(), id()) :: {:ok, id()} | :error
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})
+
+  @doc "Returns whether a team with `team_id` exists."
+  @spec team_exists?(server(), id()) :: boolean()
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})
+
+  @doc "Returns whether `user_id` is a member of `team_id`."
+  @spec is_member?(server(), id(), id()) :: boolean()
+  def is_member?(server, team_id, user_id),
+    do: GenServer.call(server, {:is_member?, team_id, user_id})
+
+  @doc "Lists members of `team_id`, or `{:error, :not_found}` if the team is unknown."
+  @spec list_members(server(), id()) :: {:ok, [id()]} | {:error, :not_found}
+  def list_members(server, team_id), do: GenServer.call(server, {:list_members, team_id})
+
+  @doc "Lists pending invited user ids for `team_id`, or `{:error, :not_found}`."
+  @spec list_invitations(server(), id()) :: {:ok, [id()]} | {:error, :not_found}
+  def list_invitations(server, team_id), do: GenServer.call(server, {:list_invitations, team_id})
+
+  @doc "Returns whether `user_id` has a pending invitation to `team_id`."
+  @spec has_pending_invite?(server(), id(), id()) : (truncated)[0m
+[36m00:28:56.323 [debug] claude -p RESULT (stop="end_turn"):
+Looking at the failure, the init-raise mutant grades "inconclusive" rather than producing a clean test failure. The two robustness problems are:
+
+1. The shared `TeamRouterTest` setup uses `start_supervised!`, which under a raising `init/1` can flood crash reports / retry and read as an eval timeout rather than a clean failure.
+2. `TeamStoreInitTest` calls `TeamStore.init([])` directly — under the mutant this *raises* an exception mid-test, which can be graded as a harness error rather than an unambiguous assertion failure.
+
+I'll strengthen `test_harness.exs`: switch the setup to a direct `start_link` (deterministic, fast fail), and convert the init tests to trap any raise and turn it into a clean assertion failure — so a gutted `init/1` unambiguously fails an assertion. I'm not touching `solution.ex`.
+
+<file path="test_harness.exs">
+defmodule TeamRouterTest do
+  use ExUnit.Case, async: false
+
+  import Plug.Conn
+  import Plug.Test
+
+  setup do
+    name = :"store_#{System.unique_integer([:positive])}"
+
+    # Start the store directly (not via start_supervised!) so that a gutted
+    # `init/1` fails this match immediately and deterministically instead of
+    # triggering supervisor-retry noise / eval timeouts.
+    {:ok, store} = TeamStore.start_link(name: name)
+    on_exit(fn -> if Process.alive?(store), do: GenServer.stop(store) end)
+
+    # Seed users
+    :ok = TeamStore.create_user(store, "alice", "token-alice")
+    :ok = TeamStore.create_user(store, "bob", "token-bob")
+    :ok = TeamStore.create_user(store, "carol", "token-carol")
+    :ok = TeamStore.create_user(store, "dave", "token-dave")
+
+    # Seed teams
+    :ok = TeamStore.create_team(store, "team-1")
+    :ok = TeamStore.create_team(store, "team-2")
+
+    # alice and bob are on team-1; carol is on team-2
+    :ok = TeamStore.add_member(store, "team-1", "alice")
+    :ok = TeamStore.add_member(store, "team-1", "bob")
+    :ok = TeamStore.add_member(store, "team-2", "carol")
+
+    %{store: store}
+  end
+
+  # -------------------------------------------------------
+  # Helpers
+  # -------------------------------------------------------
+
+  defp get_members(store, team_id, token) do
+    :get
+    |> conn("/api/teams/#{team_id}/members")
+    |> put_req_header("authorization", "Bearer #{token}")
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp get_invitations(store, team_id, token) do
+    :get
+    |> conn("/api/teams/#{team_id}/invitations")
+    |> put_req_header("authorization", "Bearer #{token}")
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp invite(store, team_id, user_id, token) do
+    body = Jason.encode!(%{"user_id" => user_id})
+
+    :post
+    |> conn("/api/teams/#{team_id}/invitations", body)
+    |> put_req_header("authorization", "Bearer #{token}")
+    |> put_req_header("content-type", "application/json")
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp accept(store, team_id, user_id, token) do
+    :post
+    |> conn("/api/teams/#{team_id}/invitations/#{user_id}/accept", "")
+    |> put_req_header("authorization", "Bearer #{token}")
+    |> put_private(:team_store, store)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp json_body(conn), do: Jason.decode!(conn.resp_body)
+
+  # -------------------------------------------------------
+  # GET members
+  # -------------------------------------------------------
+
+  test "GET returns 200 with members for a member", %{store: store} do
+    conn = get_members(store, "team-1", "token-alice")
+    assert conn.status == 200
+    body = json_body(conn)
+    assert "alice" in body["members"]
+    assert "bob" in body["members"]
+    refute "carol" in body["members"]
+  end
+
+  test "GET members 403 for non-member", %{store: store} do
+    conn = get_members(store, "team-1", "token-carol")
+    assert conn.status == 403
+    assert json_body(conn)["error"] == "forbidden"
+  end
+
+  test "GET members 404 for missing team", %{store: store} do
+    conn = get_members(store, "ghost", "token-alice")
+    assert conn.status == 404
+  end
+
+  test "GET members 401 with missing header", %{store: store} do
+    conn =
+      :get
+      |> conn("/api/teams/team-1/members")
+      |> put_private(:team_store, store)
+      |> TeamRouter.call(TeamRouter.init(store: store))
+
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "unauthorized"
+  end
+
+  test "GET members 401 with invalid token", %{store: store} do
+    conn = get_members(store, "team-1", "token-nobody")
+    assert conn.status == 401
+  end
+
+  # -------------------------------------------------------
+  # POST invitations (create pending)
+  # -------------------------------------------------------
+
+  test "member can invite a user, creating a pending invitation", %{store: store} do
+    conn = invite(store, "team-1", "carol", "token-alice")
+    assert conn.status == 201
+    body = json_body(conn)
+    assert body["invited"] == "carol"
+    assert body["status"] == "pending"
+
+    # carol is NOT yet a member — only pending
+    refute TeamStore.is_member?(store, "team-1", "carol")
+    assert TeamStore.has_pending_invite?(store, "team-1", "carol")
+  end
+
+  test "pending invitation shows up in GET invitations", %{store: store} do
+    invite(store, "team-1", "carol", "token-alice")
+    conn = get_invitations(store, "team-1", "token-bob")
+    assert conn.status == 200
+    assert "carol" in json_body(conn)["invitations"]
+  end
+
+  test "non-member cannot invite", %{store: store} do
+    conn = invite(store, "team-1", "dave", "token-carol")
+    assert conn.status == 403
+    assert json_body(conn)["error"] == "forbidden"
+  end
+
+  test "inviting to a missing team returns 404", %{store: store} do
+    conn = invite(store, "ghost", "carol", "token-alice")
+    assert conn.status == 404
+  end
+
+  test "inviting an existing member returns 409", %{store: store} do
+    conn = invite(store, "team-1", "bob", "token-alice")
+    assert conn.status == 409
+    assert json_body(conn)["error"] == "conflict"
+  end
+
+  test "inviting a user twice returns 409 on the second call", %{store: store} do
+    assert invite(store, "team-1", "carol", "token-alice").status == 201
+    assert invite(store, "team-1", "carol", "token-bob").status == 409
+  end
+
+  test "malformed invite body returns 400", %{store: store} do
+    body = Jason.encode!(%{"wrong" => "carol"})
+
+    conn =
+      :post
+      |> conn("/api/teams/team-1/invitations", body)
+      |> put_req_header("authorization", "Bearer token-alice")
+      |> put_req_header("content-type", "application/json")
+      |> put_private(:team_store, store)
+      |> TeamRouter.call(TeamRouter.init(store: store))
+
+    assert conn.status == 400
+    assert json_body(conn)["error"] == "bad_request"
+  end
+
+  # -------------------------------------------------------
+  # POST accept
+  # -------------------------------------------------------
+
+  test "invited user can accept and become a member", %{store: store} do
+    invite(store, "team-1", "carol", "token-alice")
+    conn = accept(store, "team-1", "carol", "token-carol")
+    assert conn.status == 200
+    assert json_body(conn)["joined"] == "carol"
+
+    assert TeamStore.is_member?(store, "team-1", "carol")
+    refute TeamStore.has_pending_invite?(store, "team-1", "carol")
+  end
+
+  test "accepted member appears in GET members", %{store: store} do
+    invite(store, "team-1", "carol", "token-alice")
+    accept(store, "team-1", "carol", "token-carol")
+    conn = get_members(store, "team-1", "token-alice")
+    assert "carol" in json_body(conn)["members"]
+  end
+
+  test "cannot accept someone else's invitation (403)", %{store: store} do
+    invite(store, "team-1", "carol", "token-alice")
+    conn = accept(store, "team-1", "carol", "token-bob")
+    assert conn.status == 403
+    assert json_body(conn)["error"] == "forbidden"
+    # still pending, not joined
+    assert TeamStore.has_pending_invite?(store, "team-1", "carol")
+  end
+
+  test "accepting with no pend (truncated)[0m
+[36m00:28:56.323 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 11540, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 11540, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 11540, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 11540, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 13726, "type" => "message"}], "output_tokens" => 13726, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m00:28:56.342 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01 solution.ex[0m
+[36m00:28:57.201 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":363,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":27,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:28:57.178888Z"}[0m
+[36m00:28:57.212 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:28:58.091 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.32,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 25/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.07},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with missing header"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"},{"message":"\n\nmatch (=) failed\ncode:  assert {:returned, {:ok, pid}} = result\nleft:  {:returned, {:ok, pid}}\nright: {:raised, %RuntimeError{message: \"MUTATION\"}}\n","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":25,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:28:58.066533Z"}[0m
+[36m00:28:58.099 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:28:58.947 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.3,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 25/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.07},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with missing header"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":25,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:28:58.926119Z"}[0m
+[36m00:28:58.955 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:28:59.797 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.31,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 25/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.07},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with missing header"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":25,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:28:59.775759Z"}[0m
+[36m00:28:59.806 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:29:00.666 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.32,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 24/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.11},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with missing header"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"}],"tests_errors":0,"tests_excluded":0,"tests_failed":24,"tests_passed":3,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:29:00.643537Z"}[0m
+[36m00:29:00.675 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:29:01.527 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.42,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 20/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.26},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test GET members 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamRouterTest","test":"test get_user_by_token returns error for unknown token"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":20,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:29:01.505484Z"}[0m
+[36m00:29:01.536 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:29:02.408 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.45,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 18/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.33},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET members 404 for missing team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting to a missing team returns 404"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepting on a missing team returns 404"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":18,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:29:02.385492Z"}[0m
+[36m00:29:02.416 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:29:03.280 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.55,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 14/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.48},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET members 403 for non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test non-member cannot invite"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test malformed invite body returns 400"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":14,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:29:03.259134Z"}[0m
+[36m00:29:03.290 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:29:04.162 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.82,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 5/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.81},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test GET returns 200 with members for a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test responses are application/json"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":22,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:29:04.142158Z"}[0m
+[36m00:29:04.171 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:29:05.031 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.87,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 3/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.89},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"MUTATION","module":"TeamRouterTest","test":"test list_invitations returns not_found for missing team"},{"message":"MUTATION","module":"TeamStoreInitTest","test":"test start_link/1 boots a live process seeded from init/1's empty state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:29:05.011911Z"}[0m
+[36m00:29:05.040 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:29:05.915 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.87,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 3/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.89},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:29:05.892279Z"}[0m
+[36m00:29:05.923 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:29:06.772 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.66,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 10/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.63},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test member can invite a user, creating a pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test pending invitation shows up in GET invitations"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting an existing member returns 409"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test inviting a user twice returns 409 on the second call"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test cannot accept someone else's invitation (403)"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns not_found for missing team"},{"message":"MUTATION","module":"TeamRouterTest","test":"test invite returns conflict for existing member"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:29:06.751045Z"}[0m
+[36m00:29:06.781 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:29:07.641 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.8,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 5/27 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.81},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test invited user can accept and become a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepted member appears in GET members"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test accepting with no pending invitation returns 404"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterTest","test":"test operations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterTest","test":"test accept_invitation returns not_found when no invite exists"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":22,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-06T22:29:07.619044Z"}[0m
+[36m00:29:07.650 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut solution.ex[0m
+[36m00:29:08.170 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":343,"lines_over_98":7,"max_line_length":232,"mode":"full","pipe_chain_count":5,"public_fn_count":26,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"MUTATION","type":"RuntimeError"}],"compile_warnings":1,"compiled":false,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: failed to compile (0.0)","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_003_invitation_workflow_nested_membership_endpoint_01_mut/solution.ex","task":"022_003_invitation_workflow_nested_membership_endpoint_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-06T22:29:08.151353Z"}[0m
+[36m00:29:08.170 [debug] base mutation gate (per-fn): init/1 inconclusive[0m
+[22m00:29:08.171 [info] cycle 022_003_invitation_workflow_nested_membership_endpoint_01: REJECTED after 4 attempt(s)[0m

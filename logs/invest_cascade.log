@@ -1,0 +1,81 @@
+=== 2026-07-18T14:22:59+02:00 mix run scripts/resync_embeds.exs -- --wt-all --apply
+  resynced tasks/wt_063_004_bounded_concurrency_concurrent_fetcher: prompt.md,solution.ex,test_harness.exs
+  resynced tasks/wt_104_004_usage_recycling_connection_pool: test_harness.exs
+  resynced tasks/wt_110_002_histogram_based_approximate_rolling_percentile: prompt.md
+  resynced tasks/wt_134_003_chunked_merge_based_schema_inference: prompt.md,solution.ex,test_harness.exs
+resync_embeds over 331 dirs: %{unchanged: 327, resynced: 4} — APPLIED
+=== rc=0
+=== 2026-07-18T14:23:00+02:00 mix run scripts/resync_bugfix_embeds.exs -- --apply
+bugfix embeds: %{unchanged: 955, resynced: 6} — APPLIED
+=== rc=0
+=== 2026-07-18T14:23:01+02:00 mix run scripts/resync_tfim_embeds.exs -- --apply
+tfim embeds: %{unchanged: 3249, resynced: 30} — APPLIED
+=== rc=0
+=== 2026-07-18T14:23:06+02:00 mix run scripts/resync_adapt_embeds.exs -- --apply
+  resynced adapt_063_004_bounded_concurrency_concurrent_fetcher: solution.ex, test_harness.exs
+  resynced adapt_104_004_usage_recycling_connection_pool: test_harness.exs
+  resynced adapt_110_002_histogram_based_approximate_rolling_percentile: prompt.md
+  resynced adapt_134_003_chunked_merge_based_schema_inference: prompt.md, solution.ex, test_harness.exs
+adapt embeds: %{unchanged: 245, resynced: 4}
+=== rc=0
+=== 2026-07-18T14:23:10+02:00 elixir scripts/check_embeds.exs
+    note: gold located by whitespace-normalized match (child gold wrapping differs from parent — reflow-stale gold)
+    note: gold located by whitespace-normalized match (child gold wrapping differs from parent — reflow-stale gold)
+DRIFT tasks/063_004_bounded_concurrency_concurrent_fetcher_02 (module-FIM; parent tasks/063_004_bounded_concurrency_concurrent_fetcher_01)
+    note: child gold not located in the parent (parent drifted at the target?)
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:8:   budget measured from the moment `fetch_all/3` is called — sources still
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:9:   running or still queued when it fires are reported as `{:error, :timeout}`,
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:10:   and any live process is killed before returning.
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:11: 
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:12:   Fetch processes are spawned *monitored but unlinked*, so a fetch that is
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:13:   killed from outside this module can never take the calling process down with
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:14:   it, whether or not the caller traps exits.
+    - extra in embed      tasks/063_004_bounded_concurrency_concurrent_fetcher_02/prompt.md:43:   budget measured from the first call — sources still running or still queued
+    - extra in embed      tasks/063_004_bounded_concurrency_concurrent_fetcher_02/prompt.md:44:   when it fires are reported as `{:error, :timeout}`, and any live process is
+    - extra in embed      tasks/063_004_bounded_concurrency_concurrent_fetcher_02/prompt.md:45:   killed before returning.
+    ... 109 more line(s) not shown
+DRIFT tasks/063_004_bounded_concurrency_concurrent_fetcher_03 (module-FIM; parent tasks/063_004_bounded_concurrency_concurrent_fetcher_01)
+    note: child gold not located in the parent (parent drifted at the target?)
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:8:   budget measured from the moment `fetch_all/3` is called — sources still
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:9:   running or still queued when it fires are reported as `{:error, :timeout}`,
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:10:   and any live process is killed before returning.
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:11: 
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:12:   Fetch processes are spawned *monitored but unlinked*, so a fetch that is
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:13:   killed from outside this module can never take the calling process down with
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:14:   it, whether or not the caller traps exits.
+    - extra in embed      tasks/063_004_bounded_concurrency_concurrent_fetcher_03/prompt.md:51:   budget measured from the first call — sources still running or still queued
+    - extra in embed      tasks/063_004_bounded_concurrency_concurrent_fetcher_03/prompt.md:52:   when it fires are reported as `{:error, :timeout}`, and any live process is
+    - extra in embed      tasks/063_004_bounded_concurrency_concurrent_fetcher_03/prompt.md:53:   killed before returning.
+    ... 107 more line(s) not shown
+DRIFT tasks/063_004_bounded_concurrency_concurrent_fetcher_04 (module-FIM; parent tasks/063_004_bounded_concurrency_concurrent_fetcher_01)
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:8:   budget measured from the moment `fetch_all/3` is called — sources still
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:9:   running or still queued when it fires are reported as `{:error, :timeout}`,
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:10:   and any live process is killed before returning.
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:11: 
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:12:   Fetch processes are spawned *monitored but unlinked*, so a fetch that is
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:13:   killed from outside this module can never take the calling process down with
+    - missing from embed  tasks/063_004_bounded_concurrency_concurrent_fetcher_01/solution.ex:14:   it, whether or not the caller traps exits.
+    - extra in embed      tasks/063_004_bounded_concurrency_concurrent_fetcher_04/prompt.md:28:   budget measured from the first call — sources still running or still queued
+    - extra in embed      tasks/063_004_bounded_concurrency_concurrent_fetcher_04/prompt.md:29:   when it fires are reported as `{:error, :timeout}`, and any live process is
+    - extra in embed      tasks/063_004_bounded_concurrency_concurrent_fetcher_04/prompt.md:30:   killed before returning.
+    ... 107 more line(s) not shown
+DRIFT tasks/134_003_chunked_merge_based_schema_inference_02 (module-FIM; parent tasks/134_003_chunked_merge_based_schema_inference_01)
+    - extra in embed      tasks/134_003_chunked_merge_based_schema_inference_02/prompt.md:36:   with `headers: false` every record is data and columns are positional. The
+    - extra in embed      tasks/134_003_chunked_merge_based_schema_inference_02/prompt.md:37:   returned map has `:names`, `:ncols`, and `:categories` keys.
+    - missing from embed  tasks/134_003_chunked_merge_based_schema_inference_01/solution.ex:119:   defp split_records([], true), do: {nil, []}
+    - extra in embed      tasks/134_003_chunked_merge_based_schema_inference_02/prompt.md:121:   defp split_records([], true), do: {[], []}
+DRIFT tasks/134_003_chunked_merge_based_schema_inference_03 (module-FIM; parent tasks/134_003_chunked_merge_based_schema_inference_01)
+    - extra in embed      tasks/134_003_chunked_merge_based_schema_inference_03/prompt.md:46:   with `headers: false` every record is data and columns are positional. The
+    - extra in embed      tasks/134_003_chunked_merge_based_schema_inference_03/prompt.md:47:   returned map has `:names`, `:ncols`, and `:categories` keys.
+    - missing from embed  tasks/134_003_chunked_merge_based_schema_inference_01/solution.ex:119:   defp split_records([], true), do: {nil, []}
+    - extra in embed      tasks/134_003_chunked_merge_based_schema_inference_03/prompt.md:127:   defp split_records([], true), do: {[], []}
+DRIFT tasks/134_003_chunked_merge_based_schema_inference_04 (module-FIM; parent tasks/134_003_chunked_merge_based_schema_inference_01)
+    - extra in embed      tasks/134_003_chunked_merge_based_schema_inference_04/prompt.md:38:   with `headers: false` every record is data and columns are positional. The
+    - extra in embed      tasks/134_003_chunked_merge_based_schema_inference_04/prompt.md:39:   returned map has `:names`, `:ncols`, and `:categories` keys.
+    - missing from embed  tasks/134_003_chunked_merge_based_schema_inference_01/solution.ex:119:   defp split_records([], true), do: {nil, []}
+    - extra in embed      tasks/134_003_chunked_merge_based_schema_inference_04/prompt.md:124:   defp split_records([], true), do: {[], []}
+module-FIM: 985 clean, 0 reflow, 6 drift, 0 skipped
+wt_: 331 clean, 0 reflow, 0 drift, 0 skipped
+embed check: 1316 clean, 0 reflow, 6 drift, 0 skipped
+=== rc=0
+=== cascade done rc=0

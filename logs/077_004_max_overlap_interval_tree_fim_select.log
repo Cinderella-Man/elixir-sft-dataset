@@ -1,0 +1,195 @@
+[22m02:24:09.709 [info] FIM candidate-select for 077_004_max_overlap_interval_tree_01 (up to 3)[0m
+[36m02:24:09.709 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m02:24:09.709 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `MaxOverlapIntervalTree` that implements a persistent, purely-functional interval tree specialised for **aggregate stabbing-depth queries** rather than interval enumeration.
+
+Unlike a plain interval tree that returns the *list* of matching intervals, this structure answers *counting* questions: how many stored intervals cover a point, and where do the most intervals pile up. Internally you must maintain a balanced augmented BST (not a flat scan) so the aggregate queries are efficient.
+
+I need these functions in the public API:
+- `MaxOverlapIntervalTree.new()` which returns an empty tree.
+- `MaxOverlapIntervalTree.insert(tree, {start, finish})` which inserts a closed integer interval `[start, finish]` and returns the updated tree. Both `start` and `finish` are integers and `start <= finish` is guaranteed. Duplicate intervals may be inserted and are counted with multiplicity. The original `tree` must never be mutated (persistent / purely-functional).
+- `MaxOverlapIntervalTree.depth_at(tree, point)` which returns an integer: the number of stored intervals that contain `point`. An interval `[s, f]` contains `point` when `s <= point <= f`. Touching counts, so `[1, 5]` and `[5, 10]` both contain the point `5`.
+- `MaxOverlapIntervalTree.max_overlap(tree)` which returns an integer: the maximum number of intervals that simultaneously cover any single integer point (the maximum stabbing number). An empty tree returns `0`.
+- `MaxOverlapIntervalTree.busiest_point(tree)` which returns the smallest integer point at which `max_overlap/1` is achieved, or `nil` for an empty tree.
+
+Implementation constraints:
+- The intervals are closed and touching is overlapping (so `[1, 3]` and `[3, 5]` both cover point `3`).
+- Represent the data as a **coordinate difference structure inside a balanced BST**: model each interval `[s, f]` as `+1` at coordinate `s` and `-1` at coordinate `f + 1`, keep those coordinate deltas in a self-balancing (e.g. AVL) tree keyed by coordinate, and augment each node so that `max_overlap/1` can be answered from the root's aggregate in `O(log n)` — do **not** re-sweep every insert or scan a flat list for `max_overlap`. `depth_at/2` must be an `O(log n)` prefix-sum query, not a full traversal.
+- Support degenerate intervals where `start == finish` (single-point intervals).
+- It must be a plain data-structure module — not a GenServer or process.
+
+Give me the complete module in a single file. Use only the Elixir standard library, no external dependencies.
+
+=== MODULE ===
+```elixir
+defmodule MaxOverlapIntervalTree do
+  @moduledoc """
+  A persistent, purely-functional structure for **aggregate stabbing-depth**
+  queries over closed integer intervals.
+
+  Where a classic interval tree enumerates matching intervals, this module
+  answers *counting* questions:
+
+    * `depth_at/2`     — how many stored intervals cover a point.
+    * `max_overlap/1`  — the maximum number of intervals covering any single
+      point (the maximum stabbing number).
+    * `busiest_point/1`— the leftmost point achieving that maximum.
+
+  ## Representation
+
+  Each closed interval `[s, f]` is modelled as a pair of coordinate deltas:
+
+      +1 at coordinate s          (coverage begins here)
+      -1 at coordinate f + 1      (coverage ends after f)
+
+  These coordinate deltas are stored in a self-balancing **AVL tree keyed by
+  coordinate**, with each coordinate's delta accumulated (so duplicate
+  intervals and shared endpoints simply add up).
+
+  Every node is augmented with two aggregates over its subtree's coordinates
+  taken in ascending (in-order) sequence:
+
+    * `sum`  — the total of all deltas in the subtree.
+    * `best` — the maximum running prefix sum obtained by walking the subtree's
+      coordinates in ascending order and adding each delta in turn.
+
+  Because the running prefix sum *after* applying coordinate `c` is exactly the
+  number of intervals covering the region `[c, next_coordinate)`, the root's
+  `best` is the maximum stabbing number — available in `O(1)` from the root and
+  maintained in `O(log n)` per insert.
+
+  ## Complexity (n = number of distinct coordinates)
+
+    * `insert/2`        — O(log n)
+    * `depth_at/2`      — O(log n)   (prefix-sum descent)
+    * `max_overlap/1`   — O(1)       (read the root aggregate)
+    * `busiest_point/1` — O(n)       (in-order argmax scan)
+
+  ## Persistence
+
+  Every `insert/2` returns a **new** tree; the input is never mutated. This is
+  plain data — not a GenServer or process.
+  """
+
+  # Sentinel standing in for "no elements" when combining `best` aggregates.
+  # Any real running prefix sum is far larger than this.
+  @neg_inf -1_000_000_000_000_000
+
+  @type interval :: {integer(), integer()}
+
+  @typep node_t :: %{
+           required(:coord) => integer(),
+           required(:delta) => integer(),
+           required(:sum) => integer(),
+           required(:best) => integer(),
+           required(:height) => pos_integer(),
+           required(:left) => t(),
+           required(:right) => t()
+         }
+
+  @type t :: nil | node_t()
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc "Returns an empty tree."
+  @spec new() :: t()
+  def new(), do: nil
+
+  @doc """
+  Inserts the closed interval `[start, finish]` and returns the updated tree.
+
+  The original `tree` is unmodified. `start <= finish` is assumed.
+  """
+  @spec insert(t(), interval()) :: t()
+  def insert(tree, {start, finish}) do
+    tree
+    |> bump(start, 1)
+    |> bump(finish + 1, -1)
+  end
+
+  @doc """
+  Returns the number of stored intervals whose closed range contains `point`.
+  """
+  @spec depth_at(t(), integer()) :: non_neg_integer()
+  def depth_at(tree, point), do: prefix_sum(tree, point)
+
+  @doc """
+  Returns the maximum number of intervals covering any single integer point.
+
+  Returns `0` for an empty tree.
+  """
+  @spec max_overlap(t()) :: non_neg_integer()
+  def max_overlap(nil), do: 0
+  def max_overlap(%{best: best}), do: max(0, best)
+
+  @doc """
+  Returns the smallest integer point achieving `max_overlap/1`, or `nil` when
+  the tree is empty.
+  """
+  @spec busiest_point(t()) :: integer() | nil
+  def busiest_point(nil), do: nil
+
+  def busiest_point(tree) do
+    {_run, _best, coord} =
+      tree
+      |> in_order([])
+      |> Enum.reduce({0, @neg_inf, nil}, fn {c, d}, {run, best, coord} ->
+        run2 = run + d
+
+        if run2 > best do
+          {run2, run2, c}
+        else
+          {run2, best, coord}
+        end
+      end)
+
+    coord
+  end
+
+  # ---------------------------------------------------------------------------
+  # Aggregate helpers
+  # ---------------------------------------------------------------------------
+
+  @spec sum_of(t()) :: integer()
+  defp sum_of(nil), do: 0
+  defp sum_of(%{sum: s}), do: s
+
+  @spec best_of(t()) :: integer()
+  defp best_of(nil), do: @neg_inf
+  defp best_of(%{best: b}), do: b
+
+  @spec height(t()) :: non_neg_integer()
+  defp height(nil), do: 0
+  defp height(%{height: h}), do: h
+
+  # Build a node, recomputing `sum`, `best`, and `height` from the children.
+  #
+  # For the in-order sequence [left..., node, right...], the maximum running
+  # prefix sum is the best of:
+  #   * a prefix ending inside `left`            -> best_of(left)
+  #   * the prefix ending exactly at `node`      -> sum_of(left) + delta
+  #   * a prefix ending inside `right`           -> sum_of(left) + delta + best_of(right)
+  @spec make_node(integer(), integer (truncated)[0m
+[36m02:24:19.604 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+make_node/4
+rebalance/1
+prefix_sum/2
+</file>[0m
+[36m02:24:19.604 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4946, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4946, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4946, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4946, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 545, "type" => "message"}], "output_tokens" => 545, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m

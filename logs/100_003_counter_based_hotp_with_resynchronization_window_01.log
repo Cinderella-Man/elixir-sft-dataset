@@ -1,0 +1,536 @@
+08:39:03.740 [info] VARIATION 100_003_counter_based_hotp_with_resynchronization_window_01: Counter-Based HOTP with Resynchronization Window
+08:39:03.740 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+08:39:03.740 [debug] claude -p USER prompt:
+Write me an Elixir module called `HOTP` that implements RFC 4226 **HMAC-based** One-Time Passwords — the counter-based sibling of TOTP. Unlike a time-based scheme, each code is tied to a monotonically increasing integer counter rather than the wall clock, and validation must support a **forward-only resynchronization window** because a client's counter can run ahead of the server's (e.g. the user generated codes that were never submitted). Use only the OTP standard library — no external dependencies.
+
+I need these functions in the public API:
+
+- `HOTP.generate_secret()` returns a cryptographically random, base32-encoded secret string (160 bits / 20 bytes of entropy, no padding characters), producing a 32-character string. It must use `:crypto.strong_rand_bytes/1`.
+
+- `HOTP.generate_code(secret, counter)` returns a 6-digit zero-padded string for the given non-negative integer `counter`. It HMAC-SHA1s the counter (encoded as a big-endian 8-byte integer) with the base32-decoded secret, applies the RFC 4226 dynamic truncation, and takes the result modulo 1_000_000. The same counter with the same secret must always produce the same code. It must reproduce the RFC 4226 Appendix D test vectors for the seed `"12345678901234567890"`: counters 0 through 9 yield `755224`, `287082`, `359152`, `969429`, `338314`, `254676`, `287922`, `162583`, `399871`, `520489`.
+
+- `HOTP.valid?(secret, code, counter, opts \\ [])` validates a `code` (string or integer) against a stored `counter`. Options:
+  - `:look_ahead` — a non-negative integer (default `0`) giving how many additional counters **beyond** `counter` to try.
+
+  Validation checks the counters `counter, counter + 1, …, counter + look_ahead` in ascending order. This is **forward-only**: counters below `counter` are never checked. If the code matches at some counter `c`, return `{:ok, c + 1}` (the next counter the server should store so the used code cannot be replayed). If no counter in the range matches, return `:error`. The code is normalized by left-padding to 6 digits before comparison. When multiple counters would match, the first (lowest) match wins.
+
+- `HOTP.provisioning_uri(secret, issuer, account_name, counter)` returns an `otpauth://hotp/` URI (note: `hotp`, not `totp`, since HOTP authenticators require a counter). The label is `issuer:account_name` with both parts URI-encoded. The query parameters are `secret`, `issuer`, `algorithm=SHA1`, `digits=6`, and `counter` (the given integer). All parameters must be properly URI-encoded.
+
+Requirements and constraints:
+- Base32 encoding/decoding must follow RFC 4648 (uppercase alphabet A–Z, 2–7, unpadded). Implement it yourself rather than relying on a library.
+- HMAC-SHA1 must be done via Erlang's `:crypto.mac/4`.
+- Dynamic truncation (RFC 4226 §5.3): take the last byte of the HMAC, mask with `0x0F` to get the offset, read 4 bytes from that offset, mask the top bit of the first byte with `0x7F`, then take the resulting 31-bit integer modulo 1_000_000.
+- Generated codes must always be exactly 6 characters, left-padded with zeros if necessary.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+08:40:07.072 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule HOTP do
+  @moduledoc """
+  RFC 4226 HMAC-based One-Time Passwords (HOTP) — the counter-based sibling of
+  TOTP.
+
+  Each code is derived from a shared secret and a monotonically increasing
+  integer counter rather than the wall clock. Because a client's counter can
+  drift ahead of the server's (codes generated but never submitted), validation
+  supports a *forward-only* resynchronization window via the `:look_ahead`
+  option.
+
+  The implementation relies solely on the Erlang/OTP standard library
+  (`:crypto`) and includes a self-contained RFC 4648 base32 codec.
+  """
+
+  import Bitwise
+
+  @alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @decode_map @alphabet
+              |> String.to_charlist()
+              |> Enum.with_index()
+              |> Map.new()
+
+  @digits 6
+  @modulo 1_000_000
+
+  @doc """
+  Generates a cryptographically random, base32-encoded secret.
+
+  Produces 160 bits (20 bytes) of entropy via `:crypto.strong_rand_bytes/1`,
+  encoded as an unpadded RFC 4648 base32 string of exactly 32 characters.
+  """
+  @spec generate_secret() :: String.t()
+  def generate_secret do
+    20
+    |> :crypto.strong_rand_bytes()
+    |> base32_encode()
+  end
+
+  @doc """
+  Generates the 6-digit zero-padded HOTP code for `secret` and `counter`.
+
+  The `counter` is encoded as a big-endian 8-byte integer, HMAC-SHA1'd with the
+  base32-decoded `secret`, dynamically truncated per RFC 4226 §5.3, and reduced
+  modulo 1_000_000. The same inputs always yield the same code.
+  """
+  @spec generate_code(String.t(), non_neg_integer()) :: String.t()
+  def generate_code(secret, counter) when is_integer(counter) and counter >= 0 do
+    key = base32_decode(secret)
+    hmac = :crypto.mac(:hmac, :sha, key, <<counter::big-size(64)>>)
+    offset = :binary.at(hmac, byte_size(hmac) - 1) &&& 0x0F
+    <<_::binary-size(offset), slice::binary-size(4), _::binary>> = hmac
+    <<truncated::32>> = slice
+    (truncated &&& 0x7FFFFFFF)
+    |> rem(@modulo)
+    |> Integer.to_string()
+    |> String.pad_leading(@digits, "0")
+  end
+
+  @doc """
+  Validates `code` against a stored `counter` using a forward-only window.
+
+  `code` may be a string or integer and is left-padded to 6 digits before
+  comparison. The option `:look_ahead` (non-negative integer, default `0`) sets
+  how many counters beyond `counter` to try. Counters `counter` through
+  `counter + look_ahead` are checked in ascending order; counters below
+  `counter` are never checked.
+
+  On the first (lowest) match at counter `c`, returns `{:ok, c + 1}` — the next
+  counter the server should store so the used code cannot be replayed. Returns
+  `:error` if nothing in the range matches.
+  """
+  @spec valid?(String.t(), String.t() | integer(), non_neg_integer(), keyword()) ::
+          {:ok, non_neg_integer()} | :error
+  def valid?(secret, code, counter, opts \\ []) do
+    look_ahead = Keyword.get(opts, :look_ahead, 0)
+    normalized = normalize_code(code)
+
+    Enum.reduce_while(counter..(counter + look_ahead), :error, fn c, _acc ->
+      if generate_code(secret, c) == normalized do
+        {:halt, {:ok, c + 1}}
+      else
+        {:cont, :error}
+      end
+    end)
+  end
+
+  @doc """
+  Builds an `otpauth://hotp/` provisioning URI for authenticator apps.
+
+  The label is `issuer:account_name` with both parts URI-encoded. The query
+  carries `secret`, `issuer`, `algorithm=SHA1`, `digits=6`, and `counter`, all
+  properly URI-encoded.
+  """
+  @spec provisioning_uri(String.t(), String.t(), String.t(), integer()) :: String.t()
+  def provisioning_uri(secret, issuer, account_name, counter) do
+    label = encode_component(issuer) <> ":" <> encode_component(account_name)
+
+    query =
+      URI.encode_query([
+        {"secret", secret},
+        {"issuer", issuer},
+        {"algorithm", "SHA1"},
+        {"digits", Integer.to_string(@digits)},
+        {"counter", Integer.to_string(counter)}
+      ])
+
+    "otpauth://hotp/" <> label <> "?" <> query
+  end
+
+  # --- internal helpers ---------------------------------------------------
+
+  @spec normalize_code(String.t() | integer()) :: String.t()
+  defp normalize_code(code) when is_integer(code) do
+    code |> Integer.to_string() |> String.pad_leading(@digits, "0")
+  end
+
+  defp normalize_code(code) when is_binary(code) do
+    String.pad_leading(code, @digits, "0")
+  end
+
+  @spec encode_component(String.t()) :: String.t()
+  defp encode_component(value), do: URI.encode(value, &URI.char_unreserved?/1)
+
+  @spec base32_encode(binary()) :: String.t()
+  defp base32_encode(bytes) do
+    pad = rem(5 - rem(bit_size(bytes), 5), 5)
+    padded = <<bytes::bitstring, 0::size(pad)>>
+
+    for <<chunk::5 <- padded>>, into: "" do
+      binary_part(@alphabet, chunk, 1)
+    end
+  end
+
+  @spec base32_decode(String.t()) :: binary()
+  defp base32_decode(string) do
+    bits =
+      for <<char::8 <- String.upcase(string)>>, into: <<>> do
+        <<Map.fetch!(@decode_map, char)::5>>
+      end
+
+    byte_count = div(bit_size(bits), 8)
+    <<result::binary-size(byte_count), _rest::bitstring>> = bits
+    result
+  end
+end
+</file>
+08:40:07.072 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5184, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5184, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5184, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5184, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 5316, "type" => "message"}], "output_tokens" => 5316, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:40:07.094 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01 solution.ex
+08:40:07.730 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":149,"lines_over_98":0,"max_line_length":85,"mode":"full","pipe_chain_count":10,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01/solution.ex","task":"100_003_counter_based_hotp_with_resynchronization_window_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-12T06:40:07.707451Z"}
+08:40:07.732 [info] cycle 100_003_counter_based_hotp_with_resynchronization_window_01: repairing — The files graded green but fall short of the house style / harness standard: 2 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+08:40:07.732 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+08:40:07.732 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 2 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `HOTP` that implements RFC 4226 **HMAC-based** One-Time Passwords — the counter-based sibling of TOTP. Unlike a time-based scheme, each code is tied to a monotonically increasing integer counter rather than the wall clock, and validation must support a **forward-only resynchronization window** because a client's counter can run ahead of the server's (e.g. the user generated codes that were never submitted). Use only the OTP standard library — no external dependencies.
+
+I need these functions in the public API:
+
+- `HOTP.generate_secret()` returns a cryptographically random, base32-encoded secret string (160 bits / 20 bytes of entropy, no padding characters), producing a 32-character string. It must use `:crypto.strong_rand_bytes/1`.
+
+- `HOTP.generate_code(secret, counter)` returns a 6-digit zero-padded string for the given non-negative integer `counter`. It HMAC-SHA1s the counter (encoded as a big-endian 8-byte integer) with the base32-decoded secret, applies the RFC 4226 dynamic truncation, and takes the result modulo 1_000_000. The same counter with the same secret must always produce the same code. It must reproduce the RFC 4226 Appendix D test vectors for the seed `"12345678901234567890"`: counters 0 through 9 yield `755224`, `287082`, `359152`, `969429`, `338314`, `254676`, `287922`, `162583`, `399871`, `520489`.
+
+- `HOTP.valid?(secret, code, counter, opts \\ [])` validates a `code` (string or integer) against a stored `counter`. Options:
+  - `:look_ahead` — a non-negative integer (default `0`) giving how many additional counters **beyond** `counter` to try.
+
+  Validation checks the counters `counter, counter + 1, …, counter + look_ahead` in ascending order. This is **forward-only**: counters below `counter` are never checked. If the code matches at some counter `c`, return `{:ok, c + 1}` (the next counter the server should store so the used code cannot be replayed). If no counter in the range matches, return `:error`. The code is normalized by left-padding to 6 digits before comparison. When multiple counters would match, the first (lowest) match wins.
+
+- `HOTP.provisioning_uri(secret, issuer, account_name, counter)` returns an `otpauth://hotp/` URI (note: `hotp`, not `totp`, since HOTP authenticators require a counter). The label is `issuer:account_name` with both parts URI-encoded. The query parameters are `secret`, `issuer`, `algorithm=SHA1`, `digits=6`, and `counter` (the given integer). All parameters must be properly URI-encoded.
+
+Requirements and constraints:
+- Base32 encoding/decoding must follow RFC 4648 (uppercase alphabet A–Z, 2–7, unpadded). Implement it yourself rather than relying on a library.
+- HMAC-SHA1 must be done via Erlang's `:crypto.mac/4`.
+- Dynamic truncation (RFC 4226 §5.3): take the last byte of the HMAC, mask with `0x0F` to get the offset, read 4 bytes from that offset, mask the top bit of the first byte with `0x7F`, then take the resulting 31-bit integer modulo 1_000_000.
+- Generated codes must always be exactly 6 characters, left-padded with zeros if necessary.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule HOTP do
+  @moduledoc """
+  RFC 4226 HMAC-based One-Time Passwords (HOTP) — the counter-based sibling of
+  TOTP.
+
+  Each code is derived from a shared secret and a monotonically increasing
+  integer counter rather than the wall clock. Because a client's counter can
+  drift ahead of the server's (codes generated but never submitted), validation
+  supports a *forward-only* resynchronization window via the `:look_ahead`
+  option.
+
+  The implementation relies solely on the Erlang/OTP standard library
+  (`:crypto`) and includes a self-contained RFC 4648 base32 codec.
+  """
+
+  import Bitwise
+
+  @alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @decode_map @alphabet
+              |> String.to_charlist()
+              |> Enum.with_index()
+              |> Map.new()
+
+  @digits 6
+  @modulo 1_000_000
+
+  @doc """
+  Generates a cryptographically random, base32-encoded secret.
+
+  Produces 160 bits (20 bytes) of entropy via `:crypto.strong_rand_bytes/1`,
+  encoded as an unpadded RFC 4648 base32 string of exactly 32 characters.
+  """
+  @spec generate_secret() :: String.t()
+  def generate_secret do
+    20
+    |> :crypto.strong_rand_bytes()
+    |> base32_encode()
+  end
+
+  @doc """
+  Generates the 6-digit zero-padded HOTP code for `secret` and `counter`.
+
+  The `counter` is encoded as a big-endian 8-byte integer, HMAC-SHA1'd with the
+  base32-decoded `secret`, dynamically truncated per RFC 4226 §5.3, and reduced
+  modulo 1_000_000. The same inputs always yield the same code.
+  """
+  @spec generate_code(String.t(), non_neg_integer()) :: String.t()
+  def generate_code(secret, counter) when is_integer(counter) and counter >= 0 do
+    key = base32_decode(secret)
+    hmac = :crypto.mac(:hmac, :sha, key, <<counter::big-size(64)>>)
+    offset = :binary.at(hmac, byte_size(hmac) - 1) &&& 0x0F
+    <<_::binary-size(offset), slice::binary-size(4), _::binary>> = hmac
+    <<truncated::32>> = slice
+
+    (truncated &&& 0x7FFFFFFF)
+    |> rem(@modulo)
+    |> Integer.to_string()
+    |> String.pad_leading(@digits, "0")
+  end
+
+  @doc """
+  Validates `code` against a stored `counter` using a forward-only window.
+
+  `code` may be a string or integer and is left-padded to 6 digits before
+  comparison. The option `:look_ahead` (non-negative integer, default `0`) sets
+  how many counters beyond `counter` to try. Counters `counter` through
+  `counter + look_ahead` are checked in ascending order; counters below
+  `counter` are never checked.
+
+  On the first (lowest) match at counter `c`, returns `{:ok, c + 1}` — the next
+  counter the server should store so the used code cannot be replayed. Returns
+  `:error` if nothing in the range matches.
+  """
+  @spec valid?(String.t(), String.t() | integer(), non_neg_integer(), keyword()) ::
+          {:ok, non_neg_integer()} | :error
+  def valid?(secret, code, counter, opts \\ []) do
+    look_ahead = Keyword.get(opts, :look_ahead, 0)
+    normalized = normalize_code(code)
+
+    Enum.reduce_while(counter..(counter + look_ahead), :error, fn c, _acc ->
+      if generate_code(secret, c) == normalized do
+        {:halt, {:ok, c + 1}}
+      else
+        {:cont, :error}
+      end
+    end)
+  end
+
+  @doc """
+  Builds an `otpauth://hotp/` provisioning URI for authenticator apps.
+
+  The label is `issuer:account_name` with both parts URI-encoded. The query
+  carries `secret`, `issuer`, `algorithm=SHA1`, `digits=6`, and `counter`, all
+  properly URI-encoded.
+  """
+  @spec provisioning_uri(String.t(), String.t(), String.t(), integer()) :: String.t()
+  def provisioning_uri(secret, issuer, account_name, counter) do
+    label = encode_component(issuer) <> ":" <> encode_component(account_name)
+
+    query =
+      URI.encode_query([
+        {"secret",  (truncated)
+08:46:51.129 [warning] transient error (error_max_turns ) on fix (100_003_counter_based_hotp_with_resynchronization_window_01) — retry 1/5 after 2000ms
+08:57:59.530 [debug] claude -p RESULT (stop="end_turn"):
+Looking at the failure, the module compiles green (all tests pass) but emits 2 compile warnings. After analyzing the code, the only non-standard constructs are the runtime-sized binary pattern matches (in `generate_code`'s dynamic truncation and in `base32_decode`), which are the plausible warning sources under modern Elixir/OTP 27 type analysis. I'll replace them with plain Bitwise byte arithmetic — behavior stays identical (RFC 4226 vectors still hold), and no binary-match constructs remain.
+
+<file path="solution.ex">
+defmodule HOTP do
+  @moduledoc """
+  RFC 4226 HMAC-based One-Time Passwords (HOTP) — the counter-based sibling of
+  TOTP.
+
+  Each code is derived from a shared secret and a monotonically increasing
+  integer counter rather than the wall clock. Because a client's counter can
+  drift ahead of the server's (codes generated but never submitted), validation
+  supports a *forward-only* resynchronization window via the `:look_ahead`
+  option.
+
+  The implementation relies solely on the Erlang/OTP standard library
+  (`:crypto`) and includes a self-contained RFC 4648 base32 codec.
+  """
+
+  import Bitwise
+
+  @alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @decode_map @alphabet
+              |> String.to_charlist()
+              |> Enum.with_index()
+              |> Map.new()
+
+  @digits 6
+  @modulo 1_000_000
+
+  @doc """
+  Generates a cryptographically random, base32-encoded secret.
+
+  Produces 160 bits (20 bytes) of entropy via `:crypto.strong_rand_bytes/1`,
+  encoded as an unpadded RFC 4648 base32 string of exactly 32 characters.
+  """
+  @spec generate_secret() :: String.t()
+  def generate_secret do
+    20
+    |> :crypto.strong_rand_bytes()
+    |> base32_encode()
+  end
+
+  @doc """
+  Generates the 6-digit zero-padded HOTP code for `secret` and `counter`.
+
+  The `counter` is encoded as a big-endian 8-byte integer, HMAC-SHA1'd with the
+  base32-decoded `secret`, dynamically truncated per RFC 4226 §5.3, and reduced
+  modulo 1_000_000. The same inputs always yield the same code.
+  """
+  @spec generate_code(String.t(), non_neg_integer()) :: String.t()
+  def generate_code(secret, counter) when is_integer(counter) and counter >= 0 do
+    key = base32_decode(secret)
+    hmac = :crypto.mac(:hmac, :sha, key, <<counter::64>>)
+    offset = :binary.at(hmac, byte_size(hmac) - 1) &&& 0x0F
+
+    truncated =
+      ((:binary.at(hmac, offset) &&& 0x7F) <<< 24) |||
+        (:binary.at(hmac, offset + 1) <<< 16) |||
+        (:binary.at(hmac, offset + 2) <<< 8) |||
+        :binary.at(hmac, offset + 3)
+
+    truncated
+    |> rem(@modulo)
+    |> Integer.to_string()
+    |> String.pad_leading(@digits, "0")
+  end
+
+  @doc """
+  Validates `code` against a stored `counter` using a forward-only window.
+
+  `code` may be a string or integer and is left-padded to 6 digits before
+  comparison. The option `:look_ahead` (non-negative integer, default `0`) sets
+  how many counters beyond `counter` to try. Counters `counter` through
+  `counter + look_ahead` are checked in ascending order; counters below
+  `counter` are never checked.
+
+  On the first (lowest) match at counter `c`, returns `{:ok, c + 1}` — the next
+  counter the server should store so the used code cannot be replayed. Returns
+  `:error` if nothing in the range matches.
+  """
+  @spec valid?(String.t(), String.t() | integer(), non_neg_integer(), keyword()) ::
+          {:ok, non_neg_integer()} | :error
+  def valid?(secret, code, counter, opts \\ []) do
+    look_ahead = Keyword.get(opts, :look_ahead, 0)
+    normalized = normalize_code(code)
+
+    Enum.reduce_while(counter..(counter + look_ahead), :error, fn c, _acc ->
+      if generate_code(secret, c) == normalized do
+        {:halt, {:ok, c + 1}}
+      else
+        {:cont, :error}
+      end
+    end)
+  end
+
+  @doc """
+  Builds an `otpauth://hotp/` provisioning URI for authenticator apps.
+
+  The label is `issuer:account_name` with both parts URI-encoded. The query
+  carries `secret`, `issuer`, `algorithm=SHA1`, `digits=6`, and `counter`, all
+  properly URI-encoded.
+  """
+  @spec provisioning_uri(String.t(), String.t(), String.t(), integer()) :: String.t()
+  def provisioning_uri(secret, issuer, account_name, counter) do
+    label = encode_component(issuer) <> ":" <> encode_component(account_name)
+
+    query =
+      URI.encode_query([
+        {"secret", secret},
+        {"issuer", issuer},
+        {"algorithm", "SHA1"},
+        {"digits", Integer.to_string(@digits)},
+        {"counter", Integer.to_string(counter)}
+      ])
+
+    "otpauth://hotp/" <> label <> "?" <> query
+  end
+
+  # --- internal helpers ---------------------------------------------------
+
+  @spec normalize_code(String.t() | integer()) :: String.t()
+  defp normalize_code(code) when is_integer(code) do
+    code |> Integer.to_string() |> String.pad_leading(@digits, "0")
+  end
+
+  defp normalize_code(code) when is_binary(code) do
+    String.pad_leading(code, @digits, "0")
+  end
+
+  @spec encode_component(String.t()) :: String.t()
+  defp encode_component(value), do: URI.encode(value, &URI.char_unreserved?/1)
+
+  @spec base32_encode(binary()) :: String.t()
+  defp base32_encode(bytes) do
+    pad = rem(5 - rem(bit_size(bytes), 5), 5)
+    padded = <<bytes::bitstring, 0::size(pad)>>
+
+    for <<chunk::5 <- padded>>, into: "" do
+      binary_part(@alphabet, chunk, 1)
+    end
+  end
+
+  @spec base32_decode(String.t()) :: binary()
+  defp base32_decode(string) do
+    {bytes, _buffer, _bits} =
+      string
+      |> String.upcase()
+      |> String.to_charlist()
+      |> Enum.reduce({<<>>, 0, 0}, fn char, {acc, buffer, bits} ->
+        buffer = (buffer <<< 5) ||| Map.fetch!(@decode_map, char)
+        bits = bits + 5
+
+        if bits >= 8 do
+          remaining = bits - 8
+          byte = (buffer >>> remaining) &&& 0xFF
+          {<<acc::binary, byte>>, buffer, remaining}
+        else
+          {acc, buffer, bits}
+        end
+      end)
+
+    bytes
+  end
+end
+</file>
+08:57:59.530 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 24575, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 24575, "input_tokens" => 2, "output_tokens" => 50358, "type" => "message"}], "output_tokens" => 50358, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:57:59.553 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01 solution.ex
+08:58:00.198 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":163,"lines_over_98":0,"max_line_length":85,"mode":"full","pipe_chain_count":13,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01/solution.ex","task":"100_003_counter_based_hotp_with_resynchronization_window_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-12T06:58:00.173499Z"}
+08:58:00.203 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01_mut solution.ex
+08:58:00.845 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":106,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":11,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 4/16 failed"],"tests":0.75},"shape":"single","solution_file":".gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01_mut/solution.ex","task":"100_003_counter_based_hotp_with_resynchronization_window_01_mut","test_failures":[{"message":"MUTATION","module":"HOTPTest","test":"test generate_secret returns a 32-character base32 string"},{"message":"MUTATION","module":"HOTPTest","test":"test generate_secret returns different secrets each call"},{"message":"MUTATION","module":"HOTPTest","test":"test generate_code returns a 6-character numeric string"},{"message":"MUTATION","module":"HOTPTest","test":"test generate_code is deterministic for a given counter"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-12T06:58:00.821897Z"}
+08:58:00.848 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01_mut solution.ex
+08:58:01.504 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":98,"lines_over_98":0,"max_line_length":85,"mode":"full","pipe_chain_count":10,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 12/16 failed"],"tests":0.25},"shape":"single","solution_file":".gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01_mut/solution.ex","task":"100_003_counter_based_hotp_with_resynchronization_window_01_mut","test_failures":[{"message":"MUTATION","module":"HOTPTest","test":"test generate_code reproduces the RFC 4226 Appendix D vectors"},{"message":"MUTATION","module":"HOTPTest","test":"test generate_code returns a 6-character numeric string"},{"message":"MUTATION","module":"HOTPTest","test":"test generate_code is deterministic for a given counter"},{"message":"MUTATION","module":"HOTPTest","test":"test adjacent counters produce different codes"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? accepts the exact code and returns the next counter"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? accepts an integer code"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? rejects a wrong code"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? with default look_ahead does not accept a future counter's code"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? resynchronizes forward within the look-ahead window"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? rejects a code beyond the look-ahead window"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? is forward-only and never checks counters below the stored one"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? returns the counter after the matched one"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":4,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-12T06:58:01.480343Z"}
+08:58:01.507 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01_mut solution.ex
+08:58:02.132 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":97,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":13,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 8/16 failed"],"tests":0.5},"shape":"single","solution_file":".gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01_mut/solution.ex","task":"100_003_counter_based_hotp_with_resynchronization_window_01_mut","test_failures":[{"message":"MUTATION","module":"HOTPTest","test":"test valid? accepts the exact code and returns the next counter"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? accepts an integer code"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? rejects a wrong code"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? with default look_ahead does not accept a future counter's code"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? resynchronizes forward within the look-ahead window"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? rejects a code beyond the look-ahead window"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? is forward-only and never checks counters below the stored one"},{"message":"MUTATION","module":"HOTPTest","test":"test valid? returns the counter after the matched one"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-12T06:58:02.111175Z"}
+08:58:02.136 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01_mut solution.ex
+08:58:02.778 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":95,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":13,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 2/16 failed"],"tests":0.88},"shape":"single","solution_file":".gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01_mut/solution.ex","task":"100_003_counter_based_hotp_with_resynchronization_window_01_mut","test_failures":[{"message":"MUTATION","module":"HOTPTest","test":"test provisioning_uri uses the hotp type and includes the counter"},{"message":"MUTATION","module":"HOTPTest","test":"test provisioning_uri encodes special characters in the label"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-12T06:58:02.755122Z"}
+08:58:02.778 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01 solution.ex (seed 571556194)
+08:58:03.391 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":163,"lines_over_98":0,"max_line_length":85,"mode":"full","pipe_chain_count":13,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/100_003_counter_based_hotp_with_resynchronization_window_01/solution.ex","task":"100_003_counter_based_hotp_with_resynchronization_window_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-12T06:58:03.370377Z"}
+08:58:03.393 [info] cycle 100_003_counter_based_hotp_with_resynchronization_window_01: ACCEPTED on attempt 1
+08:58:03.393 [info] promoted 100_003_counter_based_hotp_with_resynchronization_window_01 -> tasks/100_003_counter_based_hotp_with_resynchronization_window_01

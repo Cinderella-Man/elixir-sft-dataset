@@ -1,0 +1,425 @@
+[22m02:06:26.349 [info] FIM 037_002_path_addressed_nested_record_anonymizer_fim01 → 037_002_path_addressed_nested_record_anonymizer_04: target update_path/3[0m
+[36m02:06:26.349 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m02:06:26.349 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `update_path/3`.
+
+Generate a prompt describing how to implement `update_path/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `update_path/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `update_path/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `update_path/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Anonymizer` that anonymizes fields inside **deeply nested** record maps, addressing those fields by string **paths** rather than flat top-level keys.
+
+I need this function in the public API:
+- `Anonymizer.anonymize(records, rules)` where `records` is a list of (possibly deeply nested) maps and `rules` is a map whose keys are **string paths** and whose values are one of the following rule atoms or tuples:
+  - `:hash` — replace the value with its SHA-256 hex digest
+  - `:mask` — keep the first and last character of the string, replace every middle character with `*`. A string of 2 characters shows both with no masking. A string of 1 character is fully masked as `*`.
+  - `:redact` — replace the value with the string `"[REDACTED]"`
+  - `{:fake, seed}` — generate a deterministic fake value (a realistic-looking but fabricated string) derived solely from the original value and the given `seed`. The same input value + seed must always produce the same fake output across calls.
+
+Path syntax:
+- Dot notation descends into nested maps: `"user.email"` targets `record[:user][:email]`.
+- A segment ending in `[]` descends into **every element** of a list: `"orders[].card"` applies the rule to the `:card` field of every element of the `:orders` list, and `"tags[]"` applies the rule to every scalar element of the `:tags` list.
+- Map keys may be atoms or strings; a path segment must match whichever the record uses.
+
+The function must return a list of maps of the same length and structure, with the addressed values transformed in place. Anything not addressed by a path must be left untouched. A path that does not resolve in a given record (missing key, or a type mismatch such as trying to descend into a non-map) must be skipped gracefully rather than raising.
+
+Referential integrity must be preserved across the entire list: if two locations (in the same or different records) hold the same original value for paths that share a rule, their anonymized outputs must be identical. This must hold for all four rule types.
+
+Use only the Elixir/OTP standard library — no external dependencies. Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Anonymizer do
+  @moduledoc """
+  Path-addressed anonymizer for deeply nested record maps.
+
+  Rules are keyed by string paths:
+
+    * `"user.email"`     – descend into nested maps via dot notation.
+    * `"orders[].card"`  – a `[]` segment descends into every element of a list.
+    * `"tags[]"`         – apply the rule to every scalar element of a list.
+
+  Rule values are `:hash`, `:mask`, `:redact`, or `{:fake, seed}` (see the
+  base task). Every rule is a pure function of its inputs, so two locations
+  holding the same original value are anonymized identically (referential
+  integrity). Only OTP/stdlib modules are used.
+  """
+
+  @first_names ~w(
+    Alice Bob Carol Dave Eve Frank Grace Henry Iris Jack
+    Karen Leo Maya Noah Olivia Paul Quinn Rose Sam Tara
+    Uma Victor Wendy Xander Yara Zoe Adrian Blair Casey
+    Dana Elliot Faye Glenn Harper Indira Jules
+  )
+
+  @last_names ~w(
+    Smith Jones Williams Brown Taylor Davies Evans Wilson
+    Thomas Roberts Johnson Lee Walker Hall Allen Young
+    Hernandez King Wright Scott Baker Green Adams Nelson
+    Carter Mitchell Perez Turner Campbell Parker Edwards
+  )
+
+  @domains ~w(
+    example.com mail.net webhost.org fakemail.io testdomain.com
+    inbox.dev sample.org placeholder.net demo.io fictitious.com
+  )
+
+  @doc """
+  Anonymizes `records` (a list of possibly deeply nested maps) according to
+  `rules`, a map of string paths to rule atoms/tuples.
+
+  Returns a list of the same length and structure, with addressed values
+  transformed in place. Paths that do not resolve in a given record are
+  skipped gracefully.
+  """
+  @spec anonymize([map()], %{optional(String.t()) => term()}) :: [map()]
+  def anonymize(records, rules) when is_list(records) and is_map(rules) do
+    compiled = Enum.map(rules, fn {path, rule} -> {parse_path(path), rule} end)
+
+    Enum.map(records, fn record ->
+      Enum.reduce(compiled, record, fn {segments, rule}, acc ->
+        update_path(acc, segments, rule)
+      end)
+    end)
+  end
+
+  # --- Path parsing -----------------------------------------------------------
+
+  defp parse_path(path) do
+    path
+    |> String.split(".")
+    |> Enum.flat_map(&parse_segment/1)
+  end
+
+  defp parse_segment(seg) do
+    if String.ends_with?(seg, "[]") do
+      [{:key, String.trim_trailing(seg, "[]")}, :each]
+    else
+      [{:key, seg}]
+    end
+  end
+
+  # --- Path traversal ---------------------------------------------------------
+
+  defp update_path(value, [], rule), do: apply_rule(value, rule)
+
+  defp update_path(map, [{:key, key} | rest], rule) when is_map(map) do
+    case fetch_key(map, key) do
+      {:ok, actual_key, value} ->
+        Map.put(map, actual_key, update_path(value, rest, rule))
+
+      :error ->
+        map
+    end
+  end
+
+  defp update_path(list, [:each | rest], rule) when is_list(list) do
+    Enum.map(list, &update_path(&1, rest, rule))
+  end
+
+  defp update_path(other, _segments, _rule), do: other
+
+  defp fetch_key(map, key) do
+    atom_key = safe_existing_atom(key)
+
+    cond do
+      Map.has_key?(map, key) ->
+        {:ok, key, Map.fetch!(map, key)}
+
+      atom_key != nil and Map.has_key?(map, atom_key) ->
+        {:ok, atom_key, Map.fetch!(map, atom_key)}
+
+      true ->
+        :error
+    end
+  end
+
+  defp safe_existing_atom(str) do
+    String.to_existing_atom(str)
+  rescue
+    ArgumentError -> nil
+  end
+
+  # --- Rule dispatch ----------------------------------------------------------
+
+  defp apply_rule(_value, :redact), do: "[REDACTED]"
+
+  defp apply_rule(value, :hash) do
+    :crypto.hash(:sha256, to_string(value)) |> Base.encode16(case: :lower)
+  end
+
+  defp apply_rule(value, :mask) do
+    str = to_string(value)
+
+    case String.length(str) do
+      0 -> str
+      1 -> "*"
+      2 -> str
+      len -> String.at(str, 0) <> String.duplicate("*", len - 2) <> String.at(str, len - 1)
+    end
+  end
+
+  defp apply_rule(value, {:fake, seed}), do: generate_fake(to_string(value), seed)
+
+  # --- Deterministic fake generator -------------------------------------------
+
+  defp generate_fake(value, seed) do
+    <<b0, b1, b2, b3, b4, b5, b6, _rest::binary>> =
+      :crypto.hash(:sha256, "#{inspect(seed)}:#{value}")
+
+    first = Enum.at(@first_names, rem(b0, length(@first_names)))
+    last = Enum.at(@last_names, rem(b1, length(@last_names)))
+
+    case rem(b2, 4) do
+      0 ->
+        "#{first} #{last}"
+
+      1 ->
+        domain = Enum.at(@domains, rem(b3, length(@domains)))
+        "#{String.downcase(first)}.#{String.downcase(last)}@#{domain}"
+
+      2 ->
+        suffix = rem(b3 * 256 + b4, 9000) + 1000
+        "#{first}#{suffix}"
+
+      3 ->
+        suffix = rem(b5 * 256 + b6, 90) + 10
+        "#{String.downcase(first)}-#{String.downcase(last)}-#{suffix}"
+    end
+  end
+end
+```
+
+You have NO tools available in  (truncated)[0m
+[36m02:07:12.003 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `update_path/3`
+
+The module below (`Anonymizer`) is complete **except** for the private
+`update_path/3` function, whose body has been replaced with `# TODO`.
+
+Implement `update_path/3`. It is the recursive path-traversal helper that walks a
+record according to a list of pre-parsed path `segments` and applies a rule at the
+addressed location(s). It receives:
+
+- `value` — the current node being traversed (a map, a list, a scalar, or anything
+  else),
+- `segments` — the remaining path segments to follow, where each segment is either
+  `{:key, key}` (descend into a map under the string `key`) or `:each` (descend into
+  every element of a list),
+- `rule` — the rule atom/tuple to apply once the path is fully consumed.
+
+Its behavior must be:
+
+- **Base case — no segments left:** apply the rule to `value` using `apply_rule/2`
+  and return the transformed value.
+- **`{:key, key}` segment against a map:** look the key up with `fetch_key/2` (which
+  matches the key whether the map stores it as a string or as an atom). If it
+  resolves, recurse into the fetched value with the remaining segments and store the
+  result back under the *actual* key that was matched (via `Map.put/3`), returning the
+  updated map. If it does not resolve, return the map unchanged.
+- **`:each` segment against a list:** apply `update_path/3` to every element of the
+  list with the remaining segments, returning the new list.
+- **Any other combination** (e.g. a `{:key, _}` segment against a non-map, or an
+  `:each` segment against a non-list): a graceful type mismatch — return `value`
+  unchanged rather than raising.
+
+The function must never raise on unresolved paths or type mismatches; such cases are
+skipped by leaving the current node untouched.
+
+```elixir
+defmodule Anonymizer do
+  @moduledoc """
+  Path-addressed anonymizer for deeply nested record maps.
+
+  Rules are keyed by string paths:
+
+    * `"user.email"`     – descend into nested maps via dot notation.
+    * `"orders[].card"`  – a `[]` segment descends into every element of a list.
+    * `"tags[]"`         – apply the rule to every scalar element of a list.
+
+  Rule values are `:hash`, `:mask`, `:redact`, or `{:fake, seed}` (see the
+  base task). Every rule is a pure function of its inputs, so two locations
+  holding the same original value are anonymized identically (referential
+  integrity). Only OTP/stdlib modules are used.
+  """
+
+  @first_names ~w(
+    Alice Bob Carol Dave Eve Frank Grace Henry Iris Jack
+    Karen Leo Maya Noah Olivia Paul Quinn Rose Sam Tara
+    Uma Victor Wendy Xander Yara Zoe Adrian Blair Casey
+    Dana Elliot Faye Glenn Harper Indira Jules
+  )
+
+  @last_names ~w(
+    Smith Jones Williams Brown Taylor Davies Evans Wilson
+    Thomas Roberts Johnson Lee Walker Hall Allen Young
+    Hernandez King Wright Scott Baker Green Adams Nelson
+    Carter Mitchell Perez Turner Campbell Parker Edwards
+  )
+
+  @domains ~w(
+    example.com mail.net webhost.org fakemail.io testdomain.com
+    inbox.dev sample.org placeholder.net demo.io fictitious.com
+  )
+
+  @doc """
+  Anonymizes `records` (a list of possibly deeply nested maps) according to
+  `rules`, a map of string paths to rule atoms/tuples.
+
+  Returns a list of the same length and structure, with addressed values
+  transformed in place. Paths that do not resolve in a given record are
+  skipped gracefully.
+  """
+  @spec anonymize([map()], %{optional(String.t()) => term()}) :: [map()]
+  def anonymize(records, rules) when is_list(records) and is_map(rules) do
+    compiled = Enum.map(rules, fn {path, rule} -> {parse_path(path), rule} end)
+
+    Enum.map(records, fn record ->
+      Enum.reduce(compiled, record, fn {segments, rule}, acc ->
+        update_path(acc, segments, rule)
+      end)
+    end)
+  end
+
+  # --- Path parsing -----------------------------------------------------------
+
+  defp parse_path(path) do
+    path
+    |> String.split(".")
+    |> Enum.flat_map(&parse_segment/1)
+  end
+
+  defp parse_segment(seg) do
+    if String.ends_with?(seg, "[]") do
+      [{:key, String.trim_trailing(seg, "[]")}, :each]
+    else
+      [{:key, seg}]
+    end
+  end
+
+  # --- Path traversal ---------------------------------------------------------
+
+  defp update_path(value, segments, rule) do
+    # TODO
+  end
+
+  defp fetch_key(map, key) do
+    atom_key = safe_existing_atom(key)
+
+    cond do
+      Map.has_key?(map, key) ->
+        {:ok, key, Map.fetch!(map, key)}
+
+      atom_key != nil and Map.has_key?(map, atom_key) ->
+        {:ok, atom_key, Map.fetch!(map, atom_key)}
+
+      true ->
+        :error
+    end
+  end
+
+  defp safe_existing_atom(str) do
+    String.to_existing_atom(str)
+  rescue
+    ArgumentError -> nil
+  end
+
+  # --- Rule dispatch ----------------------------------------------------------
+
+  defp apply_rule(_value, :redact), do: "[REDACTED]"
+
+  defp apply_rule(value, :hash) do
+    :crypto.hash(:sha256, to_string(value)) |> Base.encode16(case: :lower)
+  end
+
+  defp apply_rule(value, :mask) do
+    str = to_string(value)
+
+    case String.length(str) do
+      0 -> str
+      1 -> "*"
+      2 -> str
+      len -> String.at(str, 0) <> String.duplicate("*", len - 2) <> String.at(str, len - 1)
+    end
+  end
+
+  defp apply_rule(value, {:fake, seed}), do: generate_fake(to_string(value), seed)
+
+  # --- Deterministic fake generator -------------------------------------------
+
+  defp generate_fake(value, seed) do
+    <<b0, b1, b2, b3, b4, b5, b6, _rest::binary>> =
+      :crypto.hash(:sha256, "#{inspect(seed)}:#{value}")
+
+    first = Enum.at(@first_names, rem(b0, length(@first_names)))
+    last = Enum.at(@last_names, rem(b1, length(@last_names)))
+
+    case rem(b2, 4) do
+      0 ->
+        "#{first} #{last}"
+
+      1 ->
+        domain = Enum.at(@domains, rem(b3, length(@domains)))
+        "#{String.downcase(first)}.#{String.downcase(last)}@#{domain}"
+
+      2 ->
+        suffix = rem(b3 * 256 + b4, 9000) + 1000
+        "#{first}#{suffix}"
+
+      3 ->
+        suffix = rem(b5 * 256 + b6, 90) + 10
+        "#{String.downcase(first)}-#{String.downcase(last)}-#{suffix}"
+    end
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp update_path(value, [], rule), do: apply_rule(value, rule)
+
+  defp update_path(map, [{:key, key} | rest], rule) when is_map(map) do
+    case fetch_key(map, key) do
+      {:ok, actual_key, value} ->
+        Map.put(map, actual_key, update_path(value, rest, rule))
+
+      :error ->
+        map
+    end
+  end
+
+  defp update_path(list, [:each | rest], rule) when is_list(list) do
+    Enum.map(list, &update_path(&1, rest, rule))
+  end
+
+  defp update_path(other, _segments, _rule), do: other
+</file>[0m
+[36m02:07:12.003 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3560, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3560, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3560, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3560, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 3859, "type" => "message"}], "output_tokens" => 3859, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m02:07:12.023 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_037_002_path_addressed_nested_record_anonymizer_04/037_002_path_addressed_nested_record_anonymizer_04 solution.ex[0m
+[36m02:07:12.679 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":17,"lines_over_98":0,"max_line_length":71,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"037_002_path_addressed_nested_record_anonymizer_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_037_002_path_addressed_nested_record_anonymizer_04/037_002_path_addressed_nested_record_anonymizer_04/solution.ex","task":"037_002_path_addressed_nested_record_anonymizer_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T00:07:12.658505Z"}[0m
+[36m02:07:12.680 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_037_002_path_addressed_nested_record_anonymizer_04/037_002_path_addressed_nested_record_anonymizer_04 .gen_staging/fim_037_002_path_addressed_nested_record_anonymizer_04/mutant.ex[0m
+[36m02:07:13.331 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":15,"lines_over_98":0,"max_line_length":69,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":12,"compiled":true,"parent":"037_002_path_addressed_nested_record_anonymizer_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.27,"reasons":["compilation: 12 warning(s) → -1.2 pts","tests: 9/10 failed"],"tests":0.1},"shape":"fim","solution_file":".gen_staging/fim_037_002_path_addressed_nested_record_anonymizer_04/mutant.ex","task":"037_002_path_addressed_nested_record_anonymizer_04","test_failures":[{"message":"MUTATION","module":"AnonymizerTest","test":"test nested path targeting hashes a value at a nested path and leaves siblings alone"},{"message":"MUTATION","module":"AnonymizerTest","test":"test nested path targeting redacts and masks at different nested paths"},{"message":"MUTATION","module":"AnonymizerTest","test":"test list descent with [] applies a rule to a field of each element in a list"},{"message":"MUTATION","module":"AnonymizerTest","test":"test list descent with [] hashes each scalar in a list of scalars (referential integrity within list)"},{"message":"MUTATION","module":"AnonymizerTest","test":"test referential integrity same value at different paths and records yields identical output"},{"message":"MUTATION","module":"AnonymizerTest","test":"test referential integrity deterministic fake preserves referential integrity across nesting"},{"message":"MUTATION","module":"AnonymizerTest","test":"test edge cases missing path is ignored gracefully"},{"message":"MUTATION","module":"AnonymizerTest","test":"test edge cases type mismatch along a path is skipped"},{"message":"MUTATION","module":"AnonymizerTest","test":"test edge cases supports string-keyed maps"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T00:07:13.310764Z"}[0m
+[36m02:07:13.331 [debug] fim mutation gate: killed[0m
+[22m02:07:13.332 [info] promoted 037_002_path_addressed_nested_record_anonymizer_04 -> tasks/037_002_path_addressed_nested_record_anonymizer_04[0m

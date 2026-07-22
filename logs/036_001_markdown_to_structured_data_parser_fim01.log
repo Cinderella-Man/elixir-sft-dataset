@@ -1,0 +1,477 @@
+06:45:40.938 [info] FIM 036_001_markdown_to_structured_data_parser_fim01 → 036_001_markdown_to_structured_data_parser_04: target process_line/2
+06:45:40.938 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+06:45:40.938 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `process_line/2`.
+
+Generate a prompt describing how to implement `process_line/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `process_line/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `process_line/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `process_line/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `MarkdownParser` that parses a Markdown document and extracts structured data from it.
+
+The document format follows these conventions:
+- `## Heading` lines define category names
+- Bullet items underneath each heading follow the format: `- **Item Name**: description (tag1, tag2)`
+- Tags are optional — an item may end without parentheses
+- Any other lines (blank lines, non-matching bullets, nested list items starting with more than one `-`) should be silently ignored
+
+The single public function should be:
+- `MarkdownParser.parse(markdown_string)` which accepts a binary and returns a list of category maps in document order:
+  ```elixir
+  [
+    %{
+      category: "Category Name",
+      items: [
+        %{name: "Item Name", description: "some description", tags: ["tag1", "tag2"]}
+      ]
+    }
+  ]
+  ```
+
+Specific behaviours to implement:
+- A `##` heading with no valid bullet items beneath it (before the next heading) should still appear in the output with `items: []`
+- Items with no tag parentheses should have `tags: []`
+- Tags should be trimmed of whitespace individually
+- Only `##` (H2) headings define categories — `#`, `###`, and deeper headings should be ignored entirely (treated as unrecognised lines)
+- If the document has bullet items before any `##` heading appears, discard them
+- The function must handle an empty string input, returning `[]`
+
+Give me the complete module in a single file. Use only the Elixir standard library — no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule MarkdownParser do
+  @moduledoc """
+  Parses a subset of Markdown into structured category/item data.
+
+  ## Document conventions
+
+  * `## Heading` lines define category names (H2 only).
+  * Bullet items beneath a heading follow the format:
+    `- **Item Name**: description (tag1, tag2)`
+  * Tags are optional; an item with no parentheses receives `tags: []`.
+  * All other lines (blank lines, non-matching bullets, H1/H3+ headings,
+    nested list items starting with more than one `-`) are silently ignored.
+  * Bullet items that appear before the first `## heading` are discarded.
+  """
+
+  # ---------------------------------------------------------------------------
+  # Compiled regexes (module-level constants)
+  # ---------------------------------------------------------------------------
+
+  # Matches exactly an H2 heading: "## Some Title"
+  # Captures the trimmed heading text.
+  @heading_re ~r/^##\s+(.+)$/
+
+  # Matches a top-level bullet item that starts with exactly one "-" (not "  -",
+  # not "--", etc.) and contains a bold name followed by a colon.
+  # Group 1 – item name (inside **…**)
+  # Group 2 – description (everything after ": " up to an optional trailing tag list)
+  # Group 3 – raw tag string inside the final "(…)" if present
+  @item_re ~r/^-\s+\*\*(.+?)\*\*:\s+(.*?)(?:\s+\(([^)]*)\))?\s*$/
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Parses `markdown` and returns a list of category maps in document order.
+
+  ## Return shape
+
+      [
+        %{
+          category: "Category Name",
+          items: [
+            %{name: "Item Name", description: "some description", tags: ["tag1", "tag2"]}
+          ]
+        }
+      ]
+
+  Returns `[]` for an empty string or a document with no H2 headings.
+  """
+  @spec parse(binary()) :: [%{category: String.t(), items: list(map())}]
+  def parse(markdown) when is_binary(markdown) do
+    markdown
+    |> split_lines()
+    |> classify_lines()
+    |> build_categories()
+  end
+
+  # ---------------------------------------------------------------------------
+  # Step 1 – split into trimmed lines, drop truly empty ones early
+  # ---------------------------------------------------------------------------
+
+  defp split_lines(markdown) do
+    markdown
+    |> String.split("\n")
+    |> Enum.map(&String.trim_trailing/1)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Step 2 – classify each line as {:heading, name} | {:item, map} | :ignore
+  # ---------------------------------------------------------------------------
+
+  defp classify_lines(lines) do
+    Enum.map(lines, &classify_line/1)
+  end
+
+  defp classify_line(line) do
+    cond do
+      match_heading(line) -> match_heading(line)
+      match_item(line) -> match_item(line)
+      true -> :ignore
+    end
+  end
+
+  defp match_heading(line) do
+    case Regex.run(@heading_re, line, capture: :all_but_first) do
+      [name] -> {:heading, String.trim(name)}
+      _ -> nil
+    end
+  end
+
+  defp match_item(line) do
+    case Regex.run(@item_re, line, capture: :all_but_first) do
+      [name, description] ->
+        {:item, build_item(name, description, nil)}
+
+      [name, description, raw_tags] ->
+        {:item, build_item(name, description, raw_tags)}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp build_item(name, description, raw_tags) do
+    tags =
+      case raw_tags do
+        nil ->
+          []
+
+        "" ->
+          []
+
+        str ->
+          str
+          |> String.split(",")
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
+      end
+
+    %{name: String.trim(name), description: String.trim(description), tags: tags}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Step 3 – fold classified lines into a list of category maps
+  # ---------------------------------------------------------------------------
+  #
+  # State:
+  #   categories  – accumulated result list (reversed; reversed again at the end)
+  #   current     – the category map being built, or nil if no heading seen yet
+  #
+
+  defp build_categories(classified_lines) do
+    initial = %{categories: [], current: nil}
+
+    %{categories: cats, current: last} =
+      Enum.reduce(classified_lines, initial, &process_line/2)
+
+    # Flush the final in-progress category (if any).
+    cats =
+      if last do
+        [finalise(last) | cats]
+      else
+        cats
+      end
+
+    Enum.reverse(cats)
+  end
+
+  # A new H2 heading: flush current category (if any), open a new one.
+  defp process_line({:heading, name}, %{categories: cats, current: current}) do
+    cats =
+      if current do
+        [finalise(current) | cats]
+      else
+        cats
+      end
+
+    %{categories: cats, current: %{category: name, items: []}}
+  end
+
+  # A valid bullet item: append to the current category (discard if no heading yet).
+  defp process_line({:item, item}, %{categories: cats, current: current}) do
+    if current do
+      %{categories: cats, current: Map.update!(current, :items, &[item | &1])}
+    else
+      %{categories: cats, current: nil}
+    end
+  end
+
+  # Anything else: skip.
+  defp process_line(:ignore, state), do: state
+
+  # Reverse the items list (they were prepended for efficiency).
+  defp finalise(%{category: name, items: items}) do
+    %{catego (truncated)
+06:46:19.918 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Task: Implement `process_line/2`
+
+You are completing the `MarkdownParser` module below. Every function is already
+written **except** the private reducer `process_line/2`, whose body has been
+replaced with `# TODO`. Implement it.
+
+## What `process_line/2` must do
+
+`process_line/2` is the reducer passed to `Enum.reduce/3` inside
+`build_categories/1`. It folds the stream of *classified* lines into the
+accumulating result. Each classified line is one of `{:heading, name}`,
+`{:item, item_map}`, or `:ignore`, and the accumulator (the state) is a map of
+the shape:
+
+```elixir
+%{categories: [finalised_category_map, ...], current: current_category_or_nil}
+```
+
+where `categories` holds already-completed category maps in **reverse** document
+order, and `current` is the category currently being built (`%{category: name,
+items: [...]}` with `items` prepended, i.e. reversed) or `nil` if no `##`
+heading has been seen yet.
+
+Implement the three cases:
+
+1. **`{:heading, name}`** — a new H2 heading begins a new category. If there is a
+   `current` category in progress, finalise it with `finalise/1` and prepend the
+   result to `categories`; if `current` is `nil`, leave `categories` untouched.
+   Either way, set `current` to a fresh `%{category: name, items: []}`.
+
+2. **`{:item, item}`** — a valid bullet item. If a `current` category exists,
+   prepend `item` onto its `items` list (use `Map.update!/3`) and keep
+   `categories` unchanged. If `current` is `nil` (the item appeared before any
+   heading), discard the item: return the state unchanged.
+
+3. **`:ignore`** — any unrecognised line. Return the state unchanged.
+
+The function must return an updated state map of the same shape so the reduction
+can continue.
+
+## Module (with `process_line/2` stubbed out)
+
+```elixir
+defmodule MarkdownParser do
+  @moduledoc """
+  Parses a subset of Markdown into structured category/item data.
+
+  ## Document conventions
+
+  * `## Heading` lines define category names (H2 only).
+  * Bullet items beneath a heading follow the format:
+    `- **Item Name**: description (tag1, tag2)`
+  * Tags are optional; an item with no parentheses receives `tags: []`.
+  * All other lines (blank lines, non-matching bullets, H1/H3+ headings,
+    nested list items starting with more than one `-`) are silently ignored.
+  * Bullet items that appear before the first `## heading` are discarded.
+  """
+
+  # ---------------------------------------------------------------------------
+  # Compiled regexes (module-level constants)
+  # ---------------------------------------------------------------------------
+
+  # Matches exactly an H2 heading: "## Some Title"
+  # Captures the trimmed heading text.
+  @heading_re ~r/^##\s+(.+)$/
+
+  # Matches a top-level bullet item that starts with exactly one "-" (not "  -",
+  # not "--", etc.) and contains a bold name followed by a colon.
+  # Group 1 – item name (inside **…**)
+  # Group 2 – description (everything after ": " up to an optional trailing tag list)
+  # Group 3 – raw tag string inside the final "(…)" if present
+  @item_re ~r/^-\s+\*\*(.+?)\*\*:\s+(.*?)(?:\s+\(([^)]*)\))?\s*$/
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Parses `markdown` and returns a list of category maps in document order.
+
+  ## Return shape
+
+      [
+        %{
+          category: "Category Name",
+          items: [
+            %{name: "Item Name", description: "some description", tags: ["tag1", "tag2"]}
+          ]
+        }
+      ]
+
+  Returns `[]` for an empty string or a document with no H2 headings.
+  """
+  @spec parse(binary()) :: [%{category: String.t(), items: list(map())}]
+  def parse(markdown) when is_binary(markdown) do
+    markdown
+    |> split_lines()
+    |> classify_lines()
+    |> build_categories()
+  end
+
+  # ---------------------------------------------------------------------------
+  # Step 1 – split into trimmed lines, drop truly empty ones early
+  # ---------------------------------------------------------------------------
+
+  defp split_lines(markdown) do
+    markdown
+    |> String.split("\n")
+    |> Enum.map(&String.trim_trailing/1)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Step 2 – classify each line as {:heading, name} | {:item, map} | :ignore
+  # ---------------------------------------------------------------------------
+
+  defp classify_lines(lines) do
+    Enum.map(lines, &classify_line/1)
+  end
+
+  defp classify_line(line) do
+    cond do
+      match_heading(line) -> match_heading(line)
+      match_item(line) -> match_item(line)
+      true -> :ignore
+    end
+  end
+
+  defp match_heading(line) do
+    case Regex.run(@heading_re, line, capture: :all_but_first) do
+      [name] -> {:heading, String.trim(name)}
+      _ -> nil
+    end
+  end
+
+  defp match_item(line) do
+    case Regex.run(@item_re, line, capture: :all_but_first) do
+      [name, description] ->
+        {:item, build_item(name, description, nil)}
+
+      [name, description, raw_tags] ->
+        {:item, build_item(name, description, raw_tags)}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp build_item(name, description, raw_tags) do
+    tags =
+      case raw_tags do
+        nil ->
+          []
+
+        "" ->
+          []
+
+        str ->
+          str
+          |> String.split(",")
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
+      end
+
+    %{name: String.trim(name), description: String.trim(description), tags: tags}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Step 3 – fold classified lines into a list of category maps
+  # ---------------------------------------------------------------------------
+  #
+  # State:
+  #   categories  – accumulated result list (reversed; reversed again at the end)
+  #   current     – the category map being built, or nil if no heading seen yet
+  #
+
+  defp build_categories(classified_lines) do
+    initial = %{categories: [], current: nil}
+
+    %{categories: cats, current: last} =
+      Enum.reduce(classified_lines, initial, &process_line/2)
+
+    # Flush the final in-progress category (if any).
+    cats =
+      if last do
+        [finalise(last) | cats]
+      else
+        cats
+      end
+
+    Enum.reverse(cats)
+  end
+
+  defp process_line(classified_line, state) do
+    # TODO
+  end
+
+  # Reverse the items list (they were prepended for efficiency).
+  defp finalise(%{category: name, items: items}) do
+    %{category: name, items: Enum.reverse(items)}
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  # A new H2 heading: flush current category (if any), open a new one.
+  defp process_line({:heading, name}, %{categories: cats, current: current}) do
+    cats =
+      if current do
+        [finalise(current) | cats]
+      else
+        cats
+      end
+
+    %{categories: cats, current: %{category: name, items: []}}
+  end
+
+  # A valid bullet item: append to the current category (discard if no heading yet).
+  defp process_line({:item, item}, %{categories: cats, current: current}) do
+    if current do
+      %{categories: cats, current: Map.update!(current, :items, &[item | &1])}
+    else
+      %{categories: cats, current: nil}
+    end
+  end
+
+  # Anything else: skip.
+  defp process_line(:ignore, state), do: state
+</file>
+06:46:19.918 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3488, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3488, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3488, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3488, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 3376, "type" => "message"}], "output_tokens" => 3376, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+06:46:19.938 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_036_001_markdown_to_structured_data_parser_04/036_001_markdown_to_structured_data_parser_04 solution.ex
+06:46:20.585 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":23,"lines_over_98":0,"max_line_length":84,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"036_001_markdown_to_structured_data_parser_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_036_001_markdown_to_structured_data_parser_04/036_001_markdown_to_structured_data_parser_04/solution.ex","task":"036_001_markdown_to_structured_data_parser_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-10T04:46:20.561807Z"}
+06:46:20.586 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_036_001_markdown_to_structured_data_parser_04/036_001_markdown_to_structured_data_parser_04 .gen_staging/fim_036_001_markdown_to_structured_data_parser_04/mutant.ex
+06:46:21.224 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":11,"lines_over_98":0,"max_line_length":77,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"parent":"036_001_markdown_to_structured_data_parser_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.3,"mode":"fim","overall":0.0,"reasons":["compilation: 7 warning(s) → hard fail (overall 0.0)","tests: 17/17 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_036_001_markdown_to_structured_data_parser_04/mutant.ex","task":"036_001_markdown_to_structured_data_parser_04","test_failures":[{"message":"MUTATION","module":"MarkdownParserTest","test":"test parses a single category with one fully-formed item"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test parses multiple categories in document order"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test parses multiple items under one category"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test item with no parentheses gets empty tags list"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test mix of tagged and untagged items in same category"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test tags are individually trimmed of whitespace"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test empty string returns empty list"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test document with only non-H2 headings returns empty list"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test H2 heading with no items has empty items list"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test multiple empty categories"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test bullet items before first H2 heading are discarded"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test H1 headings are ignored and do not create categories"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test H3 and deeper headings are ignored mid-document"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test nested bullet lines (indented with spaces) are ignored"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test bullet lines not matching the bold-name format are ignored"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test category name is trimmed of surrounding whitespace"},{"message":"MUTATION","module":"MarkdownParserTest","test":"test handles CRLF line endings"}],"tests_errors":0,"tests_excluded":0,"tests_failed":17,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-10T04:46:21.201349Z"}
+06:46:21.224 [debug] fim mutation gate: killed
+06:46:21.225 [info] promoted 036_001_markdown_to_structured_data_parser_04 -> tasks/036_001_markdown_to_structured_data_parser_04

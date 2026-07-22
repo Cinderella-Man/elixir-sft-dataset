@@ -1,0 +1,402 @@
+16:01:59.104 [info] FIM 015_002_escalating_severity_level_health_monitor_fim01 → 015_002_escalating_severity_level_health_monitor_02: target run_check/2
+16:01:59.104 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+16:01:59.104 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `run_check/2`.
+
+Generate a prompt describing how to implement `run_check/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `run_check/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `run_check/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `run_check/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Escalating Severity-Level Health Monitor
+
+Write me an Elixir module called `HealthMonitor` — a `GenServer` that supervises a
+set of registered *probes* by calling a check function for each one on a periodic
+interval, tracking each probe's **severity level**, and firing a callback whenever a
+probe's level changes. Use only the OTP standard library, no external dependencies,
+and give me the complete module in a single file.
+
+Unlike a plain up/down monitor, each probe has **three** severity levels —
+`:ok`, `:warning`, and `:critical` — driven by how many checks have failed in a row.
+
+## The singleton and its lifecycle
+
+`HealthMonitor` is a singleton process. The convenience functions below
+(`add_probe`, `level`, `report`, `probe_now`, `remove_probe`) take **no server
+argument** — they operate on the process registered under the module name
+`HealthMonitor`.
+
+- `HealthMonitor.start_link(opts \\ [])` starts and links the process and returns
+  the usual `GenServer.on_start()` result. `opts` is a keyword list defaulting to
+  `[]`. The process must be registered under the name `HealthMonitor` (i.e.
+  `__MODULE__`) so the no-argument convenience API can find it. A `:name` option may
+  override the registered name, but the convenience functions always target
+  `HealthMonitor`.
+- Starting the server does no monitoring work; a freshly started server tracks zero
+  probes, and `HealthMonitor.report()` returns `%{}`.
+
+## Registering probes
+
+`HealthMonitor.add_probe(name, check_func, interval_ms, opts \\ [])`
+
+- `name` is any term used as the key (strings, atoms, tuples all work and are
+  compared by value).
+- `check_func` is a **zero-arity** function returning either `:ok` (healthy) or
+  `{:error, reason}` (unhealthy), where `reason` is any term.
+- `interval_ms` is a **positive integer**: how often, in milliseconds, the monitor
+  calls `check_func` after registration.
+- `opts` is a keyword list:
+  - `:warn_after` — a **positive integer** `W`; defaults to `2`.
+  - `:crit_after` — a **positive integer** `C`; defaults to `4`.
+  - `:on_change` — a **four-arity** function
+    `on_change.(name, old_level, new_level, reason)` invoked whenever the probe's
+    level changes (see below). Defaults to a no-op.
+
+`add_probe/4` returns `:ok`.
+
+Guards: `check_func` must be a zero-arity function and `interval_ms` must be a
+positive integer. Calling `add_probe` with a non-positive or non-integer
+`interval_ms`, or a check function of the wrong arity, is outside the contract and
+raises `FunctionClauseError`; guard the public function accordingly.
+
+On registration:
+
+- The probe's level starts as `:ok` with a consecutive-failure count of `0`.
+- Registration itself does **not** run the check function. The first check happens
+  one `interval_ms` later, then repeats every `interval_ms` thereafter (implemented
+  with `Process.send_after/3`, re-scheduling itself after each check).
+
+Re-adding an already-registered `name` **replaces** its configuration (check
+function, interval, thresholds, on_change) and **resets** its level to `:ok` with a
+failure count of `0`.
+
+### Lifecycle rule for re-adding (important)
+
+When a probe is re-added, the **previous registration's scheduled checks must never
+run again**. After a re-add:
+
+- The old check function is never called again by any leftover/previously-scheduled
+  timer.
+- Checks for that probe happen only at the **new** interval, calling the **new**
+  check function.
+
+Superseded timer chains are dead. (A robust way to achieve this is to tag each
+registration with a generation token and ignore scheduled check messages whose token
+no longer matches the current registration.)
+
+## Performing a check
+
+Each check — whether triggered by the periodic timer or by `probe_now/1` below —
+calls `check_func.()` exactly once and then updates the probe:
+
+- If the result is `:ok`: the consecutive-failure count is reset to `0` and the new
+  level is `:ok`.
+- If the result is `{:error, reason}`: the consecutive-failure count is incremented
+  by one. The new level is then determined **solely** by the resulting count:
+  - `:critical` if the count is greater than or equal to `crit_after`;
+  - otherwise `:warning` if the count is greater than or equal to `warn_after`;
+  - otherwise `:ok`.
+
+After computing the new level, if (and only if) it **differs** from the probe's
+previous level, the `on_change` callback is invoked **exactly once** as
+`on_change.(name, old_level, new_level, reason)`, where:
+
+- on an escalation caused by a failing check, `reason` is the reason returned by
+  **that** failing check;
+- on a recovery to `:ok` caused by a successful check, `reason` is `nil`.
+
+If the new level equals the previous level, `on_change` is **not** called.
+
+"Consecutive" means any `:ok` result resets the counter to zero, so a probe that
+recovers and later fails again escalates again from scratch.
+
+## Deterministic single check
+
+`HealthMonitor.probe_now(name)` synchronously performs **one** check for the named
+probe immediately — identical work to a scheduled interval tick (calling the check
+function, updating the failure count and level, and firing `on_change` on a level
+change). It returns `{:ok, level}` where `level` is the resulting level (`:ok`,
+`:warning`, or `:critical`), or `{:error, :not_found}` if no such probe is
+registered. `probe_now/1` does not alter or reschedule the periodic timer.
+
+## Querying and removing
+
+- `HealthMonitor.level(name)` returns `:ok`, `:warning`, or `:critical` for a
+  registered probe, or `{:error, :not_found}` if the probe is unknown.
+- `HealthMonitor.report()` returns a map `%{name => level}` containing every
+  currently registered probe and its level. With no probes registered it returns
+  `%{}`.
+- `HealthMonitor.remove_probe(name)` removes a probe. It returns `:ok` if the probe
+  existed (after removal it no longer appears in `report/0` and `level/1` returns
+  `{:error, :not_found}`), or `{:error, :not_found}` if no such probe was registered.
+  After removal the probe's scheduled checks must never run again — its timer chain
+  is dead.
+
+## Robustness
+
+Any unexpected message sent to the server (anything other than the messages it uses
+for its own scheduling) must be ignored: it must not crash the process or alter
+state.
+
+Probes are fully independent: escalating one probe never affects another probe's
+level or failure count.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule HealthMonitor do
+  @moduledoc """
+  A singleton `GenServer` that supervises a set of registered *probes*.
+
+  Each probe has a zero-arity check function that is invoked on a periodic
+  interval. Rather than a simple up/down status, every probe tracks one of
+  three **severity levels** — `:ok`, `:warning`, or `:critical` — driven by
+  how many checks have failed in a row:
+
+    * a successful check (`:ok`) resets the consecutive-failure count to `0`
+      and the level to `:ok`;
+    * a failing check (`{:error, reason}`) increments the count, and the new
+      level becomes `:cr (truncated)
+16:02:40.064 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `HealthMonitor.run_check/2`
+
+Below is the complete `HealthMonitor` module, a singleton `GenServer` that
+supervises registered *probes*, tracking each probe's severity level
+(`:ok`, `:warning`, or `:critical`) and firing an `on_change` callback whenever
+a probe's level changes.
+
+Every function is provided **except** the private helper `run_check/2`, whose
+body has been replaced with `# TODO`. Implement `run_check/2`.
+
+## What `run_check/2` must do
+
+`run_check(name, probe)` performs exactly one check for the probe map `probe`
+registered under `name`, returns the **updated probe map**, and is the shared
+worker used by both the periodic `{:check, ...}` timer message and by
+`probe_now/1` — so the two paths behave identically.
+
+It must:
+
+1. Remember the probe's current level (`probe.level`) as the *old level*.
+2. Call `probe.check_func.()` **exactly once** and branch on its result:
+   - On `:ok` — reset the consecutive-failure count to `0`, set the new level to
+     `:ok`, and use a `reason` of `nil`.
+   - On `{:error, reason}` — increment the consecutive-failure count by one, then
+     compute the new level **solely** from the resulting count using the existing
+     `level_for/3` helper (`:critical` when the count is `>= crit_after`,
+     otherwise `:warning` when `>= warn_after`, otherwise `:ok`), keeping that
+     failing check's `reason`.
+3. If (and only if) the new level **differs** from the old level, invoke
+   `probe.on_change.(name, old_level, new_level, reason)` **exactly once**. If the
+   level is unchanged, do not call `on_change`.
+4. Return the probe map updated with the new `fail_count` and `level` (all other
+   fields unchanged).
+
+`run_check/2` must not schedule timers, touch other probes, or read/write server
+state beyond the single `probe` map it is given.
+
+## The whole module
+
+```elixir
+defmodule HealthMonitor do
+  @moduledoc """
+  A singleton `GenServer` that supervises a set of registered *probes*.
+
+  Each probe has a zero-arity check function that is invoked on a periodic
+  interval. Rather than a simple up/down status, every probe tracks one of
+  three **severity levels** — `:ok`, `:warning`, or `:critical` — driven by
+  how many checks have failed in a row:
+
+    * a successful check (`:ok`) resets the consecutive-failure count to `0`
+      and the level to `:ok`;
+    * a failing check (`{:error, reason}`) increments the count, and the new
+      level becomes `:critical` when the count is `>= :crit_after`, otherwise
+      `:warning` when the count is `>= :warn_after`, otherwise `:ok`.
+
+  Whenever a probe's level changes, an optional four-arity `on_change`
+  callback is invoked exactly once with `(name, old_level, new_level, reason)`.
+
+  The process is registered under the module name `HealthMonitor`, so the
+  convenience functions take no server argument. Only the OTP standard
+  library is used.
+  """
+
+  use GenServer
+
+  @typedoc "A probe severity level."
+  @type level :: :ok | :warning | :critical
+
+  @typedoc "The result returned by a probe's check function."
+  @type check_result :: :ok | {:error, term()}
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts and links the monitor process.
+
+  The process is registered under `HealthMonitor` unless a `:name` option is
+  given. A freshly started server tracks zero probes.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  @doc """
+  Registers (or re-registers) a probe under `name`.
+
+  `check_func` must be a zero-arity function returning `:ok` or
+  `{:error, reason}`. `interval_ms` is a positive integer giving how often the
+  check runs after registration (the first check happens one interval later).
+
+  Options:
+
+    * `:warn_after` — positive integer, defaults to `2`;
+    * `:crit_after` — positive integer, defaults to `4`;
+    * `:on_change` — four-arity callback, defaults to a no-op.
+
+  Re-adding an existing `name` replaces its configuration and resets its level
+  to `:ok` with a failure count of `0`; previously scheduled checks for that
+  name never run again.
+  """
+  @spec add_probe(term(), (-> check_result()), pos_integer(), keyword()) :: :ok
+  def add_probe(name, check_func, interval_ms, opts \\ [])
+      when is_function(check_func, 0) and is_integer(interval_ms) and interval_ms > 0 do
+    GenServer.call(__MODULE__, {:add_probe, name, check_func, interval_ms, opts})
+  end
+
+  @doc """
+  Returns the current severity level for `name`, or `{:error, :not_found}`.
+  """
+  @spec level(term()) :: level() | {:error, :not_found}
+  def level(name) do
+    GenServer.call(__MODULE__, {:level, name})
+  end
+
+  @doc """
+  Returns a map of `%{name => level}` for every registered probe.
+  """
+  @spec report() :: %{optional(term()) => level()}
+  def report do
+    GenServer.call(__MODULE__, :report)
+  end
+
+  @doc """
+  Synchronously performs exactly one check for `name`, immediately.
+
+  Performs the identical work of a scheduled tick (running the check function,
+  updating the failure count and level, and firing `on_change` on a level
+  change) without altering or rescheduling the periodic timer.
+
+  Returns `{:ok, level}` or `{:error, :not_found}`.
+  """
+  @spec probe_now(term()) :: {:ok, level()} | {:error, :not_found}
+  def probe_now(name) do
+    GenServer.call(__MODULE__, {:probe_now, name})
+  end
+
+  @doc """
+  Removes the probe registered under `name`.
+
+  Returns `:ok` if the probe existed (its scheduled checks never run again), or
+  `{:error, :not_found}` if no such probe was registered.
+  """
+  @spec remove_probe(term()) :: :ok | {:error, :not_found}
+  def remove_probe(name) do
+    GenServer.call(__MODULE__, {:remove_probe, name})
+  end
+
+  # ── GenServer callbacks ───────────────────────────────────────────────────
+
+  @impl true
+  @spec init(keyword()) :: {:ok, map()}
+  def init(_opts) do
+    {:ok, %{}}
+  end
+
+  @impl true
+  def handle_call({:add_probe, name, check_func, interval_ms, opts}, _from, state) do
+    warn_after = Keyword.get(opts, :warn_after, 2)
+    crit_after = Keyword.get(opts, :crit_after, 4)
+    on_change = Keyword.get(opts, :on_change, fn _name, _old, _new, _reason -> :ok end)
+    token = make_ref()
+
+    probe = %{
+      check_func: check_func,
+      interval_ms: interval_ms,
+      warn_after: warn_after,
+      crit_after: crit_after,
+      on_change: on_change,
+      level: :ok,
+      fail_count: 0,
+      token: token
+    }
+
+    Process.send_after(self(), {:check, name, token}, interval_ms)
+    {:reply, :ok, Map.put(state, name, probe)}
+  end
+
+  def handle_call({:level, name}, _from, state) do
+    case Map.fetch(state, name) do
+      {:ok, probe} -> {:reply, probe.level, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call(:report, _from, state) do
+    report = Map.new(state, fn {name, probe} -> {name, probe.level} end)
+    {:reply, report, state}
+  end
+
+  def handle_call({:probe_now, name}, _from, state) do
+    case Map.fetch(state, name) do
+      {:ok, probe} ->
+        updated = run_check(name, probe)
+        {:reply, {:ok, updated.level}, Map.put(state, name, updated)}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:remove_probe, name}, _from, state) do
+    case Map.has_key?(state, name) do
+      true -> {:reply, :ok, Map.delete(state, name)}
+      false -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  @impl true
+  def handle_info({:check, name, token}, state) do
+    case Map.fetch(state, name) do
+      {:ok, %{token: ^token} = probe} ->
+        updated = run_check(name, probe)
+        Process.send_after(self(), {:check, name, token}, probe.interval_m (truncated)
+16:02:40.064 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9430, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9430, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9430, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9430, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 3700, "type" => "message"}], "output_tokens" => 3700, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+16:02:40.092 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_015_002_escalating_severity_level_health_monitor_02/015_002_escalating_severity_level_health_monitor_02 solution.ex
+16:02:41.679 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":20,"lines_over_98":0,"max_line_length":79,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"015_002_escalating_severity_level_health_monitor_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_015_002_escalating_severity_level_health_monitor_02/015_002_escalating_severity_level_health_monitor_02/solution.ex","task":"015_002_escalating_severity_level_health_monitor_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-15T14:02:41.648422Z","warning_details":[]}
+16:02:41.697 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_015_002_escalating_severity_level_health_monitor_02/015_002_escalating_severity_level_health_monitor_02 .gen_staging/fim_015_002_escalating_severity_level_health_monitor_02/mutant.ex
+16:02:45.602 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":39,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"parent":"015_002_escalating_severity_level_health_monitor_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.5,"mode":"fim","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 11/20 failed"],"tests":0.45},"shape":"fim","solution_file":".gen_staging/fim_015_002_escalating_severity_level_health_monitor_02/mutant.ex","task":"015_002_escalating_severity_level_health_monitor_02","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{HealthMonitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 191, error_info: %{module: Exception}]}, {HealthMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [HealthMonitor, {:probe_now, \"svc\"}, 5000]}}","module":"HealthMonitorTest","test":"test consecutive failures escalate :ok -> :warning -> :critical, firing on_change per step"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{HealthMonitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 191, error_info: %{module: Exception}]}, {HealthMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [HealthMonitor, {:probe_now, \"svc\"}, 5000]}}","module":"HealthMonitorTest","test":"test default thresholds are warn_after 2 and crit_after 4"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{HealthMonitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 191, error_info: %{module: Exception}]}, {HealthMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [HealthMonitor, {:probe_now, \"svc\"}, 5000]}}","module":"HealthMonitorTest","test":"test a success recovers to :ok and fires on_change with a nil reason"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{HealthMonitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 191, error_info: %{module: Exception}]}, {HealthMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [HealthMonitor, {:probe_now, \"svc\"}, 5000]}}","module":"HealthMonitorTest","test":"test a success resets the consecutive-failure count"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{HealthMonitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 191, error_info: %{module: Exception}]}, {HealthMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [HealthMonitor, {:probe_now, \"svc\"}, 5000]}}","module":"HealthMonitorTest","test":"test re-adding a probe resets its level and applies the new config"},{"message":"\n\nAssertion failed, no matching message after 1000ms\n     The process mailbox is empty.\ncode: assert_receive {:probe, :a}\n","module":"HealthMonitorTest","test":"test re-adding a probe kills the previous schedule"},{"message":"\n\nAssertion failed, no matching message after 1000ms\n     The process mailbox is empty.\ncode: assert_receive {:probe, :c}\n","module":"HealthMonitorTest","test":"test remove_probe kills the previous schedule"},{"message":"\n\nAssertion failed, no matching message after 1000ms\n     The process mailbox is empty.\ncode: assert_receive {:probe, :a}\n","module":"HealthMonitorTest","test":"test periodic checks run at the configured interval"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{HealthMonitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 191, error_info: %{module: Exception}]}, {HealthMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [HealthMonitor, {:probe_now, \"a\"}, 5000]}}","module":"HealthMonitorTest","test":"test probes are independent"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{HealthMonitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 191, error_info: %{module: Exception}]}, {HealthMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [HealthMonitor, {:probe_now, {:svc, 1}}, 5000]}}","module":"HealthMonitorTest","test":"test atom and tuple probe names work and compare by value"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{HealthMonitor, :run_check, 2, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 191, error_info: %{module: Exception}]}, {HealthMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_3057238_2629.ex\", line: 155]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [HealthMonitor, {:probe_now, \"svc\"}, 5000]}}","module":"HealthMonitorTest","test":"test a single escalating check fires on_change only once"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-15T14:02:45.576716Z","warning_details":["evalfim_3057238_2629.ex: line 190: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","evalfim_3057238_2629.ex: line 190: variable \"probe\" is unused (if the variable is not meant to be used, prefix it with an underscore)","evalfim_3057238_2629.ex: line 195: function level_for/3 is unused","evalfim_3057238_2629.ex: line 174: the following pattern will never match: updated = run_check(name, probe) because the right-hand side has type: none() where \"name\" was given the type: # type: dynamic() # from: /tmp/evalfim_3057238_26","evalfim_3057238_2629.ex: line 155: the following pattern will never match: updated = run_check(name, probe) because the right-hand side has type: none() where \"name\" was given the type: # type: dynamic() # from: /tmp/evalfim_3057238_26"]}
+16:02:45.602 [debug] fim mutation gate: killed
+16:02:45.621 [info] promoted 015_002_escalating_severity_level_health_monitor_02 -> tasks/015_002_escalating_severity_level_health_monitor_02

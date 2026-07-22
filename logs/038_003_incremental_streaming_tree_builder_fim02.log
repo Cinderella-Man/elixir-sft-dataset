@@ -1,0 +1,490 @@
+09:14:58.913 [info] FIM 038_003_incremental_streaming_tree_builder_fim02 → 038_003_incremental_streaming_tree_builder_03: target build_subtree/3
+09:14:58.913 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+09:14:58.914 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `build_subtree/3`.
+
+Generate a prompt describing how to implement `build_subtree/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `build_subtree/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `build_subtree/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `build_subtree/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `TreeStream` — a **stateful GenServer** that builds a
+nested tree from node maps that arrive **incrementally and possibly out of order**
+(a child may be added before its parent). Unlike a one-shot builder, this process
+accumulates nodes over time and can be queried for the current forest at any moment.
+
+Each node is a map with at least these two fields:
+- `:id` — a unique identifier (any term: integer, string, atom)
+- `:parent_id` — the id of the parent node, or `nil` if this node is a root
+
+I need this public API:
+
+- `TreeStream.start_link(opts \\ [])` — starts the server and returns `{:ok, pid}`.
+  Supported option:
+  - `:orphan_strategy` — `:discard` (default) or `:raise_to_root`, applied when the
+    forest is computed (see below).
+
+- `TreeStream.add(server, item)` — adds one node. Returns `:ok`, or
+  `{:error, {:duplicate_id, id}}` if a node with that id was already added (the new
+  item is rejected and state is unchanged).
+
+- `TreeStream.add_many(server, items)` — adds a list of nodes in order. Nodes whose id
+  is already present (from a previous call or earlier in the same list) are skipped.
+  Always returns `:ok`.
+
+- `TreeStream.forest(server)` — computes and returns `{:ok, forest}` from all nodes added
+  so far, where `forest` is a list of root-level nodes, each being the original map with a
+  `:children` key added (a list of child nodes, recursively structured the same way).
+  Leaf nodes have `children: []`. When no nodes have been added, returns `{:ok, []}`.
+  Returns `{:error, {:cycle_detected, ids}}` if the current set of nodes contains a cycle.
+
+- `TreeStream.count(server)` — returns the number of nodes currently held (an integer).
+
+- `TreeStream.stop(server)` — stops the server.
+
+Ordering rules for `forest/1`: root nodes appear in the order they were added; the
+children of any parent appear in the order those items were added. All original fields
+must be preserved, with only the extra `:children` key added.
+
+Because nodes arrive incrementally, `forest/1` must correctly handle the case where a
+child was added before its parent — the resulting nesting must be identical regardless of
+insertion order (only the *root order* and *sibling order* follow insertion order).
+
+`:orphan_strategy` governs nodes whose `parent_id` references an id not currently present:
+`:discard` drops them, `:raise_to_root` promotes them to roots. Cycle detection must catch
+both direct (A → B → A) and indirect (A → B → C → A) cycles.
+
+Do not use any external dependencies — only the Elixir / Erlang standard library.
+Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule TreeStream do
+  @moduledoc """
+  A stateful GenServer that builds a nested forest from node maps arriving
+  incrementally and possibly out of order.
+
+  Each node map must have at least `:id` and `:parent_id` (or `nil` for roots).
+  Nodes are accumulated in insertion order; `forest/1` computes the nested tree
+  on demand, so a child added before its parent is placed correctly once the
+  parent arrives.
+  """
+
+  use GenServer
+
+  @type id :: term()
+  @type node_map :: %{required(:id) => id(), required(:parent_id) => id() | nil}
+  @type tree_node :: map()
+  @type orphan_strategy :: :discard | :raise_to_root
+
+  # ---------------------------------------------------------------------------
+  # Client API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the server.
+
+  Supports the `:orphan_strategy` option (`:discard`, the default, or
+  `:raise_to_root`), which governs how nodes referencing an absent parent are
+  treated when the forest is computed.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    strategy = Keyword.get(opts, :orphan_strategy, :discard)
+    GenServer.start_link(__MODULE__, strategy)
+  end
+
+  @doc """
+  Adds one node.
+
+  Returns `:ok`, or `{:error, {:duplicate_id, id}}` if a node with that id was
+  already added (the new item is rejected and the state is left unchanged).
+  """
+  @spec add(GenServer.server(), node_map()) :: :ok | {:error, {:duplicate_id, id()}}
+  def add(server, item), do: GenServer.call(server, {:add, item})
+
+  @doc """
+  Adds a list of nodes in order.
+
+  Nodes whose id is already present (from a previous call or earlier in the same
+  list) are skipped. Always returns `:ok`.
+  """
+  @spec add_many(GenServer.server(), [node_map()]) :: :ok
+  def add_many(server, items), do: GenServer.call(server, {:add_many, items})
+
+  @doc """
+  Computes and returns `{:ok, forest}` from all nodes added so far.
+
+  Each root-level node is the original map with a recursively structured
+  `:children` key added. Returns `{:ok, []}` when no nodes have been added, or
+  `{:error, {:cycle_detected, ids}}` if the current node set contains a cycle.
+  """
+  @spec forest(GenServer.server()) ::
+          {:ok, [tree_node()]} | {:error, {:cycle_detected, [id()]}}
+  def forest(server), do: GenServer.call(server, :forest)
+
+  @doc """
+  Returns the number of nodes currently held.
+  """
+  @spec count(GenServer.server()) :: non_neg_integer()
+  def count(server), do: GenServer.call(server, :count)
+
+  @doc """
+  Stops the server.
+  """
+  @spec stop(GenServer.server()) :: :ok
+  def stop(server), do: GenServer.stop(server)
+
+  # ---------------------------------------------------------------------------
+  # Server callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(strategy) do
+    {:ok, %{items: [], ids: MapSet.new(), strategy: strategy}}
+  end
+
+  @impl true
+  def handle_call({:add, item}, _from, state) do
+    id = Map.fetch!(item, :id)
+
+    if MapSet.member?(state.ids, id) do
+      {:reply, {:error, {:duplicate_id, id}}, state}
+    else
+      {:reply, :ok, put_item(state, item, id)}
+    end
+  end
+
+  def handle_call({:add_many, items}, _from, state) do
+    new_state =
+      Enum.reduce(items, state, fn item, acc ->
+        id = Map.fetch!(item, :id)
+
+        if MapSet.member?(acc.ids, id) do
+          acc
+        else
+          put_item(acc, item, id)
+        end
+      end)
+
+    {:reply, :ok, new_state}
+  end
+
+  def handle_call(:forest, _from, state) do
+    ordered = Enum.reverse(state.items)
+    {:reply, do_build(ordered, state.strategy), state}
+  end
+
+  def handle_call(:count, _from, state) do
+    {:reply, MapSet.size(state.ids), state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp put_item(state, item, id) do
+    %{state | items: [item | state.items], ids: MapSet.put(state.ids, id)}
+  end
+
+  defp do_build([], _strategy), do: {:ok, []}
+
+  defp do_build(items, strategy) do
+    {id_to_node, ordered_ids} = index_items(items)
+    children_map = build_children_map(items)
+    known_ids = MapSet.new(ordered_ids)
+
+     (truncated)
+09:15:33.752 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `build_subtree/3` function. It takes a node `id`, an
+`id_to_node` map (id → the original node map), and a `children_map` (parent id →
+ordered list of child ids). It should fetch the node map for `id` from
+`id_to_node`, look up that node's child ids in `children_map` (defaulting to an
+empty list when the node has no children), and recursively build each child
+subtree by calling `build_subtree/3` on every child id in order. Finally, it
+returns the original node map with a `:children` key added holding the list of
+recursively-built child nodes (so leaf nodes end up with `children: []`).
+
+```elixir
+defmodule TreeStream do
+  @moduledoc """
+  A stateful GenServer that builds a nested forest from node maps arriving
+  incrementally and possibly out of order.
+
+  Each node map must have at least `:id` and `:parent_id` (or `nil` for roots).
+  Nodes are accumulated in insertion order; `forest/1` computes the nested tree
+  on demand, so a child added before its parent is placed correctly once the
+  parent arrives.
+  """
+
+  use GenServer
+
+  @type id :: term()
+  @type node_map :: %{required(:id) => id(), required(:parent_id) => id() | nil}
+  @type tree_node :: map()
+  @type orphan_strategy :: :discard | :raise_to_root
+
+  # ---------------------------------------------------------------------------
+  # Client API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the server.
+
+  Supports the `:orphan_strategy` option (`:discard`, the default, or
+  `:raise_to_root`), which governs how nodes referencing an absent parent are
+  treated when the forest is computed.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    strategy = Keyword.get(opts, :orphan_strategy, :discard)
+    GenServer.start_link(__MODULE__, strategy)
+  end
+
+  @doc """
+  Adds one node.
+
+  Returns `:ok`, or `{:error, {:duplicate_id, id}}` if a node with that id was
+  already added (the new item is rejected and the state is left unchanged).
+  """
+  @spec add(GenServer.server(), node_map()) :: :ok | {:error, {:duplicate_id, id()}}
+  def add(server, item), do: GenServer.call(server, {:add, item})
+
+  @doc """
+  Adds a list of nodes in order.
+
+  Nodes whose id is already present (from a previous call or earlier in the same
+  list) are skipped. Always returns `:ok`.
+  """
+  @spec add_many(GenServer.server(), [node_map()]) :: :ok
+  def add_many(server, items), do: GenServer.call(server, {:add_many, items})
+
+  @doc """
+  Computes and returns `{:ok, forest}` from all nodes added so far.
+
+  Each root-level node is the original map with a recursively structured
+  `:children` key added. Returns `{:ok, []}` when no nodes have been added, or
+  `{:error, {:cycle_detected, ids}}` if the current node set contains a cycle.
+  """
+  @spec forest(GenServer.server()) ::
+          {:ok, [tree_node()]} | {:error, {:cycle_detected, [id()]}}
+  def forest(server), do: GenServer.call(server, :forest)
+
+  @doc """
+  Returns the number of nodes currently held.
+  """
+  @spec count(GenServer.server()) :: non_neg_integer()
+  def count(server), do: GenServer.call(server, :count)
+
+  @doc """
+  Stops the server.
+  """
+  @spec stop(GenServer.server()) :: :ok
+  def stop(server), do: GenServer.stop(server)
+
+  # ---------------------------------------------------------------------------
+  # Server callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(strategy) do
+    {:ok, %{items: [], ids: MapSet.new(), strategy: strategy}}
+  end
+
+  @impl true
+  def handle_call({:add, item}, _from, state) do
+    id = Map.fetch!(item, :id)
+
+    if MapSet.member?(state.ids, id) do
+      {:reply, {:error, {:duplicate_id, id}}, state}
+    else
+      {:reply, :ok, put_item(state, item, id)}
+    end
+  end
+
+  def handle_call({:add_many, items}, _from, state) do
+    new_state =
+      Enum.reduce(items, state, fn item, acc ->
+        id = Map.fetch!(item, :id)
+
+        if MapSet.member?(acc.ids, id) do
+          acc
+        else
+          put_item(acc, item, id)
+        end
+      end)
+
+    {:reply, :ok, new_state}
+  end
+
+  def handle_call(:forest, _from, state) do
+    ordered = Enum.reverse(state.items)
+    {:reply, do_build(ordered, state.strategy), state}
+  end
+
+  def handle_call(:count, _from, state) do
+    {:reply, MapSet.size(state.ids), state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp put_item(state, item, id) do
+    %{state | items: [item | state.items], ids: MapSet.put(state.ids, id)}
+  end
+
+  defp do_build([], _strategy), do: {:ok, []}
+
+  defp do_build(items, strategy) do
+    {id_to_node, ordered_ids} = index_items(items)
+    children_map = build_children_map(items)
+    known_ids = MapSet.new(ordered_ids)
+
+    case detect_cycle(ordered_ids, children_map) do
+      {:error, _} = err ->
+        err
+
+      :ok ->
+        root_ids =
+          Enum.filter(ordered_ids, fn id ->
+            pid = Map.fetch!(id_to_node, id).parent_id
+
+            cond do
+              is_nil(pid) -> true
+              not MapSet.member?(known_ids, pid) -> strategy == :raise_to_root
+              true -> false
+            end
+          end)
+
+        forest = Enum.map(root_ids, &build_subtree(&1, id_to_node, children_map))
+        {:ok, forest}
+    end
+  end
+
+  defp index_items(items) do
+    {map, ids} =
+      Enum.reduce(items, {%{}, []}, fn item, {map, ids} ->
+        id = Map.fetch!(item, :id)
+        {Map.put(map, id, item), [id | ids]}
+      end)
+
+    {map, Enum.reverse(ids)}
+  end
+
+  defp build_children_map(items) do
+    Enum.reduce(items, %{}, fn item, acc ->
+      pid = item.parent_id
+
+      if is_nil(pid) do
+        acc
+      else
+        Map.update(acc, pid, [item.id], fn existing -> existing ++ [item.id] end)
+      end
+    end)
+  end
+
+  defp build_subtree(id, id_to_node, children_map) do
+    # TODO
+  end
+
+  # ---------------------------------------------------------------------------
+  # Cycle detection — iterative DFS (white/grey/black colouring)
+  # ---------------------------------------------------------------------------
+
+  defp detect_cycle(all_ids, children_map) do
+    initial_colors = Map.new(all_ids, fn id -> {id, :white} end)
+
+    Enum.reduce_while(all_ids, {:ok, initial_colors}, fn id, {:ok, colors} ->
+      if Map.get(colors, id) == :white do
+        case dfs(id, children_map, colors, []) do
+          {:ok, new_colors} -> {:cont, {:ok, new_colors}}
+          {:error, _} = err -> {:halt, err}
+        end
+      else
+        {:cont, {:ok, colors}}
+      end
+    end)
+    |> case do
+      {:ok, _colors} -> :ok
+      {:error, _} = err -> err
+    end
+  end
+
+  defp dfs(id, children_map, colors, stack) do
+    colors = Map.put(colors, id, :grey)
+    stack = [id | stack]
+    child_ids = Map.get(children_map, id, [])
+
+    result =
+      Enum.reduce_while(child_ids, {:ok, colors}, fn child_id, {:ok, acc_colors} ->
+        case Map.get(acc_colors, child_id) do
+          :grey ->
+            cycle = extract_cycle(child_id, [child_id | stack])
+            {:halt, {:error, {:cycle_detected, cycle}}}
+
+          :white ->
+            case dfs(child_id, children_map, acc_colors, stack) do
+              {:ok, new_colors} -> {:cont, {:ok, new_colors}}
+              {:error, _} = err -> {:halt, err}
+            end
+
+          :black ->
+            {:cont, {:ok, acc_colors}}
+
+          nil ->
+            {:cont, {:ok, acc_colors}}
+        end
+      end)
+
+    case result do
+      {:ok, colors} -> {:ok, Map.put(colors, id, :black)}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp extract_cycle(cycle_root, path) do
+    path
+    |> Enum.reverse()
+    |> Enum.drop_while(fn id -> id != cycle_root end)
+    |> Enum.uniq()
+    |> case do
+      [] -> [cycle_root]
+      slice -> slice
+    end
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp build_subtree(id, id_to_node, children_map) do
+    nod (truncated)
+09:15:33.752 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4814, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4814, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4814, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4814, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3508, "type" => "message"}], "output_tokens" => 3508, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+09:15:33.771 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_038_003_incremental_streaming_tree_builder_03/038_003_incremental_streaming_tree_builder_03 solution.ex
+09:15:34.509 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":11,"lines_over_98":0,"max_line_length":57,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"038_003_incremental_streaming_tree_builder_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_038_003_incremental_streaming_tree_builder_03/038_003_incremental_streaming_tree_builder_03/solution.ex","task":"038_003_incremental_streaming_tree_builder_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T07:15:34.485150Z"}
+09:15:34.510 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_038_003_incremental_streaming_tree_builder_03/038_003_incremental_streaming_tree_builder_03 .gen_staging/fim_038_003_incremental_streaming_tree_builder_03/mutant.ex
+09:15:35.245 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":51,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"parent":"038_003_incremental_streaming_tree_builder_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.7,"mode":"fim","overall":0.45,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 9/12 failed"],"tests":0.25},"shape":"fim","solution_file":".gen_staging/fim_038_003_incremental_streaming_tree_builder_03/mutant.ex","task":"038_003_incremental_streaming_tree_builder_03","test_failures":[{"message":"{:EXIT, #PID<0.210.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TreeStream, :build_subtree, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 180, error_info: %{module: Exception}]}, {Enum, :\"-map/2-lists^map/1-1-\", 2, [file: ~c\"lib/enum.ex\", line: 1725]}, {TreeStream, :do_build, 2, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 152]}, {TreeStream, :handle_call, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 114]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TreeStreamTest","test":"test builds a nested tree from incrementally added nodes"},{"message":"{:EXIT, #PID<0.212.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TreeStream, :build_subtree, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 180, error_info: %{module: Exception}]}, {Enum, :\"-map/2-lists^map/1-1-\", 2, [file: ~c\"lib/enum.ex\", line: 1725]}, {TreeStream, :do_build, 2, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 152]}, {TreeStream, :handle_call, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 114]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TreeStreamTest","test":"test handles a child added before its parent (out-of-order)"},{"message":"{:EXIT, #PID<0.214.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TreeStream, :build_subtree, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 180, error_info: %{module: Exception}]}, {Enum, :\"-map/2-lists^map/1-1-\", 2, [file: ~c\"lib/enum.ex\", line: 1725]}, {TreeStream, :do_build, 2, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 152]}, {TreeStream, :handle_call, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 114]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TreeStreamTest","test":"test root and sibling order follow insertion order, not id order"},{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TreeStream, :build_subtree, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 180, error_info: %{module: Exception}]}, {Enum, :\"-map/2-lists^map/1-1-\", 2, [file: ~c\"lib/enum.ex\", line: 1725]}, {TreeStream, :do_build, 2, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 152]}, {TreeStream, :handle_call, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 114]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TreeStreamTest","test":"test duplicate add is rejected and leaves state unchanged"},{"message":"{:EXIT, #PID<0.218.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TreeStream, :build_subtree, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 180, error_info: %{module: Exception}]}, {Enum, :\"-map/2-lists^map/1-1-\", 2, [file: ~c\"lib/enum.ex\", line: 1725]}, {TreeStream, :do_build, 2, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 152]}, {TreeStream, :handle_call, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 114]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TreeStreamTest","test":"test add_many adds all and skips duplicates"},{"message":"{:EXIT, #PID<0.220.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TreeStream, :build_subtree, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 180, error_info: %{module: Exception}]}, {Enum, :\"-map/2-lists^map/1-1-\", 2, [file: ~c\"lib/enum.ex\", line: 1725]}, {TreeStream, :do_build, 2, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 152]}, {TreeStream, :handle_call, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 114]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TreeStreamTest","test":"test preserves all original fields"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TreeStream, :build_subtree, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 180, error_info: %{module: Exception}]}, {Enum, :\"-map/2-lists^map/1-1-\", 2, [file: ~c\"lib/enum.ex\", line: 1725]}, {TreeStream, :do_build, 2, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 152]}, {TreeStream, :handle_call, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 114]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TreeStreamTest","test":"test orphans are discarded by default"},{"message":"{:EXIT, #PID<0.224.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TreeStream, :build_subtree, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 180, error_info: %{module: Exception}]}, {Enum, :\"-map/2-lists^map/1-1-\", 2, [file: ~c\"lib/enum.ex\", line: 1725]}, {TreeStream, :do_build, 2, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 152]}, {TreeStream, :handle_call, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 114]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TreeStreamTest","test":"test :raise_to_root promotes orphans to roots"},{"message":"{:EXIT, #PID<0.230.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TreeStream, :build_subtree, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 180, error_info: %{module: Exception}]}, {Enum, :\"-map/2-lists^map/1-1-\", 2, [file: ~c\"lib/enum.ex\", line: 1725]}, {TreeStream, :do_build, 2, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 152]}, {TreeStream, :handle_call, 3, [file: ~c\"/tmp/evalfim_480606_2627.ex\", line: 114]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TreeStreamTest","test":"test forest reflects state as it grows across multiple queries"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":3,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T07:15:35.221091Z"}
+09:15:35.245 [debug] fim mutation gate: killed
+09:15:35.246 [info] promoted 038_003_incremental_streaming_tree_builder_03 -> tasks/038_003_incremental_streaming_tree_builder_03

@@ -1,0 +1,1495 @@
+17:33:05.919 [info] VARIATION 034_004_tolerance_rule_reconciler_with_conflict_classification_01: Tolerance-Rule Reconciler with Conflict Classification
+17:33:05.919 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+17:33:05.919 [debug] claude -p USER prompt:
+Write me an Elixir module called `TolerantReconciler` that reconciles records with **per-field comparison rules** rather than strict equality, and classifies every matched pair by how badly it disagrees.
+
+Real-world reconciliation between two systems rarely finds byte-identical records: a float may be off by rounding, a name may differ only in case or padding. Those benign differences must be reported but must *not* be treated as conflicts.
+
+I need these functions in the public API:
+
+- `TolerantReconciler.diff_pair(left, right, opts)` — compares two maps and returns `{status, diff_map}`.
+- `TolerantReconciler.reconcile_all(left, right, opts)` — reconciles two lists of maps by a composite key and buckets the results.
+- `TolerantReconciler.summary(result)` — takes the map returned by `reconcile_all/3` and returns counts.
+
+## Rules
+
+A **rule** describes how one field is compared. Supported rules:
+
+- `:exact` — the values must be equal (`==`). Any difference is a conflict.
+- `{:numeric, tolerance}` — the difference is *tolerable* if both values are numbers (integer or float) and `abs(left - right) <= tolerance`. Otherwise it is a conflict.
+- `:case_insensitive` — the difference is *tolerable* if both values are binaries and they are equal after trimming leading/trailing whitespace and downcasing. Otherwise it is a conflict.
+
+Rules are supplied via the `:rules` option as a map or keyword list of `field => rule`. Any field with no rule defaults to `:exact`.
+
+## `diff_pair/3`
+
+`opts` supports:
+
+- `:rules` (optional, default none) — the `field => rule` mapping described above.
+- `:ignore_fields` (optional, default `[]`) — a list of atoms to exclude from comparison entirely.
+
+The compared fields are every field present in `left` or in `right`, minus `:ignore_fields`. A field missing from one map is read as `nil`.
+
+For each compared field:
+
+- if the two values are equal (`==`), the field does not appear in the diff map;
+- otherwise the field appears as `field => %{left: left_value, right: right_value, status: field_status}` where `field_status` is `:within_tolerance` if the field's rule tolerates the difference (per the rules above) and `:conflict` if it does not.
+
+The returned `status` is:
+
+- `:identical` if the diff map is empty;
+- `:conflict` if any field in the diff map has `status: :conflict`;
+- `:within_tolerance` otherwise (there are differences, but every one of them is tolerated).
+
+## `reconcile_all/3`
+
+`opts` supports:
+
+- `:key_fields` (required) — a non-empty list of atoms forming the composite key. Missing or invalid must raise `ArgumentError`.
+- `:rules` (optional) — as above.
+- `:ignore_fields` (optional, default `[]`) — extra fields to exclude. The key fields are **always** excluded from comparison, whether or not they are listed.
+
+It returns a map with exactly these five keys:
+
+- `:identical`, `:within_tolerance`, `:conflicts` — lists of `%{key: key_map, left: record, right: record, differences: diff_map}` entries for keys present on both sides, bucketed by the pair's `diff_pair/3` status (`:conflict` pairs go into `:conflicts`).
+- `:only_in_left` — the raw left records whose key is absent from `right`.
+- `:only_in_right` — the raw right records whose key is absent from `left`.
+
+Where a `key_map` is `%{field => value}` over the key fields (a missing key field contributes `nil`). If the same key occurs more than once on a side, the last record with that key in the input list wins. Order within each bucket does not matter.
+
+## `summary/1`
+
+Given a `reconcile_all/3` result, returns
+
+```
+%{
+  identical: n,
+  within_tolerance: n,
+  conflicts: n,
+  only_in_left: n,
+  only_in_right: n,
+  matched: n            # identical + within_tolerance + conflicts
+}
+```
+
+Other requirements: the module must be pure — no processes, no side effects — and use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+17:33:43.080 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TolerantReconciler do
+  @moduledoc """
+  Reconciles records between two systems using per-field comparison rules instead of
+  strict equality, and classifies every matched pair by how badly it disagrees.
+
+  Real-world reconciliation rarely finds byte-identical records: a float may be off by
+  rounding, a name may differ only in case or padding. Such benign differences are
+  reported as `:within_tolerance` rather than escalated to `:conflict`.
+
+  Supported rules:
+
+    * `:exact` — values must be equal (`==`); any difference is a conflict.
+    * `{:numeric, tolerance}` — tolerable when both values are numbers and
+      `abs(left - right) <= tolerance`.
+    * `:case_insensitive` — tolerable when both values are binaries that are equal after
+      trimming leading/trailing whitespace and downcasing.
+
+  Fields without an explicit rule default to `:exact`. The module is pure: it spawns no
+  processes, performs no I/O, and depends only on the Elixir standard library.
+  """
+
+  @type field :: atom()
+  @type rule :: :exact | :case_insensitive | {:numeric, number()}
+  @type rules :: %{optional(field()) => rule()} | keyword()
+  @type record :: %{optional(field()) => term()}
+  @type field_status :: :within_tolerance | :conflict
+  @type pair_status :: :identical | :within_tolerance | :conflict
+  @type diff_map :: %{optional(field()) => %{left: term(), right: term(), status: field_status()}}
+  @type key_map :: %{optional(field()) => term()}
+  @type entry :: %{key: key_map(), left: record(), right: record(), differences: diff_map()}
+  @type result :: %{
+          identical: [entry()],
+          within_tolerance: [entry()],
+          conflicts: [entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Compares two maps field by field and returns `{status, diff_map}`.
+
+  Options:
+
+    * `:rules` — a map or keyword list of `field => rule`; fields without a rule use `:exact`.
+    * `:ignore_fields` — a list of atoms excluded from comparison entirely (default `[]`).
+
+  The diff map contains only differing fields, each as
+  `%{left: value, right: value, status: :within_tolerance | :conflict}`.
+
+  ## Examples
+
+      iex> TolerantReconciler.diff_pair(%{a: 1}, %{a: 1}, [])
+      {:identical, %{}}
+
+      iex> TolerantReconciler.diff_pair(%{p: 1.0}, %{p: 1.02}, rules: %{p: {:numeric, 0.05}})
+      {:within_tolerance, %{p: %{left: 1.0, right: 1.02, status: :within_tolerance}}}
+  """
+  @spec diff_pair(record(), record(), keyword()) :: {pair_status(), diff_map()}
+  def diff_pair(left, right, opts \\ []) when is_map(left) and is_map(right) and is_list(opts) do
+    rules = normalize_rules(Keyword.get(opts, :rules, %{}))
+    ignored = MapSet.new(Keyword.get(opts, :ignore_fields, []))
+
+    diff = build_diff(left, right, rules, ignored)
+    {status_of(diff), diff}
+  end
+
+  @doc """
+  Reconciles two lists of maps by a composite key, bucketing the outcome.
+
+  Options:
+
+    * `:key_fields` — required, a non-empty list of atoms forming the composite key.
+      A missing or invalid value raises `ArgumentError`.
+    * `:rules` — as in `diff_pair/3`.
+    * `:ignore_fields` — extra fields excluded from comparison; key fields are always
+      excluded whether or not they are listed.
+
+  Returns a map with the keys `:identical`, `:within_tolerance`, `:conflicts`,
+  `:only_in_left` and `:only_in_right`. When a key repeats on one side, the last record
+  with that key in the input list wins.
+  """
+  @spec reconcile_all([record()], [record()], keyword()) :: result()
+  def reconcile_all(left, right, opts \\ [])
+      when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+
+    ignored =
+      opts
+      |> Keyword.get(:ignore_fields, [])
+      |> Enum.concat(key_fields)
+
+    pair_opts = [rules: Keyword.get(opts, :rules, %{}), ignore_fields: ignored]
+
+    left_index = index_by_key(left, key_fields)
+    right_index = index_by_key(right, key_fields)
+
+    left_keys = left_index |> Map.keys() |> MapSet.new()
+    right_keys = right_index |> Map.keys() |> MapSet.new()
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+
+    base = %{
+      identical: [],
+      within_tolerance: [],
+      conflicts: [],
+      only_in_left: pick(left_index, MapSet.difference(left_keys, right_keys)),
+      only_in_right: pick(right_index, MapSet.difference(right_keys, left_keys))
+    }
+
+    Enum.reduce(matched_keys, base, fn key, acc ->
+      left_record = Map.fetch!(left_index, key)
+      right_record = Map.fetch!(right_index, key)
+      {status, differences} = diff_pair(left_record, right_record, pair_opts)
+
+      entry = %{
+        key: key,
+        left: left_record,
+        right: right_record,
+        differences: differences
+      }
+
+      bucket = bucket_for(status)
+      Map.update!(acc, bucket, &[entry | &1])
+    end)
+  end
+
+  @doc """
+  Counts the entries in a `reconcile_all/3` result.
+
+  Returns a map with `:identical`, `:within_tolerance`, `:conflicts`, `:only_in_left`,
+  `:only_in_right` and `:matched` (the sum of the first three).
+  """
+  @spec summary(result()) :: %{
+          identical: non_neg_integer(),
+          within_tolerance: non_neg_integer(),
+          conflicts: non_neg_integer(),
+          only_in_left: non_neg_integer(),
+          only_in_right: non_neg_integer(),
+          matched: non_neg_integer()
+        }
+  def summary(result) when is_map(result) do
+    identical = count(result, :identical)
+    within_tolerance = count(result, :within_tolerance)
+    conflicts = count(result, :conflicts)
+
+    %{
+      identical: identical,
+      within_tolerance: within_tolerance,
+      conflicts: conflicts,
+      only_in_left: count(result, :only_in_left),
+      only_in_right: count(result, :only_in_right),
+      matched: identical + within_tolerance + conflicts
+    }
+  end
+
+  # -- internals ------------------------------------------------------------------
+
+  @spec build_diff(record(), record(), %{optional(field()) => rule()}, MapSet.t()) :: diff_map()
+  defp build_diff(left, right, rules, ignored) do
+    left
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(ignored, &1))
+    |> Enum.reduce(%{}, fn field, acc ->
+      left_value = Map.get(left, field)
+      right_value = Map.get(right, field)
+
+      if left_value == right_value do
+        acc
+      else
+        rule = Map.get(rules, field, :exact)
+        status = field_status(rule, left_value, right_value)
+        Map.put(acc, field, %{left: left_value, right: right_value, status: status})
+      end
+    end)
+  end
+
+  @spec field_status(rule(), term(), term()) :: field_status()
+  defp field_status({:numeric, tolerance}, left, right)
+       when is_number(left) and is_number(right) and is_number(tolerance) do
+    if abs(left - right) <= tolerance, do: :within_tolerance, else: :conflict
+  end
+
+  defp field_status(:case_insensitive, left, right) when is_binary(left) and is_binary(right) do
+    if normalize_binary(left) == normalize_binary(right), do: :within_tolerance, else: :conflict
+  end
+
+  defp field_status(_rule, _left, _right), do: :conflict
+
+  @spec normalize_binary(binary()) :: binary()
+  defp normalize_binary(value), do: value |> String.trim() |> String.downcase()
+
+  @spec status_of(diff_map()) :: pair_status()
+  defp status_of(diff) when map_size(diff) == 0, do: :identical
+
+  defp status_of(diff) do
+    if Enum.any?(diff, fn {_field, info} -> info.status == :conflict end) do
+      :conflict
+    else
+      :within_tolerance
+    end
+  end
+
+  @spec normalize_rules(rules()) :: %{optional(field()) => rule()}
+  defp normalize_rules(rules) when is_map(rules), do: rules
+
+  defp normalize_rules(rules) when is_list(rules) do
+    if Keyword.keyword?(rules) do
+      Map.new(rules)
+    else
+      raise ArgumentError, ":rules must be a map or keyword list of field => rule"
+    end
+  end
+
+  defp normalize_rules(_other) do
+    raise ArgumentError, ":rules must be a map or keyword list of (truncated)
+17:33:43.080 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5122, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5122, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5122, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5122, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 3870, "type" => "message"}], "output_tokens" => 3870, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+17:33:43.107 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_tolerance_rule_reconciler_with_conflict_classification_01 solution.ex
+17:33:43.914 [debug] grade JSON: {"analysis":{"defp_count":19,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":260,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":15,"public_fn_count":3,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_tolerance_rule_reconciler_with_conflict_classification_01/solution.ex","task":"034_004_tolerance_rule_reconciler_with_conflict_classification_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-12T15:33:43.887183Z"}
+17:33:43.917 [info] cycle 034_004_tolerance_rule_reconciler_with_conflict_classification_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+17:33:43.917 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+17:33:43.917 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `TolerantReconciler` that reconciles records with **per-field comparison rules** rather than strict equality, and classifies every matched pair by how badly it disagrees.
+
+Real-world reconciliation between two systems rarely finds byte-identical records: a float may be off by rounding, a name may differ only in case or padding. Those benign differences must be reported but must *not* be treated as conflicts.
+
+I need these functions in the public API:
+
+- `TolerantReconciler.diff_pair(left, right, opts)` — compares two maps and returns `{status, diff_map}`.
+- `TolerantReconciler.reconcile_all(left, right, opts)` — reconciles two lists of maps by a composite key and buckets the results.
+- `TolerantReconciler.summary(result)` — takes the map returned by `reconcile_all/3` and returns counts.
+
+## Rules
+
+A **rule** describes how one field is compared. Supported rules:
+
+- `:exact` — the values must be equal (`==`). Any difference is a conflict.
+- `{:numeric, tolerance}` — the difference is *tolerable* if both values are numbers (integer or float) and `abs(left - right) <= tolerance`. Otherwise it is a conflict.
+- `:case_insensitive` — the difference is *tolerable* if both values are binaries and they are equal after trimming leading/trailing whitespace and downcasing. Otherwise it is a conflict.
+
+Rules are supplied via the `:rules` option as a map or keyword list of `field => rule`. Any field with no rule defaults to `:exact`.
+
+## `diff_pair/3`
+
+`opts` supports:
+
+- `:rules` (optional, default none) — the `field => rule` mapping described above.
+- `:ignore_fields` (optional, default `[]`) — a list of atoms to exclude from comparison entirely.
+
+The compared fields are every field present in `left` or in `right`, minus `:ignore_fields`. A field missing from one map is read as `nil`.
+
+For each compared field:
+
+- if the two values are equal (`==`), the field does not appear in the diff map;
+- otherwise the field appears as `field => %{left: left_value, right: right_value, status: field_status}` where `field_status` is `:within_tolerance` if the field's rule tolerates the difference (per the rules above) and `:conflict` if it does not.
+
+The returned `status` is:
+
+- `:identical` if the diff map is empty;
+- `:conflict` if any field in the diff map has `status: :conflict`;
+- `:within_tolerance` otherwise (there are differences, but every one of them is tolerated).
+
+## `reconcile_all/3`
+
+`opts` supports:
+
+- `:key_fields` (required) — a non-empty list of atoms forming the composite key. Missing or invalid must raise `ArgumentError`.
+- `:rules` (optional) — as above.
+- `:ignore_fields` (optional, default `[]`) — extra fields to exclude. The key fields are **always** excluded from comparison, whether or not they are listed.
+
+It returns a map with exactly these five keys:
+
+- `:identical`, `:within_tolerance`, `:conflicts` — lists of `%{key: key_map, left: record, right: record, differences: diff_map}` entries for keys present on both sides, bucketed by the pair's `diff_pair/3` status (`:conflict` pairs go into `:conflicts`).
+- `:only_in_left` — the raw left records whose key is absent from `right`.
+- `:only_in_right` — the raw right records whose key is absent from `left`.
+
+Where a `key_map` is `%{field => value}` over the key fields (a missing key field contributes `nil`). If the same key occurs more than once on a side, the last record with that key in the input list wins. Order within each bucket does not matter.
+
+## `summary/1`
+
+Given a `reconcile_all/3` result, returns
+
+```
+%{
+  identical: n,
+  within_tolerance: n,
+  conflicts: n,
+  only_in_left: n,
+  only_in_right: n,
+  matched: n            # identical + within_tolerance + conflicts
+}
+```
+
+Other requirements: the module must be pure — no processes, no side effects — and use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule TolerantReconciler do
+  @moduledoc """
+  Reconciles records between two systems using per-field comparison rules instead of
+  strict equality, and classifies every matched pair by how badly it disagrees.
+
+  Real-world reconciliation rarely finds byte-identical records: a float may be off by
+  rounding, a name may differ only in case or padding. Such benign differences are
+  reported as `:within_tolerance` rather than escalated to `:conflict`.
+
+  Supported rules:
+
+    * `:exact` — values must be equal (`==`); any difference is a conflict.
+    * `{:numeric, tolerance}` — tolerable when both values are numbers and
+      `abs(left - right) <= tolerance`.
+    * `:case_insensitive` — tolerable when both values are binaries that are equal after
+      trimming leading/trailing whitespace and downcasing.
+
+  Fields without an explicit rule default to `:exact`. The module is pure: it spawns no
+  processes, performs no I/O, and depends only on the Elixir standard library.
+  """
+
+  @type field :: atom()
+  @type rule :: :exact | :case_insensitive | {:numeric, number()}
+  @type rules :: %{optional(field()) => rule()} | keyword()
+  @type record :: %{optional(field()) => term()}
+  @type field_status :: :within_tolerance | :conflict
+  @type pair_status :: :identical | :within_tolerance | :conflict
+  @type diff_map :: %{optional(field()) => %{left: term(), right: term(), status: field_status()}}
+  @type key_map :: %{optional(field()) => term()}
+  @type entry :: %{key: key_map(), left: record(), right: record(), differences: diff_map()}
+  @type result :: %{
+          identical: [entry()],
+          within_tolerance: [entry()],
+          conflicts: [entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Compares two maps field by field and returns `{status, diff_map}`.
+
+  Options:
+
+    * `:rules` — a map or keyword list of `field => rule`; fields without a rule use `:exact`.
+    * `:ignore_fields` — a list of atoms excluded from comparison entirely (default `[]`).
+
+  The diff map contains only differing fields, each as
+  `%{left: value, right: value, status: :within_tolerance | :conflict}`.
+
+  ## Examples
+
+      iex> TolerantReconciler.diff_pair(%{a: 1}, %{a: 1}, [])
+      {:identical, %{}}
+
+      iex> TolerantReconciler.diff_pair(%{p: 1.0}, %{p: 1.02}, rules: %{p: {:numeric, 0.05}})
+      {:within_tolerance, %{p: %{left: 1.0, right: 1.02, status: :within_tolerance}}}
+  """
+  @spec diff_pair(record(), record(), keyword()) :: {pair_status(), diff_map()}
+  def diff_pair(left, right, opts \\ []) when is_map(left) and is_map(right) and is_list(opts) do
+    rules = normalize_rules(Keyword.get(opts, :rules, %{}))
+    ignored = MapSet.new(Keyword.get(opts, :ignore_fields, []))
+
+    diff = build_diff(left, right, rules, ignored)
+    {status_of(diff), diff}
+  end
+
+  @doc """
+  Reconciles two lists of maps by a composite key, buck (truncated)
+17:35:30.158 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TolerantReconciler do
+  @moduledoc """
+  Reconciles records between two systems using per-field comparison rules instead of
+  strict equality, and classifies every matched pair by how badly it disagrees.
+
+  Real-world reconciliation rarely finds byte-identical records: a float may be off by
+  rounding, a name may differ only in case or padding. Such benign differences are
+  reported as `:within_tolerance` rather than escalated to `:conflict`.
+
+  Supported rules:
+
+    * `:exact` — values must be equal (`==`); any difference is a conflict.
+    * `{:numeric, tolerance}` — tolerable when both values are numbers and
+      `abs(left - right) <= tolerance`.
+    * `:case_insensitive` — tolerable when both values are binaries that are equal after
+      trimming leading/trailing whitespace and downcasing.
+
+  Fields without an explicit rule default to `:exact`. The module is pure: it spawns no
+  processes, performs no I/O, and depends only on the Elixir standard library.
+  """
+
+  @type field :: atom()
+  @type rule :: :exact | :case_insensitive | {:numeric, number()}
+  @type record :: %{optional(field()) => term()}
+  @type field_status :: :within_tolerance | :conflict
+  @type pair_status :: :identical | :within_tolerance | :conflict
+  @type field_diff :: %{left: term(), right: term(), status: field_status()}
+  @type diff_map :: %{optional(field()) => field_diff()}
+  @type key_map :: %{optional(field()) => term()}
+  @type entry :: %{key: key_map(), left: record(), right: record(), differences: diff_map()}
+  @type result :: %{
+          identical: [entry()],
+          within_tolerance: [entry()],
+          conflicts: [entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Compares two maps field by field and returns `{status, diff_map}`.
+
+  Options:
+
+    * `:rules` — a map or keyword list of `field => rule`; fields without a rule use
+      `:exact`.
+    * `:ignore_fields` — a list of atoms excluded from comparison entirely (default `[]`).
+
+  The diff map contains only differing fields, each as
+  `%{left: value, right: value, status: :within_tolerance | :conflict}`.
+
+  The status is `:identical` when the diff map is empty, `:conflict` when any differing
+  field conflicts, and `:within_tolerance` otherwise.
+
+  ## Examples
+
+      iex> TolerantReconciler.diff_pair(%{a: 1}, %{a: 1}, [])
+      {:identical, %{}}
+
+  """
+  @spec diff_pair(record(), record(), keyword()) :: {pair_status(), diff_map()}
+  def diff_pair(left, right, opts \\ []) when is_map(left) and is_map(right) and is_list(opts) do
+    rules = normalize_rules(Keyword.get(opts, :rules, %{}))
+    ignored = MapSet.new(Keyword.get(opts, :ignore_fields, []))
+
+    diff = build_diff(left, right, rules, ignored)
+    {status_of(diff), diff}
+  end
+
+  @doc """
+  Reconciles two lists of maps by a composite key, bucketing the outcome.
+
+  Options:
+
+    * `:key_fields` — required, a non-empty list of atoms forming the composite key.
+      A missing or invalid value raises `ArgumentError`.
+    * `:rules` — as in `diff_pair/3`.
+    * `:ignore_fields` — extra fields excluded from comparison; key fields are always
+      excluded whether or not they are listed.
+
+  Returns a map with the keys `:identical`, `:within_tolerance`, `:conflicts`,
+  `:only_in_left` and `:only_in_right`. When a key repeats on one side, the last record
+  with that key in the input list wins.
+  """
+  @spec reconcile_all([record()], [record()], keyword()) :: result()
+  def reconcile_all(left, right, opts \\ [])
+      when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+
+    ignored =
+      opts
+      |> Keyword.get(:ignore_fields, [])
+      |> Enum.concat(key_fields)
+
+    pair_opts = [rules: Keyword.get(opts, :rules, %{}), ignore_fields: ignored]
+
+    left_index = index_by_key(left, key_fields)
+    right_index = index_by_key(right, key_fields)
+
+    left_keys = left_index |> Map.keys() |> MapSet.new()
+    right_keys = right_index |> Map.keys() |> MapSet.new()
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+
+    base = %{
+      identical: [],
+      within_tolerance: [],
+      conflicts: [],
+      only_in_left: pick(left_index, MapSet.difference(left_keys, right_keys)),
+      only_in_right: pick(right_index, MapSet.difference(right_keys, left_keys))
+    }
+
+    Enum.reduce(matched_keys, base, fn key, acc ->
+      left_record = Map.fetch!(left_index, key)
+      right_record = Map.fetch!(right_index, key)
+      {status, differences} = diff_pair(left_record, right_record, pair_opts)
+
+      entry = %{
+        key: key,
+        left: left_record,
+        right: right_record,
+        differences: differences
+      }
+
+      Map.update!(acc, bucket_for(status), fn entries -> [entry | entries] end)
+    end)
+  end
+
+  @doc """
+  Counts the entries in a `reconcile_all/3` result.
+
+  Returns a map with `:identical`, `:within_tolerance`, `:conflicts`, `:only_in_left`,
+  `:only_in_right` and `:matched` (the sum of the first three).
+  """
+  @spec summary(result()) :: %{
+          identical: non_neg_integer(),
+          within_tolerance: non_neg_integer(),
+          conflicts: non_neg_integer(),
+          only_in_left: non_neg_integer(),
+          only_in_right: non_neg_integer(),
+          matched: non_neg_integer()
+        }
+  def summary(result) when is_map(result) do
+    identical = count(result, :identical)
+    within_tolerance = count(result, :within_tolerance)
+    conflicts = count(result, :conflicts)
+
+    %{
+      identical: identical,
+      within_tolerance: within_tolerance,
+      conflicts: conflicts,
+      only_in_left: count(result, :only_in_left),
+      only_in_right: count(result, :only_in_right),
+      matched: identical + within_tolerance + conflicts
+    }
+  end
+
+  # -- internals ------------------------------------------------------------------
+
+  defp build_diff(left, right, rules, ignored) do
+    left
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(fn field -> MapSet.member?(ignored, field) end)
+    |> Enum.reduce(%{}, fn field, acc ->
+      left_value = Map.get(left, field)
+      right_value = Map.get(right, field)
+
+      if left_value == right_value do
+        acc
+      else
+        rule = Map.get(rules, field, :exact)
+        status = field_status(rule, left_value, right_value)
+        Map.put(acc, field, %{left: left_value, right: right_value, status: status})
+      end
+    end)
+  end
+
+  defp field_status({:numeric, tolerance}, left, right)
+       when is_number(left) and is_number(right) and is_number(tolerance) do
+    if abs(left - right) <= tolerance, do: :within_tolerance, else: :conflict
+  end
+
+  defp field_status(:case_insensitive, left, right) when is_binary(left) and is_binary(right) do
+    if normalize_binary(left) == normalize_binary(right), do: :within_tolerance, else: :conflict
+  end
+
+  defp field_status(_rule, _left, _right), do: :conflict
+
+  defp normalize_binary(value), do: value |> String.trim() |> String.downcase()
+
+  defp status_of(diff) when map_size(diff) == 0, do: :identical
+
+  defp status_of(diff) do
+    conflict? =
+      Enum.any?(diff, fn {_field, info} -> Map.get(info, :status) == :conflict end)
+
+    if conflict?, do: :conflict, else: :within_tolerance
+  end
+
+  defp normalize_rules(rules) when is_map(rules), do: rules
+
+  defp normalize_rules(rules) when is_list(rules) do
+    if Keyword.keyword?(rules) do
+      Map.new(rules)
+    else
+      raise ArgumentError, ":rules must be a map or keyword list of field => rule"
+    end
+  end
+
+  defp normalize_rules(_other) do
+    raise ArgumentError, ":rules must be a map or keyword list of field => rule"
+  end
+
+  defp validate_key_fields([_ | _] = key_fields) do
+    if Enum.all?(key_fields, fn field -> is_atom(field) end) do
+      key_fields
+    else
+      raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+    end
+  end
+
+  defp validate_key_fields(_other) do
+    raise ArgumentError, ":key_fields is r (truncated)
+17:35:30.158 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 13213, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 13213, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 13213, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 13213, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 9400, "type" => "message"}], "output_tokens" => 9400, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+17:35:30.185 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_tolerance_rule_reconciler_with_conflict_classification_01 solution.ex
+17:35:30.918 [debug] grade JSON: {"analysis":{"defp_count":19,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":15,"public_fn_count":3,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_tolerance_rule_reconciler_with_conflict_classification_01/solution.ex","task":"034_004_tolerance_rule_reconciler_with_conflict_classification_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-12T15:35:30.892283Z"}
+17:35:30.920 [info] cycle 034_004_tolerance_rule_reconciler_with_conflict_classification_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+17:35:30.921 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+17:35:30.921 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `TolerantReconciler` that reconciles records with **per-field comparison rules** rather than strict equality, and classifies every matched pair by how badly it disagrees.
+
+Real-world reconciliation between two systems rarely finds byte-identical records: a float may be off by rounding, a name may differ only in case or padding. Those benign differences must be reported but must *not* be treated as conflicts.
+
+I need these functions in the public API:
+
+- `TolerantReconciler.diff_pair(left, right, opts)` — compares two maps and returns `{status, diff_map}`.
+- `TolerantReconciler.reconcile_all(left, right, opts)` — reconciles two lists of maps by a composite key and buckets the results.
+- `TolerantReconciler.summary(result)` — takes the map returned by `reconcile_all/3` and returns counts.
+
+## Rules
+
+A **rule** describes how one field is compared. Supported rules:
+
+- `:exact` — the values must be equal (`==`). Any difference is a conflict.
+- `{:numeric, tolerance}` — the difference is *tolerable* if both values are numbers (integer or float) and `abs(left - right) <= tolerance`. Otherwise it is a conflict.
+- `:case_insensitive` — the difference is *tolerable* if both values are binaries and they are equal after trimming leading/trailing whitespace and downcasing. Otherwise it is a conflict.
+
+Rules are supplied via the `:rules` option as a map or keyword list of `field => rule`. Any field with no rule defaults to `:exact`.
+
+## `diff_pair/3`
+
+`opts` supports:
+
+- `:rules` (optional, default none) — the `field => rule` mapping described above.
+- `:ignore_fields` (optional, default `[]`) — a list of atoms to exclude from comparison entirely.
+
+The compared fields are every field present in `left` or in `right`, minus `:ignore_fields`. A field missing from one map is read as `nil`.
+
+For each compared field:
+
+- if the two values are equal (`==`), the field does not appear in the diff map;
+- otherwise the field appears as `field => %{left: left_value, right: right_value, status: field_status}` where `field_status` is `:within_tolerance` if the field's rule tolerates the difference (per the rules above) and `:conflict` if it does not.
+
+The returned `status` is:
+
+- `:identical` if the diff map is empty;
+- `:conflict` if any field in the diff map has `status: :conflict`;
+- `:within_tolerance` otherwise (there are differences, but every one of them is tolerated).
+
+## `reconcile_all/3`
+
+`opts` supports:
+
+- `:key_fields` (required) — a non-empty list of atoms forming the composite key. Missing or invalid must raise `ArgumentError`.
+- `:rules` (optional) — as above.
+- `:ignore_fields` (optional, default `[]`) — extra fields to exclude. The key fields are **always** excluded from comparison, whether or not they are listed.
+
+It returns a map with exactly these five keys:
+
+- `:identical`, `:within_tolerance`, `:conflicts` — lists of `%{key: key_map, left: record, right: record, differences: diff_map}` entries for keys present on both sides, bucketed by the pair's `diff_pair/3` status (`:conflict` pairs go into `:conflicts`).
+- `:only_in_left` — the raw left records whose key is absent from `right`.
+- `:only_in_right` — the raw right records whose key is absent from `left`.
+
+Where a `key_map` is `%{field => value}` over the key fields (a missing key field contributes `nil`). If the same key occurs more than once on a side, the last record with that key in the input list wins. Order within each bucket does not matter.
+
+## `summary/1`
+
+Given a `reconcile_all/3` result, returns
+
+```
+%{
+  identical: n,
+  within_tolerance: n,
+  conflicts: n,
+  only_in_left: n,
+  only_in_right: n,
+  matched: n            # identical + within_tolerance + conflicts
+}
+```
+
+Other requirements: the module must be pure — no processes, no side effects — and use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule TolerantReconciler do
+  @moduledoc """
+  Reconciles records between two systems using per-field comparison rules instead of
+  strict equality, and classifies every matched pair by how badly it disagrees.
+
+  Real-world reconciliation rarely finds byte-identical records: a float may be off by
+  rounding, a name may differ only in case or padding. Such benign differences are
+  reported as `:within_tolerance` rather than escalated to `:conflict`.
+
+  Supported rules:
+
+    * `:exact` — values must be equal (`==`); any difference is a conflict.
+    * `{:numeric, tolerance}` — tolerable when both values are numbers and
+      `abs(left - right) <= tolerance`.
+    * `:case_insensitive` — tolerable when both values are binaries that are equal after
+      trimming leading/trailing whitespace and downcasing.
+
+  Fields without an explicit rule default to `:exact`. The module is pure: it spawns no
+  processes, performs no I/O, and depends only on the Elixir standard library.
+  """
+
+  @type field :: atom()
+  @type rule :: :exact | :case_insensitive | {:numeric, number()}
+  @type record :: %{optional(field()) => term()}
+  @type field_status :: :within_tolerance | :conflict
+  @type pair_status :: :identical | :within_tolerance | :conflict
+  @type field_diff :: %{left: term(), right: term(), status: field_status()}
+  @type diff_map :: %{optional(field()) => field_diff()}
+  @type key_map :: %{optional(field()) => term()}
+  @type entry :: %{key: key_map(), left: record(), right: record(), differences: diff_map()}
+  @type result :: %{
+          identical: [entry()],
+          within_tolerance: [entry()],
+          conflicts: [entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Compares two maps field by field and returns `{status, diff_map}`.
+
+  Options:
+
+    * `:rules` — a map or keyword list of `field => rule`; fields without a rule use
+      `:exact`.
+    * `:ignore_fields` — a list of atoms excluded from comparison entirely (default `[]`).
+
+  The diff map contains only differing fields, each as
+  `%{left: value, right: value, status: :within_tolerance | :conflict}`.
+
+  The status is `:identical` when the diff map is empty, `:conflict` when any differing
+  field conflicts, and `:within_tolerance` otherwise.
+
+  ## Examples
+
+      iex> TolerantReconciler.diff_pair(%{a: 1}, %{a: 1}, [])
+      {:identical, %{}}
+
+  """
+  @spec diff_pair(record(), record(), keyword()) :: {pair_status(), diff_map()}
+  def diff_pair(left, right, opts \\ []) when is_map(left) and is_map(right) and is_list(opts) do
+    rules = normalize_rules(Keyword.get(opts, :rules, %{}))
+    ignored = MapSet.new(Keyword.get(opts, :ignore_fields, []))
+
+    diff = build_diff(left, right, rules, ignored)
+    {status_of(diff), diff}
+  end
+
+  @doc """
+  Reconciles two lists of maps by a composite key, bucketing the outcome.
+
+  Options:
+
+    * `:key_fields` —  (truncated)
+17:38:15.499 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TolerantReconciler do
+  @moduledoc """
+  Reconciles records between two systems using per-field comparison rules instead of
+  strict equality, and classifies every matched pair by how badly it disagrees.
+
+  Real-world reconciliation rarely finds byte-identical records: a float may be off by
+  rounding, a name may differ only in case or padding. Such benign differences are
+  reported as `:within_tolerance` rather than escalated to `:conflict`.
+
+  Supported rules:
+
+    * `:exact` — values must be equal (`==`); any difference is a conflict.
+    * `{:numeric, tolerance}` — tolerable when both values are numbers and
+      `abs(left - right) <= tolerance`.
+    * `:case_insensitive` — tolerable when both values are binaries that are equal after
+      trimming leading/trailing whitespace and downcasing.
+
+  Fields without an explicit rule default to `:exact`. The module is pure: it spawns no
+  processes, performs no I/O, and depends only on the Elixir standard library.
+  """
+
+  @type field :: atom()
+  @type rule :: :exact | :case_insensitive | {:numeric, number()}
+  @type rules :: %{optional(field()) => rule()} | [{field(), rule()}]
+  @type record :: %{optional(field()) => term()}
+  @type field_status :: :within_tolerance | :conflict
+  @type pair_status :: :identical | :within_tolerance | :conflict
+  @type field_diff :: %{left: term(), right: term(), status: field_status()}
+  @type diff_map :: %{optional(field()) => field_diff()}
+  @type key_map :: %{optional(field()) => term()}
+  @type entry :: %{key: key_map(), left: record(), right: record(), differences: diff_map()}
+  @type result :: %{
+          identical: [entry()],
+          within_tolerance: [entry()],
+          conflicts: [entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  @type counts :: %{
+          identical: non_neg_integer(),
+          within_tolerance: non_neg_integer(),
+          conflicts: non_neg_integer(),
+          only_in_left: non_neg_integer(),
+          only_in_right: non_neg_integer(),
+          matched: non_neg_integer()
+        }
+
+  @doc """
+  Compares two maps field by field and returns `{status, diff_map}`.
+
+  Options:
+
+    * `:rules` — a map or keyword list of `field => rule`; fields without a rule use
+      `:exact`.
+    * `:ignore_fields` — a list of atoms excluded from comparison entirely (default `[]`).
+
+  The diff map contains only the differing fields, each as
+  `%{left: value, right: value, status: :within_tolerance | :conflict}`. A field missing
+  from one map is read as `nil`.
+
+  The status is `:identical` when the diff map is empty, `:conflict` when any differing
+  field conflicts, and `:within_tolerance` otherwise.
+  """
+  @spec diff_pair(record(), record(), keyword()) :: {pair_status(), diff_map()}
+  def diff_pair(left, right, opts) when is_map(left) and is_map(right) and is_list(opts) do
+    rules = normalize_rules(Keyword.get(opts, :rules, %{}))
+    ignored = MapSet.new(Keyword.get(opts, :ignore_fields, []))
+
+    diff = build_diff(left, right, rules, ignored)
+    {status_of(diff), diff}
+  end
+
+  @doc """
+  Reconciles two lists of maps by a composite key, bucketing the outcome.
+
+  Options:
+
+    * `:key_fields` — required, a non-empty list of atoms forming the composite key.
+      A missing or invalid value raises `ArgumentError`.
+    * `:rules` — as in `diff_pair/3`.
+    * `:ignore_fields` — extra fields excluded from comparison; the key fields are always
+      excluded whether or not they are listed.
+
+  Returns a map with the keys `:identical`, `:within_tolerance`, `:conflicts`,
+  `:only_in_left` and `:only_in_right`. When a key repeats on one side, the last record
+  with that key in the input list wins. Order within each bucket is unspecified.
+  """
+  @spec reconcile_all([record()], [record()], keyword()) :: result()
+  def reconcile_all(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+    extra_ignored = Keyword.get(opts, :ignore_fields, [])
+    pair_opts = [rules: Keyword.get(opts, :rules, %{}), ignore_fields: key_fields ++ extra_ignored]
+
+    left_index = index_by_key(left, key_fields)
+    right_index = index_by_key(right, key_fields)
+
+    left_keys = left_index |> Map.keys() |> MapSet.new()
+    right_keys = right_index |> Map.keys() |> MapSet.new()
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+
+    base = %{
+      identical: [],
+      within_tolerance: [],
+      conflicts: [],
+      only_in_left: pick(left_index, MapSet.difference(left_keys, right_keys)),
+      only_in_right: pick(right_index, MapSet.difference(right_keys, left_keys))
+    }
+
+    Enum.reduce(matched_keys, base, fn key, acc ->
+      left_record = Map.fetch!(left_index, key)
+      right_record = Map.fetch!(right_index, key)
+      {status, differences} = diff_pair(left_record, right_record, pair_opts)
+
+      entry = %{
+        key: key,
+        left: left_record,
+        right: right_record,
+        differences: differences
+      }
+
+      Map.update!(acc, bucket_for(status), fn entries -> [entry | entries] end)
+    end)
+  end
+
+  @doc """
+  Counts the entries in a `reconcile_all/3` result.
+
+  Returns a map with `:identical`, `:within_tolerance`, `:conflicts`, `:only_in_left`,
+  `:only_in_right` and `:matched` (the sum of the first three).
+  """
+  @spec summary(result()) :: counts()
+  def summary(result) when is_map(result) do
+    identical = count(result, :identical)
+    within_tolerance = count(result, :within_tolerance)
+    conflicts = count(result, :conflicts)
+
+    %{
+      identical: identical,
+      within_tolerance: within_tolerance,
+      conflicts: conflicts,
+      only_in_left: count(result, :only_in_left),
+      only_in_right: count(result, :only_in_right),
+      matched: identical + within_tolerance + conflicts
+    }
+  end
+
+  # -- internals ------------------------------------------------------------------
+
+  defp build_diff(left, right, rules, ignored) do
+    left
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(fn field -> MapSet.member?(ignored, field) end)
+    |> Enum.reduce(%{}, fn field, acc ->
+      left_value = Map.get(left, field)
+      right_value = Map.get(right, field)
+
+      if left_value == right_value do
+        acc
+      else
+        rule = Map.get(rules, field, :exact)
+        status = field_status(rule, left_value, right_value)
+        Map.put(acc, field, %{left: left_value, right: right_value, status: status})
+      end
+    end)
+  end
+
+  defp field_status({:numeric, tolerance}, left, right)
+       when is_number(tolerance) and is_number(left) and is_number(right) do
+    if abs(left - right) <= tolerance, do: :within_tolerance, else: :conflict
+  end
+
+  defp field_status(:case_insensitive, left, right) when is_binary(left) and is_binary(right) do
+    if normalize_binary(left) == normalize_binary(right), do: :within_tolerance, else: :conflict
+  end
+
+  defp field_status(_rule, _left, _right), do: :conflict
+
+  defp normalize_binary(value), do: value |> String.trim() |> String.downcase()
+
+  defp status_of(diff) when map_size(diff) == 0, do: :identical
+
+  defp status_of(diff) do
+    if Enum.any?(diff, fn {_field, info} -> conflict?(info) end) do
+      :conflict
+    else
+      :within_tolerance
+    end
+  end
+
+  defp conflict?(%{status: :conflict}), do: true
+  defp conflict?(_field_diff), do: false
+
+  defp normalize_rules(rules) when is_map(rules), do: rules
+
+  defp normalize_rules(rules) when is_list(rules) do
+    if Keyword.keyword?(rules) do
+      Map.new(rules)
+    else
+      raise ArgumentError, ":rules must be a map or keyword list of field => rule"
+    end
+  end
+
+  defp normalize_rules(_other) do
+    raise ArgumentError, ":rules must be a map or keyword list of field => rule"
+  end
+
+  defp validate_key_fields([_ | _] = key_fields) do
+    if Enum.all?(key_fields, fn field -> is_atom(field) end) do
+      key_fields
+    else
+      raise ArgumentError, ":key_fields must be a non-empty l (truncated)
+17:38:15.499 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12838, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12838, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12838, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12838, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 13921, "type" => "message"}], "output_tokens" => 13921, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+17:38:15.528 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_tolerance_rule_reconciler_with_conflict_classification_01 solution.ex
+17:38:16.269 [debug] grade JSON: {"analysis":{"defp_count":21,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":247,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":13,"public_fn_count":3,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_tolerance_rule_reconciler_with_conflict_classification_01/solution.ex","task":"034_004_tolerance_rule_reconciler_with_conflict_classification_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-12T15:38:16.236927Z"}
+17:38:16.271 [info] cycle 034_004_tolerance_rule_reconciler_with_conflict_classification_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+17:38:16.271 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+17:38:16.271 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `TolerantReconciler` that reconciles records with **per-field comparison rules** rather than strict equality, and classifies every matched pair by how badly it disagrees.
+
+Real-world reconciliation between two systems rarely finds byte-identical records: a float may be off by rounding, a name may differ only in case or padding. Those benign differences must be reported but must *not* be treated as conflicts.
+
+I need these functions in the public API:
+
+- `TolerantReconciler.diff_pair(left, right, opts)` — compares two maps and returns `{status, diff_map}`.
+- `TolerantReconciler.reconcile_all(left, right, opts)` — reconciles two lists of maps by a composite key and buckets the results.
+- `TolerantReconciler.summary(result)` — takes the map returned by `reconcile_all/3` and returns counts.
+
+## Rules
+
+A **rule** describes how one field is compared. Supported rules:
+
+- `:exact` — the values must be equal (`==`). Any difference is a conflict.
+- `{:numeric, tolerance}` — the difference is *tolerable* if both values are numbers (integer or float) and `abs(left - right) <= tolerance`. Otherwise it is a conflict.
+- `:case_insensitive` — the difference is *tolerable* if both values are binaries and they are equal after trimming leading/trailing whitespace and downcasing. Otherwise it is a conflict.
+
+Rules are supplied via the `:rules` option as a map or keyword list of `field => rule`. Any field with no rule defaults to `:exact`.
+
+## `diff_pair/3`
+
+`opts` supports:
+
+- `:rules` (optional, default none) — the `field => rule` mapping described above.
+- `:ignore_fields` (optional, default `[]`) — a list of atoms to exclude from comparison entirely.
+
+The compared fields are every field present in `left` or in `right`, minus `:ignore_fields`. A field missing from one map is read as `nil`.
+
+For each compared field:
+
+- if the two values are equal (`==`), the field does not appear in the diff map;
+- otherwise the field appears as `field => %{left: left_value, right: right_value, status: field_status}` where `field_status` is `:within_tolerance` if the field's rule tolerates the difference (per the rules above) and `:conflict` if it does not.
+
+The returned `status` is:
+
+- `:identical` if the diff map is empty;
+- `:conflict` if any field in the diff map has `status: :conflict`;
+- `:within_tolerance` otherwise (there are differences, but every one of them is tolerated).
+
+## `reconcile_all/3`
+
+`opts` supports:
+
+- `:key_fields` (required) — a non-empty list of atoms forming the composite key. Missing or invalid must raise `ArgumentError`.
+- `:rules` (optional) — as above.
+- `:ignore_fields` (optional, default `[]`) — extra fields to exclude. The key fields are **always** excluded from comparison, whether or not they are listed.
+
+It returns a map with exactly these five keys:
+
+- `:identical`, `:within_tolerance`, `:conflicts` — lists of `%{key: key_map, left: record, right: record, differences: diff_map}` entries for keys present on both sides, bucketed by the pair's `diff_pair/3` status (`:conflict` pairs go into `:conflicts`).
+- `:only_in_left` — the raw left records whose key is absent from `right`.
+- `:only_in_right` — the raw right records whose key is absent from `left`.
+
+Where a `key_map` is `%{field => value}` over the key fields (a missing key field contributes `nil`). If the same key occurs more than once on a side, the last record with that key in the input list wins. Order within each bucket does not matter.
+
+## `summary/1`
+
+Given a `reconcile_all/3` result, returns
+
+```
+%{
+  identical: n,
+  within_tolerance: n,
+  conflicts: n,
+  only_in_left: n,
+  only_in_right: n,
+  matched: n            # identical + within_tolerance + conflicts
+}
+```
+
+Other requirements: the module must be pure — no processes, no side effects — and use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule TolerantReconciler do
+  @moduledoc """
+  Reconciles records between two systems using per-field comparison rules instead of
+  strict equality, and classifies every matched pair by how badly it disagrees.
+
+  Real-world reconciliation rarely finds byte-identical records: a float may be off by
+  rounding, a name may differ only in case or padding. Such benign differences are
+  reported as `:within_tolerance` rather than escalated to `:conflict`.
+
+  Supported rules:
+
+    * `:exact` — values must be equal (`==`); any difference is a conflict.
+    * `{:numeric, tolerance}` — tolerable when both values are numbers and
+      `abs(left - right) <= tolerance`.
+    * `:case_insensitive` — tolerable when both values are binaries that are equal after
+      trimming leading/trailing whitespace and downcasing.
+
+  Fields without an explicit rule default to `:exact`. The module is pure: it spawns no
+  processes, performs no I/O, and depends only on the Elixir standard library.
+  """
+
+  @type field :: atom()
+  @type rule :: :exact | :case_insensitive | {:numeric, number()}
+  @type rules :: %{optional(field()) => rule()} | [{field(), rule()}]
+  @type record :: %{optional(field()) => term()}
+  @type field_status :: :within_tolerance | :conflict
+  @type pair_status :: :identical | :within_tolerance | :conflict
+  @type field_diff :: %{left: term(), right: term(), status: field_status()}
+  @type diff_map :: %{optional(field()) => field_diff()}
+  @type key_map :: %{optional(field()) => term()}
+  @type entry :: %{key: key_map(), left: record(), right: record(), differences: diff_map()}
+  @type result :: %{
+          identical: [entry()],
+          within_tolerance: [entry()],
+          conflicts: [entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  @type counts :: %{
+          identical: non_neg_integer(),
+          within_tolerance: non_neg_integer(),
+          conflicts: non_neg_integer(),
+          only_in_left: non_neg_integer(),
+          only_in_right: non_neg_integer(),
+          matched: non_neg_integer()
+        }
+
+  @doc """
+  Compares two maps field by field and returns `{status, diff_map}`.
+
+  Options:
+
+    * `:rules` — a map or keyword list of `field => rule`; fields without a rule use
+      `:exact`.
+    * `:ignore_fields` — a list of atoms excluded from comparison entirely (default `[]`).
+
+  The diff map contains only the differing fields, each as
+  `%{left: value, right: value, status: :within_tolerance | :conflict}`. A field missing
+  from one map is read as `nil`.
+
+  The status is `:identical` when the diff map is empty, `:conflict` when any differing
+  field conflicts, and `:within_tolerance` otherwise.
+  """
+  @spec diff_pair(record(), record(), keyword()) :: {pair_status(), diff_map()}
+  def diff_pair(left, right, opts) when is_map(left) and is_map(right) and is_list(opts) do
+    rules = normalize_rules(Keyword.g (truncated)
+17:42:02.459 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TolerantReconciler do
+  @moduledoc """
+  Reconciles records between two systems using per-field comparison rules instead of
+  strict equality, and classifies every matched pair by how badly it disagrees.
+
+  Real-world reconciliation rarely finds byte-identical records: a float may be off by
+  rounding, a name may differ only in case or padding. Such benign differences are
+  reported as `:within_tolerance` rather than escalated to `:conflict`.
+
+  Supported rules:
+
+    * `:exact` — values must be equal (`==`); any difference is a conflict.
+    * `{:numeric, tolerance}` — tolerable when both values are numbers and
+      `abs(left - right) <= tolerance`.
+    * `:case_insensitive` — tolerable when both values are binaries that are equal after
+      trimming leading/trailing whitespace and downcasing.
+
+  Fields without an explicit rule default to `:exact`. The module is pure: it spawns no
+  processes, performs no I/O, and depends only on the Elixir standard library.
+  """
+
+  @type field :: atom()
+  @type rule :: :exact | :case_insensitive | {:numeric, number()}
+  @type rules :: %{optional(field()) => rule()} | [{field(), rule()}]
+  @type record :: %{optional(field()) => term()}
+  @type field_status :: :within_tolerance | :conflict
+  @type pair_status :: :identical | :within_tolerance | :conflict
+  @type field_diff :: %{left: term(), right: term(), status: field_status()}
+  @type diff_map :: %{optional(field()) => field_diff()}
+  @type key_map :: %{optional(field()) => term()}
+  @type entry :: %{key: key_map(), left: record(), right: record(), differences: diff_map()}
+  @type result :: %{
+          identical: [entry()],
+          within_tolerance: [entry()],
+          conflicts: [entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+  @type counts :: %{
+          identical: non_neg_integer(),
+          within_tolerance: non_neg_integer(),
+          conflicts: non_neg_integer(),
+          only_in_left: non_neg_integer(),
+          only_in_right: non_neg_integer(),
+          matched: non_neg_integer()
+        }
+
+  @doc """
+  Compares two maps field by field and returns `{status, diff_map}`.
+
+  Options:
+
+    * `:rules` — a map or keyword list of `field => rule`; fields without a rule use
+      `:exact`.
+    * `:ignore_fields` — a list of atoms excluded from comparison entirely (default `[]`).
+
+  The compared fields are every field present in `left` or `right` minus the ignored ones;
+  a field missing from one map is read as `nil`. The diff map contains only the differing
+  fields, each as `%{left: value, right: value, status: :within_tolerance | :conflict}`.
+
+  The status is `:identical` when the diff map is empty, `:conflict` when any differing
+  field conflicts, and `:within_tolerance` otherwise.
+  """
+  @spec diff_pair(record(), record(), keyword()) :: {pair_status(), diff_map()}
+  def diff_pair(left, right, opts) when is_map(left) and is_map(right) and is_list(opts) do
+    rules = normalize_rules(Keyword.get(opts, :rules, %{}))
+    ignored = Keyword.get(opts, :ignore_fields, [])
+
+    diff = build_diff(left, right, rules, ignored)
+    {status_of(diff), diff}
+  end
+
+  @doc """
+  Reconciles two lists of maps by a composite key, bucketing the outcome.
+
+  Options:
+
+    * `:key_fields` — required, a non-empty list of atoms forming the composite key.
+      A missing or invalid value raises `ArgumentError`.
+    * `:rules` — as in `diff_pair/3`.
+    * `:ignore_fields` — extra fields excluded from comparison; the key fields are always
+      excluded whether or not they are listed.
+
+  Returns a map with the keys `:identical`, `:within_tolerance`, `:conflicts`,
+  `:only_in_left` and `:only_in_right`. When a key repeats on one side, the last record
+  with that key in the input list wins. Order within each bucket is unspecified.
+  """
+  @spec reconcile_all([record()], [record()], keyword()) :: result()
+  def reconcile_all(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+    extra_ignored = Keyword.get(opts, :ignore_fields, [])
+
+    pair_opts = [
+      rules: Keyword.get(opts, :rules, %{}),
+      ignore_fields: key_fields ++ extra_ignored
+    ]
+
+    left_index = index_by_key(left, key_fields)
+    right_index = index_by_key(right, key_fields)
+
+    base = %{
+      identical: [],
+      within_tolerance: [],
+      conflicts: [],
+      only_in_left: unmatched(left_index, right_index),
+      only_in_right: unmatched(right_index, left_index)
+    }
+
+    Enum.reduce(left_index, base, fn {key, left_record}, acc ->
+      case Map.fetch(right_index, key) do
+        {:ok, right_record} -> add_pair(acc, key, left_record, right_record, pair_opts)
+        :error -> acc
+      end
+    end)
+  end
+
+  @doc """
+  Counts the entries in a `reconcile_all/3` result.
+
+  Returns a map with `:identical`, `:within_tolerance`, `:conflicts`, `:only_in_left`,
+  `:only_in_right` and `:matched` (the sum of the first three).
+  """
+  @spec summary(result()) :: counts()
+  def summary(result) when is_map(result) do
+    identical = count(result, :identical)
+    within_tolerance = count(result, :within_tolerance)
+    conflicts = count(result, :conflicts)
+
+    %{
+      identical: identical,
+      within_tolerance: within_tolerance,
+      conflicts: conflicts,
+      only_in_left: count(result, :only_in_left),
+      only_in_right: count(result, :only_in_right),
+      matched: identical + within_tolerance + conflicts
+    }
+  end
+
+  # -- comparison -----------------------------------------------------------------
+
+  defp build_diff(left, right, rules, ignored) do
+    left
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(fn field -> field in ignored end)
+    |> Enum.reduce(%{}, fn field, acc ->
+      left_value = Map.get(left, field)
+      right_value = Map.get(right, field)
+
+      if left_value == right_value do
+        acc
+      else
+        rule = Map.get(rules, field, :exact)
+        status = field_status(rule, left_value, right_value)
+        Map.put(acc, field, %{left: left_value, right: right_value, status: status})
+      end
+    end)
+  end
+
+  defp field_status({:numeric, tolerance}, left, right)
+       when is_number(tolerance) and is_number(left) and is_number(right) do
+    if abs(left - right) <= tolerance, do: :within_tolerance, else: :conflict
+  end
+
+  defp field_status(:case_insensitive, left, right) when is_binary(left) and is_binary(right) do
+    if normalize_binary(left) == normalize_binary(right), do: :within_tolerance, else: :conflict
+  end
+
+  defp field_status(_rule, _left, _right), do: :conflict
+
+  defp normalize_binary(value), do: value |> String.trim() |> String.downcase()
+
+  defp status_of(diff) do
+    conflicts? = Enum.any?(Map.values(diff), fn info -> Map.get(info, :status) == :conflict end)
+
+    cond do
+      map_size(diff) == 0 -> :identical
+      conflicts? -> :conflict
+      true -> :within_tolerance
+    end
+  end
+
+  # -- options --------------------------------------------------------------------
+
+  defp normalize_rules(rules) when is_map(rules), do: rules
+
+  defp normalize_rules(rules) when is_list(rules) do
+    if Keyword.keyword?(rules) do
+      Map.new(rules)
+    else
+      raise ArgumentError, ":rules must be a map or keyword list of field => rule"
+    end
+  end
+
+  defp normalize_rules(_other) do
+    raise ArgumentError, ":rules must be a map or keyword list of field => rule"
+  end
+
+  defp validate_key_fields([_ | _] = key_fields) do
+    if Enum.all?(key_fields, fn field -> is_atom(field) end) do
+      key_fields
+    else
+      raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+    end
+  end
+
+  defp validate_key_fields(_other) do
+    raise ArgumentError, ":key_fields is required and must be a non-empty list of atoms"
+  end
+
+  # -- indexing and bucketing -----------------------------------------------------
+
+  defp index_by_key(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc  (truncated)
+17:42:02.459 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12870, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12870, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12870, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12870, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 20497, "type" => "message"}], "output_tokens" => 20497, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+17:42:02.489 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_004_tolerance_rule_reconciler_with_conflict_classification_01 solution.ex
+17:42:03.215 [debug] grade JSON: {"analysis":{"defp_count":19,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":249,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":9,"public_fn_count":3,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_004_tolerance_rule_reconciler_with_conflict_classification_01/solution.ex","task":"034_004_tolerance_rule_reconciler_with_conflict_classification_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-12T15:42:03.190232Z"}
+17:42:03.218 [info] cycle 034_004_tolerance_rule_reconciler_with_conflict_classification_01: REJECTED after 4 attempt(s)

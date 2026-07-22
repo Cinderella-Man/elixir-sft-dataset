@@ -1,0 +1,861 @@
+10:15:17.865 [info] VARIATION 042_003_true_write_through_cache_with_backing_store_propagation_01: True Write-Through Cache with Backing-Store Propagation
+10:15:17.866 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01 solution.ex
+10:15:18.608 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":true,"line_count":204,"lines_over_98":3,"max_line_length":103,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.75,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.95,"reasons":["analysis: no lines over 98 chars (found 3) → 0/1 pts","analysis: @doc on public functions → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:15:18.578438Z"}
+10:15:18.609 [info] cycle 042_003_true_write_through_cache_with_backing_store_propagation_01: repairing — The solution is green but does not meet the house style: no @doc on any public function; 3 line(s) over 98 columns — wrap them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+10:15:18.609 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+10:15:18.609 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @doc on any public function; 3 line(s) over 98 columns — wrap them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `CacheLayer` that is a **true write-through cache**: reads are served from an ETS cache with read-through fill, and writes and deletes are propagated to a backing store *before* the cache is updated, so the cache is never ahead of the store.
+
+I need these functions in the public API:
+- `CacheLayer.start_link(opts)` to start the process as a GenServer. It should accept a `:name` option for process registration and own the lifecycle of all ETS tables it creates.
+- `CacheLayer.fetch(server, table, key, loader_fn)` — read-through. If `{table, key}` is cached, return `{:ok, value}` (read directly from ETS). On a miss, call `loader_fn.()` (a zero-arity function that loads from the store and returns the value) **at most once**, cache the result, and return `{:ok, value}`.
+- `CacheLayer.put(server, table, key, value, writer_fn)` — write-through. `writer_fn` is a zero-arity function that persists the value to the backing store and returns `:ok`, `{:ok, term}`, or `{:error, reason}`. Call `writer_fn.()` first; **only if it succeeds** update the cache to `value` and return `{:ok, value}`. If it returns `{:error, reason}`, leave the cache untouched and return `{:error, reason}`.
+- `CacheLayer.delete(server, table, key, deleter_fn)` — delete-through. `deleter_fn` is a zero-arity function that removes the key from the backing store and returns `:ok`, `{:ok, term}`, or `{:error, reason}`. Call it first; **only if it succeeds** remove the entry from the cache and return `:ok`. On `{:error, reason}`, leave the cache untouched and return `{:error, reason}`.
+- `CacheLayer.invalidate(server, table, key)` — cache-only eviction. Removes the cached entry **without touching the backing store**. Returns `:ok`.
+- `CacheLayer.invalidate_all(server, table)` — cache-only eviction of **all** entries for the table (store untouched). Returns `:ok`.
+
+Each `table` is an atom mapping to a separate `:set`, `:public` ETS table owned by the GenServer, created lazily on first use. Cached reads must be servable directly from ETS without a GenServer round-trip; all loads, writes, and deletes are serialised through the GenServer so the store functions and the cache never race. The key consistency rule: the cache is only mutated on a *successful* store operation — a failed `put`/`delete` must leave the previously cached value exactly as it was.
+
+Give me the complete module in a single file. Use only OTP and the standard library, no external dependencies.
+
+----- solution.ex -----
+defmodule CacheLayer do
+  @moduledoc """
+  A true write-through cache implemented as a GenServer, backed by ETS.
+
+  Reads are read-through (a miss calls a `loader_fn`, caches, and returns the
+  value). Writes and deletes are *write-through*: the caller-supplied store
+  function runs first, and the cache is only mutated when that store operation
+  succeeds. This guarantees the cache is never ahead of the backing store — a
+  failed `put`/`delete` leaves the previously cached value exactly as it was.
+
+  Each logical `table` (an atom) maps to a separate `:set`, `:public` ETS table
+  owned by this process, created lazily on first use. Cached reads are served
+  directly from ETS; all loads, writes, and deletes are serialised through the
+  GenServer so the store functions and the cache never race, and a `loader_fn`
+  runs at most once per miss even under concurrency.
+
+  `invalidate/3` and `invalidate_all/2` are cache-only operations: they evict
+  from ETS without touching the backing store.
+  """
+
+  use GenServer
+
+  # --------------------------------------------------------------------------
+  # Public API
+  # --------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @spec fetch(GenServer.server(), atom(), term(), (-> term())) :: {:ok, term()}
+  def fetch(server, table, key, loader_fn)
+      when is_atom(table) and is_function(loader_fn, 0) do
+    pid = resolve_pid!(server)
+
+    case :persistent_term.get({__MODULE__, pid, table}, :no_table) do
+      :no_table ->
+        GenServer.call(server, {:fetch, table, key, loader_fn})
+
+      tid ->
+        case :ets.lookup(tid, key) do
+          [{^key, value}] -> {:ok, value}
+          [] -> GenServer.call(server, {:fetch, table, key, loader_fn})
+        end
+    end
+  end
+
+  @spec put(GenServer.server(), atom(), term(), term(), (-> :ok | {:ok, term()} | {:error, term()})) ::
+          {:ok, term()} | {:error, term()}
+  def put(server, table, key, value, writer_fn)
+      when is_atom(table) and is_function(writer_fn, 0) do
+    GenServer.call(server, {:put, table, key, value, writer_fn})
+  end
+
+  @spec delete(GenServer.server(), atom(), term(), (-> :ok | {:ok, term()} | {:error, term()})) ::
+          :ok | {:error, term()}
+  def delete(server, table, key, deleter_fn)
+      when is_atom(table) and is_function(deleter_fn, 0) do
+    GenServer.call(server, {:delete, table, key, deleter_fn})
+  end
+
+  @spec invalidate(GenServer.server(), atom(), term()) :: :ok
+  def invalidate(server, table, key) when is_atom(table) do
+    GenServer.call(server, {:invalidate, table, key})
+  end
+
+  @spec invalidate_all(GenServer.server(), atom()) :: :ok
+  def invalidate_all(server, table) when is_atom(table) do
+    GenServer.call(server, {:invalidate_all, table})
+  end
+
+  # --------------------------------------------------------------------------
+  # GenServer callbacks
+  # --------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(:ok) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{tables: %{}}}
+  end
+
+  @impl GenServer
+  def handle_call({:fetch, table, key, loader_fn}, _from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    value =
+      case :ets.lookup(tid, key) do
+        [{^key, cached}] ->
+          cached
+
+        [] ->
+          fresh = loader_fn.()
+          :ets.insert(tid, {key, fresh})
+          fresh
+      end
+
+    {:reply, {:ok, value}, state}
+  end
+
+  def handle_call({:put, table, key, value, writer_fn}, _from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    reply =
+      case writer_fn.() do
+        :ok ->
+          :ets.insert(tid, {key, value})
+          {:ok, value}
+
+        {:ok, _} ->
+          :ets.insert(tid, {key, value})
+          {:ok, value}
+
+        {:error, reason} ->
+          # Store write failed: cache is left exactly as it was.
+          {:error, reason}
+
+        other ->
+          raise ArgumentError,
+                "writer_fn must return :ok, {:ok, term} or {:error, reason}, got: #{inspect(other)}"
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:delete, table, key, deleter_fn}, _from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    reply =
+      case deleter_fn.() do
+        :ok ->
+          :ets.delete(tid, key)
+          :ok
+
+        {:ok, _} ->
+          :ets.delete(tid, key)
+          :ok
+
+        {:error, reason} ->
+          {:error, reason}
+
+        other ->
+      (truncated)
+10:15:54.352 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule CacheLayer do
+  @moduledoc """
+  A true write-through cache implemented as a GenServer, backed by ETS.
+
+  Reads are read-through (a miss calls a `loader_fn`, caches, and returns the
+  value). Writes and deletes are *write-through*: the caller-supplied store
+  function runs first, and the cache is only mutated when that store operation
+  succeeds. This guarantees the cache is never ahead of the backing store — a
+  failed `put`/`delete` leaves the previously cached value exactly as it was.
+
+  Each logical `table` (an atom) maps to a separate `:set`, `:public` ETS table
+  owned by this process, created lazily on first use. Cached reads are served
+  directly from ETS; all loads, writes, and deletes are serialised through the
+  GenServer so the store functions and the cache never race, and a `loader_fn`
+  runs at most once per miss even under concurrency.
+
+  `invalidate/3` and `invalidate_all/2` are cache-only operations: they evict
+  from ETS without touching the backing store.
+  """
+
+  use GenServer
+
+  @typedoc "A zero-arity store function returning a success/error tuple."
+  @type store_fun :: (-> :ok | {:ok, term()} | {:error, term()})
+
+  # --------------------------------------------------------------------------
+  # Public API
+  # --------------------------------------------------------------------------
+
+  @doc """
+  Starts the cache GenServer.
+
+  Accepts the standard GenServer options, notably `:name` for process
+  registration. The started process owns the lifecycle of every ETS table it
+  creates.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc """
+  Read-through fetch for `{table, key}`.
+
+  On a cache hit the value is read directly from ETS. On a miss `loader_fn` is
+  called at most once, its result is cached, and `{:ok, value}` is returned.
+  """
+  @spec fetch(GenServer.server(), atom(), term(), (-> term())) :: {:ok, term()}
+  def fetch(server, table, key, loader_fn)
+      when is_atom(table) and is_function(loader_fn, 0) do
+    pid = resolve_pid!(server)
+
+    case :persistent_term.get({__MODULE__, pid, table}, :no_table) do
+      :no_table ->
+        GenServer.call(server, {:fetch, table, key, loader_fn})
+
+      tid ->
+        case :ets.lookup(tid, key) do
+          [{^key, value}] -> {:ok, value}
+          [] -> GenServer.call(server, {:fetch, table, key, loader_fn})
+        end
+    end
+  end
+
+  @doc """
+  Write-through put for `{table, key}`.
+
+  `writer_fn` persists to the backing store first. Only when it returns `:ok`
+  or `{:ok, term}` is the cache updated to `value` and `{:ok, value}` returned.
+  On `{:error, reason}` the cache is left untouched and `{:error, reason}` is
+  returned.
+  """
+  @spec put(GenServer.server(), atom(), term(), term(), store_fun()) ::
+          {:ok, term()} | {:error, term()}
+  def put(server, table, key, value, writer_fn)
+      when is_atom(table) and is_function(writer_fn, 0) do
+    GenServer.call(server, {:put, table, key, value, writer_fn})
+  end
+
+  @doc """
+  Delete-through for `{table, key}`.
+
+  `deleter_fn` removes the key from the backing store first. Only when it
+  returns `:ok` or `{:ok, term}` is the cache entry removed and `:ok` returned.
+  On `{:error, reason}` the cache is left untouched and `{:error, reason}` is
+  returned.
+  """
+  @spec delete(GenServer.server(), atom(), term(), store_fun()) ::
+          :ok | {:error, term()}
+  def delete(server, table, key, deleter_fn)
+      when is_atom(table) and is_function(deleter_fn, 0) do
+    GenServer.call(server, {:delete, table, key, deleter_fn})
+  end
+
+  @doc """
+  Cache-only eviction of `{table, key}`.
+
+  Removes the cached entry without touching the backing store. Always `:ok`.
+  """
+  @spec invalidate(GenServer.server(), atom(), term()) :: :ok
+  def invalidate(server, table, key) when is_atom(table) do
+    GenServer.call(server, {:invalidate, table, key})
+  end
+
+  @doc """
+  Cache-only eviction of every entry for `table`.
+
+  Clears the table's cache without touching the backing store. Always `:ok`.
+  """
+  @spec invalidate_all(GenServer.server(), atom()) :: :ok
+  def invalidate_all(server, table) when is_atom(table) do
+    GenServer.call(server, {:invalidate_all, table})
+  end
+
+  # --------------------------------------------------------------------------
+  # GenServer callbacks
+  # --------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(:ok) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{tables: %{}}}
+  end
+
+  @impl GenServer
+  def handle_call({:fetch, table, key, loader_fn}, _from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    value =
+      case :ets.lookup(tid, key) do
+        [{^key, cached}] ->
+          cached
+
+        [] ->
+          fresh = loader_fn.()
+          :ets.insert(tid, {key, fresh})
+          fresh
+      end
+
+    {:reply, {:ok, value}, state}
+  end
+
+  def handle_call({:put, table, key, value, writer_fn}, _from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    reply =
+      case writer_fn.() do
+        :ok ->
+          :ets.insert(tid, {key, value})
+          {:ok, value}
+
+        {:ok, _} ->
+          :ets.insert(tid, {key, value})
+          {:ok, value}
+
+        {:error, reason} ->
+          # Store write failed: cache is left exactly as it was.
+          {:error, reason}
+
+        other ->
+          raise ArgumentError,
+                "writer_fn must return :ok, {:ok, term} or " <>
+                  "{:error, reason}, got: #{inspect(other)}"
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:delete, table, key, deleter_fn}, _from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    reply =
+      case deleter_fn.() do
+        :ok ->
+          :ets.delete(tid, key)
+          :ok
+
+        {:ok, _} ->
+          :ets.delete(tid, key)
+          :ok
+
+        {:error, reason} ->
+          {:error, reason}
+
+        other ->
+          raise ArgumentError,
+                "deleter_fn must return :ok, {:ok, term} or " <>
+                  "{:error, reason}, got: #{inspect(other)}"
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:invalidate, table, key}, _from, state) do
+    case Map.get(state.tables, table) do
+      nil -> :ok
+      tid -> :ets.delete(tid, key)
+    end
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:invalidate_all, table}, _from, state) do
+    case Map.get(state.tables, table) do
+      nil -> :ok
+      tid -> :ets.delete_all_objects(tid)
+    end
+
+    {:reply, :ok, state}
+  end
+
+  @impl GenServer
+  def terminate(_reason, state) do
+    pid = self()
+
+    Enum.each(state.tables, fn {table, tid} ->
+      :persistent_term.erase({__MODULE__, pid, table})
+      :ets.delete(tid)
+    end)
+
+    :ok
+  end
+
+  # --------------------------------------------------------------------------
+  # Helpers
+  # --------------------------------------------------------------------------
+
+  defp ensure_table(table, %{tables: tables} = state) do
+    case Map.get(tables, table) do
+      nil ->
+        tid = :ets.new(table, [:set, :public])
+        :persistent_term.put({__MODULE__, self(), table}, tid)
+        {tid, %{state | tables: Map.put(tables, table, tid)}}
+
+      tid ->
+        {tid, state}
+    end
+  end
+
+  defp resolve_pid!(pid) when is_pid(pid), do: pid
+
+  defp resolve_pid!(name) do
+    case GenServer.whereis(name) do
+      nil -> raise ArgumentError, "CacheLayer: cannot resolve #{inspect(name)} to a pid"
+      pid -> pid
+    end
+  end
+end
+</file>
+10:15:54.353 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6965, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6965, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6965, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6965, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 3530, "type" => "message"}], "output_tokens" => 3530, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+10:15:54.371 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01 solution.ex
+10:15:55.096 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":88,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:15:55.072304Z"}
+10:15:55.103 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:15:55.823 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 12/12 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test fetch loads on a miss and caches for later hits"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test concurrent misses call the loader at most once"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test put writes through to the store then updates the cache"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test put overwrites an existing cached value"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test a failed write leaves the previously cached value intact"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test delete removes from the store then the cache"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test a failed delete leaves the cached value intact"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test invalidate evicts from the cache without touching the store"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLay (truncated)
+10:15:55.828 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:15:56.564 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":170,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.36,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 10/12 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.17},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test fetch loads on a miss and caches for later hits"},{"message":"{:EXIT, #PID<0.214.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :fetch, 4, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 15, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CacheLayerWriteThroughTest","test":"test concurrent misses call the loader at most once"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test put writes through to the store then updates the cache"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test put overwrites an existing cached value"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test a failed write leaves the previously cached value intact"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test delete removes from the store then the cache"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test a failed delete leaves the cached value intact"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test invalidate evicts from the cache without touching the store"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test invalidate_all clears the table without touching the store"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test put on one table does not affect another"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:15:56.540800Z"}
+10:15:56.570 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:15:57.307 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.71,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 4/12 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.67},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test put writes through to the store then updates the cache"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test put overwrites an existing cached value"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test a failed write leaves the previously cached value intact"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test put on one table does not affect another"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:15:57.283424Z"}
+10:15:57.313 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:15:58.021 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.84,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 2/12 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.83},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test delete removes from the store then the cache"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test a failed delete leaves the cached value intact"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:15:57.999560Z"}
+10:15:58.026 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:15:58.770 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.84,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 2/12 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.83},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test invalidate evicts from the cache without touching the store"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test invalidate on a non-existent key returns :ok"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:15:58.744974Z"}
+10:15:58.775 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:15:59.495 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.85,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 2/12 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.83},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test invalidate_all clears the table without touching the store"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test invalidate_all on an unused table returns :ok"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:15:59.473348Z"}
+10:15:59.500 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:16:00.230 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":180,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 12/12 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test fetch loads on a miss and caches for later hits"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test concurrent misses call the loader at most once"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test put writes through to the store then updates the cache"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test put overwrites an existing cached value"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test a failed write leaves the previously cached value intact"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test delete removes from the store then the cache"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test a failed delete leaves the cached value intact"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test invalidate evicts from the cache without touching the store"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test invalidate_all clears the table without touching the store"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test invalidate on a non-existent key returns :ok"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test invalidate_all on an unused table returns :ok"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test put on one table does not affect another"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:16:00.206401Z"}
+10:16:00.235 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:16:00.967 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":116,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":19,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.18,"reasons":["compilation: 19 warning(s) → -1.9 pts","tests: 12/12 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.213.0>, {:fetch, :users, \"u:1\", #Function<9.3335710/0 in CacheLayerWriteThroughTest.\"test fetch loads on a miss and caches for later hits\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test fetch loads on a miss and caches for later hits"},{"message":"{:EXIT, #PID<0.215.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.218.0>, {:fetch, :users, \"hot\", #Function<4.3335710/0 in CacheLayerWriteThroughTest.\"test concurrent misses call the loader at most once\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test concurrent misses call the loader at most once"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 67, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.248.0>, {:put, :users, \"u:1\", :new, &CacheLayerWriteThroughTest.Store.write/0}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test put writes through to the store then updates the cache"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.253.0>, {:fetch, :users, \"u:1\", #Function<16.3335710/0 in CacheLayerWriteThroughTest.\"test put overwrites an existing cached value\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test put overwrites an existing cached value"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.258.0>, {:fetch, :users, \"u:1\", #Function<2.3335710/0 in CacheLayerWriteThroughTest.\"test a failed write leaves the previously cached value intact\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test a failed write leaves the previously cached value intact"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.263.0>, {:fetch, :users, \"u:1\", #Function<7.3335710/0 in CacheLayerWriteThroughTest.\"test delete removes from the store then the cache\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test delete removes from the store then the cache"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.268.0>, {:fetch, :users, \"u:1\", #Function<0.3335710/0 in CacheLayerWriteThroughTest.\"test a failed delete leaves the cached value intact\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test a failed delete leaves the cached value intact"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.273.0>, {:fetch, :users, \"u:1\", #Function<10.3335710/0 in CacheLayerWriteThroughTest.\"test invalidate evicts from the cache without touching the store\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test invalidate evicts from the cache without touching the store"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.278.0>, {:fetch, :users, \"u:1\", #Function<20.3335710/0 in CacheLayerWriteThroughTest.\"test invalidate_all clears the table without touching the store\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test invalidate_all clears the table without touching the store"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call (truncated)
+10:16:00.972 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:16:01.727 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":174,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.96,"reasons":["compilation: 1 warning(s) → -0.1 pts","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T08:16:01.702327Z"}
+10:16:01.727 [debug] base mutation gate (per-fn): terminate/2 survived
+10:16:01.728 [info] cycle 042_003_true_write_through_cache_with_backing_store_propagation_01: repairing — Mutation gate failed: the raise-mutant of `terminate/2` still passes the tests — that public function is not exercised by test_harness.exs. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+10:16:01.728 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+10:16:01.728 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Mutation gate failed: the raise-mutant of `terminate/2` still passes the tests — that public function is not exercised by test_harness.exs. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `CacheLayer` that is a **true write-through cache**: reads are served from an ETS cache with read-through fill, and writes and deletes are propagated to a backing store *before* the cache is updated, so the cache is never ahead of the store.
+
+I need these functions in the public API:
+- `CacheLayer.start_link(opts)` to start the process as a GenServer. It should accept a `:name` option for process registration and own the lifecycle of all ETS tables it creates.
+- `CacheLayer.fetch(server, table, key, loader_fn)` — read-through. If `{table, key}` is cached, return `{:ok, value}` (read directly from ETS). On a miss, call `loader_fn.()` (a zero-arity function that loads from the store and returns the value) **at most once**, cache the result, and return `{:ok, value}`.
+- `CacheLayer.put(server, table, key, value, writer_fn)` — write-through. `writer_fn` is a zero-arity function that persists the value to the backing store and returns `:ok`, `{:ok, term}`, or `{:error, reason}`. Call `writer_fn.()` first; **only if it succeeds** update the cache to `value` and return `{:ok, value}`. If it returns `{:error, reason}`, leave the cache untouched and return `{:error, reason}`.
+- `CacheLayer.delete(server, table, key, deleter_fn)` — delete-through. `deleter_fn` is a zero-arity function that removes the key from the backing store and returns `:ok`, `{:ok, term}`, or `{:error, reason}`. Call it first; **only if it succeeds** remove the entry from the cache and return `:ok`. On `{:error, reason}`, leave the cache untouched and return `{:error, reason}`.
+- `CacheLayer.invalidate(server, table, key)` — cache-only eviction. Removes the cached entry **without touching the backing store**. Returns `:ok`.
+- `CacheLayer.invalidate_all(server, table)` — cache-only eviction of **all** entries for the table (store untouched). Returns `:ok`.
+
+Each `table` is an atom mapping to a separate `:set`, `:public` ETS table owned by the GenServer, created lazily on first use. Cached reads must be servable directly from ETS without a GenServer round-trip; all loads, writes, and deletes are serialised through the GenServer so the store functions and the cache never race. The key consistency rule: the cache is only mutated on a *successful* store operation — a failed `put`/`delete` must leave the previously cached value exactly as it was.
+
+Give me the complete module in a single file. Use only OTP and the standard library, no external dependencies.
+
+----- solution.ex -----
+defmodule CacheLayer do
+  @moduledoc """
+  A true write-through cache implemented as a GenServer, backed by ETS.
+
+  Reads are read-through (a miss calls a `loader_fn`, caches, and returns the
+  value). Writes and deletes are *write-through*: the caller-supplied store
+  function runs first, and the cache is only mutated when that store operation
+  succeeds. This guarantees the cache is never ahead of the backing store — a
+  failed `put`/`delete` leaves the previously cached value exactly as it was.
+
+  Each logical `table` (an atom) maps to a separate `:set`, `:public` ETS table
+  owned by this process, created lazily on first use. Cached reads are served
+  directly from ETS; all loads, writes, and deletes are serialised through the
+  GenServer so the store functions and the cache never race, and a `loader_fn`
+  runs at most once per miss even under concurrency.
+
+  `invalidate/3` and `invalidate_all/2` are cache-only operations: they evict
+  from ETS without touching the backing store.
+  """
+
+  use GenServer
+
+  @typedoc "A zero-arity store function returning a success/error tuple."
+  @type store_fun :: (-> :ok | {:ok, term()} | {:error, term()})
+
+  # --------------------------------------------------------------------------
+  # Public API
+  # --------------------------------------------------------------------------
+
+  @doc """
+  Starts the cache GenServer.
+
+  Accepts the standard GenServer options, notably `:name` for process
+  registration. The started process owns the lifecycle of every ETS table it
+  creates.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc """
+  Read-through fetch for `{table, key}`.
+
+  On a cache hit the value is read directly from ETS. On a miss `loader_fn` is
+  called at most once, its result is cached, and `{:ok, value}` is returned.
+  """
+  @spec fetch(GenServer.server(), atom(), term(), (-> term())) :: {:ok, term()}
+  def fetch(server, table, key, loader_fn)
+      when is_atom(table) and is_function(loader_fn, 0) do
+    pid = resolve_pid!(server)
+
+    case :persistent_term.get({__MODULE__, pid, table}, :no_table) do
+      :no_table ->
+        GenServer.call(server, {:fetch, table, key, loader_fn})
+
+      tid ->
+        case :ets.lookup(tid, key) do
+          [{^key, value}] -> {:ok, value}
+          [] -> GenServer.call(server, {:fetch, table, key, loader_fn})
+        end
+    end
+  end
+
+  @doc """
+  Write-through put for `{table, key}`.
+
+  `writer_fn` persists to the backing store first. Only when it returns `:ok`
+  or `{:ok, term}` is the cache updated to `value` and `{:ok, value}` returned.
+  On `{:error, reason}` the cache is left untouched and `{:error, reason}` is
+  returned.
+  """
+  @spec put(GenServer.server(), atom(), term(), term(), store_fun()) ::
+          {:ok, term()} | {:error, term()}
+  def put(server, table, key, value, writer_fn)
+      when is_atom(table) and is_function(writer_fn, 0) do
+    GenServer.call(server, {:put, table, key, value, writer_fn})
+  end
+
+  @doc """
+  Delete-through for `{table, key}`.
+
+  `deleter_fn` removes the key from the backing store first. Only when it
+  returns `:ok` or `{:ok, term}` is the cache entry removed and `:ok` returned.
+  On `{:error, reason}` the cache is left untouched and `{:error, reason}` is
+  returned.
+  """
+  @spec delete(GenServer.server(), atom(), term(), store_fun()) ::
+          :ok | {:error, term()}
+  def delete(server, table, key, deleter_fn)
+      when is_atom(table) and is_function(deleter_fn, 0) do
+    GenServer.call(server, {:delete, table, key, deleter_fn})
+  end
+
+  @doc """
+  Cache-only eviction of `{table, key}`.
+
+  Removes the cached entry without touching the backing store. Always `:ok`.
+  """
+  @spec invalidate(GenServer.server(), atom(), term()) :: :ok
+  def invalidate(server, table, key) when is_atom(table) do
+    GenServer.call(server, {:invalidate, table, key})
+  end
+
+  @doc """
+  Cache-only eviction of every entry for `table`.
+
+  Clears the table's cache without touching the backing store. Always `:ok`.
+  """
+  @spec invalidate_all(GenServer.server(), atom()) :: :ok
+  def invalidate_all(server, table) when is_atom(table) do
+    GenServer.call(server, {:invalidate_all, table})
+  end
+
+  # --------------------------------------------------------------------------
+  # GenServer callbacks
+  # --------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(:ok) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{tables: %{}}}
+  end
+
+  @impl GenServer
+  def handle_cal (truncated)
+10:17:00.053 [debug] claude -p RESULT (stop="end_turn"):
+<file path="test_harness.exs">
+defmodule CacheLayerWriteThroughTest do
+  use ExUnit.Case, async: false
+
+  # A mock backing store that records load/write/delete calls and can be
+  # toggled to fail its write/delete operations.
+  defmodule Store do
+    use Agent
+
+    def start_link(_) do
+      Agent.start_link(fn -> %{loads: 0, writes: 0, deletes: 0, fail: false} end, name: __MODULE__)
+    end
+
+    def loaded(value) do
+      Agent.update(__MODULE__, fn s -> %{s | loads: s.loads + 1} end)
+      value
+    end
+
+    def write do
+      Agent.get_and_update(__MODULE__, fn s ->
+        resp = if s.fail, do: {:error, :store_down}, else: :ok
+        {resp, %{s | writes: s.writes + 1}}
+      end)
+    end
+
+    def delete do
+      Agent.get_and_update(__MODULE__, fn s ->
+        resp = if s.fail, do: {:error, :store_down}, else: :ok
+        {resp, %{s | deletes: s.deletes + 1}}
+      end)
+    end
+
+    def set_fail(bool), do: Agent.update(__MODULE__, fn s -> %{s | fail: bool} end)
+    def counts, do: Agent.get(__MODULE__, & &1)
+  end
+
+  setup do
+    start_supervised!({Store, :ok})
+    cl = start_supervised!({CacheLayer, []})
+    %{cl: cl}
+  end
+
+  # -------------------------------------------------------
+  # Read-through
+  # -------------------------------------------------------
+
+  test "fetch loads on a miss and caches for later hits", %{cl: cl} do
+    loader = fn -> Store.loaded(:v1) end
+
+    assert {:ok, :v1} = CacheLayer.fetch(cl, :users, "u:1", loader)
+    assert {:ok, :v1} = CacheLayer.fetch(cl, :users, "u:1", loader)
+    assert Store.counts().loads == 1
+  end
+
+  test "concurrent misses call the loader at most once", %{cl: cl} do
+    loader = fn -> Process.sleep(20); Store.loaded(:v) end
+
+    results =
+      for _ <- 1..25 do
+        Task.async(fn -> CacheLayer.fetch(cl, :users, "hot", loader) end)
+      end
+      |> Enum.map(&Task.await/1)
+
+    assert Enum.all?(results, &(&1 == {:ok, :v}))
+    assert Store.counts().loads == 1
+  end
+
+  # -------------------------------------------------------
+  # Write-through
+  # -------------------------------------------------------
+
+  test "put writes through to the store then updates the cache", %{cl: cl} do
+    assert {:ok, :new} = CacheLayer.put(cl, :users, "u:1", :new, &Store.write/0)
+    assert Store.counts().writes == 1
+
+    # Subsequent fetch is served from cache — loader never runs.
+    assert {:ok, :new} = CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:from_db) end)
+    assert Store.counts().loads == 0
+  end
+
+  test "put overwrites an existing cached value", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:old) end)
+    assert {:ok, :updated} = CacheLayer.put(cl, :users, "u:1", :updated, &Store.write/0)
+
+    assert {:ok, :updated} = CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:x) end)
+    # Only the original load happened; the second fetch was a cache hit.
+    assert Store.counts().loads == 1
+  end
+
+  test "a failed write leaves the previously cached value intact", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:v1) end)
+    Store.set_fail(true)
+
+    assert {:error, :store_down} = CacheLayer.put(cl, :users, "u:1", :v2, &Store.write/0)
+    assert Store.counts().writes == 1
+
+    # Cache untouched — still the old value, no reload.
+    assert {:ok, :v1} = CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:x) end)
+    assert Store.counts().loads == 1
+  end
+
+  # -------------------------------------------------------
+  # Delete-through
+  # -------------------------------------------------------
+
+  test "delete removes from the store then the cache", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:v1) end)
+
+    assert :ok = CacheLayer.delete(cl, :users, "u:1", &Store.delete/0)
+    assert Store.counts().deletes == 1
+
+    # Cache miss now -> reload.
+    assert {:ok, :v2} = CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:v2) end)
+    assert Store.counts().loads == 2
+  end
+
+  test "a failed delete leaves the cached value intact", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:v1) end)
+    Store.set_fail(true)
+
+    assert {:error, :store_down} = CacheLayer.delete(cl, :users, "u:1", &Store.delete/0)
+    assert Store.counts().deletes == 1
+
+    # Still cached — no reload.
+    assert {:ok, :v1} = CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:x) end)
+    assert Store.counts().loads == 1
+  end
+
+  # -------------------------------------------------------
+  # Cache-only invalidation (store untouched)
+  # -------------------------------------------------------
+
+  test "invalidate evicts from the cache without touching the store", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:v1) end)
+
+    assert :ok = CacheLayer.invalidate(cl, :users, "u:1")
+    assert Store.counts().deletes == 0
+
+    # Evicted -> reload.
+    assert {:ok, :v2} = CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:v2) end)
+    assert Store.counts().loads == 2
+  end
+
+  test "invalidate_all clears the table without touching the store", %{cl: cl} do
+    for i <- 1..5 do
+      CacheLayer.fetch(cl, :users, "u:#{i}", fn -> Store.loaded(i) end)
+    end
+
+    assert Store.counts().loads == 5
+    assert :ok = CacheLayer.invalidate_all(cl, :users)
+    assert Store.counts().deletes == 0
+
+    for i <- 1..5 do
+      CacheLayer.fetch(cl, :users, "u:#{i}", fn -> Store.loaded(i) end)
+    end
+
+    assert Store.counts().loads == 10
+  end
+
+  test "invalidate on a non-existent key returns :ok", %{cl: cl} do
+    assert :ok = CacheLayer.invalidate(cl, :users, "nope")
+  end
+
+  test "invalidate_all on an unused table returns :ok", %{cl: cl} do
+    assert :ok = CacheLayer.invalidate_all(cl, :never_used)
+  end
+
+  # -------------------------------------------------------
+  # Table independence
+  # -------------------------------------------------------
+
+  test "put on one table does not affect another", %{cl: cl} do
+    CacheLayer.put(cl, :users, "id:1", :u, &Store.write/0)
+    CacheLayer.put(cl, :posts, "id:1", :p, &Store.write/0)
+
+    assert {:ok, :u} = CacheLayer.fetch(cl, :users, "id:1", fn -> Store.loaded(:x) end)
+    assert {:ok, :p} = CacheLayer.fetch(cl, :posts, "id:1", fn -> Store.loaded(:x) end)
+    assert Store.counts().loads == 0
+  end
+
+  # -------------------------------------------------------
+  # Termination / cleanup (exercises terminate/2)
+  # -------------------------------------------------------
+
+  test "stopping the server cleans up its persistent_term registrations" do
+    {:ok, pid} = CacheLayer.start_link([])
+
+    # Touch two tables so both get lazily created and registered.
+    assert {:ok, :v1} = CacheLayer.fetch(pid, :cleanup_a, "k", fn -> :v1 end)
+    assert {:ok, :v2} = CacheLayer.fetch(pid, :cleanup_b, "k", fn -> :v2 end)
+
+    # The fast read-path registrations exist while the server is alive.
+    tid_a = :persistent_term.get({CacheLayer, pid, :cleanup_a})
+    tid_b = :persistent_term.get({CacheLayer, pid, :cleanup_b})
+    assert :ets.info(tid_a) != :undefined
+    assert :ets.info(tid_b) != :undefined
+    assert :ets.lookup(tid_a, "k") == [{"k", :v1}]
+
+    # A clean stop must run terminate/2, which erases every registration.
+    :ok = GenServer.stop(pid)
+
+    assert :persistent_term.get({CacheLayer, pid, :cleanup_a}, :gone) == :gone
+    assert :persistent_term.get({CacheLayer, pid, :cleanup_b}, :gone) == :gone
+  end
+
+  test "terminate/2 runs during a supervised shutdown without crashing" do
+    {:ok, sup} = Supervisor.start_link([{CacheLayer, []}], strategy: :one_for_one)
+    [{_id, pid, _type, _mods}] = Supervisor.which_children(sup)
+
+    assert {:ok, :v} = CacheLayer.fetch(pid, :sup_tbl, "k", fn -> :v end)
+    assert :persistent_term.get({CacheLayer, pid, :sup_tbl}) |> :ets.info() != :undefined
+
+    ref = Process.monitor(pid)
+    :ok = Supervisor.stop(sup)
+
+    # The child must have exited normally (a raising terminate/2 would surface
+    # here as an abnormal exit reason), and its registration must be gone.
+    assert_receive {:DOWN, ^ref, :p (truncated)
+10:17:00.053 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7488, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7488, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7488, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7488, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 5457, "type" => "message"}], "output_tokens" => 5457, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+10:17:00.073 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01 solution.ex
+10:17:00.853 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":248,"lines_over_98":0,"max_line_length":88,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-04T08:17:00.828512Z"}
+10:17:00.859 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:17:01.612 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 14/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test fetch loads on a miss and caches for later hits"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test concurrent misses call the loader at most once"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test put writes through to the store then updates the cache"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test put overwrites an existing cached value"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test a failed write leaves the previously cached value intact"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test delete removes from the store then the cache"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test a failed delete leaves the cached value intact"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLayer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test invalidate evicts from the cache without touching the store"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:9: CacheLay (truncated)
+10:17:01.617 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:17:02.390 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":170,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.35,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 12/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.14},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test fetch loads on a miss and caches for later hits"},{"message":"{:EXIT, #PID<0.214.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :fetch, 4, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 15, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CacheLayerWriteThroughTest","test":"test concurrent misses call the loader at most once"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test put writes through to the store then updates the cache"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test put overwrites an existing cached value"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test a failed write leaves the previously cached value intact"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test delete removes from the store then the cache"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test a failed delete leaves the cached value intact"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test invalidate evicts from the cache without touching the store"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test invalidate_all clears the table without touching the store"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test put on one table does not affect another"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test stopping the server cleans up its persistent_term registrations"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test terminate/2 runs during a supervised shutdown without crashing"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-04T08:17:02.365911Z"}
+10:17:02.395 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:17:03.147 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.74,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 4/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.71},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test put writes through to the store then updates the cache"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test put overwrites an existing cached value"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test a failed write leaves the previously cached value intact"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test put on one table does not affect another"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-04T08:17:03.123465Z"}
+10:17:03.153 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:17:03.922 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.85,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 2/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.86},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test delete removes from the store then the cache"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test a failed delete leaves the cached value intact"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-04T08:17:03.898727Z"}
+10:17:03.927 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:17:04.711 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.85,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 2/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.86},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test invalidate evicts from the cache without touching the store"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test invalidate on a non-existent key returns :ok"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-04T08:17:04.687335Z"}
+10:17:04.717 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:17:05.483 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":181,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.86,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 2/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.86},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test invalidate_all clears the table without touching the store"},{"message":"MUTATION","module":"CacheLayerWriteThroughTest","test":"test invalidate_all on an unused table returns :ok"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-04T08:17:05.457646Z"}
+10:17:05.488 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:17:06.212 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":180,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 14/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test fetch loads on a miss and caches for later hits"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test concurrent misses call the loader at most once"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test put writes through to the store then updates the cache"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test put overwrites an existing cached value"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test a failed write leaves the previously cached value intact"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test delete removes from the store then the cache"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test a failed delete leaves the cached value intact"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test invalidate evicts from the cache without touching the store"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test invalidate_all clears the table without touching the store"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test invalidate on a non-existent key returns :ok"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test invalidate_all on an unused table returns :ok"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test put on one table does not affect another"},{"message":"failed to start child with the spec {CacheLayer, []}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex:57: CacheLayer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CacheLayerWriteThroughTest","test":"test stopping the server cleans up its p (truncated)
+10:17:06.216 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:17:06.966 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":116,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":19,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.18,"reasons":["compilation: 19 warning(s) → -1.9 pts","tests: 14/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.213.0>, {:fetch, :users, \"u:1\", #Function<9.39150835/0 in CacheLayerWriteThroughTest.\"test fetch loads on a miss and caches for later hits\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test fetch loads on a miss and caches for later hits"},{"message":"{:EXIT, #PID<0.215.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.218.0>, {:fetch, :users, \"hot\", #Function<4.39150835/0 in CacheLayerWriteThroughTest.\"test concurrent misses call the loader at most once\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test concurrent misses call the loader at most once"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 67, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.248.0>, {:put, :users, \"u:1\", :new, &CacheLayerWriteThroughTest.Store.write/0}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test put writes through to the store then updates the cache"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.253.0>, {:fetch, :users, \"u:1\", #Function<16.39150835/0 in CacheLayerWriteThroughTest.\"test put overwrites an existing cached value\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test put overwrites an existing cached value"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.258.0>, {:fetch, :users, \"u:1\", #Function<2.39150835/0 in CacheLayerWriteThroughTest.\"test a failed write leaves the previously cached value intact\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test a failed write leaves the previously cached value intact"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.263.0>, {:fetch, :users, \"u:1\", #Function<7.39150835/0 in CacheLayerWriteThroughTest.\"test delete removes from the store then the cache\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test delete removes from the store then the cache"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.268.0>, {:fetch, :users, \"u:1\", #Function<0.39150835/0 in CacheLayerWriteThroughTest.\"test a failed delete leaves the cached value intact\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test a failed delete leaves the cached value intact"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.273.0>, {:fetch, :users, \"u:1\", #Function<10.39150835/0 in CacheLayerWriteThroughTest.\"test invalidate evicts from the cache without touching the store\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test invalidate evicts from the cache without touching the store"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 63, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.278.0>, {:fetch, :users, \"u:1\", #Function<24.39150835/0 in CacheLayerWriteThroughTest.\"test invalidate_all clears the table without touching the store\"/1>}, 5000]}}","module":"CacheLayerWriteThroughTest","test":"test invalidate_all clears the table without touching the store"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :handle_call, 3, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 75, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServe (truncated)
+10:17:06.970 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut solution.ex
+10:17:07.754 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":174,"lines_over_98":7,"max_line_length":963,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.86,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 2/14 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.86},"shape":"single","solution_file":".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex","task":"042_003_true_write_through_cache_with_backing_store_propagation_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.283.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :terminate, 2, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 149, error_info: %{module: Exception}]}, {:gen_server, :try_terminate, 3, [file: ~c\"gen_server.erl\", line: 2482]}, {:gen_server, :terminate, 9, [file: ~c\"gen_server.erl\", line: 2733]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CacheLayerWriteThroughTest","test":"test stopping the server cleans up its persistent_term registrations"},{"message":"\n\nAssertion with in failed\ncode:  assert reason in [:normal, :shutdown]\nleft:  {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :terminate, 2, [file: ~c\".gen_staging/042_003_true_write_through_cache_with_backing_store_propagation_01_mut/solution.ex\", line: 149, error_info: %{module: Exception}]}, {:gen_server, :try_terminate, 3, [file: ~c\"gen_server.erl\", line: 2482]}, {:gen_server, :terminate, 9, [file: ~c\"gen_server.erl\", line: 2733]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}\nright: [:normal, :shutdown]\n","module":"CacheLayerWriteThroughTest","test":"test terminate/2 runs during a supervised shutdown without crashing"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-04T08:17:07.729876Z"}
+10:17:07.755 [info] cycle 042_003_true_write_through_cache_with_backing_store_propagation_01: ACCEPTED on attempt 2
+10:17:07.755 [info] promoted 042_003_true_write_through_cache_with_backing_store_propagation_01 -> tasks/042_003_true_write_through_cache_with_backing_store_propagation_01

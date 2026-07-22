@@ -1,0 +1,9 @@
+keep_land: 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01 — blind-verifying the candidate prompt (1 solver call)
+  GREEN — candidate LANDED (backup kept). Run the cascade + commit.
+  mix run scripts/resync_embeds.exs -- --wt-all --apply
+  mix run scripts/resync_bugfix_embeds.exs -- --apply
+  mix run scripts/resync_tfim_embeds.exs -- --apply
+  mix run scripts/resync_adapt_embeds.exs -- --apply
+  mix run scripts/resync_dedoc_embeds.exs -- --apply
+  elixir scripts/check_embeds.exs
+

@@ -1,0 +1,8 @@
+keep_land: 110_002_histogram_based_approximate_rolling_percentile_01 — blind-verifying the candidate prompt (1 solver call)
+  RED — test histogram quantile estimates are deterministic for a known distribution: :exit: {{:badarg, [{:array, :new_1, 4, [file: ~c"array.erl", line: 329]}, {HistogramPercentile, :handle_cast, 2, [file: ~c".gen_staging/keep_land_110_002_histogram_based_approximate_rolling_percentile
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  ENTAILED — the failing demand IS in the candidate prompt (judge quote:
+  "At query time, sum the per-bucket counts across every stored slice whose start time `s` satisfies `now - s < window_ms`, producing a list of counts `c_0 … c_{k-1}` with total `n`. If `n == 0`, return `{:error, :empty}`. Otherwise use Prometheus-style linear interpolation:"). This is keep-class hardness, not a gap.
+  Review packet: logs/keep_review/110_002_histogram_based_approximate_rolling_percentile_01
+  To land: mix run scripts/keep_land.exs -- --approve 110_002_histogram_based_approximate_rolling_percentile_01
+

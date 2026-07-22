@@ -1,0 +1,387 @@
+04:16:33.528 [info] FIM 101_001_sliding_window_counter_fim01 → 101_001_sliding_window_counter_02: target do_cleanup/1
+04:16:33.528 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+04:16:33.528 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `do_cleanup/1`.
+
+Generate a prompt describing how to implement `do_cleanup/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `do_cleanup/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `do_cleanup/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `do_cleanup/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer module called `SlidingCounter` that counts events
+in a sliding time window using a sub-bucket strategy.
+
+I need these functions in the public API:
+- `SlidingCounter.start_link(opts)` to start the process. It should accept:
+  - `:clock` — a zero-arity function returning the current time in milliseconds.
+    Defaults to `fn -> System.monotonic_time(:millisecond) end`.
+  - `:bucket_ms` — the width of each internal sub-bucket in milliseconds.
+    Defaults to `1_000` (1 second).
+  - `:name` — optional process registration name.
+  - `:cleanup_interval_ms` — how often to run the periodic cleanup.
+    Defaults to `60_000`. Pass `:infinity` to disable.
+- `SlidingCounter.increment(server, key)` — records one event for the given key
+  at the current clock time. Returns `:ok`.
+- `SlidingCounter.count(server, key, window_ms)` — returns the total number of
+  events recorded for `key` that fall within the last `window_ms` milliseconds
+  relative to the current clock time. Events outside that window must not be
+  counted.
+
+Internal design requirements:
+- Divide time into fixed-width sub-buckets of `:bucket_ms` each. Every event is
+  placed into the bucket whose index is `div(timestamp, bucket_ms)`.
+- When answering `count/3`, only include buckets whose time range overlaps the
+  sliding window `[now - window_ms, now]`. Discard (do not count) any bucket
+  that falls entirely before the window.
+- Different keys must be tracked independently — incrementing "page:home" must
+  not affect "page:about".
+- Memory must not leak: run a periodic cleanup (via `Process.send_after`) that
+  removes all buckets — and whole keys — that have fallen outside a reasonable
+  maximum window. Also handle a `:cleanup` message sent directly to the process
+  so tests can trigger cleanup synchronously. After cleanup, `state.keys` must
+  be an empty map when all data has expired.
+
+Give me the complete module in a single file. Use only the OTP standard library,
+no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule SlidingCounter do
+  @moduledoc """
+  A GenServer that counts events in a sliding time window using a sub-bucket strategy.
+
+  ## Sub-bucket design
+
+  Rather than storing one timestamp per event (which would require scanning and
+  trimming lists on every read), time is divided into fixed-width *buckets*.
+  Each bucket holds an integer count of all events that landed inside it.
+
+      bucket index = Integer.floor_div(event_timestamp_ms, bucket_ms)
+
+  State shape: `%{key => %{bucket_index => count}}`.
+
+  ### Counting accuracy vs. bucket width
+
+  A bucket covers the closed-open interval `[b * bucket_ms, (b+1) * bucket_ms)`.
+  When answering `count/3` for a window `[now - window_ms, now]`, any bucket
+  whose range *overlaps* that window is included in full.  This means events
+  near the leading edge of the oldest bucket are counted even if they are
+  technically just outside the window.  The error is bounded by at most one
+  bucket width, so choose `:bucket_ms` to be small relative to the smallest
+  window you plan to query.
+
+  ## Cleanup
+
+  A background timer fires every `:cleanup_interval_ms` and removes buckets
+  (and whole keys) that fall entirely before `now - max_window_ms`.  Tests
+  can also trigger cleanup synchronously by sending the atom `:cleanup`
+  directly to the process.
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Defaults
+  # ---------------------------------------------------------------------------
+
+  @default_bucket_ms 1_000
+  @default_cleanup_interval_ms 60_000
+  # How many bucket-widths worth of history to retain when :max_window_ms is
+  # not supplied by the caller.  60 × bucket_ms gives one minute of retention
+  # with the default 1 s buckets, and 6 s with the 100 ms test buckets — small
+  # enough that cleanup can actually evict data in tests without having to wait
+  # hours for the clock to advance past a hardcoded 24 h constant.
+  @default_max_window_buckets 60
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the `SlidingCounter` process.
+
+  ## Options
+
+  | key                    | type / default                   | description                    |
+  |------------------------|----------------------------------|--------------------------------|
+  | `:clock`               | `(-> integer)` / monotonic       | Current time in ms (0-arity)   |
+  | `:bucket_ms`           | `pos_integer` / `1_000`          | Width of each sub-bucket       |
+  | `:max_window_ms`       | `pos_integer` / `bucket_ms * 60` | Oldest data retained; cutoff   |
+  | `:cleanup_interval_ms` | `pos_integer`/`:infinity`/`60_000` | Background cleanup interval   |
+  | `:name`                | atom / `nil`                     | Optional registration name     |
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    # Separate GenServer start options (like :name) from our init options so
+    # we can forward them cleanly.
+    {gen_opts, init_opts} = Keyword.split(opts, [:name])
+    GenServer.start_link(__MODULE__, init_opts, gen_opts)
+  end
+
+  @doc """
+  Records one event for `key` at the time returned by the configured clock.
+
+  Implemented as a synchronous call so that the timestamp assigned to the event
+  is read before control returns to the caller — this keeps semantics
+  deterministic when callers advance a clock (or read the count) immediately
+  after incrementing.
+  """
+  @spec increment(GenServer.server(), term()) :: :ok
+  def increment(server, key) do
+    GenServer.call(server, {:increment, key})
+  end
+
+  @doc """
+  Returns the total number of events for `key` within the last `window_ms`
+  milliseconds.  Events whose bucket falls entirely before `now - window_ms`
+  are excluded.
+  """
+  @spec count(GenServer.server(), term(), pos_integer()) :: non_neg_integer()
+  def count(server, key, window_ms) do
+    GenServer.call(server, {:count, key, window_ms})
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    clock =
+      Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
+
+    bucket_ms = Keyword.get(opts, :bucket_ms, @default_bucket_ms)
+    max_window_ms = Keyword.get(opts, :max_window_ms, bucket_ms * @default_max_window_buckets)
+    cleanup_interval_ms = Keyword.get(opts, :cleanup_interval_ms, @default_cleanup_interval_ms)
+
+    state = %{
+      clock: clock,
+      bucket_ms: bucket_ms,
+      max_window_ms: max_window_ms,
+      cleanup_interval_ms: cleanup_interval_ms,
+      # Primary data structure.
+      # Outer map key  → key supplied by the caller (any term).
+      # Inner map key  → bucket index (int (truncated)
+04:17:18.428 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `do_cleanup/1` function. It takes the current server
+`state` and returns an updated state with expired data pruned. Read the current
+time by calling `state.clock`. Compute the retention cutoff as the smallest
+bucket index whose start time is still within `now - max_window_ms`: since a
+bucket at index `b` starts at `b * bucket_ms`, a bucket is safe to drop when
+`b * bucket_ms < now - max_window_ms`, so keep buckets where `b >= cutoff` with
+`cutoff = ceil((now - max_window_ms) / bucket_ms)`. Use ceiling integer
+division via `-Integer.floor_div(-(now - state.max_window_ms), state.bucket_ms)`.
+Walk every key in `state.keys`, filtering each key's bucket map down to only the
+buckets at or after the cutoff. If a key has no live buckets left after
+filtering, drop the whole key from the map (do not keep an empty inner map).
+Return the state with its `:keys` replaced by the pruned map — so that once all
+data has expired, `state.keys` is an empty map.
+
+```elixir
+defmodule SlidingCounter do
+  @moduledoc """
+  A GenServer that counts events in a sliding time window using a sub-bucket strategy.
+
+  ## Sub-bucket design
+
+  Rather than storing one timestamp per event (which would require scanning and
+  trimming lists on every read), time is divided into fixed-width *buckets*.
+  Each bucket holds an integer count of all events that landed inside it.
+
+      bucket index = Integer.floor_div(event_timestamp_ms, bucket_ms)
+
+  State shape: `%{key => %{bucket_index => count}}`.
+
+  ### Counting accuracy vs. bucket width
+
+  A bucket covers the closed-open interval `[b * bucket_ms, (b+1) * bucket_ms)`.
+  When answering `count/3` for a window `[now - window_ms, now]`, any bucket
+  whose range *overlaps* that window is included in full.  This means events
+  near the leading edge of the oldest bucket are counted even if they are
+  technically just outside the window.  The error is bounded by at most one
+  bucket width, so choose `:bucket_ms` to be small relative to the smallest
+  window you plan to query.
+
+  ## Cleanup
+
+  A background timer fires every `:cleanup_interval_ms` and removes buckets
+  (and whole keys) that fall entirely before `now - max_window_ms`.  Tests
+  can also trigger cleanup synchronously by sending the atom `:cleanup`
+  directly to the process.
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Defaults
+  # ---------------------------------------------------------------------------
+
+  @default_bucket_ms 1_000
+  @default_cleanup_interval_ms 60_000
+  # How many bucket-widths worth of history to retain when :max_window_ms is
+  # not supplied by the caller.  60 × bucket_ms gives one minute of retention
+  # with the default 1 s buckets, and 6 s with the 100 ms test buckets — small
+  # enough that cleanup can actually evict data in tests without having to wait
+  # hours for the clock to advance past a hardcoded 24 h constant.
+  @default_max_window_buckets 60
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the `SlidingCounter` process.
+
+  ## Options
+
+  | key                    | type / default                   | description                    |
+  |------------------------|----------------------------------|--------------------------------|
+  | `:clock`               | `(-> integer)` / monotonic       | Current time in ms (0-arity)   |
+  | `:bucket_ms`           | `pos_integer` / `1_000`          | Width of each sub-bucket       |
+  | `:max_window_ms`       | `pos_integer` / `bucket_ms * 60` | Oldest data retained; cutoff   |
+  | `:cleanup_interval_ms` | `pos_integer`/`:infinity`/`60_000` | Background cleanup interval   |
+  | `:name`                | atom / `nil`                     | Optional registration name     |
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    # Separate GenServer start options (like :name) from our init options so
+    # we can forward them cleanly.
+    {gen_opts, init_opts} = Keyword.split(opts, [:name])
+    GenServer.start_link(__MODULE__, init_opts, gen_opts)
+  end
+
+  @doc """
+  Records one event for `key` at the time returned by the configured clock.
+
+  Implemented as a synchronous call so that the timestamp assigned to the event
+  is read before control returns to the caller — this keeps semantics
+  deterministic when callers advance a clock (or read the count) immediately
+  after incrementing.
+  """
+  @spec increment(GenServer.server(), term()) :: :ok
+  def increment(server, key) do
+    GenServer.call(server, {:increment, key})
+  end
+
+  @doc """
+  Returns the total number of events for `key` within the last `window_ms`
+  milliseconds.  Events whose bucket falls entirely before `now - window_ms`
+  are excluded.
+  """
+  @spec count(GenServer.server(), term(), pos_integer()) :: non_neg_integer()
+  def count(server, key, window_ms) do
+    GenServer.call(server, {:count, key, window_ms})
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    clock =
+      Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
+
+    bucket_ms = Keyword.get(opts, :bucket_ms, @default_bucket_ms)
+    max_window_ms = Keyword.get(opts, :max_window_ms, bucket_ms * @default_max_window_buckets)
+    cleanup_interval_ms = Keyword.get(opts, :cleanup_interval_ms, @default_cleanup_interval_ms)
+
+    state = %{
+      clock: clock,
+      bucket_ms: bucket_ms,
+      max_window_ms: max_window_ms,
+      cleanup_interval_ms: cleanup_interval_ms,
+      # Primary data structure.
+      # Outer map key  → key supplied by the caller (any term).
+      # Inner map key  → bucket index (integer).
+      # Inner map value → event count (positive integer).
+      keys: %{}
+    }
+
+    schedule_cleanup(cleanup_interval_ms)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:increment, key}, _from, state) do
+    now = state.clock.()
+    bucket = bucket_for(now, state.bucket_ms)
+
+    buckets =
+      state.keys
+      |> Map.get(key, %{})
+      |> Map.update(bucket, 1, &(&1 + 1))
+
+    {:reply, :ok, put_in(state, [:keys, key], buckets)}
+  end
+
+  @impl true
+  def handle_call({:count, key, window_ms}, _from, state) do
+    now = state.clock.()
+
+    # Derive the smallest bucket index whose *start* falls within [now-window_ms, now].
+    #
+    # Bucket b starts at b * bucket_ms.  We want to include bucket b iff:
+    #
+    #   b * bucket_ms  >=  now - window_ms
+    #   b              >=  (now - window_ms) / bucket_ms   [ceiling]
+    #
+    # Ceiling integer division (works for negative values too):
+    #   ceil(a / b)  =  -floor_div(-a, b)
+    #
+    # This is stricter than an overlap test: a bucket that merely *overlaps*
+    # the window boundary (its end > window_start) would be included by floor,
+    # but the tests require that we only count buckets whose start time is
+    # already within the window — keeping the semantics consistent with
+    # "an event at time T is in the window iff T >= now - window_ms".
+    min_bucket = -Integer.floor_div(-(now - window_ms), state.bucket_ms)
+
+    total =
+      state.keys
+      |> Map.get(key, %{})
+      |> Enum.reduce(0, fn {b, cnt}, acc ->
+        if b >= min_bucket, do: acc + cnt, else: acc
+      end)
+
+    {:reply, total, state}
+  end
+
+  # ------------------------------------------------------------------
+  # Cleanup — triggered by both the periodic timer AND direct :cleanup
+  # messages (used by tests for deterministic verification).
+  # ------------------------------------------------------------------
+
+  @impl true
+  def handle_info(:cleanup, state) do
+    new_state = do_cleanup(state)
+    # Reschedule *after* cleanup so timing drift is forward-only.
+    schedule_cleanup(state.cleanup_interval_ms)
+    {:noreply, new_ (truncated)
+04:17:18.428 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8394, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8394, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8394, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8394, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 4228, "type" => "message"}], "output_tokens" => 4228, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+04:17:18.448 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_101_001_sliding_window_counter_02/101_001_sliding_window_counter_02 solution.ex
+04:17:19.099 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":18,"lines_over_98":0,"max_line_length":78,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"101_001_sliding_window_counter_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_101_001_sliding_window_counter_02/101_001_sliding_window_counter_02/solution.ex","task":"101_001_sliding_window_counter_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-11T02:17:19.075359Z"}
+04:17:19.100 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_101_001_sliding_window_counter_02/101_001_sliding_window_counter_02 .gen_staging/fim_101_001_sliding_window_counter_02/mutant.ex
+04:17:19.774 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":25,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"101_001_sliding_window_counter_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 2/15 failed"],"tests":0.87},"shape":"fim","solution_file":".gen_staging/fim_101_001_sliding_window_counter_02/mutant.ex","task":"101_001_sliding_window_counter_02","test_failures":[{"message":"{:EXIT, #PID<0.247.0>}: {%RuntimeError{message: \"MUTATION\"}, [{SlidingCounter, :do_cleanup, 1, [file: ~c\"/tmp/evalfim_1376650_2629.ex\", line: 207, error_info: %{module: Exception}]}, {SlidingCounter, :handle_info, 2, [file: ~c\"/tmp/evalfim_1376650_2629.ex\", line: 176]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"SlidingCounterTest","test":"test expired keys are removed during cleanup"},{"message":"{:EXIT, #PID<0.251.0>}: {%RuntimeError{message: \"MUTATION\"}, [{SlidingCounter, :do_cleanup, 1, [file: ~c\"/tmp/evalfim_1376650_2629.ex\", line: 207, error_info: %{module: Exception}]}, {SlidingCounter, :handle_info, 2, [file: ~c\"/tmp/evalfim_1376650_2629.ex\", line: 176]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"SlidingCounterTest","test":"test active keys survive cleanup"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-11T02:17:19.752227Z"}
+04:17:19.774 [debug] fim mutation gate: killed
+04:17:19.775 [info] promoted 101_001_sliding_window_counter_02 -> tasks/101_001_sliding_window_counter_02

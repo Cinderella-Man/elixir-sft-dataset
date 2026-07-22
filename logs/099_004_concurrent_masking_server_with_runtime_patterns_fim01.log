@@ -1,0 +1,395 @@
+08:16:12.149 [info] FIM 099_004_concurrent_masking_server_with_runtime_patterns_fim01 → 099_004_concurrent_masking_server_with_runtime_patterns_02: target scrub/2
+08:16:12.149 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+08:16:12.149 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `scrub/2`.
+
+Generate a prompt describing how to implement `scrub/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `scrub/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `scrub/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `scrub/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `MaskingServer` — a `GenServer` that scrubs sensitive data from log-bound maps, keyword lists, and strings for concurrent callers, supports registering **extra masking patterns at runtime**, and tracks cumulative masking statistics.
+
+I need these functions in the public API:
+
+- `MaskingServer.start_link(opts)` — starts the server. `opts` is a keyword list; `opts[:sensitive_keys]` is a list of atoms and/or strings (defaulting to `[]` when absent). Key comparison during masking must be case-insensitive and work for both atom and string keys. Returns `{:ok, pid}`.
+
+- `MaskingServer.mask(server, data)` — a synchronous call that accepts a map, a keyword list, a plain list, or any other term and returns the same shape with sensitive data scrubbed.
+  - Maps and keyword lists are walked recursively. If a key matches a configured sensitive key, its value is replaced with `"[MASKED]"` regardless of the value's type. Non-sensitive keys are preserved and their values continue to be walked.
+  - Plain lists (including lists of maps or keyword lists) are walked element-by-element.
+  - Every **string value** encountered under a non-sensitive key is passed through the same pattern scrubbing as `mask_string/2`. Values replaced with `"[MASKED]"` because of a sensitive key are **not** additionally pattern-scanned.
+  - Structs, numbers, atoms, and other terms are returned unchanged.
+
+- `MaskingServer.mask_string(server, string)` — a synchronous call that scans a raw string and masks the built-in patterns plus any registered custom patterns (see `add_pattern/3`), returning the scrubbed string. The built-in patterns are:
+  - **Credit card numbers**: any sequence of 13–19 digits (optionally separated by single spaces or hyphens) — replace every digit except the last 4 with `*`, keeping separators intact. E.g. `"4111-1111-1111-1234"` → `"****-****-****-1234"`.
+  - **Email addresses**: keep only the first character of the local part and replace the rest with `***`. E.g. `"john.doe@example.com"` → `"j***@example.com"`.
+  - **SSN patterns**: sequences matching `\d{3}-\d{2}-\d{4}` — replace with `"***-**-****"`.
+
+- `MaskingServer.add_pattern(server, regex, replacement)` — registers an additional masking pattern where `regex` is a compiled `Regex` and `replacement` is a string. Returns `:ok`. When scrubbing a string, the built-in patterns are applied first (credit cards, then SSNs, then emails), and then every registered custom pattern is applied in the order it was added, each via a standard regex replace with its replacement string. Registered patterns apply to every subsequent string scrubbed by both `mask_string/2` and `mask/2`.
+
+- `MaskingServer.stats(server)` — returns a map `%{keys_masked: k, patterns_applied: p}` describing cumulative work since the server started:
+  - `:keys_masked` — the total number of values replaced with `"[MASKED]"` because their key was sensitive, summed across every `mask/2` call.
+  - `:patterns_applied` — the total number of pattern matches replaced (built-in **and** custom patterns) across every string scrubbed by every `mask/2` and `mask_string/2` call.
+
+Because all operations go through the `GenServer`, concurrent callers are serialized and the statistics stay exact under concurrency.
+
+Give me the complete module in a single file. Use only the Elixir standard library and built-in regex support — no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule MaskingServer do
+  @moduledoc """
+  A `GenServer` that scrubs sensitive data from log-bound maps, keyword lists,
+  plain lists, and strings on behalf of concurrent callers.
+
+  The server masks values whose key matches a configured *sensitive key*
+  (case-insensitively, for both atom and string keys) and scrubs string values
+  using a set of built-in patterns (credit cards, SSNs, and email addresses)
+  plus any custom patterns registered at runtime via `add_pattern/3`.
+
+  Because every operation is routed through the `GenServer`, concurrent callers
+  are serialized and the cumulative statistics returned by `stats/0` stay exact
+  under concurrency.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type stats :: %{keys_masked: non_neg_integer(), patterns_applied: non_neg_integer()}
+
+  @masked "[MASKED]"
+
+  @cc_regex ~r/\d(?:[ -]?\d){12,18}/
+  @ssn_regex ~r/\d{3}-\d{2}-\d{4}/
+  @ssn_replacement "***-**-****"
+  @email_regex ~r/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the masking server.
+
+  `opts` is a keyword list. `opts[:sensitive_keys]` is a list of atoms and/or
+  strings (defaulting to `[]`); key comparison during masking is
+  case-insensitive and works for both atom and string keys.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts)
+  end
+
+  @doc """
+  Masks sensitive data in `data`, returning the same shape.
+
+  Maps and keyword lists are walked recursively; a value under a sensitive key
+  becomes `"[MASKED]"`, while other values are walked further. Plain lists are
+  walked element-by-element. String values under non-sensitive keys are scrubbed
+  with the same patterns as `mask_string/2`. Structs, numbers, atoms, and other
+  terms are returned unchanged.
+  """
+  @spec mask(server(), term()) :: term()
+  def mask(server, data) do
+    GenServer.call(server, {:mask, data})
+  end
+
+  @doc """
+  Scans a raw string and masks the built-in patterns plus any registered custom
+  patterns, returning the scrubbed string.
+  """
+  @spec mask_string(server(), String.t()) :: String.t()
+  def mask_string(server, string) do
+    GenServer.call(server, {:mask_string, string})
+  end
+
+  @doc """
+  Registers an additional masking pattern applied (in registration order) after
+  the built-in patterns for every subsequent string scrubbed.
+  """
+  @spec add_pattern(server(), Regex.t(), String.t()) :: :ok
+  def add_pattern(server, regex, replacement) do
+    GenServer.call(server, {:add_pattern, regex, replacement})
+  end
+
+  @doc """
+  Returns cumulative masking statistics since the server started:
+  `%{keys_masked: k, patterns_applied: p}`.
+  """
+  @spec stats(server()) :: stats()
+  def stats(server) do
+    GenServer.call(server, :stats)
+  end
+
+  # ── GenServer callbacks ───────────────────────────────────────────────────
+
+  @impl true
+  def init(opts) do
+    sensitive =
+      opts
+      |> Keyword.get(:sensitive_keys, [])
+      |> Enum.map(&normalize_key/1)
+      |> MapSet.new()
+
+    state = %{sensitive: sensitive, patterns: [], keys_masked: 0, patterns_applied: 0}
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:mask, data}, _from, state) do
+    {result,  (truncated)
+08:16:49.268 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `scrub/2` function. It takes the server `state` and a
+`string`, and returns a `{scrubbed_string, count}` tuple where `count` is the
+total number of pattern matches that were replaced.
+
+It must apply the built-in patterns first, in this exact order — credit cards
+(`@cc_regex`, replaced via the `mask_cc/1` function), then SSNs (`@ssn_regex`,
+replaced with `@ssn_replacement`), then emails (`@email_regex`, replaced via the
+`mask_email/1` function) — and then every registered custom pattern from
+`state.patterns` (a list of `{regex, replacement}` tuples), in the order they
+were added.
+
+For each pattern in turn, count how many times it matches in the current string
+(using `Regex.scan/2`), apply `Regex.replace/3` with that pattern's replacement,
+and accumulate both the running string and the running match count. The final
+result is the fully scrubbed string paired with the sum of all matches replaced.
+
+```elixir
+defmodule MaskingServer do
+  @moduledoc """
+  A `GenServer` that scrubs sensitive data from log-bound maps, keyword lists,
+  plain lists, and strings on behalf of concurrent callers.
+
+  The server masks values whose key matches a configured *sensitive key*
+  (case-insensitively, for both atom and string keys) and scrubs string values
+  using a set of built-in patterns (credit cards, SSNs, and email addresses)
+  plus any custom patterns registered at runtime via `add_pattern/3`.
+
+  Because every operation is routed through the `GenServer`, concurrent callers
+  are serialized and the cumulative statistics returned by `stats/0` stay exact
+  under concurrency.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type stats :: %{keys_masked: non_neg_integer(), patterns_applied: non_neg_integer()}
+
+  @masked "[MASKED]"
+
+  @cc_regex ~r/\d(?:[ -]?\d){12,18}/
+  @ssn_regex ~r/\d{3}-\d{2}-\d{4}/
+  @ssn_replacement "***-**-****"
+  @email_regex ~r/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the masking server.
+
+  `opts` is a keyword list. `opts[:sensitive_keys]` is a list of atoms and/or
+  strings (defaulting to `[]`); key comparison during masking is
+  case-insensitive and works for both atom and string keys.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts)
+  end
+
+  @doc """
+  Masks sensitive data in `data`, returning the same shape.
+
+  Maps and keyword lists are walked recursively; a value under a sensitive key
+  becomes `"[MASKED]"`, while other values are walked further. Plain lists are
+  walked element-by-element. String values under non-sensitive keys are scrubbed
+  with the same patterns as `mask_string/2`. Structs, numbers, atoms, and other
+  terms are returned unchanged.
+  """
+  @spec mask(server(), term()) :: term()
+  def mask(server, data) do
+    GenServer.call(server, {:mask, data})
+  end
+
+  @doc """
+  Scans a raw string and masks the built-in patterns plus any registered custom
+  patterns, returning the scrubbed string.
+  """
+  @spec mask_string(server(), String.t()) :: String.t()
+  def mask_string(server, string) do
+    GenServer.call(server, {:mask_string, string})
+  end
+
+  @doc """
+  Registers an additional masking pattern applied (in registration order) after
+  the built-in patterns for every subsequent string scrubbed.
+  """
+  @spec add_pattern(server(), Regex.t(), String.t()) :: :ok
+  def add_pattern(server, regex, replacement) do
+    GenServer.call(server, {:add_pattern, regex, replacement})
+  end
+
+  @doc """
+  Returns cumulative masking statistics since the server started:
+  `%{keys_masked: k, patterns_applied: p}`.
+  """
+  @spec stats(server()) :: stats()
+  def stats(server) do
+    GenServer.call(server, :stats)
+  end
+
+  # ── GenServer callbacks ───────────────────────────────────────────────────
+
+  @impl true
+  def init(opts) do
+    sensitive =
+      opts
+      |> Keyword.get(:sensitive_keys, [])
+      |> Enum.map(&normalize_key/1)
+      |> MapSet.new()
+
+    state = %{sensitive: sensitive, patterns: [], keys_masked: 0, patterns_applied: 0}
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:mask, data}, _from, state) do
+    {result, {ks, pa}} = walk(state, data, {0, 0})
+
+    new_state =
+      state
+      |> Map.update!(:keys_masked, &(&1 + ks))
+      |> Map.update!(:patterns_applied, &(&1 + pa))
+
+    {:reply, result, new_state}
+  end
+
+  def handle_call({:mask_string, string}, _from, state) do
+    {scrubbed, count} = scrub(state, string)
+    new_state = Map.update!(state, :patterns_applied, &(&1 + count))
+    {:reply, scrubbed, new_state}
+  end
+
+  def handle_call({:add_pattern, regex, replacement}, _from, state) do
+    new_state = Map.update!(state, :patterns, &(&1 ++ [{regex, replacement}]))
+    {:reply, :ok, new_state}
+  end
+
+  def handle_call(:stats, _from, state) do
+    stats = %{keys_masked: state.keys_masked, patterns_applied: state.patterns_applied}
+    {:reply, stats, state}
+  end
+
+  # ── Walking terms ─────────────────────────────────────────────────────────
+
+  # Structs are returned unchanged.
+  defp walk(_state, term, acc) when is_struct(term), do: {term, acc}
+
+  defp walk(state, term, acc) when is_map(term) do
+    {pairs, acc2} = walk_pairs(state, Map.to_list(term), acc)
+    {Map.new(pairs), acc2}
+  end
+
+  defp walk(state, term, acc) when is_list(term) do
+    if term != [] and Keyword.keyword?(term) do
+      walk_pairs(state, term, acc)
+    else
+      Enum.map_reduce(term, acc, fn element, ac -> walk(state, element, ac) end)
+    end
+  end
+
+  defp walk(state, term, {ks, pa}) when is_binary(term) do
+    {scrubbed, count} = scrub(state, term)
+    {scrubbed, {ks, pa + count}}
+  end
+
+  defp walk(_state, term, acc), do: {term, acc}
+
+  # Walks a list of `{key, value}` pairs shared by maps and keyword lists.
+  defp walk_pairs(state, pairs, acc) do
+    Enum.map_reduce(pairs, acc, fn {key, value}, {ks, pa} = ac ->
+      if sensitive?(state, key) do
+        {{key, @masked}, {ks + 1, pa}}
+      else
+        {masked_value, ac2} = walk(state, value, ac)
+        {{key, masked_value}, ac2}
+      end
+    end)
+  end
+
+  defp sensitive?(state, key) do
+    MapSet.member?(state.sensitive, normalize_key(key))
+  end
+
+  defp normalize_key(key) when is_atom(key), do: key |> Atom.to_string() |> String.downcase()
+  defp normalize_key(key) when is_binary(key), do: String.downcase(key)
+  defp normalize_key(key), do: key
+
+  # ── String scrubbing ──────────────────────────────────────────────────────
+
+  # Applies built-in patterns (credit cards, then SSNs, then emails) followed by
+  # every registered custom pattern, counting each match replaced.
+  defp scrub(state, string) do
+    # TODO
+  end
+
+  # Masks every digit except the last four, keeping separators intact.
+  defp mask_cc(match) do
+    chars = String.graphemes(match)
+    keep = Enum.count(chars, &digit?/1) - 4
+
+    {masked, _seen} =
+      Enum.map_reduce(chars, 0, fn ch, seen ->
+        cond do
+          digit?(ch) and seen < keep -> {"*", seen + 1}
+          digit?(ch) -> {ch, seen + 1}
+          true -> {ch, seen}
+        end
+      end)
+
+    Enum.join(masked)
+  end
+
+  # Keeps only the first character of the local part.
+  defp mask_email(match) do
+    [local, domain] = String.split(match, "@", parts: 2)
+    String.first(local) <> "***@" <> domain
+  end
+
+  defp digit?(<<c>>) when c in ?0..?9, do: true
+  defp digit?(_char), do: false
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp scrub(state, string) do
+    builtins = [
+      {@cc_regex, &mask_cc/1},
+      (truncated)
+08:16:49.268 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5186, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5186, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5186, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5186, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 3417, "type" => "message"}], "output_tokens" => 3417, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:16:49.288 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_099_004_concurrent_masking_server_with_runtime_patterns_02/099_004_concurrent_masking_server_with_runtime_patterns_02 solution.ex
+08:16:49.993 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":12,"lines_over_98":0,"max_line_length":89,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"099_004_concurrent_masking_server_with_runtime_patterns_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_099_004_concurrent_masking_server_with_runtime_patterns_02/099_004_concurrent_masking_server_with_runtime_patterns_02/solution.ex","task":"099_004_concurrent_masking_server_with_runtime_patterns_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-10T06:16:49.969255Z"}
+08:16:49.994 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_099_004_concurrent_masking_server_with_runtime_patterns_02/099_004_concurrent_masking_server_with_runtime_patterns_02 .gen_staging/fim_099_004_concurrent_masking_server_with_runtime_patterns_02/mutant.ex
+08:16:50.731 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":28,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":11,"compiled":true,"parent":"099_004_concurrent_masking_server_with_runtime_patterns_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.0,"reasons":["compilation: 11 warning(s) → hard fail (overall 0.0)","tests: 12/15 failed"],"tests":0.2},"shape":"fim","solution_file":".gen_staging/fim_099_004_concurrent_masking_server_with_runtime_patterns_02/mutant.ex","task":"099_004_concurrent_masking_server_with_runtime_patterns_02","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :scrub, 2, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 175, error_info: %{module: Exception}]}, {MaskingServer, :walk, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 144]}, {MaskingServer, :\"-walk_pairs/3-fun-0-\", 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 156]}, {Enum, :\"-map_reduce/3-lists^mapfoldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1851]}, {MaskingServer, :walk, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 131]}, {MaskingServer, :handle_call, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 99]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.210.0>, {:mask, %{user: \"alice\", password: \"hunter2\"}}, 5000]}}","module":"MaskingServerTest","test":"test masks sensitive keys in a flat map"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :scrub, 2, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 175, error_info: %{module: Exception}]}, {MaskingServer, :walk, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 144]}, {MaskingServer, :\"-walk_pairs/3-fun-0-\", 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 156]}, {Enum, :\"-map_reduce/3-lists^mapfoldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1851]}, {MaskingServer, :walk, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 131]}, {MaskingServer, :\"-walk_pairs/3-fun-0-\", 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 156]}, {Enum, :\"-map_reduce/3-lists^mapfoldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1851]}, {MaskingServer, :walk, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 131]}, {MaskingServer, :handle_call, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 99]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.217.0>, {:mask, %{user: %{name: \"carol\", password: \"deep\"}}}, 5000]}}","module":"MaskingServerTest","test":"test recursively masks nested maps"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :scrub, 2, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 175, error_info: %{module: Exception}]}, {MaskingServer, :walk, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 144]}, {MaskingServer, :\"-walk_pairs/3-fun-0-\", 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 156]}, {Enum, :\"-map_reduce/3-lists^mapfoldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1851]}, {MaskingServer, :handle_call, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 99]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.221.0>, {:mask, [username: \"dave\", password: \"secret!\"]}, 5000]}}","module":"MaskingServerTest","test":"test masks sensitive keys in a keyword list"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :scrub, 2, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 175, error_info: %{module: Exception}]}, {MaskingServer, :walk, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 144]}, {MaskingServer, :\"-walk_pairs/3-fun-0-\", 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 156]}, {Enum, :\"-map_reduce/3-lists^mapfoldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1851]}, {Enum, :\"-map_reduce/3-lists^mapfoldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1851]}, {MaskingServer, :walk, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 131]}, {MaskingServer, :handle_call, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 99]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.225.0>, {:mask, %{count: 7, role: \"admin\"}}, 5000]}}","module":"MaskingServerTest","test":"test leaves non-sensitive keys untouched"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :scrub, 2, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 175, error_info: %{module: Exception}]}, {MaskingServer, :walk, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 144]}, {MaskingServer, :\"-walk_pairs/3-fun-0-\", 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 156]}, {Enum, :\"-map_reduce/3-lists^mapfoldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 1851]}, {MaskingServer, :walk, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 131]}, {MaskingServer, :handle_call, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 99]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.229.0>, {:mask, %{note: \"email john.doe@example.com\"}}, 5000]}}","module":"MaskingServerTest","test":"test pattern-masks string values under non-sensitive keys"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :scrub, 2, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 175, error_info: %{module: Exception}]}, {MaskingServer, :handle_call, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 110]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.233.0>, {:mask_string, \"4111-1111-1111-1234\"}, 5000]}}","module":"MaskingServerTest","test":"test masks a dashed credit card"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :scrub, 2, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 175, error_info: %{module: Exception}]}, {MaskingServer, :handle_call, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 110]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.237.0>, {:mask_string, \"SSN: 123-45-6789\"}, 5000]}}","module":"MaskingServerTest","test":"test masks an SSN"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :scrub, 2, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 175, error_info: %{module: Exception}]}, {MaskingServer, :handle_call, 3, [file: ~c\"/tmp/evalfim_988732_2629.ex\", line: 110]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.241.0>, {:mask_string, \"call 555-1234 now\"}, 5000]}}","module":"MaskingServerTest","test":"test a registered custom pattern is appli (truncated)
+08:16:50.731 [debug] fim mutation gate: killed
+08:16:50.733 [info] promoted 099_004_concurrent_masking_server_with_runtime_patterns_02 -> tasks/099_004_concurrent_masking_server_with_runtime_patterns_02

@@ -1,0 +1,26 @@
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 4 needing top-up → next: 097_002_weighted_strength_score_password_policy_01, 104_004_usage_recycling_connection_pool_01, 105_001_genserver_based_debouncer_01, …
+  2. new bases:      skipped (GEN_ONLY=backfill)
+=============================================
+
+
+Backfill: 4 seed(s) needing derivatives.
+[1/4] 097_002_weighted_strength_score_password_policy_01 (backfill) ...
+      tfim_097_002_weighted_strength_score_password_policy_10 (tfim) ... ACCEPTED (15 passed, mutant killed (isolation), 1 attempt(s))
+      tfim_097_002_weighted_strength_score_password_policy_11 (tfim) ... ACCEPTED (15 passed, mutant killed (isolation), 1 attempt(s))
+[2/4] 104_004_usage_recycling_connection_pool_01 (backfill) ...
+      tfim_104_004_usage_recycling_connection_pool_10 (tfim) ... ACCEPTED (17 passed, mutant killed (isolation), 1 attempt(s))
+      tfim_104_004_usage_recycling_connection_pool_11 (tfim) ... ACCEPTED (17 passed, mutant killed (isolation), 1 attempt(s))
+[3/4] 105_001_genserver_based_debouncer_01 (backfill) ...
+      bugfix_105_001_genserver_based_debouncer_02 (bugfix) ... REJECTED (mutant not killed by tests (survives or fails to compile) — not a mintable bug)
+      bugfix_105_001_genserver_based_debouncer_02 (bugfix) ... ACCEPTED (14 passed, mutant killed (semantic_killed), 1 attempt(s))
+[4/4] 107_002_keyed_event_aggregator_with_per_key_batching_01 (backfill) ...
+      tfim_107_002_keyed_event_aggregator_with_per_key_batching_10 (tfim) ... ACCEPTED (11 passed, mutant killed (isolation), 1 attempt(s))
+      tfim_107_002_keyed_event_aggregator_with_per_key_batching_11 (tfim) ... ACCEPTED (11 passed, mutant killed (isolation), 1 attempt(s))
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 745 | mintable (rejected → accepted) pairs: 100 | minted: %{exists: 16, unverified: 83, minted: 1}
+
+Done.

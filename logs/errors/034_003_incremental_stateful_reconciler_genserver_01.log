@@ -1,0 +1,1470 @@
+06:07:12.657 [info] VARIATION 034_003_incremental_stateful_reconciler_genserver_01: Incremental Stateful Reconciler GenServer
+06:07:12.657 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+06:07:12.657 [debug] claude -p USER prompt:
+Write me an Elixir module called `Reconciler` that reconciles two sides of records — a "left" side and a "right" side — but instead of a single pure function it must be an **incremental, stateful `GenServer`**: records are fed in one at a time as they arrive, and the reconciliation is computed on demand over whatever has been accumulated so far.
+
+I need this public API:
+
+- `Reconciler.start_link(opts)` — starts the server and returns `{:ok, pid}`. `opts` is a keyword list that must support:
+  - `:key_fields` (required) — a list of atoms forming the composite key used to match records across the two sides (e.g., `[:id]` or `[:org_id, :user_id]`). If it is missing, `start_link/1` must raise.
+  - `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields except the key fields are compared.
+
+- `Reconciler.put_left(server, record)` — adds a record (a map) to the left side. Returns `:ok`. If a record with the same composite key was already put on the left side, this **replaces** it (last write wins).
+
+- `Reconciler.put_right(server, record)` — the same, for the right side. Returns `:ok`.
+
+- `Reconciler.reconcile(server)` — computes and returns a map with three keys, reflecting the current accumulated state:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for composite keys present on both sides. `diff_map` is a map of `%{field => %{left: val, right: val}}` for any compared field whose values differ (using `==`), and is `%{}` when the records are identical on all compared fields.
+  - `:only_in_left` — a list of records whose key is present only on the left side.
+  - `:only_in_right` — a list of records whose key is present only on the right side.
+
+- `Reconciler.reset(server)` — clears both sides (left and right become empty). Returns `:ok`. After a reset, `reconcile/1` returns `%{matched: [], only_in_left: [], only_in_right: []}`.
+
+Behaviour requirements:
+
+- Key matching is exact — records match if and only if all key fields have equal values. Composite keys (`[:org_id, :user_id]`) must only match when every key field is equal.
+- Matched entries must include both the original left and right record in full, even if some fields are excluded from comparison.
+- If a compared field is missing from one or both records, treat the missing value as `nil` and diff accordingly.
+- Field comparison is value-exact (using `==`).
+- Order of results does not matter.
+- `reconcile/1` must not consume or clear state — it can be called repeatedly and reflects all `put_left`/`put_right` calls made so far.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+06:07:47.709 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  An incremental, stateful reconciler for two sides of records.
+
+  `Reconciler` is a `GenServer` that accumulates records on a "left" side and a
+  "right" side, one at a time, and computes a reconciliation on demand over
+  whatever has been accumulated so far.
+
+  Records are plain maps. Two records "match" when all of the configured
+  `:key_fields` compare equal (using `==`). For matched records, a set of
+  `:compare_fields` is diffed field by field; when `:compare_fields` is omitted
+  the comparison uses every field except the key fields (across both records).
+
+  The reconciliation result classifies composite keys into three buckets:
+
+    * `:matched` — keys present on both sides, with a per-field difference map;
+    * `:only_in_left` — keys present only on the left side;
+    * `:only_in_right` — keys present only on the right side.
+
+  Reconciling never consumes state: `reconcile/1` may be called repeatedly and
+  always reflects every `put_left/2` and `put_right/2` performed so far.
+  """
+
+  use GenServer
+
+  @typedoc "A record is an arbitrary map of fields to values."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of key-field values, in `:key_fields` order."
+  @type key :: tuple()
+
+  @typedoc "A per-field difference: `%{field => %{left: val, right: val}}`."
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @typedoc "A single matched entry, including both full records and their diff."
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  # Internal server state.
+  defstruct key_fields: [], compare_fields: nil, left: %{}, right: %{}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  `opts` is a keyword list supporting:
+
+    * `:key_fields` (required) — a list of atoms forming the composite key used
+      to match records across the two sides. Raises `ArgumentError` if missing.
+    * `:compare_fields` (optional) — a list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields except the key
+      fields are compared.
+
+  Any remaining options (such as `:name`) are forwarded to `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) when is_list(opts) do
+    key_fields =
+      case Keyword.fetch(opts, :key_fields) do
+        {:ok, fields} when is_list(fields) ->
+          fields
+
+        {:ok, _other} ->
+          raise ArgumentError, ":key_fields must be a list of atoms"
+
+        :error ->
+          raise ArgumentError, ":key_fields option is required"
+      end
+
+    compare_fields = Keyword.get(opts, :compare_fields)
+
+    gen_opts = Keyword.take(opts, [:name, :timeout, :debug, :spawn_opt, :hibernate_after])
+
+    init_arg = %{key_fields: key_fields, compare_fields: compare_fields}
+
+    GenServer.start_link(__MODULE__, init_arg, gen_opts)
+  end
+
+  @doc """
+  Adds `record` (a map) to the left side.
+
+  If a record with the same composite key was already put on the left side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_left(GenServer.server(), record()) :: :ok
+  def put_left(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :left, record})
+  end
+
+  @doc """
+  Adds `record` (a map) to the right side.
+
+  If a record with the same composite key was already put on the right side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_right(GenServer.server(), record()) :: :ok
+  def put_right(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :right, record})
+  end
+
+  @doc """
+  Computes and returns the reconciliation over the currently accumulated state.
+
+  Returns a map with `:matched`, `:only_in_left`, and `:only_in_right` keys.
+  This call does not consume or clear state and may be called repeatedly. The
+  order of results within each bucket is unspecified.
+  """
+  @spec reconcile(GenServer.server()) :: result()
+  def reconcile(server) do
+    GenServer.call(server, :reconcile)
+  end
+
+  @doc """
+  Clears both sides, leaving the server empty.
+
+  After a reset, `reconcile/1` returns
+  `%{matched: [], only_in_left: [], only_in_right: []}`. Always returns `:ok`.
+  """
+  @spec reset(GenServer.server()) :: :ok
+  def reset(server) do
+    GenServer.call(server, :reset)
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  @spec init(%{key_fields: [atom()], compare_fields: [atom()] | nil}) :: {:ok, %__MODULE__{}}
+  def init(%{key_fields: key_fields, compare_fields: compare_fields}) do
+    state = %__MODULE__{
+      key_fields: key_fields,
+      compare_fields: compare_fields,
+      left: %{},
+      right: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:put, side, record}, _from, state) do
+    key = build_key(record, state.key_fields)
+    side_map = Map.put(Map.fetch!(state, side), key, record)
+    {:reply, :ok, Map.put(state, side, side_map)}
+  end
+
+  def handle_call(:reconcile, _from, state) do
+    {:reply, compute(state), state}
+  end
+
+  def handle_call(:reset, _from, state) do
+    {:reply, :ok, %{state | left: %{}, right: %{}}}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  # Builds the composite key tuple for a record, missing fields becoming nil.
+  @spec build_key(record(), [atom()]) :: key()
+  defp build_key(record, key_fields) do
+    key_fields
+    |> Enum.map(fn field -> Map.get(record, field) end)
+    |> List.to_tuple()
+  end
+
+  # Computes the full reconciliation result from accumulated state.
+  @spec compute(%__MODULE__{}) :: result()
+  defp compute(%__MODULE__{left: left, right: right} = state) do
+    left_keys = MapSet.new(Map.keys(left))
+    right_keys = MapSet.new(Map.keys(right))
+
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      Enum.map(matched_keys, fn key ->
+        left_record = Map.fetch!(left, key)
+        right_record = Map.fetch!(right, key)
+
+        %{
+          left: left_record,
+          right: right_record,
+          differences: diff(left_record, right_record, state)
+        }
+      end)
+
+    only_in_left = Enum.map(only_left_keys, fn key -> Map.fetch!(left, key) end)
+    only_in_right = Enum.map(only_right_keys, fn key -> Map.fetch!(right, key) end)
+
+    %{matched: matched, only_in_left: only_in_left, only_in_right: only_in_right}
+  end
+
+  # Diffs a matched pair of records over the configured compare fields.
+  @spec diff(record(), record(), %__MODULE__{}) :: diff_map()
+  defp diff(left_record, right_record, state) do
+    fields = compare_fields(left_record, right_record, state)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      left_val = Map.get(left_record, field)
+      right_val = Map.get(right_record, field)
+
+      if left_val == right_val do
+        acc
+      else
+        Map.put(acc, field, %{left: left_val, right: right_val})
+      end
+    end)
+  end
+
+  # Determines which fields to compare for a matched pair.
+  @spec compare_fields(record(), record(), %__MODULE__{}) :: [atom()]
+  defp compare_fields(_left_record, _right_record, %__MODULE__{compare_fields: fields})
+       when is_list(fields) do
+    fields
+  end
+
+  defp compare_fields(left_record, right_record, %__MODULE__{key_fields: key_fields}) do
+    key_set = MapSet.new( (truncated)
+06:07:47.709 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1658, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1658, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1658, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1658, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 3210, "type" => "message"}], "output_tokens" => 3210, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+06:07:47.735 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_incremental_stateful_reconciler_genserver_01 solution.ex
+06:07:48.411 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":239,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":6,"public_fn_count":9,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_003_incremental_stateful_reconciler_genserver_01/solution.ex","task":"034_003_incremental_stateful_reconciler_genserver_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-10T04:07:48.387786Z"}
+06:07:48.411 [info] cycle 034_003_incremental_stateful_reconciler_genserver_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+06:07:48.411 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+06:07:48.412 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Reconciler` that reconciles two sides of records — a "left" side and a "right" side — but instead of a single pure function it must be an **incremental, stateful `GenServer`**: records are fed in one at a time as they arrive, and the reconciliation is computed on demand over whatever has been accumulated so far.
+
+I need this public API:
+
+- `Reconciler.start_link(opts)` — starts the server and returns `{:ok, pid}`. `opts` is a keyword list that must support:
+  - `:key_fields` (required) — a list of atoms forming the composite key used to match records across the two sides (e.g., `[:id]` or `[:org_id, :user_id]`). If it is missing, `start_link/1` must raise.
+  - `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields except the key fields are compared.
+
+- `Reconciler.put_left(server, record)` — adds a record (a map) to the left side. Returns `:ok`. If a record with the same composite key was already put on the left side, this **replaces** it (last write wins).
+
+- `Reconciler.put_right(server, record)` — the same, for the right side. Returns `:ok`.
+
+- `Reconciler.reconcile(server)` — computes and returns a map with three keys, reflecting the current accumulated state:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for composite keys present on both sides. `diff_map` is a map of `%{field => %{left: val, right: val}}` for any compared field whose values differ (using `==`), and is `%{}` when the records are identical on all compared fields.
+  - `:only_in_left` — a list of records whose key is present only on the left side.
+  - `:only_in_right` — a list of records whose key is present only on the right side.
+
+- `Reconciler.reset(server)` — clears both sides (left and right become empty). Returns `:ok`. After a reset, `reconcile/1` returns `%{matched: [], only_in_left: [], only_in_right: []}`.
+
+Behaviour requirements:
+
+- Key matching is exact — records match if and only if all key fields have equal values. Composite keys (`[:org_id, :user_id]`) must only match when every key field is equal.
+- Matched entries must include both the original left and right record in full, even if some fields are excluded from comparison.
+- If a compared field is missing from one or both records, treat the missing value as `nil` and diff accordingly.
+- Field comparison is value-exact (using `==`).
+- Order of results does not matter.
+- `reconcile/1` must not consume or clear state — it can be called repeatedly and reflects all `put_left`/`put_right` calls made so far.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Reconciler do
+  @moduledoc """
+  An incremental, stateful reconciler for two sides of records.
+
+  `Reconciler` is a `GenServer` that accumulates records on a "left" side and a
+  "right" side, one at a time, and computes a reconciliation on demand over
+  whatever has been accumulated so far.
+
+  Records are plain maps. Two records "match" when all of the configured
+  `:key_fields` compare equal (using `==`). For matched records, a set of
+  `:compare_fields` is diffed field by field; when `:compare_fields` is omitted
+  the comparison uses every field except the key fields (across both records).
+
+  The reconciliation result classifies composite keys into three buckets:
+
+    * `:matched` — keys present on both sides, with a per-field difference map;
+    * `:only_in_left` — keys present only on the left side;
+    * `:only_in_right` — keys present only on the right side.
+
+  Reconciling never consumes state: `reconcile/1` may be called repeatedly and
+  always reflects every `put_left/2` and `put_right/2` performed so far.
+  """
+
+  use GenServer
+
+  @typedoc "A record is an arbitrary map of fields to values."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of key-field values, in `:key_fields` order."
+  @type key :: tuple()
+
+  @typedoc "A per-field difference: `%{field => %{left: val, right: val}}`."
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @typedoc "A single matched entry, including both full records and their diff."
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  # Internal server state.
+  defstruct key_fields: [], compare_fields: nil, left: %{}, right: %{}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  `opts` is a keyword list supporting:
+
+    * `:key_fields` (required) — a list of atoms forming the composite key used
+      to match records across the two sides. Raises `ArgumentError` if missing.
+    * `:compare_fields` (optional) — a list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields except the key
+      fields are compared.
+
+  Any remaining options (such as `:name`) are forwarded to `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) when is_list(opts) do
+    key_fields =
+      case Keyword.fetch(opts, :key_fields) do
+        {:ok, fields} when is_list(fields) ->
+          fields
+
+        {:ok, _other} ->
+          raise ArgumentError, ":key_fields must be a list of atoms"
+
+        :error ->
+          raise ArgumentError, ":key_fields option is required"
+      end
+
+    compare_fields = Keyword.get(opts, :compare_fields)
+
+    gen_opts = Keyword.take(opts, [:name, :timeout, :debug, :spawn_opt, :hibernate_after])
+
+    init_arg = %{key_fields: key_fields, compare_fields: compare_fields}
+
+    GenServer.start_link(__MODULE__, init_arg, gen_opts)
+  end
+
+  @doc """
+  Adds `record` (a map) to the left side.
+
+  If a record with the same composite key was already put on the left side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_left(GenServer.server(), record()) :: :ok
+  def put_left(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :left, record})
+  end
+
+  @doc """
+  Adds `record` (a map) to the right side.
+
+  If a record with the same composite key was already put on the right side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_right(GenServer.server(), record()) :: :ok
+  def put_right(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :right, record})
+  end
+
+  @doc """
+  Computes and returns the reconciliation over the currently accumulated state.
+
+  Returns a map with `:matched`, `:only_in_left`, and `:only_in_right` keys.
+  This call does not consume or clear state and may be called repeatedly. The
+  (truncated)
+06:12:23.859 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the failing check is a single compile warning. The likely culprit on a recent Elixir/OTP 27 setup is the **dynamic struct-key access** in the `:put` handler — `Map.fetch!(state, side)` and `Map.put(state, side, side_map)` operate on the `%Reconciler{}` struct with a *runtime* key (`side`), which the type checker flags. Since `put_left`/`put_right` already send literal `:left`/`:right` atoms, I can match them literally and use static struct field access, which is warning-free and behavior-identical.
+
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  An incremental, stateful reconciler for two sides of records.
+
+  `Reconciler` is a `GenServer` that accumulates records on a "left" side and a
+  "right" side, one at a time, and computes a reconciliation on demand over
+  whatever has been accumulated so far.
+
+  Records are plain maps. Two records "match" when all of the configured
+  `:key_fields` compare equal (using `==`). For matched records, a set of
+  `:compare_fields` is diffed field by field; when `:compare_fields` is omitted
+  the comparison uses every field except the key fields (across both records).
+
+  The reconciliation result classifies composite keys into three buckets:
+
+    * `:matched` — keys present on both sides, with a per-field difference map;
+    * `:only_in_left` — keys present only on the left side;
+    * `:only_in_right` — keys present only on the right side.
+
+  Reconciling never consumes state: `reconcile/1` may be called repeatedly and
+  always reflects every `put_left/2` and `put_right/2` performed so far.
+  """
+
+  use GenServer
+
+  @typedoc "A record is an arbitrary map of fields to values."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of key-field values, in `:key_fields` order."
+  @type key :: tuple()
+
+  @typedoc "A per-field difference: `%{field => %{left: val, right: val}}`."
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @typedoc "A single matched entry, including both full records and their diff."
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  # Internal server state.
+  defstruct key_fields: [], compare_fields: nil, left: %{}, right: %{}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  `opts` is a keyword list supporting:
+
+    * `:key_fields` (required) — a list of atoms forming the composite key used
+      to match records across the two sides. Raises `ArgumentError` if missing.
+    * `:compare_fields` (optional) — a list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields except the key
+      fields are compared.
+
+  Any remaining options (such as `:name`) are forwarded to
+  `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) when is_list(opts) do
+    key_fields =
+      case Keyword.fetch(opts, :key_fields) do
+        {:ok, fields} when is_list(fields) ->
+          fields
+
+        {:ok, _other} ->
+          raise ArgumentError, ":key_fields must be a list of atoms"
+
+        :error ->
+          raise ArgumentError, ":key_fields option is required"
+      end
+
+    compare_fields = Keyword.get(opts, :compare_fields)
+
+    gen_opts = Keyword.take(opts, [:name, :timeout, :debug, :spawn_opt, :hibernate_after])
+
+    init_arg = %{key_fields: key_fields, compare_fields: compare_fields}
+
+    GenServer.start_link(__MODULE__, init_arg, gen_opts)
+  end
+
+  @doc """
+  Adds `record` (a map) to the left side.
+
+  If a record with the same composite key was already put on the left side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_left(GenServer.server(), record()) :: :ok
+  def put_left(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :left, record})
+  end
+
+  @doc """
+  Adds `record` (a map) to the right side.
+
+  If a record with the same composite key was already put on the right side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_right(GenServer.server(), record()) :: :ok
+  def put_right(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :right, record})
+  end
+
+  @doc """
+  Computes and returns the reconciliation over the currently accumulated state.
+
+  Returns a map with `:matched`, `:only_in_left`, and `:only_in_right` keys.
+  This call does not consume or clear state and may be called repeatedly. The
+  order of results within each bucket is unspecified.
+  """
+  @spec reconcile(GenServer.server()) :: result()
+  def reconcile(server) do
+    GenServer.call(server, :reconcile)
+  end
+
+  @doc """
+  Clears both sides, leaving the server empty.
+
+  After a reset, `reconcile/1` returns
+  `%{matched: [], only_in_left: [], only_in_right: []}`. Always returns `:ok`.
+  """
+  @spec reset(GenServer.server()) :: :ok
+  def reset(server) do
+    GenServer.call(server, :reset)
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  @spec init(%{key_fields: [atom()], compare_fields: [atom()] | nil}) :: {:ok, %__MODULE__{}}
+  def init(%{key_fields: key_fields, compare_fields: compare_fields}) do
+    state = %__MODULE__{
+      key_fields: key_fields,
+      compare_fields: compare_fields,
+      left: %{},
+      right: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:put, :left, record}, _from, state) do
+    key = build_key(record, state.key_fields)
+    {:reply, :ok, %{state | left: Map.put(state.left, key, record)}}
+  end
+
+  def handle_call({:put, :right, record}, _from, state) do
+    key = build_key(record, state.key_fields)
+    {:reply, :ok, %{state | right: Map.put(state.right, key, record)}}
+  end
+
+  def handle_call(:reconcile, _from, state) do
+    {:reply, compute(state), state}
+  end
+
+  def handle_call(:reset, _from, state) do
+    {:reply, :ok, %{state | left: %{}, right: %{}}}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  # Builds the composite key tuple for a record, missing fields becoming nil.
+  @spec build_key(record(), [atom()]) :: key()
+  defp build_key(record, key_fields) do
+    key_fields
+    |> Enum.map(fn field -> Map.get(record, field) end)
+    |> List.to_tuple()
+  end
+
+  # Computes the full reconciliation result from accumulated state.
+  @spec compute(%__MODULE__{}) :: result()
+  defp compute(%__MODULE__{left: left, right: right} = state) do
+    left_keys = MapSet.new(Map.keys(left))
+    right_keys = MapSet.new(Map.keys(right))
+
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      Enum.map(matched_keys, fn key ->
+        left_record = Map.fetch!(left, key)
+        right_record = Map.fetch!(right, key)
+
+        %{
+          left: left_record,
+          right: right_record,
+          differences: diff(left_record, right_record, state)
+        }
+      end)
+
+    only_in_left = Enum.map(only_left_keys, fn key -> Map.fetch!(left, key) end)
+    only_in_right = Enum.map(only_right_keys, fn key -> Map.fetch!(right, key) end)
+
+    %{matched: matched, only_in_left: only_in_left, only_in_right: only_in_right}
+  end
+
+  # Diffs a matched pair of records over the configured compare fields.
+  @spec diff(record(), record(), %__MODULE__{}) :: diff_map()
+  defp diff(left_record, right_record, state) do
+    fields = compare_fields(left_record, right_record, state)
+ (truncated)
+06:12:23.859 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8094, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8094, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8094, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8094, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 21287, "type" => "message"}], "output_tokens" => 21287, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+06:12:23.886 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_incremental_stateful_reconciler_genserver_01 solution.ex
+06:12:24.570 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":244,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":6,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_003_incremental_stateful_reconciler_genserver_01/solution.ex","task":"034_003_incremental_stateful_reconciler_genserver_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-10T04:12:24.546866Z"}
+06:12:24.571 [info] cycle 034_003_incremental_stateful_reconciler_genserver_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+06:12:24.571 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+06:12:24.571 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Reconciler` that reconciles two sides of records — a "left" side and a "right" side — but instead of a single pure function it must be an **incremental, stateful `GenServer`**: records are fed in one at a time as they arrive, and the reconciliation is computed on demand over whatever has been accumulated so far.
+
+I need this public API:
+
+- `Reconciler.start_link(opts)` — starts the server and returns `{:ok, pid}`. `opts` is a keyword list that must support:
+  - `:key_fields` (required) — a list of atoms forming the composite key used to match records across the two sides (e.g., `[:id]` or `[:org_id, :user_id]`). If it is missing, `start_link/1` must raise.
+  - `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields except the key fields are compared.
+
+- `Reconciler.put_left(server, record)` — adds a record (a map) to the left side. Returns `:ok`. If a record with the same composite key was already put on the left side, this **replaces** it (last write wins).
+
+- `Reconciler.put_right(server, record)` — the same, for the right side. Returns `:ok`.
+
+- `Reconciler.reconcile(server)` — computes and returns a map with three keys, reflecting the current accumulated state:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for composite keys present on both sides. `diff_map` is a map of `%{field => %{left: val, right: val}}` for any compared field whose values differ (using `==`), and is `%{}` when the records are identical on all compared fields.
+  - `:only_in_left` — a list of records whose key is present only on the left side.
+  - `:only_in_right` — a list of records whose key is present only on the right side.
+
+- `Reconciler.reset(server)` — clears both sides (left and right become empty). Returns `:ok`. After a reset, `reconcile/1` returns `%{matched: [], only_in_left: [], only_in_right: []}`.
+
+Behaviour requirements:
+
+- Key matching is exact — records match if and only if all key fields have equal values. Composite keys (`[:org_id, :user_id]`) must only match when every key field is equal.
+- Matched entries must include both the original left and right record in full, even if some fields are excluded from comparison.
+- If a compared field is missing from one or both records, treat the missing value as `nil` and diff accordingly.
+- Field comparison is value-exact (using `==`).
+- Order of results does not matter.
+- `reconcile/1` must not consume or clear state — it can be called repeatedly and reflects all `put_left`/`put_right` calls made so far.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Reconciler do
+  @moduledoc """
+  An incremental, stateful reconciler for two sides of records.
+
+  `Reconciler` is a `GenServer` that accumulates records on a "left" side and a
+  "right" side, one at a time, and computes a reconciliation on demand over
+  whatever has been accumulated so far.
+
+  Records are plain maps. Two records "match" when all of the configured
+  `:key_fields` compare equal (using `==`). For matched records, a set of
+  `:compare_fields` is diffed field by field; when `:compare_fields` is omitted
+  the comparison uses every field except the key fields (across both records).
+
+  The reconciliation result classifies composite keys into three buckets:
+
+    * `:matched` — keys present on both sides, with a per-field difference map;
+    * `:only_in_left` — keys present only on the left side;
+    * `:only_in_right` — keys present only on the right side.
+
+  Reconciling never consumes state: `reconcile/1` may be called repeatedly and
+  always reflects every `put_left/2` and `put_right/2` performed so far.
+  """
+
+  use GenServer
+
+  @typedoc "A record is an arbitrary map of fields to values."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of key-field values, in `:key_fields` order."
+  @type key :: tuple()
+
+  @typedoc "A per-field difference: `%{field => %{left: val, right: val}}`."
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @typedoc "A single matched entry, including both full records and their diff."
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  # Internal server state.
+  defstruct key_fields: [], compare_fields: nil, left: %{}, right: %{}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  `opts` is a keyword list supporting:
+
+    * `:key_fields` (required) — a list of atoms forming the composite key used
+      to match records across the two sides. Raises `ArgumentError` if missing.
+    * `:compare_fields` (optional) — a list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields except the key
+      fields are compared.
+
+  Any remaining options (such as `:name`) are forwarded to
+  `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) when is_list(opts) do
+    key_fields =
+      case Keyword.fetch(opts, :key_fields) do
+        {:ok, fields} when is_list(fields) ->
+          fields
+
+        {:ok, _other} ->
+          raise ArgumentError, ":key_fields must be a list of atoms"
+
+        :error ->
+          raise ArgumentError, ":key_fields option is required"
+      end
+
+    compare_fields = Keyword.get(opts, :compare_fields)
+
+    gen_opts = Keyword.take(opts, [:name, :timeout, :debug, :spawn_opt, :hibernate_after])
+
+    init_arg = %{key_fields: key_fields, compare_fields: compare_fields}
+
+    GenServer.start_link(__MODULE__, init_arg, gen_opts)
+  end
+
+  @doc """
+  Adds `record` (a map) to the left side.
+
+  If a record with the same composite key was already put on the left side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_left(GenServer.server(), record()) :: :ok
+  def put_left(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :left, record})
+  end
+
+  @doc """
+  Adds `record` (a map) to the right side.
+
+  If a record with the same composite key was already put on the right side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_right(GenServer.server(), record()) :: :ok
+  def put_right(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :right, record})
+  end
+
+  @doc """
+  Computes and returns the reconciliation over the currently accumulated state.
+
+  Returns a map with `:matched`, `:only_in_left`, and `:only_in_right` keys.
+  This call does not consume or clear state and may be called repeatedly. The (truncated)
+06:19:43.476 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the solution appears clean except for one anomaly: `init/1` is a GenServer callback (marked `@impl true`) but carries a hand-written `@spec` whose argument type **narrows** the behaviour's `init(init_arg :: term())` callback down to a specific map. That narrowed-callback spec is the source of the single compile warning. GenServer callbacks are exempt from the house-style `@doc`/`@spec` requirement (the solution is already green with `handle_call/3` carrying neither), so the safe, behavior-preserving fix is to drop that spec on the callback.
+
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  An incremental, stateful reconciler for two sides of records.
+
+  `Reconciler` is a `GenServer` that accumulates records on a "left" side and a
+  "right" side, one at a time, and computes a reconciliation on demand over
+  whatever has been accumulated so far.
+
+  Records are plain maps. Two records "match" when all of the configured
+  `:key_fields` compare equal (using `==`). For matched records, a set of
+  `:compare_fields` is diffed field by field; when `:compare_fields` is omitted
+  the comparison uses every field except the key fields (across both records).
+
+  The reconciliation result classifies composite keys into three buckets:
+
+    * `:matched` — keys present on both sides, with a per-field difference map;
+    * `:only_in_left` — keys present only on the left side;
+    * `:only_in_right` — keys present only on the right side.
+
+  Reconciling never consumes state: `reconcile/1` may be called repeatedly and
+  always reflects every `put_left/2` and `put_right/2` performed so far.
+  """
+
+  use GenServer
+
+  @typedoc "A record is an arbitrary map of fields to values."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of key-field values, in `:key_fields` order."
+  @type key :: tuple()
+
+  @typedoc "A per-field difference: `%{field => %{left: val, right: val}}`."
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @typedoc "A single matched entry, including both full records and their diff."
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  # Internal server state.
+  defstruct key_fields: [], compare_fields: nil, left: %{}, right: %{}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  `opts` is a keyword list supporting:
+
+    * `:key_fields` (required) — a list of atoms forming the composite key used
+      to match records across the two sides. Raises `ArgumentError` if missing.
+    * `:compare_fields` (optional) — a list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields except the key
+      fields are compared.
+
+  Any remaining options (such as `:name`) are forwarded to
+  `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) when is_list(opts) do
+    key_fields =
+      case Keyword.fetch(opts, :key_fields) do
+        {:ok, fields} when is_list(fields) ->
+          fields
+
+        {:ok, _other} ->
+          raise ArgumentError, ":key_fields must be a list of atoms"
+
+        :error ->
+          raise ArgumentError, ":key_fields option is required"
+      end
+
+    compare_fields = Keyword.get(opts, :compare_fields)
+
+    gen_opts = Keyword.take(opts, [:name, :timeout, :debug, :spawn_opt, :hibernate_after])
+
+    init_arg = %{key_fields: key_fields, compare_fields: compare_fields}
+
+    GenServer.start_link(__MODULE__, init_arg, gen_opts)
+  end
+
+  @doc """
+  Adds `record` (a map) to the left side.
+
+  If a record with the same composite key was already put on the left side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_left(GenServer.server(), record()) :: :ok
+  def put_left(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :left, record})
+  end
+
+  @doc """
+  Adds `record` (a map) to the right side.
+
+  If a record with the same composite key was already put on the right side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_right(GenServer.server(), record()) :: :ok
+  def put_right(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :right, record})
+  end
+
+  @doc """
+  Computes and returns the reconciliation over the currently accumulated state.
+
+  Returns a map with `:matched`, `:only_in_left`, and `:only_in_right` keys.
+  This call does not consume or clear state and may be called repeatedly. The
+  order of results within each bucket is unspecified.
+  """
+  @spec reconcile(GenServer.server()) :: result()
+  def reconcile(server) do
+    GenServer.call(server, :reconcile)
+  end
+
+  @doc """
+  Clears both sides, leaving the server empty.
+
+  After a reset, `reconcile/1` returns
+  `%{matched: [], only_in_left: [], only_in_right: []}`. Always returns `:ok`.
+  """
+  @spec reset(GenServer.server()) :: :ok
+  def reset(server) do
+    GenServer.call(server, :reset)
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(%{key_fields: key_fields, compare_fields: compare_fields}) do
+    state = %__MODULE__{
+      key_fields: key_fields,
+      compare_fields: compare_fields,
+      left: %{},
+      right: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:put, :left, record}, _from, state) do
+    key = build_key(record, state.key_fields)
+    {:reply, :ok, %{state | left: Map.put(state.left, key, record)}}
+  end
+
+  def handle_call({:put, :right, record}, _from, state) do
+    key = build_key(record, state.key_fields)
+    {:reply, :ok, %{state | right: Map.put(state.right, key, record)}}
+  end
+
+  def handle_call(:reconcile, _from, state) do
+    {:reply, compute(state), state}
+  end
+
+  def handle_call(:reset, _from, state) do
+    {:reply, :ok, %{state | left: %{}, right: %{}}}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  # Builds the composite key tuple for a record, missing fields becoming nil.
+  @spec build_key(record(), [atom()]) :: key()
+  defp build_key(record, key_fields) do
+    key_fields
+    |> Enum.map(fn field -> Map.get(record, field) end)
+    |> List.to_tuple()
+  end
+
+  # Computes the full reconciliation result from accumulated state.
+  @spec compute(%__MODULE__{}) :: result()
+  defp compute(%__MODULE__{left: left, right: right} = state) do
+    left_keys = MapSet.new(Map.keys(left))
+    right_keys = MapSet.new(Map.keys(right))
+
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      Enum.map(matched_keys, fn key ->
+        left_record = Map.fetch!(left, key)
+        right_record = Map.fetch!(right, key)
+
+        %{
+          left: left_record,
+          right: right_record,
+          differences: diff(left_record, right_record, state)
+        }
+      end)
+
+    only_in_left = Enum.map(only_left_keys, fn key -> Map.fetch!(left, key) end)
+    only_in_right = Enum.map(only_right_keys, fn key -> Map.fetch!(right, key) end)
+
+    %{matched: matched, only_in_left: only_in_left, only_in_right: only_in_right}
+  end
+
+  # Diffs a matched pair of records over the configured compare fields.
+  @spec diff(record(), record(), %__MODULE__{}) :: diff_map()
+  defp diff(left_record, right_record, state) do
+    fields = compare_fields(left_record, right_record, state)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+       (truncated)
+06:19:43.476 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8152, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8152, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8152, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8152, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 32719, "type" => "message"}], "output_tokens" => 32719, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+06:19:43.503 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_incremental_stateful_reconciler_genserver_01 solution.ex
+06:19:44.195 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":243,"lines_over_98":0,"max_line_length":90,"mode":"full","pipe_chain_count":6,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_003_incremental_stateful_reconciler_genserver_01/solution.ex","task":"034_003_incremental_stateful_reconciler_genserver_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-10T04:19:44.172040Z"}
+06:19:44.196 [info] cycle 034_003_incremental_stateful_reconciler_genserver_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+06:19:44.196 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+06:19:44.196 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Reconciler` that reconciles two sides of records — a "left" side and a "right" side — but instead of a single pure function it must be an **incremental, stateful `GenServer`**: records are fed in one at a time as they arrive, and the reconciliation is computed on demand over whatever has been accumulated so far.
+
+I need this public API:
+
+- `Reconciler.start_link(opts)` — starts the server and returns `{:ok, pid}`. `opts` is a keyword list that must support:
+  - `:key_fields` (required) — a list of atoms forming the composite key used to match records across the two sides (e.g., `[:id]` or `[:org_id, :user_id]`). If it is missing, `start_link/1` must raise.
+  - `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields except the key fields are compared.
+
+- `Reconciler.put_left(server, record)` — adds a record (a map) to the left side. Returns `:ok`. If a record with the same composite key was already put on the left side, this **replaces** it (last write wins).
+
+- `Reconciler.put_right(server, record)` — the same, for the right side. Returns `:ok`.
+
+- `Reconciler.reconcile(server)` — computes and returns a map with three keys, reflecting the current accumulated state:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for composite keys present on both sides. `diff_map` is a map of `%{field => %{left: val, right: val}}` for any compared field whose values differ (using `==`), and is `%{}` when the records are identical on all compared fields.
+  - `:only_in_left` — a list of records whose key is present only on the left side.
+  - `:only_in_right` — a list of records whose key is present only on the right side.
+
+- `Reconciler.reset(server)` — clears both sides (left and right become empty). Returns `:ok`. After a reset, `reconcile/1` returns `%{matched: [], only_in_left: [], only_in_right: []}`.
+
+Behaviour requirements:
+
+- Key matching is exact — records match if and only if all key fields have equal values. Composite keys (`[:org_id, :user_id]`) must only match when every key field is equal.
+- Matched entries must include both the original left and right record in full, even if some fields are excluded from comparison.
+- If a compared field is missing from one or both records, treat the missing value as `nil` and diff accordingly.
+- Field comparison is value-exact (using `==`).
+- Order of results does not matter.
+- `reconcile/1` must not consume or clear state — it can be called repeatedly and reflects all `put_left`/`put_right` calls made so far.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Reconciler do
+  @moduledoc """
+  An incremental, stateful reconciler for two sides of records.
+
+  `Reconciler` is a `GenServer` that accumulates records on a "left" side and a
+  "right" side, one at a time, and computes a reconciliation on demand over
+  whatever has been accumulated so far.
+
+  Records are plain maps. Two records "match" when all of the configured
+  `:key_fields` compare equal (using `==`). For matched records, a set of
+  `:compare_fields` is diffed field by field; when `:compare_fields` is omitted
+  the comparison uses every field except the key fields (across both records).
+
+  The reconciliation result classifies composite keys into three buckets:
+
+    * `:matched` — keys present on both sides, with a per-field difference map;
+    * `:only_in_left` — keys present only on the left side;
+    * `:only_in_right` — keys present only on the right side.
+
+  Reconciling never consumes state: `reconcile/1` may be called repeatedly and
+  always reflects every `put_left/2` and `put_right/2` performed so far.
+  """
+
+  use GenServer
+
+  @typedoc "A record is an arbitrary map of fields to values."
+  @type record :: map()
+
+  @typedoc "A composite key: the tuple of key-field values, in `:key_fields` order."
+  @type key :: tuple()
+
+  @typedoc "A per-field difference: `%{field => %{left: val, right: val}}`."
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @typedoc "A single matched entry, including both full records and their diff."
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  # Internal server state.
+  defstruct key_fields: [], compare_fields: nil, left: %{}, right: %{}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  `opts` is a keyword list supporting:
+
+    * `:key_fields` (required) — a list of atoms forming the composite key used
+      to match records across the two sides. Raises `ArgumentError` if missing.
+    * `:compare_fields` (optional) — a list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields except the key
+      fields are compared.
+
+  Any remaining options (such as `:name`) are forwarded to
+  `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) when is_list(opts) do
+    key_fields =
+      case Keyword.fetch(opts, :key_fields) do
+        {:ok, fields} when is_list(fields) ->
+          fields
+
+        {:ok, _other} ->
+          raise ArgumentError, ":key_fields must be a list of atoms"
+
+        :error ->
+          raise ArgumentError, ":key_fields option is required"
+      end
+
+    compare_fields = Keyword.get(opts, :compare_fields)
+
+    gen_opts = Keyword.take(opts, [:name, :timeout, :debug, :spawn_opt, :hibernate_after])
+
+    init_arg = %{key_fields: key_fields, compare_fields: compare_fields}
+
+    GenServer.start_link(__MODULE__, init_arg, gen_opts)
+  end
+
+  @doc """
+  Adds `record` (a map) to the left side.
+
+  If a record with the same composite key was already put on the left side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_left(GenServer.server(), record()) :: :ok
+  def put_left(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :left, record})
+  end
+
+  @doc """
+  Adds `record` (a map) to the right side.
+
+  If a record with the same composite key was already put on the right side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_right(GenServer.server(), record()) :: :ok
+  def put_right(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :right, record})
+  end
+
+  @doc """
+  Computes and returns the reconciliation over the currently accumulated state.
+
+  Returns a map with `:matched`, `:only_in_left`, and `:only_in_right` keys.
+  This call does not consume or clear state and may be called repeatedly. The (truncated)
+06:26:05.353 [debug] claude -p RESULT (stop="end_turn"):
+Looking at the solution, the code is functionally clean, but the house-style checker (running on OTP 27 / a recent Elixir with the type checker) is flagging a compile warning. The only "unusual" constructs are the `@spec`s on the **private** helper functions (which reference `%__MODULE__{}` and get checked against inferred types). House style only requires `@spec`/`@doc` on **public** functions, so the safe, fully-compliant fix is to drop the private specs (and the now-unused `key` type that only they referenced), keeping behavior and all public documentation intact.
+
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  An incremental, stateful reconciler for two sides of records.
+
+  `Reconciler` is a `GenServer` that accumulates records on a "left" side and a
+  "right" side, one at a time, and computes a reconciliation on demand over
+  whatever has been accumulated so far.
+
+  Records are plain maps. Two records "match" when all of the configured
+  `:key_fields` compare equal (using `==`). For matched records, a set of
+  `:compare_fields` is diffed field by field; when `:compare_fields` is omitted
+  the comparison uses every field except the key fields (across both records).
+
+  The reconciliation result classifies composite keys into three buckets:
+
+    * `:matched` — keys present on both sides, with a per-field difference map;
+    * `:only_in_left` — keys present only on the left side;
+    * `:only_in_right` — keys present only on the right side.
+
+  Reconciling never consumes state: `reconcile/1` may be called repeatedly and
+  always reflects every `put_left/2` and `put_right/2` performed so far.
+  """
+
+  use GenServer
+
+  # Internal server state.
+  defstruct key_fields: [], compare_fields: nil, left: %{}, right: %{}
+
+  @typedoc "A record is an arbitrary map of fields to values."
+  @type record :: map()
+
+  @typedoc "A per-field difference: `%{field => %{left: val, right: val}}`."
+  @type diff_map :: %{optional(atom()) => %{left: any(), right: any()}}
+
+  @typedoc "A single matched entry, including both full records and their diff."
+  @type matched_entry :: %{left: record(), right: record(), differences: diff_map()}
+
+  @typedoc "The full reconciliation result."
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the reconciler server.
+
+  `opts` is a keyword list supporting:
+
+    * `:key_fields` (required) — a list of atoms forming the composite key used
+      to match records across the two sides. Raises `ArgumentError` if missing.
+    * `:compare_fields` (optional) — a list of atoms specifying which fields to
+      diff on matched records. When omitted or `nil`, all fields except the key
+      fields are compared.
+
+  Any remaining options (such as `:name`) are forwarded to
+  `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) when is_list(opts) do
+    key_fields =
+      case Keyword.fetch(opts, :key_fields) do
+        {:ok, fields} when is_list(fields) ->
+          fields
+
+        {:ok, _other} ->
+          raise ArgumentError, ":key_fields must be a list of atoms"
+
+        :error ->
+          raise ArgumentError, ":key_fields option is required"
+      end
+
+    compare_fields = Keyword.get(opts, :compare_fields)
+
+    gen_opts = Keyword.take(opts, [:name, :timeout, :debug, :spawn_opt, :hibernate_after])
+
+    init_arg = %{key_fields: key_fields, compare_fields: compare_fields}
+
+    GenServer.start_link(__MODULE__, init_arg, gen_opts)
+  end
+
+  @doc """
+  Adds `record` (a map) to the left side.
+
+  If a record with the same composite key was already put on the left side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_left(GenServer.server(), record()) :: :ok
+  def put_left(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :left, record})
+  end
+
+  @doc """
+  Adds `record` (a map) to the right side.
+
+  If a record with the same composite key was already put on the right side, it
+  is replaced (last write wins). Always returns `:ok`.
+  """
+  @spec put_right(GenServer.server(), record()) :: :ok
+  def put_right(server, record) when is_map(record) do
+    GenServer.call(server, {:put, :right, record})
+  end
+
+  @doc """
+  Computes and returns the reconciliation over the currently accumulated state.
+
+  Returns a map with `:matched`, `:only_in_left`, and `:only_in_right` keys.
+  This call does not consume or clear state and may be called repeatedly. The
+  order of results within each bucket is unspecified.
+  """
+  @spec reconcile(GenServer.server()) :: result()
+  def reconcile(server) do
+    GenServer.call(server, :reconcile)
+  end
+
+  @doc """
+  Clears both sides, leaving the server empty.
+
+  After a reset, `reconcile/1` returns
+  `%{matched: [], only_in_left: [], only_in_right: []}`. Always returns `:ok`.
+  """
+  @spec reset(GenServer.server()) :: :ok
+  def reset(server) do
+    GenServer.call(server, :reset)
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(%{key_fields: key_fields, compare_fields: compare_fields}) do
+    state = %__MODULE__{
+      key_fields: key_fields,
+      compare_fields: compare_fields,
+      left: %{},
+      right: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:put, :left, record}, _from, state) do
+    key = build_key(record, state.key_fields)
+    {:reply, :ok, %{state | left: Map.put(state.left, key, record)}}
+  end
+
+  def handle_call({:put, :right, record}, _from, state) do
+    key = build_key(record, state.key_fields)
+    {:reply, :ok, %{state | right: Map.put(state.right, key, record)}}
+  end
+
+  def handle_call(:reconcile, _from, state) do
+    {:reply, compute(state), state}
+  end
+
+  def handle_call(:reset, _from, state) do
+    {:reply, :ok, %{state | left: %{}, right: %{}}}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  # Builds the composite key tuple for a record, missing fields becoming nil.
+  defp build_key(record, key_fields) do
+    key_fields
+    |> Enum.map(fn field -> Map.get(record, field) end)
+    |> List.to_tuple()
+  end
+
+  # Computes the full reconciliation result from accumulated state.
+  defp compute(%__MODULE__{left: left, right: right} = state) do
+    left_keys = MapSet.new(Map.keys(left))
+    right_keys = MapSet.new(Map.keys(right))
+
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      Enum.map(matched_keys, fn key ->
+        left_record = Map.fetch!(left, key)
+        right_record = Map.fetch!(right, key)
+
+        %{
+          left: left_record,
+          right: right_record,
+          differences: diff(left_record, right_record, state)
+        }
+      end)
+
+    only_in_left = Enum.map(only_left_keys, fn key -> Map.fetch!(left, key) end)
+    only_in_right = Enum.map(only_right_keys, fn key -> Map.fetch!(right, key) end)
+
+    %{matched: matched, only_in_left: only_in_left, only_in_right: only_in_right}
+  end
+
+  # Diffs a matched pair of records over the configured compare fields.
+  defp diff(left_record, right_record, state) do
+    fields = compare_fields(left_record, right_record, state)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      left_val = Map.get(left_record, field)
+      right_val = Map.get(right_record, field)
+
+      if left_val == right_val do
+        acc
+      else
+        Map.put(acc, field, %{left: left_val, right: right_val})
+      end
+    end)
+  end
+
+  # Determines w (truncated)
+06:26:05.353 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8100, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8100, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8100, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8100, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 28953, "type" => "message"}], "output_tokens" => 28953, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+06:26:05.380 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_incremental_stateful_reconciler_genserver_01 solution.ex
+06:26:06.082 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":236,"lines_over_98":0,"max_line_length":90,"mode":"full","pipe_chain_count":6,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_003_incremental_stateful_reconciler_genserver_01/solution.ex","task":"034_003_incremental_stateful_reconciler_genserver_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-10T04:26:06.057469Z"}
+06:26:06.083 [info] cycle 034_003_incremental_stateful_reconciler_genserver_01: REJECTED after 4 attempt(s)

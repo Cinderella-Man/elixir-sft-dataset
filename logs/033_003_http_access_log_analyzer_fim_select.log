@@ -1,0 +1,240 @@
+03:38:12.268 [info] FIM candidate-select for 033_003_http_access_log_analyzer_01 (up to 3)
+03:38:12.268 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+03:38:12.268 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `AccessLogAnalyzer` that parses a structured
+HTTP access log file and produces a traffic analysis report.
+
+Each line of the input file is an independent JSON object with these fields:
+- `"timestamp"`   — an ISO 8601 datetime string (e.g. `"2024-01-15T14:03:22Z"`)
+- `"method"`      — an HTTP method string (e.g. `"GET"`, `"POST"`)
+- `"path"`        — a string representing the request path (e.g. `"/api/users"`)
+- `"status_code"` — an integer HTTP status code (e.g. `200`, `404`, `500`)
+- `"duration_ms"` — a number (integer or float) representing response time in
+                     milliseconds
+
+I need one public function:
+
+    AccessLogAnalyzer.analyze(path :: String.t()) :: {:ok, report} | {:error, reason}
+
+Where `report` is a plain map with exactly these keys:
+
+- `:requests_by_method`  — a map from method string to integer count
+                            (only methods actually seen appear)
+- `:requests_by_status`  — a map from status code integer to integer count
+                            (only status codes actually seen appear)
+- `:top_paths`           — a list of at most 10 `{path, count}` tuples,
+                            sorted descending by count, then alphabetically
+                            by path to break ties
+- `:avg_duration`        — float average duration_ms across all valid lines;
+                            0.0 if no valid lines
+- `:max_duration`        — the single `{path, duration_ms}` tuple with the
+                            highest duration; `nil` if no valid lines;
+                            if multiple lines tie, keep the one whose path
+                            is alphabetically first
+- `:error_rate`          — float between 0.0 and 1.0 representing lines with
+                            status_code >= 400 divided by total valid lines;
+                            0.0 if no valid lines
+- `:requests_per_minute` — a map from a `{date_tuple, {hour, minute}}` tuple
+                            (e.g. `{{2024,1,15}, {14, 3}}`) to integer count;
+                            only minutes with at least one request appear
+- `:time_range`          — a `{first_dt, last_dt}` tuple of `DateTime` structs;
+                            `nil` if no valid lines
+- `:malformed_count`     — integer count of lines that could not be parsed
+
+Lines that are blank or contain only whitespace should be skipped silently
+(they don't count as malformed).
+
+Error handling rules:
+- If the file does not exist or cannot be opened, return `{:error, reason}`.
+- Every other failure (bad JSON, missing fields, wrong types) is counted in
+  `:malformed_count`; the line is skipped and processing continues.
+- A line is considered malformed if ANY of these is true:
+  - It is not valid JSON
+  - The top-level JSON value is not an object
+  - Any of `"timestamp"`, `"method"`, `"path"`, `"status_code"`, or
+    `"duration_ms"` is absent
+  - `"timestamp"` cannot be parsed as an ISO 8601 datetime
+  - `"method"` or `"path"` is not a string
+  - `"status_code"` is not an integer
+  - `"duration_ms"` is not a number (integer or float)
+
+Use `Jason` for JSON parsing and the standard `DateTime` module for timestamp
+parsing. No other external dependencies.
+
+Stream the file line-by-line so the module can handle files larger than memory.
+
+Give me the complete module in a single file.
+
+=== MODULE ===
+```elixir
+defmodule AccessLogAnalyzer do
+  @moduledoc """
+  Parses a structured, newline-delimited JSON HTTP access log file and produces
+  a traffic analysis report.
+
+  Each line must be a JSON object with the fields:
+    "timestamp"   – ISO 8601 datetime string
+    "method"      – HTTP method string
+    "path"        – request path string
+    "status_code" – integer HTTP status code
+    "duration_ms" – number (response time in milliseconds)
+
+  Blank / whitespace-only lines are silently skipped.
+  Lines that cannot be parsed increment :malformed_count and are otherwise ignored.
+
+  Requires the `jason` dependency in mix.exs:
+      {:jason, "~> 1.4"}
+  """
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec analyze(String.t()) :: {:ok, map()} | {:error, term()}
+  def analyze(path) do
+    case File.stat(path) do
+      {:error, reason} ->
+        {:error, reason}
+
+      {:ok, _} ->
+        report =
+          path
+          |> File.stream!([], :line)
+          |> Stream.map(&String.trim_trailing(&1, "\n"))
+          |> Stream.map(&String.trim_trailing(&1, "\r"))
+          |> Enum.reduce(initial_acc(), &process_line/2)
+          |> build_report()
+
+        {:ok, report}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Accumulator
+  # ---------------------------------------------------------------------------
+
+  defp initial_acc do
+    %{
+      by_method: %{},
+      by_status: %{},
+      path_counts: %{},
+      duration_sum: 0.0,
+      max_duration: nil,
+      timestamps: nil,
+      requests_per_minute: %{},
+      total: 0,
+      error_count: 0,
+      malformed: 0
+    }
+  end
+
+  # ---------------------------------------------------------------------------
+  # Per-line processing
+  # ---------------------------------------------------------------------------
+
+  defp process_line(raw_line, acc) do
+    trimmed = String.trim(raw_line)
+
+    if trimmed == "" do
+      acc
+    else
+      case parse_line(trimmed) do
+        {:ok, entry} ->
+          accumulate(acc, entry)
+
+        :error ->
+          %{acc | malformed: acc.malformed + 1}
+      end
+    end
+  end
+
+  defp parse_line(trimmed) do
+    with {:ok, obj} when is_map(obj) <- Jason.decode(trimmed),
+         {:ok, ts_string} <- fetch_string(obj, "timestamp"),
+         {:ok, method} <- fetch_string(obj, "method"),
+         {:ok, req_path} <- fetch_string(obj, "path"),
+         {:ok, status_code} <- fetch_integer(obj, "status_code"),
+         {:ok, duration_ms} <- fetch_number(obj, "duration_ms"),
+         {:ok, dt} <- parse_timestamp(ts_string) do
+      {:ok,
+       %{
+         timestamp: dt,
+         method: method,
+         path: req_path,
+         status_code: status_code,
+         duration_ms: duration_ms
+       }}
+    else
+      _ -> :error
+    end
+  end
+
+  defp fetch_string(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} when is_binary(value) -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  defp fetch_integer(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} when is_integer(value) -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  defp fetch_number(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} when is_number(value) -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  defp parse_timestamp(ts_string) do
+    case DateTime.from_iso8601(ts_string) do
+      {:ok, dt, _offset} ->
+        {:ok, DateTime.shift_zone!(dt, "Etc/UTC")}
+
+      {:error, _} ->
+        :error
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Accumulation
+  # ---------------------------------------------------------------------------
+
+  defp accumulate(acc, entry) do
+    acc
+    |> update_method(entry.method)
+    |> update_status(entry.status_code)
+    |> update_path(entry.path)
+    |> update_duration(entry.path, entry.duration_ms)
+    |> update_timestamps(entry.timestamp)
+    |> update_requests_per_minute(entry.timestamp)
+    |> update_error_count(entry.status_code)
+    |> Map.update!(:total, &(&1 + 1))
+  end
+
+  defp update (truncated)
+03:38:18.427 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+parse_line/1
+update_duration/3
+compute_top_paths/1
+</file>
+03:38:18.427 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4722, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4722, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4722, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4722, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 290, "type" => "message"}], "output_tokens" => 290, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

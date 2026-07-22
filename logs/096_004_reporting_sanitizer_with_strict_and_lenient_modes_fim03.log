@@ -1,0 +1,354 @@
+[22m07:13:11.620 [info] FIM 096_004_reporting_sanitizer_with_strict_and_lenient_modes_fim03 → 096_004_reporting_sanitizer_with_strict_and_lenient_modes_04: target text/2[0m
+[36m07:13:11.620 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m07:13:11.620 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `text/2`.
+
+Generate a prompt describing how to implement `text/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `text/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `text/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `text/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Sanitizer` that not only cleans input but **reports every transformation it made** and supports a strict mode that *rejects* dirty input instead of silently fixing it.
+
+Every function takes an options keyword list with a `:mode` of either `:lenient` (default) or `:strict`.
+
+Common return contract for each function:
+- If cleaning produced **no violations**: `{:ok, cleaned, []}` (in both modes).
+- In `:lenient` mode **with** violations: `{:ok, cleaned, violations}` where `violations` is a list of atoms (in a fixed order, see below).
+- In `:strict` mode **with** violations: `{:error, violations}`.
+- A **hard failure** (empty result) always returns `{:error, [:empty]}` regardless of mode.
+
+Functions:
+
+- `Sanitizer.sql_identifier(input, opts \\ [])` — keep only `[A-Za-z0-9_]`. Violations, in order:
+  - `:removed_illegal_chars` — if any character was stripped.
+  - `:prefixed_digit_start` — if the cleaned value started with a digit and an underscore was prepended.
+  - If the stripped value is empty → `{:error, [:empty]}`.
+
+- `Sanitizer.filename(input, opts \\ [])` — strip null bytes, strip `/` and `\`, keep only `[A-Za-z0-9_.-]`, collapse runs of 2+ dots to one, trim leading/trailing dots. Violations, in order:
+  - `:removed_null_bytes` — if the input contained a null byte.
+  - `:removed_path_separators` — if the input contained `/` or `\`.
+  - `:removed_illegal_chars` — if any other disallowed characters were stripped.
+  - `:collapsed_dots` — if a run of 2+ dots was collapsed.
+  - `:trimmed_dots` — if leading/trailing dots were trimmed.
+  - If the final value is empty → `{:error, [:empty]}`.
+
+- `Sanitizer.text(input, opts \\ [])` — clean free text: strip C0 control characters (except `\t`, `\n`, `\r`), trim surrounding whitespace, then HTML-escape `&`, `<`, `>`, `"`, `'` to `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&#39;`. Violations, in order:
+  - `:removed_control_chars` — if control characters were stripped.
+  - `:trimmed_whitespace` — if trimming changed the value.
+  - `:escaped_html` — if any character was HTML-escaped.
+  - `text` never has a hard failure (an empty result is valid).
+
+Give me the complete module in a single file, standard library only — no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Sanitizer do
+  @moduledoc """
+  Reporting sanitizer with `:lenient` (default) and `:strict` modes.
+
+  Each function returns a violation report describing what it changed:
+
+    * no violations → `{:ok, cleaned, []}` (both modes)
+    * `:lenient` with violations → `{:ok, cleaned, violations}`
+    * `:strict` with violations → `{:error, violations}`
+    * hard failure (empty result) → `{:error, [:empty]}`
+
+  Standard library only — no external dependencies.
+  """
+
+  @type result :: {:ok, String.t(), [atom()]} | {:error, [atom()]}
+
+  # ── SQL identifier ─────────────────────────────────────────────────────────
+
+  @doc """
+  Sanitizes `input` into a SQL identifier, keeping only `[A-Za-z0-9_]`.
+
+  Reports `:removed_illegal_chars` when characters were stripped and
+  `:prefixed_digit_start` when a leading underscore was prepended because the
+  value started with a digit. An empty stripped value is `{:error, [:empty]}`.
+  """
+  @spec sql_identifier(String.t(), keyword()) :: result()
+  def sql_identifier(input, opts \\ []) when is_binary(input) do
+    mode = Keyword.get(opts, :mode, :lenient)
+    stripped = String.replace(input, ~r/[^a-zA-Z0-9_]/, "")
+
+    if stripped == "" do
+      {:error, [:empty]}
+    else
+      removed = if stripped != input, do: [:removed_illegal_chars], else: []
+
+      {cleaned, prefixed} =
+        if String.match?(stripped, ~r/\A[0-9]/) do
+          {"_" <> stripped, [:prefixed_digit_start]}
+        else
+          {stripped, []}
+        end
+
+      finalize(mode, cleaned, removed ++ prefixed)
+    end
+  end
+
+  # ── Filename ───────────────────────────────────────────────────────────────
+
+  @doc """
+  Sanitizes `input` into a safe filename.
+
+  Strips null bytes and path separators, keeps only `[A-Za-z0-9_.-]`, collapses
+  runs of 2+ dots to one, and trims leading/trailing dots. Reports each of these
+  transformations in fixed order. An empty final value is `{:error, [:empty]}`.
+  """
+  @spec filename(String.t(), keyword()) :: result()
+  def filename(input, opts \\ []) when is_binary(input) do
+    mode = Keyword.get(opts, :mode, :lenient)
+
+    no_null = String.replace(input, "\0", "")
+    no_sep = no_null |> String.replace("/", "") |> String.replace("\\", "")
+    filtered = String.replace(no_sep, ~r/[^a-zA-Z0-9_\-.]/, "")
+    collapsed = String.replace(filtered, ~r/\.{2,}/, ".")
+    trimmed = String.trim(collapsed, ".")
+
+    if trimmed == "" do
+      {:error, [:empty]}
+    else
+      violations =
+        []
+        |> maybe(String.contains?(input, "\0"), :removed_null_bytes)
+        |> maybe(String.contains?(input, "/") or String.contains?(input, "\\"),
+          :removed_path_separators)
+        |> maybe(filtered != no_sep, :removed_illegal_chars)
+        |> maybe(collapsed != filtered, :collapsed_dots)
+        |> maybe(trimmed != collapsed, :trimmed_dots)
+
+      finalize(mode, trimmed, violations)
+    end
+  end
+
+  # ── Free text ──────────────────────────────────────────────────────────────
+
+  @doc """
+  Sanitizes free `text`.
+
+  Strips C0 control characters (except `\\t`, `\\n`, `\\r`), trims surrounding
+  whitespace, then HTML-escapes `&`, `<`, `>`, `"`, `'`. Reports each of these
+  transformations in fixed order. An empty result is valid (no hard failure).
+  """
+  @spec text(String.t(), keyword()) :: result()
+  def text(input, opts \\ []) when is_binary(input) do
+    mode = Keyword.get(opts, :mode, :lenient)
+
+    no_ctrl = String.replace(input, ~r/[\x00-\x08\x0B\x0C\x0E-\x1F]/, "")
+    trimmed = String.trim(no_ctrl)
+    escaped = html_escape(trimmed)
+
+    violations =
+      []
+      |> maybe(no_ctrl != input, :removed_control_chars)
+      |> maybe(trimmed != no_ctrl, :trimmed_whitespace)
+      |> maybe(escaped != trimmed, :escaped_html)
+
+    finalize(mode, escaped, violations)
+  end
+
+  # ── Helpers ────────────────────────────────────────────────────────────────
+
+  @spec finalize(:lenient | :strict, String.t(), [atom()]) :: result()
+  defp finalize(_mode, cleaned, []), do: {:ok, cleaned, []}
+  defp finalize(:lenient, cleaned, violations), do: {:ok, cleaned, violations}
+  defp finalize(:strict, _cleaned, violations), do: {:error, violations}
+
+  @spec maybe([atom()], boolean(), atom()) :: [atom()] (truncated)[0m
+[36m07:13:40.462 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `text/2` function for the `Sanitizer` module.
+
+`text(input, opts \\ [])` sanitizes free text and reports every transformation it
+made, honoring the module-wide `:mode` option (`:lenient` by default, or `:strict`).
+It is guarded with `when is_binary(input)`.
+
+The function must, in order:
+
+1. Read `mode` from `opts` with `Keyword.get(opts, :mode, :lenient)`.
+2. Strip C0 control characters — every byte in `\x00`–`\x08`, `\x0B`, `\x0C`, and
+   `\x0E`–`\x1F` — while keeping `\t`, `\n`, and `\r`. Do this with
+   `String.replace/3` and the regex `~r/[\x00-\x08\x0B\x0C\x0E-\x1F]/`, producing
+   `no_ctrl`.
+3. Trim surrounding whitespace from `no_ctrl` with `String.trim/1`, producing
+   `trimmed`.
+4. HTML-escape `&`, `<`, `>`, `"`, `'` (to `&amp;`, `&lt;`, `&gt;`, `&quot;`,
+   `&#39;`) by calling the private `html_escape/1` helper on `trimmed`, producing
+   `escaped`.
+
+Then build the violations list (using the `maybe/3` helper) in this fixed order:
+
+- `:removed_control_chars` — when `no_ctrl != input`.
+- `:trimmed_whitespace` — when `trimmed != no_ctrl`.
+- `:escaped_html` — when `escaped != trimmed`.
+
+Finally, return `finalize(mode, escaped, violations)`. Unlike the other functions,
+`text/2` has no hard failure: an empty result is valid.
+
+```elixir
+defmodule Sanitizer do
+  @moduledoc """
+  Reporting sanitizer with `:lenient` (default) and `:strict` modes.
+
+  Each function returns a violation report describing what it changed:
+
+    * no violations → `{:ok, cleaned, []}` (both modes)
+    * `:lenient` with violations → `{:ok, cleaned, violations}`
+    * `:strict` with violations → `{:error, violations}`
+    * hard failure (empty result) → `{:error, [:empty]}`
+
+  Standard library only — no external dependencies.
+  """
+
+  @type result :: {:ok, String.t(), [atom()]} | {:error, [atom()]}
+
+  # ── SQL identifier ─────────────────────────────────────────────────────────
+
+  @doc """
+  Sanitizes `input` into a SQL identifier, keeping only `[A-Za-z0-9_]`.
+
+  Reports `:removed_illegal_chars` when characters were stripped and
+  `:prefixed_digit_start` when a leading underscore was prepended because the
+  value started with a digit. An empty stripped value is `{:error, [:empty]}`.
+  """
+  @spec sql_identifier(String.t(), keyword()) :: result()
+  def sql_identifier(input, opts \\ []) when is_binary(input) do
+    mode = Keyword.get(opts, :mode, :lenient)
+    stripped = String.replace(input, ~r/[^a-zA-Z0-9_]/, "")
+
+    if stripped == "" do
+      {:error, [:empty]}
+    else
+      removed = if stripped != input, do: [:removed_illegal_chars], else: []
+
+      {cleaned, prefixed} =
+        if String.match?(stripped, ~r/\A[0-9]/) do
+          {"_" <> stripped, [:prefixed_digit_start]}
+        else
+          {stripped, []}
+        end
+
+      finalize(mode, cleaned, removed ++ prefixed)
+    end
+  end
+
+  # ── Filename ───────────────────────────────────────────────────────────────
+
+  @doc """
+  Sanitizes `input` into a safe filename.
+
+  Strips null bytes and path separators, keeps only `[A-Za-z0-9_.-]`, collapses
+  runs of 2+ dots to one, and trims leading/trailing dots. Reports each of these
+  transformations in fixed order. An empty final value is `{:error, [:empty]}`.
+  """
+  @spec filename(String.t(), keyword()) :: result()
+  def filename(input, opts \\ []) when is_binary(input) do
+    mode = Keyword.get(opts, :mode, :lenient)
+
+    no_null = String.replace(input, "\0", "")
+    no_sep = no_null |> String.replace("/", "") |> String.replace("\\", "")
+    filtered = String.replace(no_sep, ~r/[^a-zA-Z0-9_\-.]/, "")
+    collapsed = String.replace(filtered, ~r/\.{2,}/, ".")
+    trimmed = String.trim(collapsed, ".")
+
+    if trimmed == "" do
+      {:error, [:empty]}
+    else
+      violations =
+        []
+        |> maybe(String.contains?(input, "\0"), :removed_null_bytes)
+        |> maybe(String.contains?(input, "/") or String.contains?(input, "\\"),
+          :removed_path_separators)
+        |> maybe(filtered != no_sep, :removed_illegal_chars)
+        |> maybe(collapsed != filtered, :collapsed_dots)
+        |> maybe(trimmed != collapsed, :trimmed_dots)
+
+      finalize(mode, trimmed, violations)
+    end
+  end
+
+  # ── Free text ──────────────────────────────────────────────────────────────
+
+  @doc """
+  Sanitizes free `text`.
+
+  Strips C0 control characters (except `\\t`, `\\n`, `\\r`), trims surrounding
+  whitespace, then HTML-escapes `&`, `<`, `>`, `"`, `'`. Reports each of these
+  transformations in fixed order. An empty result is valid (no hard failure).
+  """
+  @spec text(String.t(), keyword()) :: result()
+  def text(input, opts \\ []) when is_binary(input) do
+    # TODO
+  end
+
+  # ── Helpers ────────────────────────────────────────────────────────────────
+
+  @spec finalize(:lenient | :strict, String.t(), [atom()]) :: result()
+  defp finalize(_mode, cleaned, []), do: {:ok, cleaned, []}
+  defp finalize(:lenient, cleaned, violations), do: {:ok, cleaned, violations}
+  defp finalize(:strict, _cleaned, violations), do: {:error, violations}
+
+  @spec maybe([atom()], boolean(), atom()) :: [atom()]
+  defp maybe(list, true, v), do: list ++ [v]
+  defp maybe(list, false, _v), do: list
+
+  @spec html_escape(String.t()) :: String.t()
+  defp html_escape(s) do
+    s
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+    |> String.replace("\"", "&quot;")
+    |> String.replace("'", "&#39;")
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  def text(input, opts \\ []) when is_binary(input) do
+    mode = Keyword.get(opts, :mode, :lenient)
+
+    no_ctrl = String.replace(input, ~r/[\x00-\x08\x0B\x0C\x0E-\x1F]/, "")
+    trimmed = String.trim(no_ctrl)
+    escaped = html_escape(trimmed)
+
+    violations =
+      []
+      |> maybe(no_ctrl != input, :removed_control_chars)
+      |> maybe(trimmed != no_ctrl, :trimmed_whitespace)
+      |> maybe(escaped != trimmed, :escaped_html)
+
+    finalize(mode, escaped, violations)
+  end
+</file>[0m
+[36m07:13:40.462 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3697, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3697, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3697, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3697, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 2757, "type" => "message"}], "output_tokens" => 2757, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m07:13:40.482 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_096_004_reporting_sanitizer_with_strict_and_lenient_modes_04/096_004_reporting_sanitizer_with_strict_and_lenient_modes_04 solution.ex[0m
+[36m07:13:41.070 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":15,"lines_over_98":0,"max_line_length":73,"mode":"fim","pipe_chain_count":3,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"096_004_reporting_sanitizer_with_strict_and_lenient_modes_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_096_004_reporting_sanitizer_with_strict_and_lenient_modes_04/096_004_reporting_sanitizer_with_strict_and_lenient_modes_04/solution.ex","task":"096_004_reporting_sanitizer_with_strict_and_lenient_modes_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":18,"timestamp":"2026-07-07T05:13:41.049843Z"}[0m
+[36m07:13:41.072 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_096_004_reporting_sanitizer_with_strict_and_lenient_modes_04/096_004_reporting_sanitizer_with_strict_and_lenient_modes_04 .gen_staging/fim_096_004_reporting_sanitizer_with_strict_and_lenient_modes_04/mutant.ex[0m
+[36m07:13:41.701 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":52,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"096_004_reporting_sanitizer_with_strict_and_lenient_modes_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.75,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 6/18 failed"],"tests":0.67},"shape":"fim","solution_file":".gen_staging/fim_096_004_reporting_sanitizer_with_strict_and_lenient_modes_04/mutant.ex","task":"096_004_reporting_sanitizer_with_strict_and_lenient_modes_04","test_failures":[{"message":"MUTATION","module":"SanitizerTest","test":"test text/2 clean text has no violations"},{"message":"MUTATION","module":"SanitizerTest","test":"test text/2 escapes html and reports it"},{"message":"MUTATION","module":"SanitizerTest","test":"test text/2 reports trimming and escaping in order"},{"message":"MUTATION","module":"SanitizerTest","test":"test text/2 reports removed control chars"},{"message":"MUTATION","module":"SanitizerTest","test":"test text/2 strict mode rejects text needing escaping"},{"message":"MUTATION","module":"SanitizerTest","test":"test text/2 empty text is valid (no hard failure)"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":18,"timestamp":"2026-07-07T05:13:41.680817Z"}[0m
+[36m07:13:41.701 [debug] fim mutation gate: killed[0m
+[22m07:13:41.702 [info] promoted 096_004_reporting_sanitizer_with_strict_and_lenient_modes_04 -> tasks/096_004_reporting_sanitizer_with_strict_and_lenient_modes_04[0m

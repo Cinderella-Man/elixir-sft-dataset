@@ -1,0 +1,203 @@
+12:57:55.945 [info] FIM candidate-select for 042_004_single_flight_non_blocking_write_through_cache_01 (up to 3)
+12:57:55.945 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+12:57:55.945 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `CacheLayer` that wraps database reads with an ETS-backed cache using a **single-flight (request-coalescing), non-blocking** concurrency model.
+
+The naive design serialises *every* cache miss through the GenServer and runs the slow `fallback_fn` inside the GenServer's critical section — so one slow database call blocks misses for **all** keys. I want a better concurrency model:
+
+- The expensive `fallback_fn` must run **outside** the GenServer process, so a slow load for one key never blocks loads for other keys — distinct keys are computed concurrently.
+- For a single key, if several callers miss at the same time, exactly **one** of them (the "leader") runs `fallback_fn`; the others ("followers") block until the leader finishes and then receive the leader's result. `fallback_fn` is called **at most once** per cache miss no matter how many callers race.
+
+I need these functions in the public API:
+- `CacheLayer.start_link(opts)` to start the process as a GenServer. It should accept a `:name` option for process registration and own the lifecycle of all ETS tables it creates.
+- `CacheLayer.fetch(server, table, key, fallback_fn)` which returns `{:ok, value}`. On a cache hit it reads directly from ETS (no GenServer round-trip). On a miss it participates in the single-flight protocol described above and returns `{:ok, value}`.
+- `CacheLayer.invalidate(server, table, key)` which removes the entry for `{table, key}`. Returns `:ok`.
+- `CacheLayer.invalidate_all(server, table)` which removes **all** cached entries for the given `table`. Returns `:ok`.
+
+Each `table` is an atom mapping to a separate `:set`, `:public` ETS table owned by the GenServer, created lazily on first use. The GenServer coordinates the single-flight bookkeeping (who is the leader for `{table, key}`, which callers are waiting) but must **not** execute `fallback_fn` itself. If the leader crashes before producing a value, the followers must not hang forever — one of them should get a chance to retry.
+
+Give me the complete module in a single file. Use only OTP and the standard library, no external dependencies.
+
+=== MODULE ===
+```elixir
+defmodule CacheLayer do
+  @moduledoc """
+  An ETS-backed read cache with a single-flight, non-blocking concurrency model.
+
+  Each logical `table` (an atom) maps to a separate `:set`, `:public` ETS table
+  owned by this process, created lazily on first use. Cache hits are served
+  directly from ETS with no GenServer round-trip.
+
+  ## Single-flight
+
+  The expensive `fallback_fn` runs in the *caller's* process, never inside the
+  GenServer, so a slow load for one key does not block loads for other keys.
+  For a given `{table, key}`:
+
+    * The first caller to miss becomes the **leader** and runs `fallback_fn`.
+    * Concurrent callers become **followers**: their `fetch` call is parked
+      inside the GenServer (no reply) until the leader finishes, at which point
+      they receive the leader's value. `fallback_fn` is therefore invoked at
+      most once per cache miss.
+
+  If the leader crashes before reporting a value (monitored via
+  `Process.monitor/1`), all parked followers are told to `:retry`, so they never
+  hang — one of them becomes the new leader.
+  """
+
+  use GenServer
+
+  # --------------------------------------------------------------------------
+  # Public API
+  # --------------------------------------------------------------------------
+
+  @doc """
+  Starts the cache as a GenServer.
+
+  Accepts the usual GenServer options, notably `:name` for process registration.
+  The started process owns the lifecycle of every ETS table it creates.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc """
+  Fetches the value cached under `{table, key}`, computing it on a miss.
+
+  On a cache hit the value is read directly from ETS with no GenServer
+  round-trip. On a miss the caller joins the single-flight protocol: exactly one
+  racing caller runs `fallback_fn`, the rest wait for and receive its result.
+  Always returns `{:ok, value}`.
+  """
+  @spec fetch(GenServer.server(), atom(), term(), (-> term())) :: {:ok, term()}
+  def fetch(server, table, key, fallback_fn)
+      when is_atom(table) and is_function(fallback_fn, 0) do
+    pid = resolve_pid!(server)
+
+    case :persistent_term.get({__MODULE__, pid, table}, :no_table) do
+      :no_table ->
+        join_and_compute(server, table, key, fallback_fn)
+
+      tid ->
+        case :ets.lookup(tid, key) do
+          [{^key, value}] -> {:ok, value}
+          [] -> join_and_compute(server, table, key, fallback_fn)
+        end
+    end
+  end
+
+  @doc """
+  Removes the cached entry for `{table, key}`. Always returns `:ok`.
+  """
+  @spec invalidate(GenServer.server(), atom(), term()) :: :ok
+  def invalidate(server, table, key) when is_atom(table) do
+    GenServer.call(server, {:invalidate, table, key})
+  end
+
+  @doc """
+  Removes every cached entry for `table`. Always returns `:ok`.
+  """
+  @spec invalidate_all(GenServer.server(), atom()) :: :ok
+  def invalidate_all(server, table) when is_atom(table) do
+    GenServer.call(server, {:invalidate_all, table})
+  end
+
+  # Single-flight participation. Runs the fallback in THIS process when elected
+  # leader; blocks (via a parked GenServer call) when a follower.
+  defp join_and_compute(server, table, key, fallback_fn) do
+    case GenServer.call(server, {:join, table, key}, :infinity) do
+      {:hit, value} ->
+        {:ok, value}
+
+      {:value, value} ->
+        # A follower whose leader completed.
+        {:ok, value}
+
+      :retry ->
+        # Leader failed; try again (we may become the new leader).
+        join_and_compute(server, table, key, fallback_fn)
+
+      {:leader, _ref} ->
+        try do
+          value = fallback_fn.()
+          :ok = GenServer.call(server, {:done, table, key, value}, :infinity)
+          {:ok, value}
+        rescue
+          e ->
+            GenServer.call(server, {:fail, table, key}, :infinity)
+            reraise e, __STACKTRACE__
+        end
+    end
+  end
+
+  # --------------------------------------------------------------------------
+  # GenServer callbacks
+  # --------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(:ok) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{tables: %{}, inflight: %{}}}
+  end
+
+  @impl GenServer
+  def handle_call({:join, table, key}, from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    case :ets.lookup(tid, key) do
+      [{^key, value}] ->
+        {:reply, {:hit, value}, state}
+
+      [] ->
+        flight_key = {table, key}
+
+        case Map.get(state.inflight, flight_key) do
+          nil ->
+            leader = elem(from, 0)
+            mref = Process.monitor(leader)
+            entry = %{leader: leader, mref: mref, waiters: []}
+            inflight = Map.put(state.inflight, flight_key, entry)
+            {:reply, {:leader, mref}, %{state | inflight: inflight}}
+
+          entry ->
+            entry = %{entry | waiters: [from | entry.waiters]}
+            {:noreply, %{state | inflight: Map.put(state.inflight, flight_key, entry)}}
+        end
+    end
+  end
+
+  def handle_call({:done, table, key, value}, _from, state) do
+    {tid, state} = ensure_table(table, state)
+    :ets.insert(tid, {key, value})
+
+    flight_key = {table, key}
+
+    case Map.pop(state.inflight, flight_key) do
+      {nil, _} ->
+        {:reply, :ok, state}
+
+      {entry, inflight} ->
+        Process.demonitor(entry.mref, [:flush])
+        Enum.eac (truncated)
+12:58:09.481 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+join_and_compute/4
+handle_call/3
+handle_info/2
+</file>
+12:58:09.481 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4469, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4469, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4469, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4469, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 627, "type" => "message"}], "output_tokens" => 627, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

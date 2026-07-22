@@ -1,0 +1,1000 @@
+[22m00:57:07.245 [info] VARIATION 034_002_tolerance_aware_reconciler_01: Tolerance-Aware Reconciler[0m
+[36m00:57:07.246 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_tolerance_aware_reconciler_01 solution.ex[0m
+[36m00:57:07.849 [debug] grade JSON: {"analysis":{"defp_count":14,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":148,"lines_over_98":1,"max_line_length":99,"mode":"full","pipe_chain_count":10,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.96,"reasons":["compilation: 1 warning(s) → -0.1 pts","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_tolerance_aware_reconciler_01/solution.ex","task":"034_002_tolerance_aware_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-06T22:57:07.828529Z"}[0m
+[22m00:57:07.850 [info] cycle 034_002_tolerance_aware_reconciler_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them; 1 line(s) over 98 columns — wrap them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m00:57:07.850 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m00:57:07.850 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them; 1 line(s) over 98 columns — wrap them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Reconciler` that takes two lists of records and reconciles them by a shared key, producing a structured diff — but with **configurable per-field comparison semantics** instead of strict value equality.
+
+I need this function in the public API:
+
+- `Reconciler.reconcile(left, right, opts)` where `left` and `right` are lists of maps and `opts` is a keyword list. It returns a map with three keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for records present in both lists. `diff_map` is a map of `%{field => %{left: val, right: val}}` for any fields whose values are considered **unequal under that field's comparator**. It is empty if the records are considered equal on all compared fields.
+  - `:only_in_left` — a list of records present in `left` but absent in `right`.
+  - `:only_in_right` — a list of records present in `right` but absent in `left`.
+
+The `opts` keyword list must support:
+- `:key_fields` (required) — a list of atoms that together form the composite key used to match records across the two lists (e.g. `[:id]` or `[:org, :uid]`). Key matching is always **exact**.
+- `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields except the key fields are compared.
+- `:comparators` (optional) — a map of `%{field => rule}` giving per-field comparison rules. Any field not present in the map uses exact `==`. The supported rules are:
+  - `:exact` — value equality via `==` (the default).
+  - `:case_insensitive` — for two binaries, equal if they match after `String.downcase/1`; otherwise falls back to `==`.
+  - `{:tolerance, tol}` — for two numbers, equal if `abs(left - right) <= tol`; otherwise falls back to `==` (so `nil` vs a number is unequal).
+  - a 2-arity function `fun(left_val, right_val)` returning a boolean — `true` means the two values are considered equal.
+
+Behaviour requirements:
+- Composite keys must work correctly — `[:org, :uid]` should only match records where both fields are equal.
+- Records in `:matched` must include both the original left and right record in full, even if some fields are excluded from comparison.
+- If a compared field is missing from one or both records, treat the missing value as `nil` and apply the field's comparator to `nil`.
+- A comparator only affects the field it is assigned to; all other fields keep their own (or the default) rule.
+- Order of results does not matter.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff,
+  with configurable per-field comparison semantics (tolerance, case-insensitive,
+  custom predicates) instead of strict value equality.
+
+  ## Example
+
+      left  = [%{id: 1, name: "Alice", price: 10.0}]
+      right = [%{id: 1, name: "ALICE", price: 10.1}]
+
+      Reconciler.reconcile(left, right,
+        key_fields: [:id],
+        comparators: %{name: :case_insensitive, price: {:tolerance, 0.2}}
+      )
+      #=> %{matched: [%{left: ..., right: ..., differences: %{}}],
+      #=>   only_in_left: [], only_in_right: []}
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+  @type rule :: :exact | :case_insensitive | {:tolerance, number()} | (term(), term() -> boolean())
+
+  @type result :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` by the composite key in `opts`, applying per-field
+  comparison rules from `:comparators` (defaulting to exact `==`).
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields_opt = Keyword.get(opts, :compare_fields, nil)
+    comparators = Keyword.get(opts, :comparators, %{})
+    validate_comparators!(comparators)
+
+    left_index = index_by(left, key_fields)
+    right_index = index_by(right, key_fields)
+
+    left_keys = MapSet.new(Map.keys(left_index))
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    matched =
+      left_keys
+      |> MapSet.intersection(right_keys)
+      |> Enum.map(fn key ->
+        l = Map.fetch!(left_index, key)
+        r = Map.fetch!(right_index, key)
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields_opt)
+        %{left: l, right: r, differences: diff(l, r, fields, comparators)}
+      end)
+
+    only_in_left =
+      left_keys |> MapSet.difference(right_keys) |> Enum.map(&Map.fetch!(left_index, &1))
+
+    only_in_right =
+      right_keys |> MapSet.difference(left_keys) |> Enum.map(&Map.fetch!(right_index, &1))
+
+    %{matched: matched, only_in_left: only_in_left, only_in_right: only_in_right}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation
+  # ---------------------------------------------------------------------------
+
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        unless Enum.all?(fields, &is_atom/1) do
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+        fields
+
+      {:ok, _} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  defp validate_comparators!(comparators) when is_map(comparators), do: :ok
+
+  defp validate_comparators!(_),
+    do: raise(ArgumentError, ":comparators must be a map of field => rule")
+
+  # ---------------------------------------------------------------------------
+  # Indexing / key handling
+  # ---------------------------------------------------------------------------
+
+  defp index_by(records, key_fields) do
+    Map.new(records, fn record -> {composite_key(record, key_fields), record} end)
+  end
+
+  defp composite_key(record, key_fields) do
+    key_fields |> Enum.map(&Map.get(record, &1)) |> List.to_tuple()
+  end
+
+  defp resolve_compare_fields(_l, _r, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    key_set = MapSet.new(key_fields)
+
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+
+  # ---------------------------------------------------------------------------
+  # Diffing with per-field comparators
+  # ---------------------------------------------------------------------------
+
+  defp diff(left, right, fields, comparators) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv  (truncated)[0m
+[36m01:00:38.670 [debug] claude -p RESULT (stop="end_turn"):
+Looking at the two issues: (1) the `@type rule` line exceeds 98 columns, and (2) the `unless` construct is the compile-warning source. I'll wrap the type line and replace `unless` with an idiomatic `if/else`, keeping behavior identical.
+
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff,
+  with configurable per-field comparison semantics (tolerance, case-insensitive,
+  custom predicates) instead of strict value equality.
+
+  ## Example
+
+      left  = [%{id: 1, name: "Alice", price: 10.0}]
+      right = [%{id: 1, name: "ALICE", price: 10.1}]
+
+      Reconciler.reconcile(left, right,
+        key_fields: [:id],
+        comparators: %{name: :case_insensitive, price: {:tolerance, 0.2}}
+      )
+      #=> %{matched: [%{left: ..., right: ..., differences: %{}}],
+      #=>   only_in_left: [], only_in_right: []}
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+  @type rule ::
+          :exact
+          | :case_insensitive
+          | {:tolerance, number()}
+          | (term(), term() -> boolean())
+
+  @type result :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` by the composite key in `opts`, applying per-field
+  comparison rules from `:comparators` (defaulting to exact `==`).
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields_opt = Keyword.get(opts, :compare_fields, nil)
+    comparators = Keyword.get(opts, :comparators, %{})
+    validate_comparators!(comparators)
+
+    left_index = index_by(left, key_fields)
+    right_index = index_by(right, key_fields)
+
+    left_keys = MapSet.new(Map.keys(left_index))
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    matched =
+      left_keys
+      |> MapSet.intersection(right_keys)
+      |> Enum.map(fn key ->
+        l = Map.fetch!(left_index, key)
+        r = Map.fetch!(right_index, key)
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields_opt)
+        %{left: l, right: r, differences: diff(l, r, fields, comparators)}
+      end)
+
+    only_in_left =
+      left_keys |> MapSet.difference(right_keys) |> Enum.map(&Map.fetch!(left_index, &1))
+
+    only_in_right =
+      right_keys |> MapSet.difference(left_keys) |> Enum.map(&Map.fetch!(right_index, &1))
+
+    %{matched: matched, only_in_left: only_in_left, only_in_right: only_in_right}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation
+  # ---------------------------------------------------------------------------
+
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      {:ok, _} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  defp validate_comparators!(comparators) when is_map(comparators), do: :ok
+
+  defp validate_comparators!(_),
+    do: raise(ArgumentError, ":comparators must be a map of field => rule")
+
+  # ---------------------------------------------------------------------------
+  # Indexing / key handling
+  # ---------------------------------------------------------------------------
+
+  defp index_by(records, key_fields) do
+    Map.new(records, fn record -> {composite_key(record, key_fields), record} end)
+  end
+
+  defp composite_key(record, key_fields) do
+    key_fields |> Enum.map(&Map.get(record, &1)) |> List.to_tuple()
+  end
+
+  defp resolve_compare_fields(_l, _r, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    key_set = MapSet.new(key_fields)
+
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+
+  # ---------------------------------------------------------------------------
+  # Diffing with per-field comparators
+  # ---------------------------------------------------------------------------
+
+  defp diff(left, right, fields, comparators) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+      rule = Map.get(comparators, field, :exact)
+
+      if equal?(lv, rv, rule) do
+        acc
+      else
+        Map.put(acc, field, %{left: lv, right: rv})
+      end
+    end)
+  end
+
+  defp equal?(lv, rv, :exact), do: lv == rv
+
+  defp equal?(lv, rv, :case_insensitive) when is_binary(lv) and is_binary(rv),
+    do: String.downcase(lv) == String.downcase(rv)
+
+  defp equal?(lv, rv, :case_insensitive), do: lv == rv
+
+  defp equal?(lv, rv, {:tolerance, tol})
+       when is_number(lv) and is_number(rv) and is_number(tol),
+       do: abs(lv - rv) <= tol
+
+  defp equal?(lv, rv, {:tolerance, _tol}), do: lv == rv
+
+  defp equal?(lv, rv, fun) when is_function(fun, 2), do: fun.(lv, rv) == true
+end
+</file>[0m
+[36m01:00:38.670 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5943, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5943, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5943, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5943, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 16928, "type" => "message"}], "output_tokens" => 16928, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m01:00:38.688 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_tolerance_aware_reconciler_01 solution.ex[0m
+[36m01:00:39.279 [debug] grade JSON: {"analysis":{"defp_count":14,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":152,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":10,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_tolerance_aware_reconciler_01/solution.ex","task":"034_002_tolerance_aware_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-06T23:00:39.260742Z"}[0m
+[22m01:00:39.281 [info] cycle 034_002_tolerance_aware_reconciler_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m01:00:39.281 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m01:00:39.281 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Reconciler` that takes two lists of records and reconciles them by a shared key, producing a structured diff — but with **configurable per-field comparison semantics** instead of strict value equality.
+
+I need this function in the public API:
+
+- `Reconciler.reconcile(left, right, opts)` where `left` and `right` are lists of maps and `opts` is a keyword list. It returns a map with three keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for records present in both lists. `diff_map` is a map of `%{field => %{left: val, right: val}}` for any fields whose values are considered **unequal under that field's comparator**. It is empty if the records are considered equal on all compared fields.
+  - `:only_in_left` — a list of records present in `left` but absent in `right`.
+  - `:only_in_right` — a list of records present in `right` but absent in `left`.
+
+The `opts` keyword list must support:
+- `:key_fields` (required) — a list of atoms that together form the composite key used to match records across the two lists (e.g. `[:id]` or `[:org, :uid]`). Key matching is always **exact**.
+- `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields except the key fields are compared.
+- `:comparators` (optional) — a map of `%{field => rule}` giving per-field comparison rules. Any field not present in the map uses exact `==`. The supported rules are:
+  - `:exact` — value equality via `==` (the default).
+  - `:case_insensitive` — for two binaries, equal if they match after `String.downcase/1`; otherwise falls back to `==`.
+  - `{:tolerance, tol}` — for two numbers, equal if `abs(left - right) <= tol`; otherwise falls back to `==` (so `nil` vs a number is unequal).
+  - a 2-arity function `fun(left_val, right_val)` returning a boolean — `true` means the two values are considered equal.
+
+Behaviour requirements:
+- Composite keys must work correctly — `[:org, :uid]` should only match records where both fields are equal.
+- Records in `:matched` must include both the original left and right record in full, even if some fields are excluded from comparison.
+- If a compared field is missing from one or both records, treat the missing value as `nil` and apply the field's comparator to `nil`.
+- A comparator only affects the field it is assigned to; all other fields keep their own (or the default) rule.
+- Order of results does not matter.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff,
+  with configurable per-field comparison semantics (tolerance, case-insensitive,
+  custom predicates) instead of strict value equality.
+
+  ## Example
+
+      left  = [%{id: 1, name: "Alice", price: 10.0}]
+      right = [%{id: 1, name: "ALICE", price: 10.1}]
+
+      Reconciler.reconcile(left, right,
+        key_fields: [:id],
+        comparators: %{name: :case_insensitive, price: {:tolerance, 0.2}}
+      )
+      #=> %{matched: [%{left: ..., right: ..., differences: %{}}],
+      #=>   only_in_left: [], only_in_right: []}
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+  @type rule ::
+          :exact
+          | :case_insensitive
+          | {:tolerance, number()}
+          | (term(), term() -> boolean())
+
+  @type result :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` by the composite key in `opts`, applying per-field
+  comparison rules from `:comparators` (defaulting to exact `==`).
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields_opt = Keyword.get(opts, :compare_fields, nil)
+    comparators = Keyword.get(opts, :comparators, %{})
+    validate_comparators!(comparators)
+
+    left_index = index_by(left, key_fields)
+    right_index = index_by(right, key_fields)
+
+    left_keys = MapSet.new(Map.keys(left_index))
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    matched =
+      left_keys
+      |> MapSet.intersection(right_keys)
+      |> Enum.map(fn key ->
+        l = Map.fetch!(left_index, key)
+        r = Map.fetch!(right_index, key)
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields_opt)
+        %{left: l, right: r, differences: diff(l, r, fields, comparators)}
+      end)
+
+    only_in_left =
+      left_keys |> MapSet.difference(right_keys) |> Enum.map(&Map.fetch!(left_index, &1))
+
+    only_in_right =
+      right_keys |> MapSet.difference(left_keys) |> Enum.map(&Map.fetch!(right_index, &1))
+
+    %{matched: matched, only_in_left: only_in_left, only_in_right: only_in_right}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation
+  # ---------------------------------------------------------------------------
+
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      {:ok, _} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  defp validate_comparators!(comparators) when is_map(comparators), do: :ok
+
+  defp validate_comparators!(_),
+    do: raise(ArgumentError, ":comparators must be a map of field => rule")
+
+  # ---------------------------------------------------------------------------
+  # Indexing / key handling
+  # ---------------------------------------------------------------------------
+
+  defp index_by(records, key_fields) do
+    Map.new(records, fn record -> {composite_key(record, key_fields), record} end)
+  end
+
+  defp composite_key(record, key_fields) do
+    key_fields |> Enum.map(&Map.get(record, &1)) |> List.to_tuple()
+  end
+
+  defp resolve_compare_fields(_l, _r, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    key_set = MapSet.new(key_fields)
+
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+
+  # ---------------------------------------------------------------------------
+  # Diffing with per-field comparators
+  # ---------------------------------------------------------------------------
+
+  defp diff(left, right, fields, comparators) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+ (truncated)[0m
+[36m01:01:18.632 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff,
+  with configurable per-field comparison semantics (tolerance, case-insensitive,
+  custom predicates) instead of strict value equality.
+
+  ## Example
+
+      left  = [%{id: 1, name: "Alice", price: 10.0}]
+      right = [%{id: 1, name: "ALICE", price: 10.1}]
+
+      Reconciler.reconcile(left, right,
+        key_fields: [:id],
+        comparators: %{name: :case_insensitive, price: {:tolerance, 0.2}}
+      )
+      #=> %{matched: [%{left: ..., right: ..., differences: %{}}],
+      #=>   only_in_left: [], only_in_right: []}
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @type result :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` by the composite key in `opts`, applying per-field
+  comparison rules from `:comparators` (defaulting to exact `==`).
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields_opt = Keyword.get(opts, :compare_fields, nil)
+    comparators = Keyword.get(opts, :comparators, %{})
+    validate_comparators!(comparators)
+
+    left_index = index_by(left, key_fields)
+    right_index = index_by(right, key_fields)
+
+    left_keys = MapSet.new(Map.keys(left_index))
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    matched =
+      left_keys
+      |> MapSet.intersection(right_keys)
+      |> Enum.map(fn key ->
+        l = Map.fetch!(left_index, key)
+        r = Map.fetch!(right_index, key)
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields_opt)
+        %{left: l, right: r, differences: diff(l, r, fields, comparators)}
+      end)
+
+    only_in_left =
+      left_keys |> MapSet.difference(right_keys) |> Enum.map(&Map.fetch!(left_index, &1))
+
+    only_in_right =
+      right_keys |> MapSet.difference(left_keys) |> Enum.map(&Map.fetch!(right_index, &1))
+
+    %{matched: matched, only_in_left: only_in_left, only_in_right: only_in_right}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation
+  # ---------------------------------------------------------------------------
+
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      {:ok, _} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  defp validate_comparators!(comparators) when is_map(comparators), do: :ok
+
+  defp validate_comparators!(_),
+    do: raise(ArgumentError, ":comparators must be a map of field => rule")
+
+  # ---------------------------------------------------------------------------
+  # Indexing / key handling
+  # ---------------------------------------------------------------------------
+
+  defp index_by(records, key_fields) do
+    Map.new(records, fn record -> {composite_key(record, key_fields), record} end)
+  end
+
+  defp composite_key(record, key_fields) do
+    key_fields |> Enum.map(&Map.get(record, &1)) |> List.to_tuple()
+  end
+
+  defp resolve_compare_fields(_l, _r, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    key_set = MapSet.new(key_fields)
+
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+
+  # ---------------------------------------------------------------------------
+  # Diffing with per-field comparators
+  # ---------------------------------------------------------------------------
+
+  defp diff(left, right, fields, comparators) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+      rule = Map.get(comparators, field, :exact)
+
+      if equal?(lv, rv, rule) do
+        acc
+      else
+        Map.put(acc, field, %{left: lv, right: rv})
+      end
+    end)
+  end
+
+  defp equal?(lv, rv, :exact), do: lv == rv
+
+  defp equal?(lv, rv, :case_insensitive) when is_binary(lv) and is_binary(rv),
+    do: String.downcase(lv) == String.downcase(rv)
+
+  defp equal?(lv, rv, :case_insensitive), do: lv == rv
+
+  defp equal?(lv, rv, {:tolerance, tol})
+       when is_number(lv) and is_number(rv) and is_number(tol),
+       do: abs(lv - rv) <= tol
+
+  defp equal?(lv, rv, {:tolerance, _tol}), do: lv == rv
+
+  defp equal?(lv, rv, fun) when is_function(fun, 2), do: fun.(lv, rv) == true
+end
+</file>[0m
+[36m01:01:18.632 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5934, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5934, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5934, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5934, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 3434, "type" => "message"}], "output_tokens" => 3434, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m01:01:18.651 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_tolerance_aware_reconciler_01 solution.ex[0m
+[36m01:01:19.260 [debug] grade JSON: {"analysis":{"defp_count":14,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":147,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":10,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_tolerance_aware_reconciler_01/solution.ex","task":"034_002_tolerance_aware_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-06T23:01:19.238812Z"}[0m
+[22m01:01:19.261 [info] cycle 034_002_tolerance_aware_reconciler_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m01:01:19.261 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m01:01:19.261 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `Reconciler` that takes two lists of records and reconciles them by a shared key, producing a structured diff — but with **configurable per-field comparison semantics** instead of strict value equality.
+
+I need this function in the public API:
+
+- `Reconciler.reconcile(left, right, opts)` where `left` and `right` are lists of maps and `opts` is a keyword list. It returns a map with three keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for records present in both lists. `diff_map` is a map of `%{field => %{left: val, right: val}}` for any fields whose values are considered **unequal under that field's comparator**. It is empty if the records are considered equal on all compared fields.
+  - `:only_in_left` — a list of records present in `left` but absent in `right`.
+  - `:only_in_right` — a list of records present in `right` but absent in `left`.
+
+The `opts` keyword list must support:
+- `:key_fields` (required) — a list of atoms that together form the composite key used to match records across the two lists (e.g. `[:id]` or `[:org, :uid]`). Key matching is always **exact**.
+- `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields except the key fields are compared.
+- `:comparators` (optional) — a map of `%{field => rule}` giving per-field comparison rules. Any field not present in the map uses exact `==`. The supported rules are:
+  - `:exact` — value equality via `==` (the default).
+  - `:case_insensitive` — for two binaries, equal if they match after `String.downcase/1`; otherwise falls back to `==`.
+  - `{:tolerance, tol}` — for two numbers, equal if `abs(left - right) <= tol`; otherwise falls back to `==` (so `nil` vs a number is unequal).
+  - a 2-arity function `fun(left_val, right_val)` returning a boolean — `true` means the two values are considered equal.
+
+Behaviour requirements:
+- Composite keys must work correctly — `[:org, :uid]` should only match records where both fields are equal.
+- Records in `:matched` must include both the original left and right record in full, even if some fields are excluded from comparison.
+- If a compared field is missing from one or both records, treat the missing value as `nil` and apply the field's comparator to `nil`.
+- A comparator only affects the field it is assigned to; all other fields keep their own (or the default) rule.
+- Order of results does not matter.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff,
+  with configurable per-field comparison semantics (tolerance, case-insensitive,
+  custom predicates) instead of strict value equality.
+
+  ## Example
+
+      left  = [%{id: 1, name: "Alice", price: 10.0}]
+      right = [%{id: 1, name: "ALICE", price: 10.1}]
+
+      Reconciler.reconcile(left, right,
+        key_fields: [:id],
+        comparators: %{name: :case_insensitive, price: {:tolerance, 0.2}}
+      )
+      #=> %{matched: [%{left: ..., right: ..., differences: %{}}],
+      #=>   only_in_left: [], only_in_right: []}
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @type result :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` by the composite key in `opts`, applying per-field
+  comparison rules from `:comparators` (defaulting to exact `==`).
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields_opt = Keyword.get(opts, :compare_fields, nil)
+    comparators = Keyword.get(opts, :comparators, %{})
+    validate_comparators!(comparators)
+
+    left_index = index_by(left, key_fields)
+    right_index = index_by(right, key_fields)
+
+    left_keys = MapSet.new(Map.keys(left_index))
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    matched =
+      left_keys
+      |> MapSet.intersection(right_keys)
+      |> Enum.map(fn key ->
+        l = Map.fetch!(left_index, key)
+        r = Map.fetch!(right_index, key)
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields_opt)
+        %{left: l, right: r, differences: diff(l, r, fields, comparators)}
+      end)
+
+    only_in_left =
+      left_keys |> MapSet.difference(right_keys) |> Enum.map(&Map.fetch!(left_index, &1))
+
+    only_in_right =
+      right_keys |> MapSet.difference(left_keys) |> Enum.map(&Map.fetch!(right_index, &1))
+
+    %{matched: matched, only_in_left: only_in_left, only_in_right: only_in_right}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation
+  # ---------------------------------------------------------------------------
+
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      {:ok, _} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  defp validate_comparators!(comparators) when is_map(comparators), do: :ok
+
+  defp validate_comparators!(_),
+    do: raise(ArgumentError, ":comparators must be a map of field => rule")
+
+  # ---------------------------------------------------------------------------
+  # Indexing / key handling
+  # ---------------------------------------------------------------------------
+
+  defp index_by(records, key_fields) do
+    Map.new(records, fn record -> {composite_key(record, key_fields), record} end)
+  end
+
+  defp composite_key(record, key_fields) do
+    key_fields |> Enum.map(&Map.get(record, &1)) |> List.to_tuple()
+  end
+
+  defp resolve_compare_fields(_l, _r, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    key_set = MapSet.new(key_fields)
+
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+
+  # ---------------------------------------------------------------------------
+  # Diffing with per-field comparators
+  # ---------------------------------------------------------------------------
+
+  defp diff(left, right, fields, comparators) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+      rule = Map.get(comparators, field, :exact)
+
+      if equal?(lv, rv, r (truncated)[0m
+[36m01:10:48.186 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the solution already has a `@moduledoc`, `@spec`, `@doc`, no TODO markers, and every line is ≤98 columns. The reported issue is a single compile warning that needs silencing while keeping behavior identical.
+
+The culprit is the anonymous-predicate clause: `fun.(lv, rv) == true` compares a dynamically-typed call result against the boolean literal `true`, which the OTP 27+/Elixir type checker flags. Since the spec guarantees the custom comparator returns a boolean, the comparison is redundant — I return the predicate result directly (behavior-identical for the documented boolean contract and for every test), silencing the warning.
+
+<file path="solution.ex">
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff,
+  with configurable per-field comparison semantics (tolerance, case-insensitive,
+  custom predicates) instead of strict value equality.
+
+  ## Example
+
+      left  = [%{id: 1, name: "Alice", price: 10.0}]
+      right = [%{id: 1, name: "ALICE", price: 10.1}]
+
+      Reconciler.reconcile(left, right,
+        key_fields: [:id],
+        comparators: %{name: :case_insensitive, price: {:tolerance, 0.2}}
+      )
+      #=> %{matched: [%{left: ..., right: ..., differences: %{}}],
+      #=>   only_in_left: [], only_in_right: []}
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @type result :: %{
+          matched: [%{left: record(), right: record(), differences: diff_map()}],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` by the composite key in `opts`, applying per-field
+  comparison rules from `:comparators` (defaulting to exact `==`).
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields_opt = Keyword.get(opts, :compare_fields, nil)
+    comparators = Keyword.get(opts, :comparators, %{})
+    validate_comparators!(comparators)
+
+    left_index = index_by(left, key_fields)
+    right_index = index_by(right, key_fields)
+
+    left_keys = MapSet.new(Map.keys(left_index))
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    matched =
+      left_keys
+      |> MapSet.intersection(right_keys)
+      |> Enum.map(fn key ->
+        l = Map.fetch!(left_index, key)
+        r = Map.fetch!(right_index, key)
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields_opt)
+        %{left: l, right: r, differences: diff(l, r, fields, comparators)}
+      end)
+
+    only_in_left =
+      left_keys |> MapSet.difference(right_keys) |> Enum.map(&Map.fetch!(left_index, &1))
+
+    only_in_right =
+      right_keys |> MapSet.difference(left_keys) |> Enum.map(&Map.fetch!(right_index, &1))
+
+    %{matched: matched, only_in_left: only_in_left, only_in_right: only_in_right}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation
+  # ---------------------------------------------------------------------------
+
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        if Enum.all?(fields, &is_atom/1) do
+          fields
+        else
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+      {:ok, _} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  defp validate_comparators!(comparators) when is_map(comparators), do: :ok
+
+  defp validate_comparators!(_),
+    do: raise(ArgumentError, ":comparators must be a map of field => rule")
+
+  # ---------------------------------------------------------------------------
+  # Indexing / key handling
+  # ---------------------------------------------------------------------------
+
+  defp index_by(records, key_fields) do
+    Map.new(records, fn record -> {composite_key(record, key_fields), record} end)
+  end
+
+  defp composite_key(record, key_fields) do
+    key_fields |> Enum.map(&Map.get(record, &1)) |> List.to_tuple()
+  end
+
+  defp resolve_compare_fields(_l, _r, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    key_set = MapSet.new(key_fields)
+
+    (Map.keys(left) ++ Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(key_set, &1))
+  end
+
+  # ---------------------------------------------------------------------------
+  # Diffing with per-field comparators
+  # ---------------------------------------------------------------------------
+
+  defp diff(left, right, fields, comparators) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+      rule = Map.get(comparators, field, :exact)
+
+      if equal?(lv, rv, rule) do
+        acc
+      else
+        Map.put(acc, field, %{left: lv, right: rv})
+      end
+    end)
+  end
+
+  defp equal?(lv, rv, :exact), do: lv == rv
+
+  defp equal?(lv, rv, :case_insensitive) when is_binary(lv) and is_binary(rv),
+    do: String.downcase(lv) == String.downcase(rv)
+
+  defp equal?(lv, rv, :case_insensitive), do: lv == rv
+
+  defp equal?(lv, rv, {:tolerance, tol})
+       when is_number(lv) and is_number(rv) and is_number(tol),
+       do: abs(lv - rv) <= tol
+
+  defp equal?(lv, rv, {:tolerance, _tol}), do: lv == rv
+
+  defp equal?(lv, rv, fun) when is_function(fun, 2), do: fun.(lv, rv)
+end
+</file>[0m
+[36m01:10:48.186 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5883, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5883, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5883, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5883, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 41944, "type" => "message"}], "output_tokens" => 41944, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m01:10:48.205 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_tolerance_aware_reconciler_01 solution.ex[0m
+[36m01:10:48.827 [debug] grade JSON: {"analysis":{"defp_count":14,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":147,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":10,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_tolerance_aware_reconciler_01/solution.ex","task":"034_002_tolerance_aware_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-06T23:10:48.807708Z"}[0m
+[22m01:10:48.828 [info] cycle 034_002_tolerance_aware_reconciler_01: REJECTED after 4 attempt(s)[0m

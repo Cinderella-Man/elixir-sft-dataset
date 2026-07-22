@@ -1,0 +1,1108 @@
+18:30:23.248 [info] FIM 072_002_deferred_timer_virtual_clock_fim02 → 072_002_deferred_timer_virtual_clock_03: target handle_call/3
+18:30:23.248 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+18:30:23.248 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `handle_call/3`.
+
+Generate a prompt describing how to implement `handle_call/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `handle_call/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `handle_call/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `handle_call/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir `Clock` behaviour and two implementations — one for production, one for testing — in a single file. This variation adds a **deterministic virtual-time scheduler**: the fake clock can register deferred callbacks that fire when virtual time is advanced past their due instant.
+
+The behaviour should define one callback: `now/0`, returning the current time as a `DateTime`.
+
+The production implementation `Clock.Real` should implement `now/0` by delegating to `DateTime.utc_now()`.
+
+The test implementation `Clock.Fake` should be a `GenServer` with the following public API:
+- `Clock.Fake.start_link(opts)` — starts the process. Accepts an optional `:initial` datetime (defaults to `~U[2024-01-01 00:00:00Z]`) and an optional `:name` for registration.
+- `Clock.Fake.now(server)` — returns the current virtual datetime.
+- `Clock.Fake.advance(server, duration)` — moves virtual time forward. `duration` is a keyword list like `[seconds: 30]` or `[hours: 1, minutes: 30]` (supported units: `:second(s)`, `:minute(s)`, `:hour(s)`, `:day(s)`). Advancing must **fire every registered timer whose due instant is at or before the new virtual time**, executing their functions in chronological order (ties broken by registration order). It returns the list of fired timer refs, in fire order.
+- `Clock.Fake.schedule(server, duration, fun)` — registers a 0-arity function `fun` to run when virtual time reaches `now + duration`. Returns a unique integer timer ref. Timers only ever fire during an `advance/2` call (never at scheduling time).
+- `Clock.Fake.cancel(server, ref)` — cancels a still-pending timer. Returns `:ok` if it was pending, `:error` otherwise.
+- `Clock.Fake.pending(server)` — returns the count of timers not yet fired or cancelled.
+
+Additionally, provide a top-level `Clock` module with a `now/1` function that accepts a module name (`Clock.Real`) or a `Clock.Fake` PID/registered name and dispatches correctly — calling `Clock.Real.now()` or `Clock.Fake.now(server)` depending on the argument. This lets application code accept a `:clock` dependency-injection option and call `Clock.now(clock)` uniformly.
+
+Give me the complete implementation in a single file with no external dependencies, using only the Elixir standard library and OTP.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Clock do
+  @moduledoc """
+  Behaviour and dispatcher for clock implementations.
+
+  This variation pairs the readable `now/0` with a deterministic virtual-time
+  scheduler (`Clock.Fake`) that can register deferred callbacks. Application
+  code accepts a `:clock` option and calls `Clock.now/1` uniformly.
+  """
+
+  @doc "Returns the current datetime."
+  @callback now() :: DateTime.t()
+
+  @doc "Dispatches `now/0` to the correct implementation."
+  @spec now(module() | GenServer.server()) :: DateTime.t()
+  def now(clock) when is_atom(clock) do
+    if function_exported?(clock, :now, 0) do
+      clock.now()
+    else
+      Clock.Fake.now(clock)
+    end
+  end
+
+  def now(clock), do: Clock.Fake.now(clock)
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Real do
+  @moduledoc "Production clock — delegates straight to the OS."
+
+  @behaviour Clock
+
+  @impl Clock
+  @spec now() :: DateTime.t()
+  def now, do: DateTime.utc_now()
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Fake do
+  @moduledoc """
+  A controllable, process-based virtual clock with a deferred-timer scheduler.
+
+  Timers registered with `schedule/3` never fire on their own — they fire only
+  when `advance/2` moves virtual time to or past their due instant, in strict
+  chronological order (ties broken by registration order).
+
+  Note: callback functions run inside the clock process, so they must not call
+  back into the same clock synchronously (that would deadlock). In tests they
+  typically `send/2` a message to the test process.
+  """
+
+  use GenServer
+
+  @default_initial ~U[2024-01-01 00:00:00Z]
+
+  defstruct time: nil, timers: [], next_seq: 0, next_ref: 0
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {initial, opts} = Keyword.pop(opts, :initial, @default_initial)
+    {name_opt, _rest} = Keyword.pop(opts, :name)
+    gen_opts = if name_opt, do: [name: name_opt], else: []
+    GenServer.start_link(__MODULE__, initial, gen_opts)
+  end
+
+  @doc "Returns the current virtual `DateTime`."
+  @spec now(GenServer.server()) :: DateTime.t()
+  def now(server), do: GenServer.call(server, :now)
+
+  @doc """
+  Registers `fun` (0-arity) to run when virtual time reaches `now + duration`.
+  Returns a unique integer timer ref. Timers only fire during `advance/2`.
+  """
+  @spec schedule(GenServer.server(), keyword(), (-> any())) :: non_neg_integer()
+  def schedule(server, duration, fun) when is_list(duration) and is_function(fun, 0),
+    do: GenServer.call(server, {:schedule, duration, fun})
+
+  @doc "Cancels a pending timer. Returns `:ok` if it was pending, `:error` otherwise."
+  @spec cancel(GenServer.server(), non_neg_integer()) :: :ok | :error
+  def cancel(server, ref), do: GenServer.call(server, {:cancel, ref})
+
+  @doc "Returns the number of timers not yet fired or cancelled."
+  @spec pending(GenServer.server()) :: non_neg_integer()
+  def pending(server), do: GenServer.call(server, :pending)
+
+  @doc """
+  Moves virtual time forward by `duration` and fires every due timer in
+  chronological order. Returns the list of fired timer refs, in fire order.
+  """
+  @spec advance(GenServer.server(), keyword()) :: [non_neg_integer()]
+  def advance(server, duration) when is_list(duration),
+    do: GenServer.call(server, {:advance, duration})
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(%DateTime{} = initial), do: {:ok, %__MODULE__{time: initial}}
+
+  @impl GenServer
+  def handle_call(:now, _from, state), do: {:reply, state.time, state}
+
+  def handle_call(:pending, _from, state), do: {:reply, length(state.timers), state}
+
+  def handle_call({:schedule, duration, fun}, _from, state) do
+    at = apply_duration(state.time, duration)
+    ref = state.next_ref
+    timer = %{ref: ref, at: at, seq: state.next_seq, fun: fun}
+
+    state = %{
+      state
+      | timers: [timer | state.timers],
+        next_seq: state.next_seq + 1,
+        next_ref: ref + 1
+    }
+
+    {:reply, ref, state}
+  end
+
+  def handle_call({:cancel, ref}, _from, state) do
+    {removed, remaining} = Enum.split_with(state.timers, &(&1.ref == ref))
+    reply = if removed == [], do: :error, else: :ok
+    {:reply, reply, %{state | timers: remaining}}
+  end
+
+  def handle_call({:advance, duration}, _from, state) do
+    ne (truncated)
+18:31:03.788 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the `handle_call/3` GenServer callback for `Clock.Fake`. It is the
+message-handling core of the virtual clock and must cover five distinct calls
+(one clause per message):
+
+1. `:now` — reply with the current virtual time (`state.time`) and leave the
+   state unchanged.
+
+2. `:pending` — reply with the number of timers still registered (the length of
+   `state.timers`), leaving the state unchanged.
+
+3. `{:schedule, duration, fun}` — compute the due instant by applying `duration`
+   to the current time via the `apply_duration/2` helper. Take the next timer
+   ref from `state.next_ref`, build a timer map `%{ref: ref, at: at, seq:
+   state.next_seq, fun: fun}`, and prepend it to `state.timers`. Increment both
+   `next_seq` and `next_ref` in the updated state. Reply with the new `ref`.
+
+4. `{:cancel, ref}` — split `state.timers` into the timer(s) matching `ref` and
+   the rest. Reply `:ok` if something matched, otherwise `:error`, and keep only
+   the remaining timers in the state.
+
+5. `{:advance, duration}` — compute the new virtual time by applying `duration`
+   to the current time. Split the timers into those that are due (their `at` is
+   at or before the new time — `DateTime.compare/2` returns `:lt` or `:eq`) and
+   those still pending. Order the due timers chronologically, breaking ties by
+   registration order, using `{DateTime.to_unix(at, :microsecond), seq}` as the
+   sort key. Execute each due timer's `fun` in that order. Reply with the list
+   of fired refs (in fire order) and update the state's `time` to the new time
+   and `timers` to the remaining pending timers.
+
+```elixir
+defmodule Clock do
+  @moduledoc """
+  Behaviour and dispatcher for clock implementations.
+
+  This variation pairs the readable `now/0` with a deterministic virtual-time
+  scheduler (`Clock.Fake`) that can register deferred callbacks. Application
+  code accepts a `:clock` option and calls `Clock.now/1` uniformly.
+  """
+
+  @doc "Returns the current datetime."
+  @callback now() :: DateTime.t()
+
+  @doc "Dispatches `now/0` to the correct implementation."
+  @spec now(module() | GenServer.server()) :: DateTime.t()
+  def now(clock) when is_atom(clock) do
+    if function_exported?(clock, :now, 0) do
+      clock.now()
+    else
+      Clock.Fake.now(clock)
+    end
+  end
+
+  def now(clock), do: Clock.Fake.now(clock)
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Real do
+  @moduledoc "Production clock — delegates straight to the OS."
+
+  @behaviour Clock
+
+  @impl Clock
+  @spec now() :: DateTime.t()
+  def now, do: DateTime.utc_now()
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Fake do
+  @moduledoc """
+  A controllable, process-based virtual clock with a deferred-timer scheduler.
+
+  Timers registered with `schedule/3` never fire on their own — they fire only
+  when `advance/2` moves virtual time to or past their due instant, in strict
+  chronological order (ties broken by registration order).
+
+  Note: callback functions run inside the clock process, so they must not call
+  back into the same clock synchronously (that would deadlock). In tests they
+  typically `send/2` a message to the test process.
+  """
+
+  use GenServer
+
+  @default_initial ~U[2024-01-01 00:00:00Z]
+
+  defstruct time: nil, timers: [], next_seq: 0, next_ref: 0
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {initial, opts} = Keyword.pop(opts, :initial, @default_initial)
+    {name_opt, _rest} = Keyword.pop(opts, :name)
+    gen_opts = if name_opt, do: [name: name_opt], else: []
+    GenServer.start_link(__MODULE__, initial, gen_opts)
+  end
+
+  @doc "Returns the current virtual `DateTime`."
+  @spec now(GenServer.server()) :: DateTime.t()
+  def now(server), do: GenServer.call(server, :now)
+
+  @doc """
+  Registers `fun` (0-arity) to run when virtual time reaches `now + duration`.
+  Returns a unique integer timer ref. Timers only fire during `advance/2`.
+  """
+  @spec schedule(GenServer.server(), keyword(), (-> any())) :: non_neg_integer()
+  def schedule(server, duration, fun) when is_list(duration) and is_function(fun, 0),
+    do: GenServer.call(server, {:schedule, duration, fun})
+
+  @doc "Cancels a pending timer. Returns `:ok` if it was pending, `:error` otherwise."
+  @spec cancel(GenServer.server(), non_neg_integer()) :: :ok | :error
+  def cancel(server, ref), do: GenServer.call(server, {:cancel, ref})
+
+  @doc "Returns the number of timers not yet fired or cancelled."
+  @spec pending(GenServer.server()) :: non_neg_integer()
+  def pending(server), do: GenServer.call(server, :pending)
+
+  @doc """
+  Moves virtual time forward by `duration` and fires every due timer in
+  chronological order. Returns the list of fired timer refs, in fire order.
+  """
+  @spec advance(GenServer.server(), keyword()) :: [non_neg_integer()]
+  def advance(server, duration) when is_list(duration),
+    do: GenServer.call(server, {:advance, duration})
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(%DateTime{} = initial), do: {:ok, %__MODULE__{time: initial}}
+
+  @impl GenServer
+  # TODO
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  @unit_seconds %{
+    second: 1,
+    seconds: 1,
+    minute: 60,
+    minutes: 60,
+    hour: 3600,
+    hours: 3600,
+    day: 86_400,
+    days: 86_400
+  }
+
+  # Convert the whole duration to seconds, then apply once — robust across
+  # Elixir versions regardless of which units DateTime.add/3 supports natively.
+  defp apply_duration(datetime, duration) do
+    total =
+      Enum.reduce(duration, 0, fn {unit, amount}, acc ->
+        acc + amount * Map.fetch!(@unit_seconds, unit)
+      end)
+
+    DateTime.add(datetime, total, :second)
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  @impl GenServer
+  def handle_call(:now, _from, state), do: {:reply, state.time, state}
+
+  def handle_call(:pending, _from, state), do: {:reply, length(state.timers), state}
+
+  def handle_call({:schedule, duration, fun}, _from, state) do
+    at = apply_duration(state.time, duration)
+    ref = state.next_ref
+    timer = %{ref: ref, at: at, seq: state.next_seq, fun: fun}
+
+    state = %{
+      state
+      | timers: [timer | state.timers],
+        next_seq: state.next_seq + 1,
+        next_ref: ref + 1
+    }
+
+    {:reply, ref, state}
+  end
+
+  def handle_call({:cancel, ref}, _from, state) do
+    {removed, remaining} = Enum.split_with(state.timers, &(&1.ref == ref))
+    reply = if removed == [], do: :error, else: :ok
+    {:reply, reply, %{state | timers: remaining}}
+  end
+
+  def handle_call({:advance, duration}, _from, state) do
+    new_time = apply_duration(state.time, duration)
+
+    {due, remaining} =
+      Enum.split_with(state.timers, fn t ->
+        DateTime.compare(t.at, new_time) in [:lt, :eq]
+      end)
+
+    ordered = Enum.sort_by(due, fn t -> {DateTime.to_unix(t.at, :microsecond), t.seq} end)
+    Enum.each(ordered, fn t -> t.fun.() end)
+
+    fired = Enum.map(ordered, & &1.ref)
+    {:reply, fired, %{state | time: new_time, timers: remaining}}
+  end
+</file>
+18:31:03.788 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3984, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3984, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3984, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3984, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3717, "type" => "message"}], "output_tokens" => 3717, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+18:31:03.808 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_072_002_deferred_timer_virtual_clock_03/072_002_deferred_timer_virtual_clock_03 solution.ex
+18:31:04.267 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":40,"lines_over_98":0,"max_line_length":90,"mode":"fim","pipe_chain_count":0,"public_fn_count":5,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"/tmp/evalfim_1035373_2626.ex: cannot compile module Clock.Fake (errors have been logged)","type":"CompileError"}],"compile_warnings":2,"compiled":false,"parent":"072_002_deferred_timer_virtual_clock_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.0,"reasons":["compilation: failed to compile (0.0)"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_072_002_deferred_timer_virtual_clock_03/072_002_deferred_timer_virtual_clock_03/solution.ex","task":"072_002_deferred_timer_virtual_clock_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-04T16:31:04.249376Z"}
+18:31:04.268 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+18:31:04.268 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit prompt.md and/or solution.ex.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Compilation failed:
+  - CompileError: /tmp/evalfim_1035373_2626.ex: cannot compile module Clock.Fake (errors have been logged)
+
+=== CURRENT FILES ===
+----- prompt.md -----
+Implement the `handle_call/3` GenServer callback for `Clock.Fake`. It is the
+message-handling core of the virtual clock and must cover five distinct calls
+(one clause per message):
+
+1. `:now` — reply with the current virtual time (`state.time`) and leave the
+   state unchanged.
+
+2. `:pending` — reply with the number of timers still registered (the length of
+   `state.timers`), leaving the state unchanged.
+
+3. `{:schedule, duration, fun}` — compute the due instant by applying `duration`
+   to the current time via the `apply_duration/2` helper. Take the next timer
+   ref from `state.next_ref`, build a timer map `%{ref: ref, at: at, seq:
+   state.next_seq, fun: fun}`, and prepend it to `state.timers`. Increment both
+   `next_seq` and `next_ref` in the updated state. Reply with the new `ref`.
+
+4. `{:cancel, ref}` — split `state.timers` into the timer(s) matching `ref` and
+   the rest. Reply `:ok` if something matched, otherwise `:error`, and keep only
+   the remaining timers in the state.
+
+5. `{:advance, duration}` — compute the new virtual time by applying `duration`
+   to the current time. Split the timers into those that are due (their `at` is
+   at or before the new time — `DateTime.compare/2` returns `:lt` or `:eq`) and
+   those still pending. Order the due timers chronologically, breaking ties by
+   registration order, using `{DateTime.to_unix(at, :microsecond), seq}` as the
+   sort key. Execute each due timer's `fun` in that order. Reply with the list
+   of fired refs (in fire order) and update the state's `time` to the new time
+   and `timers` to the remaining pending timers.
+
+```elixir
+defmodule Clock do
+  @moduledoc """
+  Behaviour and dispatcher for clock implementations.
+
+  This variation pairs the readable `now/0` with a deterministic virtual-time
+  scheduler (`Clock.Fake`) that can register deferred callbacks. Application
+  code accepts a `:clock` option and calls `Clock.now/1` uniformly.
+  """
+
+  @doc "Returns the current datetime."
+  @callback now() :: DateTime.t()
+
+  @doc "Dispatches `now/0` to the correct implementation."
+  @spec now(module() | GenServer.server()) :: DateTime.t()
+  def now(clock) when is_atom(clock) do
+    if function_exported?(clock, :now, 0) do
+      clock.now()
+    else
+      Clock.Fake.now(clock)
+    end
+  end
+
+  def now(clock), do: Clock.Fake.now(clock)
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Real do
+  @moduledoc "Production clock — delegates straight to the OS."
+
+  @behaviour Clock
+
+  @impl Clock
+  @spec now() :: DateTime.t()
+  def now, do: DateTime.utc_now()
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Fake do
+  @moduledoc """
+  A controllable, process-based virtual clock with a deferred-timer scheduler.
+
+  Timers registered with `schedule/3` never fire on their own — they fire only
+  when `advance/2` moves virtual time to or past their due instant, in strict
+  chronological order (ties broken by registration order).
+
+  Note: callback functions run inside the clock process, so they must not call
+  back into the same clock synchronously (that would deadlock). In tests they
+  typically `send/2` a message to the test process.
+  """
+
+  use GenServer
+
+  @default_initial ~U[2024-01-01 00:00:00Z]
+
+  defstruct time: nil, timers: [], next_seq: 0, next_ref: 0
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {initial, opts} = Keyword.pop(opts, :initial, @default_initial)
+    {name_opt, _rest} = Keyword.pop(opts, :name)
+    gen_opts = if name_opt, do: [name: name_opt], else: []
+    GenServer.start_link(__MODULE__, initial, gen_opts)
+  end
+
+  @doc "Returns the current virtual `DateTime`."
+  @spec now(GenServer.server()) :: DateTime.t()
+  def now(server), do: GenServer.call(server, :now)
+
+  @doc """
+  Registers `fun` (0-arity) to run when virtual time reaches `now + duration`.
+  Returns a unique integer timer ref. Timers only fire during `advance/2`.
+  """
+  @spec schedule(GenServer.server(), keyword(), (-> any())) :: non_neg_integer()
+  def schedule(server, duration, fun) when is_list(duration) and is_function(fun, 0),
+    do: GenServer.call(server, {:schedule, duration, fun})
+
+  @doc "Cancels a pending timer. Returns `:ok` if it was pending, `:error` otherwise."
+  @spec cancel(GenServer.server(), non_neg_integer()) :: :ok | :error
+  def cancel(server, ref), do: GenServer.call(server, {:cancel, ref})
+
+  @doc "Returns the number of timers not yet fired or cancelled."
+  @spec pending(GenServer.server()) :: non_neg_integer()
+  def pending(server), do: GenServer.call(server, :pending)
+
+  @doc """
+  Moves virtual time forward by `duration` and fires every due timer in
+  chronological order. Returns the list of fired timer refs, in fire order.
+  """
+  @spec advance(GenServer.server(), keyword()) :: [non_neg_integer()]
+  def advance(server, duration) when is_list(duration),
+    do: GenServer.call(server, {:advance, duration})
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(%DateTime{} = initial), do: {:ok, %__MODULE__{time: initial}}
+
+  @impl GenServer
+  # TODO
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  @unit_seconds %{
+    second: 1,
+    seconds: 1,
+    minute: 60,
+    minutes: 60,
+    hour: 3600,
+    hours: 3600,
+    day: 86_400,
+    days: 86_400
+  }
+
+  # Convert the whole duration to seconds, then apply once — robust across
+  # Elixir versions regardless of which units DateTime.add/3 supports natively.
+  defp apply_duration(datetime, duration) do
+    total =
+      Enum.reduce(duration, 0, fn {unit, amount}, acc ->
+        acc + amount * Map.fetch!(@unit_seconds, unit)
+      end)
+
+    DateTime.add(datetime, total, :second)
+  end
+end
+```
+
+----- solution.ex -----
+  @impl GenServer
+  def handle_call(:now, _from, state), do: {:reply, state.time, state}
+
+  def handle_call(:pending, _from, state), do: {:reply, length(state.timers), state}
+
+  def handle_call({:schedule, duration, fun}, _from, state) do
+    at = apply_duration(state.time, duration)
+    ref = state.next_ref
+    timer = %{ref: ref, at: at, seq: state.next_seq, fun: fun}
+
+    state = %{
+      state
+      | timers: [timer | state.timers],
+        next_seq: state.next_seq + 1,
+        next_ref: ref + 1
+    }
+
+    {:reply, ref, state}
+  end
+
+  def handle_call({:cancel, ref}, _from, state) do
+    {removed, remaining} = Enum.split_with(state.timers, &(&1.ref == ref))
+    reply = if removed == [], do: :error, else: :ok
+    {:reply, reply, %{state | timers: remaining}}
+  end
+
+  def handle_call({:advance, duration}, _from, state) do
+    new_time = apply_duration(state.time, duration)
+
+    {due, remaining} =
+      Enum.split_with(state.timers, fn t ->
+        DateTime.compare(t.at, new_time) in [:lt, :eq]
+      end)
+
+    ordered = Enum.sort_by(due, fn t -> {DateTime.to_unix(t.at, :microsecond), t.seq} end)
+    Enum.each(ordered, fn t -> t.fun.() end)
+
+    fired = Enum.map(ordered, & &1.ref)
+    {:reply, fired, %{state | time: new_time, timers: remaining}}
+  end
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file block (truncated)
+18:31:51.041 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+  def handle_call(:now, _from, state), do: {:reply, state.time, state}
+
+  def handle_call(:pending, _from, state), do: {:reply, length(state.timers), state}
+
+  def handle_call({:schedule, duration, fun}, _from, state) do
+    at = apply_duration(state.time, duration)
+    ref = state.next_ref
+    timer = %{ref: ref, at: at, seq: state.next_seq, fun: fun}
+
+    state = %{
+      state
+      | timers: [timer | state.timers],
+        next_seq: state.next_seq + 1,
+        next_ref: ref + 1
+    }
+
+    {:reply, ref, state}
+  end
+
+  def handle_call({:cancel, ref}, _from, state) do
+    {removed, remaining} = Enum.split_with(state.timers, &(&1.ref == ref))
+    reply = if removed == [], do: :error, else: :ok
+    {:reply, reply, %{state | timers: remaining}}
+  end
+
+  def handle_call({:advance, duration}, _from, state) do
+    new_time = apply_duration(state.time, duration)
+
+    {due, remaining} =
+      Enum.split_with(state.timers, fn t ->
+        DateTime.compare(t.at, new_time) in [:lt, :eq]
+      end)
+
+    ordered = Enum.sort_by(due, fn t -> {DateTime.to_unix(t.at, :microsecond), t.seq} end)
+    Enum.each(ordered, fn t -> t.fun.() end)
+
+    fired = Enum.map(ordered, & &1.ref)
+    {:reply, fired, %{state | time: new_time, timers: remaining}}
+  end
+</file>
+18:31:51.041 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3502, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3502, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3502, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3502, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 3451, "type" => "message"}], "output_tokens" => 3451, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+18:31:51.059 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_072_002_deferred_timer_virtual_clock_03/072_002_deferred_timer_virtual_clock_03 solution.ex
+18:31:51.527 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":39,"lines_over_98":0,"max_line_length":90,"mode":"fim","pipe_chain_count":0,"public_fn_count":5,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"/tmp/evalfim_1036035_2629.ex: cannot compile module Clock.Fake (errors have been logged)","type":"CompileError"}],"compile_warnings":1,"compiled":false,"parent":"072_002_deferred_timer_virtual_clock_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.0,"reasons":["compilation: failed to compile (0.0)"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_072_002_deferred_timer_virtual_clock_03/072_002_deferred_timer_virtual_clock_03/solution.ex","task":"072_002_deferred_timer_virtual_clock_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-04T16:31:51.508809Z"}
+18:31:51.528 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+18:31:51.528 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit prompt.md and/or solution.ex.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Compilation failed:
+  - CompileError: /tmp/evalfim_1036035_2629.ex: cannot compile module Clock.Fake (errors have been logged)
+
+=== CURRENT FILES ===
+----- prompt.md -----
+Implement the `handle_call/3` GenServer callback for `Clock.Fake`. It is the
+message-handling core of the virtual clock and must cover five distinct calls
+(one clause per message):
+
+1. `:now` — reply with the current virtual time (`state.time`) and leave the
+   state unchanged.
+
+2. `:pending` — reply with the number of timers still registered (the length of
+   `state.timers`), leaving the state unchanged.
+
+3. `{:schedule, duration, fun}` — compute the due instant by applying `duration`
+   to the current time via the `apply_duration/2` helper. Take the next timer
+   ref from `state.next_ref`, build a timer map `%{ref: ref, at: at, seq:
+   state.next_seq, fun: fun}`, and prepend it to `state.timers`. Increment both
+   `next_seq` and `next_ref` in the updated state. Reply with the new `ref`.
+
+4. `{:cancel, ref}` — split `state.timers` into the timer(s) matching `ref` and
+   the rest. Reply `:ok` if something matched, otherwise `:error`, and keep only
+   the remaining timers in the state.
+
+5. `{:advance, duration}` — compute the new virtual time by applying `duration`
+   to the current time. Split the timers into those that are due (their `at` is
+   at or before the new time — `DateTime.compare/2` returns `:lt` or `:eq`) and
+   those still pending. Order the due timers chronologically, breaking ties by
+   registration order, using `{DateTime.to_unix(at, :microsecond), seq}` as the
+   sort key. Execute each due timer's `fun` in that order. Reply with the list
+   of fired refs (in fire order) and update the state's `time` to the new time
+   and `timers` to the remaining pending timers.
+
+```elixir
+defmodule Clock do
+  @moduledoc """
+  Behaviour and dispatcher for clock implementations.
+
+  This variation pairs the readable `now/0` with a deterministic virtual-time
+  scheduler (`Clock.Fake`) that can register deferred callbacks. Application
+  code accepts a `:clock` option and calls `Clock.now/1` uniformly.
+  """
+
+  @doc "Returns the current datetime."
+  @callback now() :: DateTime.t()
+
+  @doc "Dispatches `now/0` to the correct implementation."
+  @spec now(module() | GenServer.server()) :: DateTime.t()
+  def now(clock) when is_atom(clock) do
+    if function_exported?(clock, :now, 0) do
+      clock.now()
+    else
+      Clock.Fake.now(clock)
+    end
+  end
+
+  def now(clock), do: Clock.Fake.now(clock)
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Real do
+  @moduledoc "Production clock — delegates straight to the OS."
+
+  @behaviour Clock
+
+  @impl Clock
+  @spec now() :: DateTime.t()
+  def now, do: DateTime.utc_now()
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Fake do
+  @moduledoc """
+  A controllable, process-based virtual clock with a deferred-timer scheduler.
+
+  Timers registered with `schedule/3` never fire on their own — they fire only
+  when `advance/2` moves virtual time to or past their due instant, in strict
+  chronological order (ties broken by registration order).
+
+  Note: callback functions run inside the clock process, so they must not call
+  back into the same clock synchronously (that would deadlock). In tests they
+  typically `send/2` a message to the test process.
+  """
+
+  use GenServer
+
+  @default_initial ~U[2024-01-01 00:00:00Z]
+
+  defstruct time: nil, timers: [], next_seq: 0, next_ref: 0
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {initial, opts} = Keyword.pop(opts, :initial, @default_initial)
+    {name_opt, _rest} = Keyword.pop(opts, :name)
+    gen_opts = if name_opt, do: [name: name_opt], else: []
+    GenServer.start_link(__MODULE__, initial, gen_opts)
+  end
+
+  @doc "Returns the current virtual `DateTime`."
+  @spec now(GenServer.server()) :: DateTime.t()
+  def now(server), do: GenServer.call(server, :now)
+
+  @doc """
+  Registers `fun` (0-arity) to run when virtual time reaches `now + duration`.
+  Returns a unique integer timer ref. Timers only fire during `advance/2`.
+  """
+  @spec schedule(GenServer.server(), keyword(), (-> any())) :: non_neg_integer()
+  def schedule(server, duration, fun) when is_list(duration) and is_function(fun, 0),
+    do: GenServer.call(server, {:schedule, duration, fun})
+
+  @doc "Cancels a pending timer. Returns `:ok` if it was pending, `:error` otherwise."
+  @spec cancel(GenServer.server(), non_neg_integer()) :: :ok | :error
+  def cancel(server, ref), do: GenServer.call(server, {:cancel, ref})
+
+  @doc "Returns the number of timers not yet fired or cancelled."
+  @spec pending(GenServer.server()) :: non_neg_integer()
+  def pending(server), do: GenServer.call(server, :pending)
+
+  @doc """
+  Moves virtual time forward by `duration` and fires every due timer in
+  chronological order. Returns the list of fired timer refs, in fire order.
+  """
+  @spec advance(GenServer.server(), keyword()) :: [non_neg_integer()]
+  def advance(server, duration) when is_list(duration),
+    do: GenServer.call(server, {:advance, duration})
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(%DateTime{} = initial), do: {:ok, %__MODULE__{time: initial}}
+
+  @impl GenServer
+  # TODO
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  @unit_seconds %{
+    second: 1,
+    seconds: 1,
+    minute: 60,
+    minutes: 60,
+    hour: 3600,
+    hours: 3600,
+    day: 86_400,
+    days: 86_400
+  }
+
+  # Convert the whole duration to seconds, then apply once — robust across
+  # Elixir versions regardless of which units DateTime.add/3 supports natively.
+  defp apply_duration(datetime, duration) do
+    total =
+      Enum.reduce(duration, 0, fn {unit, amount}, acc ->
+        acc + amount * Map.fetch!(@unit_seconds, unit)
+      end)
+
+    DateTime.add(datetime, total, :second)
+  end
+end
+```
+
+----- solution.ex -----
+  def handle_call(:now, _from, state), do: {:reply, state.time, state}
+
+  def handle_call(:pending, _from, state), do: {:reply, length(state.timers), state}
+
+  def handle_call({:schedule, duration, fun}, _from, state) do
+    at = apply_duration(state.time, duration)
+    ref = state.next_ref
+    timer = %{ref: ref, at: at, seq: state.next_seq, fun: fun}
+
+    state = %{
+      state
+      | timers: [timer | state.timers],
+        next_seq: state.next_seq + 1,
+        next_ref: ref + 1
+    }
+
+    {:reply, ref, state}
+  end
+
+  def handle_call({:cancel, ref}, _from, state) do
+    {removed, remaining} = Enum.split_with(state.timers, &(&1.ref == ref))
+    reply = if removed == [], do: :error, else: :ok
+    {:reply, reply, %{state | timers: remaining}}
+  end
+
+  def handle_call({:advance, duration}, _from, state) do
+    new_time = apply_duration(state.time, duration)
+
+    {due, remaining} =
+      Enum.split_with(state.timers, fn t ->
+        DateTime.compare(t.at, new_time) in [:lt, :eq]
+      end)
+
+    ordered = Enum.sort_by(due, fn t -> {DateTime.to_unix(t.at, :microsecond), t.seq} end)
+    Enum.each(ordered, fn t -> t.fun.() end)
+
+    fired = Enum.map(ordered, & &1.ref)
+    {:reply, fired, %{state | time: new_time, timers: remaining}}
+  end
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE (truncated)
+18:34:21.597 [warning] transient error (error_max_turns ) on fim_fix (072_002_deferred_timer_virtual_clock_fim02) — retry 1/5 after 2000ms
+18:39:56.541 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the compile failure is in the skeleton, not the logic. In `Clock.Fake` the skeleton has a dangling `@impl GenServer` immediately before `# TODO`:
+
+```elixir
+  @impl GenServer
+  # TODO
+```
+
+A comment doesn't consume a pending `@impl`. When the skeleton is compiled as-is (template validation), the next actual definition after `# TODO` is the **private** helper `apply_duration/2`, so `@impl GenServer` attaches to it — and `@impl` for a non-callback (private) function is a `CompileError`. That's exactly the "cannot compile module Clock.Fake" failure.
+
+Fix: drop the dangling `@impl GenServer` from the skeleton (so it no longer leaks onto `apply_duration/2`) and move the `@impl GenServer` annotation into the solution, in front of the first `handle_call/3` clause (keeping `@impl` consistency with `init/1`, which also uses it).
+
+<file path="prompt.md">
+Implement the `handle_call/3` GenServer callback for `Clock.Fake`. It is the
+message-handling core of the virtual clock and must cover five distinct calls
+(one clause per message):
+
+1. `:now` — reply with the current virtual time (`state.time`) and leave the
+   state unchanged.
+
+2. `:pending` — reply with the number of timers still registered (the length of
+   `state.timers`), leaving the state unchanged.
+
+3. `{:schedule, duration, fun}` — compute the due instant by applying `duration`
+   to the current time via the `apply_duration/2` helper. Take the next timer
+   ref from `state.next_ref`, build a timer map `%{ref: ref, at: at, seq:
+   state.next_seq, fun: fun}`, and prepend it to `state.timers`. Increment both
+   `next_seq` and `next_ref` in the updated state. Reply with the new `ref`.
+
+4. `{:cancel, ref}` — split `state.timers` into the timer(s) matching `ref` and
+   the rest. Reply `:ok` if something matched, otherwise `:error`, and keep only
+   the remaining timers in the state.
+
+5. `{:advance, duration}` — compute the new virtual time by applying `duration`
+   to the current time. Split the timers into those that are due (their `at` is
+   at or before the new time — `DateTime.compare/2` returns `:lt` or `:eq`) and
+   those still pending. Order the due timers chronologically, breaking ties by
+   registration order, using `{DateTime.to_unix(at, :microsecond), seq}` as the
+   sort key. Execute each due timer's `fun` in that order. Reply with the list
+   of fired refs (in fire order) and update the state's `time` to the new time
+   and `timers` to the remaining pending timers.
+
+Annotate your `handle_call/3` clauses with `@impl GenServer` (the first clause is
+enough) to stay consistent with the already-annotated `init/1` callback.
+
+```elixir
+defmodule Clock do
+  @moduledoc """
+  Behaviour and dispatcher for clock implementations.
+
+  This variation pairs the readable `now/0` with a deterministic virtual-time
+  scheduler (`Clock.Fake`) that can register deferred callbacks. Application
+  code accepts a `:clock` option and calls `Clock.now/1` uniformly.
+  """
+
+  @doc "Returns the current datetime."
+  @callback now() :: DateTime.t()
+
+  @doc "Dispatches `now/0` to the correct implementation."
+  @spec now(module() | GenServer.server()) :: DateTime.t()
+  def now(clock) when is_atom(clock) do
+    if function_exported?(clock, :now, 0) do
+      clock.now()
+    else
+      Clock.Fake.now(clock)
+    end
+  end
+
+  def now(clock), do: Clock.Fake.now(clock)
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Real do
+  @moduledoc "Production clock — delegates straight to the OS."
+
+  @behaviour Clock
+
+  @impl Clock
+  @spec now() :: DateTime.t()
+  def now, do: DateTime.utc_now()
+end
+
+# ---------------------------------------------------------------------------
+
+defmodule Clock.Fake do
+  @moduledoc """
+  A controllable, process-based virtual clock with a deferred-timer scheduler.
+
+  Timers registered with `schedule/3` never fire on their own — they fire only
+  when `advance/2` moves virtual time to or past their due instant, in strict
+  chronological order (ties broken by registration order).
+
+  Note: callback functions run inside the clock process, so they must not call
+  back into the same clock synchronously (that would deadlock). In tests they
+  typically `send/2` a message to the test process.
+  """
+
+  use GenServer
+
+  @default_initial ~U[2024-01-01 00:00:00Z]
+
+  defstruct time: nil, timers: [], next_seq: 0, next_ref: 0
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {initial, opts} = Keyword.pop(opts, :initial, @default_initial)
+    {name_opt, _rest} = Keyword.pop(opts, :name)
+    gen_opts = if name_opt, do: [name: name_opt], else: []
+    GenServer.start_link(__MODULE__, initial, gen_opts)
+  end
+
+  @doc "Returns the current virtual `DateTime`."
+  @spec now(GenServer.server()) :: DateTime.t()
+  def now(server), do: GenServer.call(server, :now)
+
+  @doc """
+  Registers `fun` (0-arity) to run when virtual time reaches `now + duration`.
+  Returns a unique integer timer ref. Timers only fire during `advance/2`.
+  """
+  @spec schedule(GenServer.server(), keyword(), (-> any())) :: non_neg_integer()
+  def schedule(server, duration, fun) when is_list(duration) and is_function(fun, 0),
+    do: GenServer.call(server, {:schedule, duration, fun})
+
+  @doc "Cancels a pending timer. Returns `:ok` if it was pending, `:error` otherwise."
+  @spec cancel(GenServer.server(), non_neg_integer()) :: :ok | :error
+  def cancel(server, ref), do: GenServer.call(server, {:cancel, ref})
+
+  @doc "Returns the number of timers not yet fired or cancelled."
+  @spec pending(GenServer.server()) :: non_neg_integer()
+  def pending(server), do: GenServer.call(server, :pending)
+
+  @doc """
+  Moves virtual time forward by `duration` and fires every due timer in
+  chronological order. Returns the list of fired timer refs, in fire order.
+  """
+  @spec advance(GenServer.server(), keyword()) :: [non_neg_integer()]
+  def advance(server, duration) when is_list(duration),
+    do: GenServer.call(server, {:advance, duration})
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(%DateTime{} = initial), do: {:ok, %__MODULE__{time: initial}}
+
+  # TODO: implement the five handle_call/3 clauses described above.
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  @unit_seconds %{
+    second: 1,
+    seconds: 1,
+    minute: 60,
+    minutes: 60,
+    hour: 3600,
+    hours: 3600,
+    day: 86_400,
+    days: 86_400
+  }
+
+  # Convert the whole duration to seconds, then apply once — robust across
+  # Elixir versions regardless of which units DateTime.add/3 supports natively.
+  defp apply_duration(datetime, duration) do
+    total =
+      Enum.reduce(duration, 0, fn {unit, amount}, acc ->
+        acc + amount * Map.fetch!(@unit_seconds, unit)
+      end)
+
+    DateTime.add(datetime, total, :second)
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  @impl GenServer
+  def handle_call(:now, _from, state), do: {:reply, state.time, state}
+
+  def handle_call(:pending, _from, state), do: {:reply, length(state.timers), state}
+
+  def handle_call({:schedule, duration, fun}, _from, state) do
+    at = apply_duration(state.time, duration)
+    ref = state.next_ref
+    timer = %{ref: ref, at: at, seq: state.next_seq, fun: fun}
+
+    state = %{
+      state
+      | timers: [timer | state.timers],
+        next_seq: state.next_seq + 1,
+        next_ref: ref + 1
+    }
+
+    {:reply, ref, state}
+  end
+
+  def handle_call({:cancel, ref}, _from, state) do
+    {removed, remaining} = Enum.split_with(state.timers, &(&1.ref == ref))
+    reply = if removed == [], do: :error, else: :ok
+    {:repl (truncated)
+18:39:56.541 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 18270, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 0, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 18270, "input_tokens" => 2972, "output_tokens" => 26124, "type" => "message"}], "output_tokens" => 26124, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+18:39:56.560 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_072_002_deferred_timer_virtual_clock_03/072_002_deferred_timer_virtual_clock_03 solution.ex
+18:39:57.453 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":40,"lines_over_98":0,"max_line_length":90,"mode":"fim","pipe_chain_count":0,"public_fn_count":5,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"072_002_deferred_timer_virtual_clock_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_072_002_deferred_timer_virtual_clock_03/072_002_deferred_timer_virtual_clock_03/solution.ex","task":"072_002_deferred_timer_virtual_clock_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T16:39:57.434117Z"}
+18:39:57.454 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_072_002_deferred_timer_virtual_clock_03/072_002_deferred_timer_virtual_clock_03 .gen_staging/fim_072_002_deferred_timer_virtual_clock_03/mutant.ex
+18:39:58.172 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":20,"lines_over_98":0,"max_line_length":60,"mode":"fim","pipe_chain_count":0,"public_fn_count":5,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":10,"compiled":true,"parent":"072_002_deferred_timer_virtual_clock_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.29,"reasons":["compilation: 10 warning(s) → -1.0 pts","tests: 13/15 failed"],"tests":0.13},"shape":"fim","solution_file":".gen_staging/fim_072_002_deferred_timer_virtual_clock_03/mutant.ex","task":"072_002_deferred_timer_virtual_clock_03","test_failures":[{"message":"{:EXIT, #PID<0.218.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 108, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test Clock.Fake basics now/1 returns the frozen datetime"},{"message":"{:EXIT, #PID<0.220.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 124, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test Clock.Fake basics advance moves virtual time forward"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 124, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test Clock.Fake basics advance is cumulative"},{"message":"{:EXIT, #PID<0.224.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test Clock.Fake deferred timers a timer fires only once virtual time reaches its due instant"},{"message":"{:EXIT, #PID<0.226.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test Clock.Fake deferred timers advance returns the refs of timers it fired"},{"message":"{:EXIT, #PID<0.228.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test Clock.Fake deferred timers timers fire in chronological order regardless of registration order"},{"message":"{:EXIT, #PID<0.230.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test Clock.Fake deferred timers cancel prevents a pending timer from firing"},{"message":"{:EXIT, #PID<0.232.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test Clock.Fake deferred timers cancel returns :error for an unknown or already-fired ref"},{"message":"{:EXIT, #PID<0.234.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test Clock.Fake deferred timers pending/1 tracks outstanding timers"},{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 108, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test Clock.now/1 unified dispatch dispatches to Clock.Fake when given a pid"},{"message":"{:EXIT, #PID<0.239.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 108, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test Clock.now/1 unified dispatch dispatches to Clock.Fake when given a registered name"},{"message":"{:EXIT, #PID<0.241.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test isolation two clocks and their timers are independent"},{"message":"{:EXIT, #PID<0.244.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Clock.Fake, :handle_call, 3, [file: ~c\"/tmp/evalfim_1041147_2628.ex\", line: 116, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"ClockV1Test","test":"test dependency injection pattern a scheduled reminder fires at the right virtual time"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-04T16:39:58.152251Z"}
+18:39:58.172 [debug] fim mutation gate: killed
+18:39:58.173 [info] promoted 072_002_deferred_timer_virtual_clock_03 -> tasks/072_002_deferred_timer_virtual_clock_03

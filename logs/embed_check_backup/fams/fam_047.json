@@ -1,0 +1,83 @@
+{
+ "parent": "tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01",
+ "dirs": [
+  {
+   "dir": "tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_02",
+   "kind": "module-FIM",
+   "parent": "tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01",
+   "diff": [
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:98:       Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:99:         entry, {out, acc} ->",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:100:           acc = %{acc | processed: acc.processed ++ [entry.id]}",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_02/prompt.md:117:       Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn entry,",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_02/prompt.md:118:                                                                                  {out, acc} ->",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_02/prompt.md:119:         acc = %{acc | processed: acc.processed ++ [entry.id]}",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:102:           case run_handler(handler, entry.message) do",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:103:             :success ->",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:104:               {Map.put(out, entry.id, :remove), %{acc | succeeded: acc.succeeded + 1}}",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_02/prompt.md:121:         case run_handler(handler, entry.message) do",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_02/prompt.md:122:           :success ->",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_02/prompt.md:123:             {Map.put(out, entry.id, :remove), %{acc | succeeded: acc.succeeded + 1}}",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:106:             {:failure, _reason} ->",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:107:               {Map.put(out, entry.id, {:keep, entry.retry_count + 1}),",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:108:                %{acc | failed: acc.failed + 1}}",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:109:           end",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_02/prompt.md:125:           {:failure, _reason} ->",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_02/prompt.md:126:             {Map.put(out, entry.id, {:keep, entry.retry_count + 1}),",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_02/prompt.md:127:              %{acc | failed: acc.failed + 1}}"
+   ]
+  },
+  {
+   "dir": "tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_03",
+   "kind": "module-FIM",
+   "parent": "tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01",
+   "diff": [
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:98:       Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:99:         entry, {out, acc} ->",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:100:           acc = %{acc | processed: acc.processed ++ [entry.id]}",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_03/prompt.md:109:       Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn entry,",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_03/prompt.md:110:                                                                                  {out, acc} ->",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_03/prompt.md:111:         acc = %{acc | processed: acc.processed ++ [entry.id]}",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:102:           case run_handler(handler, entry.message) do",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:103:             :success ->",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:104:               {Map.put(out, entry.id, :remove), %{acc | succeeded: acc.succeeded + 1}}",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_03/prompt.md:113:         case run_handler(handler, entry.message) do",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_03/prompt.md:114:           :success ->",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_03/prompt.md:115:             {Map.put(out, entry.id, :remove), %{acc | succeeded: acc.succeeded + 1}}",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:106:             {:failure, _reason} ->",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:107:               {Map.put(out, entry.id, {:keep, entry.retry_count + 1}),",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:108:                %{acc | failed: acc.failed + 1}}",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:109:           end",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_03/prompt.md:117:           {:failure, _reason} ->",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_03/prompt.md:118:             {Map.put(out, entry.id, {:keep, entry.retry_count + 1}),",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_03/prompt.md:119:              %{acc | failed: acc.failed + 1}}"
+   ]
+  },
+  {
+   "dir": "tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_04",
+   "kind": "module-FIM",
+   "parent": "tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01",
+   "diff": [
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:98:       Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:99:         entry, {out, acc} ->",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:100:           acc = %{acc | processed: acc.processed ++ [entry.id]}",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_04/prompt.md:105:       Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn entry,",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_04/prompt.md:106:                                                                                  {out, acc} ->",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_04/prompt.md:107:         acc = %{acc | processed: acc.processed ++ [entry.id]}",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:102:           case run_handler(handler, entry.message) do",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:103:             :success ->",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:104:               {Map.put(out, entry.id, :remove), %{acc | succeeded: acc.succeeded + 1}}",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_04/prompt.md:109:         case run_handler(handler, entry.message) do",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_04/prompt.md:110:           :success ->",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_04/prompt.md:111:             {Map.put(out, entry.id, :remove), %{acc | succeeded: acc.succeeded + 1}}",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:106:             {:failure, _reason} ->",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:107:               {Map.put(out, entry.id, {:keep, entry.retry_count + 1}),",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:108:                %{acc | failed: acc.failed + 1}}",
+    "- missing from embed  tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01/solution.ex:109:           end",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_04/prompt.md:113:           {:failure, _reason} ->",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_04/prompt.md:114:             {Map.put(out, entry.id, {:keep, entry.retry_count + 1}),",
+    "- extra in embed      tasks/103_004_bounded_priority_dead_letter_queue_with_bulk_drain_04/prompt.md:115:              %{acc | failed: acc.failed + 1}}"
+   ]
+  }
+ ]
+}

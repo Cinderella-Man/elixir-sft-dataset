@@ -1,0 +1,386 @@
+19:55:40.460 [info] FIM 012_004_task_tracker_event_sourced_aggregate_fim01 → 012_004_task_tracker_event_sourced_aggregate_04: target apply_event/2
+19:55:40.460 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+19:55:40.460 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `apply_event/2`.
+
+Generate a prompt describing how to implement `apply_event/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `apply_event/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `apply_event/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `apply_event/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer module called `TaskAggregate` that maintains state through event sourcing for a task/issue tracking domain.
+
+I need these functions in the public API:
+
+- `TaskAggregate.start_link(opts)` to start the process. It should accept a `:name` option for process registration.
+
+- `TaskAggregate.execute(server, id, command)` which validates the command against the current state of the aggregate identified by `id`, produces zero or more events, applies them to the state, and persists them to an in-memory list. Commands are tuples: `{:create, title, priority}` where priority is `:low`, `:medium`, or `:high`; `{:assign, assignee_name}`; `{:start}`; `{:complete}`; `{:reopen}`. If the command succeeds, return `{:ok, events}` where `events` is the list of new events produced by that command. If the command fails validation, return `{:error, reason}`.
+
+- `TaskAggregate.state(server, id)` which returns the current state of the aggregate. If the aggregate has never received a command, return `nil`. Otherwise return a map with at least `:title`, `:assignee`, `:status`, and `:priority` keys (`:status` starts as `:created` after creation, `:assignee` starts as `nil`).
+
+- `TaskAggregate.events(server, id)` which returns the full ordered list of events for that aggregate, oldest first.
+
+The event sourcing logic should work as follows: each command is first validated against the current state, then zero or more event structs/maps are produced, then those events are applied one by one to the state, then they are appended to the event history. Events should be maps with at least a `:type` key. Use types like `:task_created`, `:task_assigned`, `:task_started`, `:task_completed`, `:task_reopened`.
+
+Validation rules:
+- `:create` must fail with `{:error, :already_exists}` if the task already exists. Priority must be one of `:low`, `:medium`, `:high` — otherwise fail with `{:error, :invalid_priority}`.
+- `:assign` must fail with `{:error, :not_found}` if the task hasn't been created. Must fail with `{:error, :already_completed}` if the status is `:completed`.
+- `:start` must fail with `{:error, :not_found}` if the task hasn't been created. Must fail with `{:error, :not_assigned}` if the task has no assignee (assignee is nil). Must fail with `{:error, :already_started}` if the status is already `:in_progress`.
+- `:complete` must fail with `{:error, :not_found}` if the task hasn't been created. Must fail with `{:error, :not_in_progress}` if the status is not `:in_progress`.
+- `:reopen` must fail with `{:error, :not_found}` if the task hasn't been created. Must fail with `{:error, :not_completed}` if the status is not `:completed`. Reopening resets status to `:created` and clears the assignee to `nil`.
+
+Each aggregate `id` must be tracked independently — commands on `"task:1"` should have no effect on `"task:2"`.
+
+Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule TaskAggregate do
+  @moduledoc """
+  An event-sourced Aggregate for a task/issue tracking domain.
+  Maintains independent state and event history for multiple task IDs.
+  """
+
+  use GenServer
+
+  @valid_priorities [:low, :medium, :high]
+
+  @type id :: any()
+  @type command ::
+          {:create, String.t(), atom()}
+          | {:assign, String.t()}
+          | {:start}
+          | {:complete}
+          | {:reopen}
+  @type event :: %{atom() => any(), type: atom()}
+  @type state_map ::
+          %{
+            title: String.t(),
+            assignee: String.t() | nil,
+            status: atom(),
+            priority: atom()
+          }
+          | nil
+
+  # --- Public API ---
+
+  @doc "Starts the GenServer process."
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, %{}, name: name)
+  end
+
+  @doc "Validates a command, produces events, updates state, and persists history."
+  @spec execute(GenServer.server(), id(), command()) :: {:ok, [event()]} | {:error, atom()}
+  def execute(server, id, command) do
+    GenServer.call(server, {:execute, id, command})
+  end
+
+  @doc "Returns the current calculated state for a specific aggregate ID."
+  @spec state(GenServer.server(), id()) :: state_map()
+  def state(server, id) do
+    GenServer.call(server, {:get_state, id})
+  end
+
+  @doc "Returns the full history of events for a specific aggregate ID."
+  @spec events(GenServer.server(), id()) :: [event()]
+  def events(server, id) do
+    GenServer.call(server, {:get_events, id})
+  end
+
+  # --- GenServer Callbacks ---
+
+  @impl true
+  def init(initial_state), do: {:ok, initial_state}
+
+  @impl true
+  def handle_call({:execute, id, command}, _from, store) do
+    current_instance = Map.get(store, id, %{state: nil, events: []})
+
+    case validate_command(current_instance.state, command) do
+      {:ok, new_events} ->
+        updated_state = Enum.reduce(new_events, current_instance.state, &apply_event/2)
+
+        updated_instance = %{
+          state: updated_state,
+          events: current_instance.events ++ new_events
+        }
+
+        {:reply, {:ok, new_events}, Map.put(store, id, updated_instance)}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, store}
+    end
+  end
+
+  @impl true
+  def handle_call({:get_state, id}, _from, store) do
+    {:reply, get_in(store, [id, :state]), store}
+  end
+
+  @impl true
+  def handle_call({:get_events, id}, _from, store) do
+    history =
+      store
+      |> Map.get(id, %{})
+      |> Map.get(:events, [])
+
+    {:reply, history, store}
+  end
+
+  # --- Domain Logic: Command Validation ---
+
+  defp validate_command(nil, {:create, title, priority}) do
+    if priority in @valid_priorities do
+      {:ok, [%{type: :task_created, title: title, priority: priority}]}
+    else
+      {:error, :invalid_priority}
+    end
+  end
+
+  defp validate_command(_state, {:create, _title, _priority}), do: {:error, :already_exists}
+
+  defp validate_command(nil, _command), do: {:error, :not_found}
+
+  defp validate_command(%{status: :completed}, {:assign, _assignee}),
+    do: {:error, :already_completed}
+
+  defp validate_command(_state, {:assign, assignee}) do
+    {:ok, [%{type: :task_assigned, assignee: assignee}]}
+  end
+
+  defp validate_command(%{assignee: nil}, {:start}), do: {:error, :not_assigned}
+  defp validate_command(%{status: :in_progress}, {:start}), do: {:error, :already_started}
+
+  defp validate_command(_state, {:start}) do
+    {:ok, [%{type: :task_started}]}
+  end
+
+  defp validate_command(%{status: :in_progress}, {:complete}) do
+    {:ok, [%{type: :task_completed}]}
+  end
+
+  defp validate_command(_state, {:complete}), do: {:error, :not_in_progress}
+
+  defp validate_command(%{status: :completed}, {:reopen}) do
+    {:ok, [%{type: :task_reopened}]}
+  end
+
+  defp validate_command(_state, {:reopen}), do: {:error, :not_completed}
+
+  # --- Domain Logic: Event Application ---
+
+  defp apply_event(%{ty (truncated)
+19:56:09.863 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `apply_event/2` function. It is the "left fold" reducer of the
+event-sourcing pipeline: given a single event map (which always has a `:type` key) and
+the aggregate's current state, it returns the new state produced by applying that event.
+It is called via `Enum.reduce(new_events, current_instance.state, &apply_event/2)`, so
+the event is the first argument and the accumulated state is the second.
+
+Provide one clause per event type:
+
+- `:task_created` — the current state will be `nil`; build a fresh state map with the
+  event's `title` and `priority`, `assignee` set to `nil`, and `status` set to `:created`.
+- `:task_assigned` — set the state's `:assignee` to the event's `assignee`.
+- `:task_started` — set the state's `:status` to `:in_progress`.
+- `:task_completed` — set the state's `:status` to `:completed`.
+- `:task_reopened` — reset the state's `:status` to `:created` and clear `:assignee` to `nil`.
+
+Each clause takes the event as the first argument and the state as the second, and returns
+the updated state map.
+
+```elixir
+defmodule TaskAggregate do
+  @moduledoc """
+  An event-sourced Aggregate for a task/issue tracking domain.
+  Maintains independent state and event history for multiple task IDs.
+  """
+
+  use GenServer
+
+  @valid_priorities [:low, :medium, :high]
+
+  @type id :: any()
+  @type command ::
+          {:create, String.t(), atom()}
+          | {:assign, String.t()}
+          | {:start}
+          | {:complete}
+          | {:reopen}
+  @type event :: %{atom() => any(), type: atom()}
+  @type state_map ::
+          %{
+            title: String.t(),
+            assignee: String.t() | nil,
+            status: atom(),
+            priority: atom()
+          }
+          | nil
+
+  # --- Public API ---
+
+  @doc "Starts the GenServer process."
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, %{}, name: name)
+  end
+
+  @doc "Validates a command, produces events, updates state, and persists history."
+  @spec execute(GenServer.server(), id(), command()) :: {:ok, [event()]} | {:error, atom()}
+  def execute(server, id, command) do
+    GenServer.call(server, {:execute, id, command})
+  end
+
+  @doc "Returns the current calculated state for a specific aggregate ID."
+  @spec state(GenServer.server(), id()) :: state_map()
+  def state(server, id) do
+    GenServer.call(server, {:get_state, id})
+  end
+
+  @doc "Returns the full history of events for a specific aggregate ID."
+  @spec events(GenServer.server(), id()) :: [event()]
+  def events(server, id) do
+    GenServer.call(server, {:get_events, id})
+  end
+
+  # --- GenServer Callbacks ---
+
+  @impl true
+  def init(initial_state), do: {:ok, initial_state}
+
+  @impl true
+  def handle_call({:execute, id, command}, _from, store) do
+    current_instance = Map.get(store, id, %{state: nil, events: []})
+
+    case validate_command(current_instance.state, command) do
+      {:ok, new_events} ->
+        updated_state = Enum.reduce(new_events, current_instance.state, &apply_event/2)
+
+        updated_instance = %{
+          state: updated_state,
+          events: current_instance.events ++ new_events
+        }
+
+        {:reply, {:ok, new_events}, Map.put(store, id, updated_instance)}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, store}
+    end
+  end
+
+  @impl true
+  def handle_call({:get_state, id}, _from, store) do
+    {:reply, get_in(store, [id, :state]), store}
+  end
+
+  @impl true
+  def handle_call({:get_events, id}, _from, store) do
+    history =
+      store
+      |> Map.get(id, %{})
+      |> Map.get(:events, [])
+
+    {:reply, history, store}
+  end
+
+  # --- Domain Logic: Command Validation ---
+
+  defp validate_command(nil, {:create, title, priority}) do
+    if priority in @valid_priorities do
+      {:ok, [%{type: :task_created, title: title, priority: priority}]}
+    else
+      {:error, :invalid_priority}
+    end
+  end
+
+  defp validate_command(_state, {:create, _title, _priority}), do: {:error, :already_exists}
+
+  defp validate_command(nil, _command), do: {:error, :not_found}
+
+  defp validate_command(%{status: :completed}, {:assign, _assignee}),
+    do: {:error, :already_completed}
+
+  defp validate_command(_state, {:assign, assignee}) do
+    {:ok, [%{type: :task_assigned, assignee: assignee}]}
+  end
+
+  defp validate_command(%{assignee: nil}, {:start}), do: {:error, :not_assigned}
+  defp validate_command(%{status: :in_progress}, {:start}), do: {:error, :already_started}
+
+  defp validate_command(_state, {:start}) do
+    {:ok, [%{type: :task_started}]}
+  end
+
+  defp validate_command(%{status: :in_progress}, {:complete}) do
+    {:ok, [%{type: :task_completed}]}
+  end
+
+  defp validate_command(_state, {:complete}), do: {:error, :not_in_progress}
+
+  defp validate_command(%{status: :completed}, {:reopen}) do
+    {:ok, [%{type: :task_reopened}]}
+  end
+
+  defp validate_command(_state, {:reopen}), do: {:error, :not_completed}
+
+  # --- Domain Logic: Event Application ---
+
+  defp apply_event(event, state) do
+    # TODO
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp apply_event(%{type: :task_created, title: title, priority: priority}, _nil_state) do
+    %{title: title, assignee: nil, status: :created, priority: priority}
+  end
+
+  defp apply_event(%{type: :task_assigned, assignee: assignee}, state) do
+    %{state | assignee: assignee}
+  end
+
+  defp apply_event(%{type: :task_started}, state) do
+    %{state | status: :in_progress}
+  end
+
+  defp apply_event(%{type: :task_completed}, state) do
+    %{state | status: :completed}
+  end
+
+  defp apply_event(%{type: :task_reopened}, state) do
+    %{state | status: :created, assignee: nil}
+  end
+</file>
+19:56:09.863 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3665, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3665, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3665, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3665, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2647, "type" => "message"}], "output_tokens" => 2647, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+19:56:09.883 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_012_004_task_tracker_event_sourced_aggregate_04/012_004_task_tracker_event_sourced_aggregate_04 solution.ex
+19:56:10.581 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":19,"lines_over_98":0,"max_line_length":91,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"012_004_task_tracker_event_sourced_aggregate_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_012_004_task_tracker_event_sourced_aggregate_04/012_004_task_tracker_event_sourced_aggregate_04/solution.ex","task":"012_004_task_tracker_event_sourced_aggregate_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":25,"tests_ran":true,"tests_skipped":0,"tests_total":25,"timestamp":"2026-07-06T17:56:10.557461Z"}
+19:56:10.582 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_012_004_task_tracker_event_sourced_aggregate_04/012_004_task_tracker_event_sourced_aggregate_04 .gen_staging/fim_012_004_task_tracker_event_sourced_aggregate_04/mutant.ex
+19:56:11.313 [debug] grade JSON: {"analysis":{"defp_count":5,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":19,"lines_over_98":0,"max_line_length":89,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"parent":"012_004_task_tracker_event_sourced_aggregate_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.3,"mode":"fim","overall":0.43,"reasons":["compilation: 7 warning(s) → -0.7 pts","tests: 18/25 failed"],"tests":0.28},"shape":"fim","solution_file":".gen_staging/fim_012_004_task_tracker_event_sourced_aggregate_04/mutant.ex","task":"012_004_task_tracker_event_sourced_aggregate_04","test_failures":[{"message":"{:EXIT, #PID<0.208.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TaskAggregate, :apply_event, 2, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 138, error_info: %{module: Exception}]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {TaskAggregate, :handle_call, 3, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 66]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TaskAggregateTest","test":"test create produces a :task_created event"},{"message":"{:EXIT, #PID<0.210.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TaskAggregate, :apply_event, 2, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 138, error_info: %{module: Exception}]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {TaskAggregate, :handle_call, 3, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 66]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TaskAggregateTest","test":"test state after create has correct title, assignee, status, and priority"},{"message":"{:EXIT, #PID<0.212.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TaskAggregate, :apply_event, 2, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 138, error_info: %{module: Exception}]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {TaskAggregate, :handle_call, 3, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 66]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TaskAggregateTest","test":"test creating an already-existing task fails"},{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TaskAggregate, :apply_event, 2, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 138, error_info: %{module: Exception}]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {TaskAggregate, :handle_call, 3, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 66]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TaskAggregateTest","test":"test assign sets the assignee"},{"message":"{:EXIT, #PID<0.218.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TaskAggregate, :apply_event, 2, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 138, error_info: %{module: Exception}]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {TaskAggregate, :handle_call, 3, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 66]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TaskAggregateTest","test":"test reassigning to a different person succeeds"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TaskAggregate, :apply_event, 2, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 138, error_info: %{module: Exception}]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {TaskAggregate, :handle_call, 3, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 66]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TaskAggregateTest","test":"test assign on completed task fails"},{"message":"{:EXIT, #PID<0.224.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TaskAggregate, :apply_event, 2, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 138, error_info: %{module: Exception}]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {TaskAggregate, :handle_call, 3, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 66]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TaskAggregateTest","test":"test start moves status to :in_progress"},{"message":"{:EXIT, #PID<0.228.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TaskAggregate, :apply_event, 2, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 138, error_info: %{module: Exception}]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {TaskAggregate, :handle_call, 3, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 66]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TaskAggregateTest","test":"test start on unassigned task fails"},{"message":"{:EXIT, #PID<0.230.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TaskAggregate, :apply_event, 2, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 138, error_info: %{module: Exception}]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {TaskAggregate, :handle_call, 3, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 66]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TaskAggregateTest","test":"test start on already-in-progress task fails"},{"message":"{:EXIT, #PID<0.232.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TaskAggregate, :apply_event, 2, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 138, error_info: %{module: Exception}]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {TaskAggregate, :handle_call, 3, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 66]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TaskAggregateTest","test":"test complete moves status to :completed"},{"message":"{:EXIT, #PID<0.236.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TaskAggregate, :apply_event, 2, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 138, error_info: %{module: Exception}]}, {Enum, :\"-reduce/3-lists^foldl/2-0-\", 3, [file: ~c\"lib/enum.ex\", line: 2622]}, {TaskAggregate, :handle_call, 3, [file: ~c\"/tmp/evalfim_195160_2626.ex\", line: 66]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", lin (truncated)
+19:56:11.313 [debug] fim mutation gate: killed
+19:56:11.314 [info] promoted 012_004_task_tracker_event_sourced_aggregate_04 -> tasks/012_004_task_tracker_event_sourced_aggregate_04

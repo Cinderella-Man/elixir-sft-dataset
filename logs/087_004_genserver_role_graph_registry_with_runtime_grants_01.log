@@ -1,0 +1,414 @@
+[22m06:30:46.905 [info] VARIATION 087_004_genserver_role_graph_registry_with_runtime_grants_01: GenServer Role-Graph Registry with Runtime Grants[0m
+[36m06:30:46.907 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01 solution.ex[0m
+[36m06:30:47.523 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":true,"line_count":165,"lines_over_98":0,"max_line_length":90,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.97,"reasons":["analysis: @doc on public functions → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01/solution.ex","task":"087_004_genserver_role_graph_registry_with_runtime_grants_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T04:30:47.502504Z"}[0m
+[22m06:30:47.524 [info] cycle 087_004_genserver_role_graph_registry_with_runtime_grants_01: repairing — The solution is green but does not meet the house style: no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m06:30:47.524 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m06:30:47.524 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir GenServer module called `RoleRegistry` that maintains a **mutable, arbitrary role-inheritance graph** with **runtime grant/revoke of permissions** — not a fixed four-level ladder, but a directed acyclic graph of roles that can be reshaped while the server is running.
+
+I need the following public API (each takes the server `pid` or registered name as its first argument):
+
+- `RoleRegistry.start_link(opts \\ [])` — starts the GenServer. Standard `GenServer` options like `:name` should be honored. Initial state has no roles, no inheritance edges, and no grants.
+- `RoleRegistry.add_role(server, role)` — registers a role atom. Returns `:ok` (idempotent — adding an existing role is fine).
+- `RoleRegistry.add_inheritance(server, child, parent)` — records that `child` inherits `parent`'s permissions (transitively). Both roles must already exist, otherwise return `{:error, :unknown_role}`. Adding an edge that would create a cycle (including a self-edge) must be rejected with `{:error, :cycle}` and leave state unchanged. On success return `:ok`.
+- `RoleRegistry.grant(server, role, resource, action)` — grants permission for `{resource, action}` directly to `role`. The role must exist, otherwise `{:error, :unknown_role}`. Returns `:ok`. Idempotent.
+- `RoleRegistry.revoke(server, role, resource, action)` — removes a direct `{resource, action}` grant from `role` (only that role's own grant, not inherited ones). Returns `:ok` even if the grant was not present.
+- `RoleRegistry.can?(server, role, resource, action)` — returns `true` if `role`, or **any role it inherits transitively** (directly or through a chain of inheritance edges), has a direct grant for `{resource, action}`; otherwise `false`. Returns `false` for an unknown role.
+
+Inheritance means: if `child` inherits `parent`, then `child` has every permission `parent` has (and everything `parent` inherits, transitively). Revoking a grant from `parent` must immediately affect what `child` can do.
+
+Give me the complete module in a single file with no external dependencies.
+
+----- solution.ex -----
+defmodule RoleRegistry do
+  @moduledoc """
+  A GenServer maintaining a mutable role-inheritance DAG with runtime
+  grant/revoke of permissions.
+
+  Roles form an arbitrary acyclic inheritance graph: if `child` inherits
+  `parent`, then `child` holds every permission `parent` holds, transitively.
+  Adding an edge that would introduce a cycle is rejected, leaving state
+  untouched. Grants and revokes take effect immediately for all inheriting
+  roles because `can?/4` resolves the inheritance closure at query time.
+
+  ## State
+
+      %{
+        roles:    MapSet.t(role),
+        inherits: %{role => MapSet.t(parent_role)},
+        grants:   %{role => MapSet.t({resource, action})}
+      }
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Client API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @spec add_role(GenServer.server(), atom()) :: :ok
+  def add_role(server, role), do: GenServer.call(server, {:add_role, role})
+
+  @spec add_inheritance(GenServer.server(), atom(), atom()) ::
+          :ok | {:error, :unknown_role | :cycle}
+  def add_inheritance(server, child, parent) do
+    GenServer.call(server, {:add_inheritance, child, parent})
+  end
+
+  @spec grant(GenServer.server(), atom(), atom(), atom()) :: :ok | {:error, :unknown_role}
+  def grant(server, role, resource, action) do
+    GenServer.call(server, {:grant, role, resource, action})
+  end
+
+  @spec revoke(GenServer.server(), atom(), atom(), atom()) :: :ok
+  def revoke(server, role, resource, action) do
+    GenServer.call(server, {:revoke, role, resource, action})
+  end
+
+  @spec can?(GenServer.server(), atom(), atom(), atom()) :: boolean()
+  def can?(server, role, resource, action) do
+    GenServer.call(server, {:can?, role, resource, action})
+  end
+
+  # ---------------------------------------------------------------------------
+  # Server callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(:ok) do
+    {:ok, %{roles: MapSet.new(), inherits: %{}, grants: %{}}}
+  end
+
+  @impl true
+  def handle_call({:add_role, role}, _from, state) do
+    {:reply, :ok, %{state | roles: MapSet.put(state.roles, role)}}
+  end
+
+  def handle_call({:add_inheritance, child, parent}, _from, state) do
+    cond do
+      not MapSet.member?(state.roles, child) ->
+        {:reply, {:error, :unknown_role}, state}
+
+      not MapSet.member?(state.roles, parent) ->
+        {:reply, {:error, :unknown_role}, state}
+
+      child == parent ->
+        {:reply, {:error, :cycle}, state}
+
+      # If `parent` already reaches `child` via inheritance, then `child` is an
+      # ancestor of `parent`; adding child -> parent would close a cycle.
+      reachable?(state.inherits, parent, child) ->
+        {:reply, {:error, :cycle}, state}
+
+      true ->
+        parents = state.inherits |> Map.get(child, MapSet.new()) |> MapSet.put(parent)
+        {:reply, :ok, %{state | inherits: Map.put(state.inherits, child, parents)}}
+    end
+  end
+
+  def handle_call({:grant, role, resource, action}, _from, state) do
+    if MapSet.member?(state.roles, role) do
+      key = {resource, action}
+      set = state.grants |> Map.get(role, MapSet.new()) |> MapSet.put(key)
+      {:reply, :ok, %{state | grants: Map.put(state.grants, role, set)}}
+    else
+      {:reply, {:error, :unknown_role}, state}
+    end
+  end
+
+  def handle_call({:revoke, role, resource, action}, _from, state) do
+    key = {resource, action}
+    set = state.grants |> Map.get(role, MapSet.new()) |> MapSet.delete(key)
+    {:reply, :ok, %{state | grants: Map.put(state.grants, role, set)}}
+  end
+
+  def handle_call({:can?, role, resource, action}, _from, state) do
+    result =
+      if MapSet.member?(state.roles, role) do
+        key = {resource, action}
+
+        state.inherits
+        |> closure(role)
+        |> Enum.any?(fn r ->
+          MapSet.member?(Map.get(state.grants, r, MapSet.new()), key)
+        end)
+      else
+        false
+      end
+
+    {:reply, result, state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Graph helpers
+  # ---------------------------------------------------------------------------
+
+  # Can we reach `target` from `from` following inheritance edges?
+  defp reachable?(inherits, from, target) do
+    do_reach(inherits, [from], MapSet.new(), target)
+  end
+
+  defp do_reach(_inherits, [], _seen, _target), do: false
+
+  defp do_reach(inherits, [node | rest], seen, target) do
+    cond do
+      node == target ->
+        true
+
+      MapSet.member?(seen, node) ->
+        do_reach(inherits, rest, seen, target)
+
+      true ->
+        parents = inherits |> Map.get(node, MapSet.new()) |> MapSet.to_list()
+        do_reach(inherits, parents ++ rest, MapSet.put(seen, node), target)
+    end
+  end
+
+  # The set containing `role` and every role reachab (truncated)[0m
+[36m06:31:15.023 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule RoleRegistry do
+  @moduledoc """
+  A GenServer maintaining a mutable role-inheritance DAG with runtime
+  grant/revoke of permissions.
+
+  Roles form an arbitrary acyclic inheritance graph: if `child` inherits
+  `parent`, then `child` holds every permission `parent` holds, transitively.
+  Adding an edge that would introduce a cycle is rejected, leaving state
+  untouched. Grants and revokes take effect immediately for all inheriting
+  roles because `can?/4` resolves the inheritance closure at query time.
+
+  ## State
+
+      %{
+        roles:    MapSet.t(role),
+        inherits: %{role => MapSet.t(parent_role)},
+        grants:   %{role => MapSet.t({resource, action})}
+      }
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Client API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the `RoleRegistry` GenServer.
+
+  Standard `GenServer` options such as `:name` are honored. The initial state
+  has no roles, no inheritance edges, and no grants.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc """
+  Registers `role`. Idempotent — adding an existing role is a no-op. Returns `:ok`.
+  """
+  @spec add_role(GenServer.server(), atom()) :: :ok
+  def add_role(server, role), do: GenServer.call(server, {:add_role, role})
+
+  @doc """
+  Records that `child` inherits `parent`'s permissions transitively.
+
+  Both roles must already exist, otherwise returns `{:error, :unknown_role}`.
+  An edge that would create a cycle (including a self-edge) is rejected with
+  `{:error, :cycle}`, leaving state unchanged. On success returns `:ok`.
+  """
+  @spec add_inheritance(GenServer.server(), atom(), atom()) ::
+          :ok | {:error, :unknown_role | :cycle}
+  def add_inheritance(server, child, parent) do
+    GenServer.call(server, {:add_inheritance, child, parent})
+  end
+
+  @doc """
+  Grants permission for `{resource, action}` directly to `role`.
+
+  The role must exist, otherwise returns `{:error, :unknown_role}`. Idempotent.
+  Returns `:ok` on success.
+  """
+  @spec grant(GenServer.server(), atom(), atom(), atom()) :: :ok | {:error, :unknown_role}
+  def grant(server, role, resource, action) do
+    GenServer.call(server, {:grant, role, resource, action})
+  end
+
+  @doc """
+  Removes a direct `{resource, action}` grant from `role`.
+
+  Only the role's own grant is removed, not inherited ones. Returns `:ok` even
+  if the grant was not present.
+  """
+  @spec revoke(GenServer.server(), atom(), atom(), atom()) :: :ok
+  def revoke(server, role, resource, action) do
+    GenServer.call(server, {:revoke, role, resource, action})
+  end
+
+  @doc """
+  Returns `true` if `role`, or any role it inherits transitively, has a direct
+  grant for `{resource, action}`; otherwise `false`.
+
+  Returns `false` for an unknown role.
+  """
+  @spec can?(GenServer.server(), atom(), atom(), atom()) :: boolean()
+  def can?(server, role, resource, action) do
+    GenServer.call(server, {:can?, role, resource, action})
+  end
+
+  # ---------------------------------------------------------------------------
+  # Server callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(:ok) do
+    {:ok, %{roles: MapSet.new(), inherits: %{}, grants: %{}}}
+  end
+
+  @impl true
+  def handle_call({:add_role, role}, _from, state) do
+    {:reply, :ok, %{state | roles: MapSet.put(state.roles, role)}}
+  end
+
+  def handle_call({:add_inheritance, child, parent}, _from, state) do
+    cond do
+      not MapSet.member?(state.roles, child) ->
+        {:reply, {:error, :unknown_role}, state}
+
+      not MapSet.member?(state.roles, parent) ->
+        {:reply, {:error, :unknown_role}, state}
+
+      child == parent ->
+        {:reply, {:error, :cycle}, state}
+
+      # If `parent` already reaches `child` via inheritance, then `child` is an
+      # ancestor of `parent`; adding child -> parent would close a cycle.
+      reachable?(state.inherits, parent, child) ->
+        {:reply, {:error, :cycle}, state}
+
+      true ->
+        parents = state.inherits |> Map.get(child, MapSet.new()) |> MapSet.put(parent)
+        {:reply, :ok, %{state | inherits: Map.put(state.inherits, child, parents)}}
+    end
+  end
+
+  def handle_call({:grant, role, resource, action}, _from, state) do
+    if MapSet.member?(state.roles, role) do
+      key = {resource, action}
+      set = state.grants |> Map.get(role, MapSet.new()) |> MapSet.put(key)
+      {:reply, :ok, %{state | grants: Map.put(state.grants, role, set)}}
+    else
+      {:reply, {:error, :unknown_role}, state}
+    end
+  end
+
+  def handle_call({:revoke, role, resource, action}, _from, state) do
+    key = {resource, action}
+    set = state.grants |> Map.get(role, MapSet.new()) |> MapSet.delete(key)
+    {:reply, :ok, %{state | grants: Map.put(state.grants, role, set)}}
+  end
+
+  def handle_call({:can?, role, resource, action}, _from, state) do
+    result =
+      if MapSet.member?(state.roles, role) do
+        key = {resource, action}
+
+        state.inherits
+        |> closure(role)
+        |> Enum.any?(fn r ->
+          MapSet.member?(Map.get(state.grants, r, MapSet.new()), key)
+        end)
+      else
+        false
+      end
+
+    {:reply, result, state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Graph helpers
+  # ---------------------------------------------------------------------------
+
+  # Can we reach `target` from `from` following inheritance edges?
+  defp reachable?(inherits, from, target) do
+    do_reach(inherits, [from], MapSet.new(), target)
+  end
+
+  defp do_reach(_inherits, [], _seen, _target), do: false
+
+  defp do_reach(inherits, [node | rest], seen, target) do
+    cond do
+      node == target ->
+        true
+
+      MapSet.member?(seen, node) ->
+        do_reach(inherits, rest, seen, target)
+
+      true ->
+        parents = inherits |> Map.get(node, MapSet.new()) |> MapSet.to_list()
+        do_reach(inherits, parents ++ rest, MapSet.put(seen, node), target)
+    end
+  end
+
+  # The set containing `role` and every role reachable via inheritance edges.
+  defp closure(inherits, role) do
+    build_closure(inherits, [role], MapSet.new())
+  end
+
+  defp build_closure(_inherits, [], acc), do: acc
+
+  defp build_closure(inherits, [node | rest], acc) do
+    if MapSet.member?(acc, node) do
+      build_closure(inherits, rest, acc)
+    else
+      parents = inherits |> Map.get(node, MapSet.new()) |> MapSet.to_list()
+      build_closure(inherits, parents ++ rest, MapSet.put(acc, node))
+    end
+  end
+end
+</file>[0m
+[36m06:31:15.023 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6019, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6019, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6019, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6019, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 2770, "type" => "message"}], "output_tokens" => 2770, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m06:31:15.044 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01 solution.ex[0m
+[36m06:31:15.693 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":199,"lines_over_98":0,"max_line_length":90,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01/solution.ex","task":"087_004_genserver_role_graph_registry_with_runtime_grants_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T04:31:15.672322Z"}[0m
+[36m06:31:15.697 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut solution.ex[0m
+[36m06:31:16.355 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":141,"lines_over_98":6,"max_line_length":653,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 14/14 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex","task":"087_004_genserver_role_graph_registry_with_runtime_grants_01_mut","test_failures":[{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants grant then can?"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants unknown role can?/grant"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants add_role is idempotent"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants revoke removes only that grant"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants revoke of missing grant is ok"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance child inherits parent permissions"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance transitive inheritance across a chain"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance diamond inheritance (multiple parents)"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance unknown roles rejected"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test cycle detection self edge rejected"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test cycle detection direct back-edge rejected"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test cycle detection transitive cycle rejected and state unchanged"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test runtime mutation affects inherited permissions revoking parent grant affects child immediately"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test runtime mutation affects inherited permissions granting parent later flows to child"}],"tests_errors":0,"tests_excluded":0,"tests_failed":14,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T04:31:16.332939Z"}[0m
+[36m06:31:16.359 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut solution.ex[0m
+[36m06:31:17.020 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":141,"lines_over_98":6,"max_line_length":653,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.31,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 13/14 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.07},"shape":"single","solution_file":".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex","task":"087_004_genserver_role_graph_registry_with_runtime_grants_01_mut","test_failures":[{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants grant then can?"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants add_role is idempotent"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants revoke removes only that grant"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants revoke of missing grant is ok"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance child inherits parent permissions"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance transitive inheritance across a chain"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance diamond inheritance (multiple parents)"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance unknown roles rejected"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test cycle detection self edge rejected"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test cycle detection direct back-edge rejected"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test cycle detection transitive cycle rejected and state unchanged"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test runtime mutation affects inherited permissions revoking parent grant affects child immediately"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test runtime mutation affects inherited permissions granting parent later flows to child"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T04:31:16.997237Z"}[0m
+[36m06:31:17.023 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut solution.ex[0m
+[36m06:31:17.682 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":141,"lines_over_98":6,"max_line_length":653,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.5,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 9/14 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.36},"shape":"single","solution_file":".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex","task":"087_004_genserver_role_graph_registry_with_runtime_grants_01_mut","test_failures":[{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance child inherits parent permissions"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance transitive inheritance across a chain"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance diamond inheritance (multiple parents)"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance unknown roles rejected"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test cycle detection self edge rejected"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test cycle detection direct back-edge rejected"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test cycle detection transitive cycle rejected and state unchanged"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test runtime mutation affects inherited permissions revoking parent grant affects child immediately"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test runtime mutation affects inherited permissions granting parent later flows to child"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T04:31:17.659651Z"}[0m
+[36m06:31:17.687 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut solution.ex[0m
+[36m06:31:18.353 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":141,"lines_over_98":6,"max_line_length":653,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.49,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 9/14 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.36},"shape":"single","solution_file":".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex","task":"087_004_genserver_role_graph_registry_with_runtime_grants_01_mut","test_failures":[{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants grant then can?"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants unknown role can?/grant"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants revoke removes only that grant"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance child inherits parent permissions"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance transitive inheritance across a chain"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance diamond inheritance (multiple parents)"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test cycle detection transitive cycle rejected and state unchanged"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test runtime mutation affects inherited permissions revoking parent grant affects child immediately"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test runtime mutation affects inherited permissions granting parent later flows to child"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T04:31:18.332501Z"}[0m
+[36m06:31:18.357 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut solution.ex[0m
+[36m06:31:19.012 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":141,"lines_over_98":6,"max_line_length":653,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.78,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 3/14 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.79},"shape":"single","solution_file":".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex","task":"087_004_genserver_role_graph_registry_with_runtime_grants_01_mut","test_failures":[{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants revoke removes only that grant"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants revoke of missing grant is ok"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test runtime mutation affects inherited permissions revoking parent grant affects child immediately"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T04:31:18.991414Z"}[0m
+[36m06:31:19.016 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut solution.ex[0m
+[36m06:31:19.653 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":141,"lines_over_98":6,"max_line_length":653,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.49,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 9/14 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.36},"shape":"single","solution_file":".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex","task":"087_004_genserver_role_graph_registry_with_runtime_grants_01_mut","test_failures":[{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants grant then can?"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants unknown role can?/grant"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test roles and direct grants revoke removes only that grant"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance child inherits parent permissions"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance transitive inheritance across a chain"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test inheritance diamond inheritance (multiple parents)"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test cycle detection transitive cycle rejected and state unchanged"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test runtime mutation affects inherited permissions revoking parent grant affects child immediately"},{"message":"MUTATION","module":"RoleRegistryTest","test":"test runtime mutation affects inherited permissions granting parent later flows to child"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-07T04:31:19.633405Z"}[0m
+[36m06:31:19.658 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut solution.ex[0m
+[36m06:31:20.309 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":141,"lines_over_98":6,"max_line_length":653,"mode":"full","pipe_chain_count":12,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 14/14 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex","task":"087_004_genserver_role_graph_registry_with_runtime_grants_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test roles and direct grants grant then can?"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test roles and direct grants unknown role can?/grant"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test roles and direct grants add_role is idempotent"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test roles and direct grants revoke removes only that grant"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test roles and direct grants revoke of missing grant is ok"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test inheritance child inherits parent permissions"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test inheritance transitive inheritance across a chain"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test inheritance diamond inheritance (multiple parents)"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test inheritance unknown roles rejected"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test cycle detection self edge rejected"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test cycle detection direct back-edge rejected"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test cycle detection transitive cycle rejected and state unchanged"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :init, 1, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test runtime mutation affects inherited permissions revoking parent grant affects child immediately"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATION\"}, [{R (truncated)[0m
+[36m06:31:20.313 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut solution.ex[0m
+[36m06:31:20.948 [debug] grade JSON: {"analysis":{"defp_count":6,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":106,"lines_over_98":6,"max_line_length":653,"mode":"full","pipe_chain_count":4,"public_fn_count":12,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":21,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.18,"reasons":["compilation: 21 warning(s) → -2.1 pts","tests: 14/14 failed","analysis: no lines over 98 chars (found 6) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex","task":"087_004_genserver_role_graph_registry_with_runtime_grants_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test roles and direct grants grant then can?"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 65, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test roles and direct grants unknown role can?/grant"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test roles and direct grants add_role is idempotent"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test roles and direct grants revoke removes only that grant"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test roles and direct grants revoke of missing grant is ok"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test inheritance child inherits parent permissions"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test inheritance transitive inheritance across a chain"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test inheritance diamond inheritance (multiple parents)"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test inheritance unknown roles rejected"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test cycle detection self edge rejected"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test cycle detection direct back-edge rejected"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"RoleRegistryTest","test":"test cycle detection transitive cycle rejected and state unchanged"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{RoleRegistry, :handle_call, 3, [file: ~c\".gen_staging/087_004_genserver_role_graph_registry_with_runtime_grants_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :in (truncated)[0m
+[22m06:31:20.949 [info] cycle 087_004_genserver_role_graph_registry_with_runtime_grants_01: ACCEPTED on attempt 1[0m
+[22m06:31:20.949 [info] promoted 087_004_genserver_role_graph_registry_with_runtime_grants_01 -> tasks/087_004_genserver_role_graph_registry_with_runtime_grants_01[0m

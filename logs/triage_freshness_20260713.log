@@ -1,0 +1,16 @@
+Screen triage: 6 untriaged RED task(s) — model=opus
+[1/6] 001_004_penalty_escalation_01 ... ENTAILED (solver-weak — keep)
+[2/6] 002_001_circuit_breaker_01 ... ENTAILED (solver-weak — keep)
+[3/6] 014_004_concurrent_priority_queue_with_configurable_parallelism_01 ... PROMPT GAP: If `:max_concurrency` is not a positive integer, `start_link/1` must raise an `ArgumentError` (rather than returning an error tuple or exiting).
+[4/6] 015_001_heartbeat_monitor_01 ... ENTAILED (solver-weak — keep)
+[5/6] 015_003_async_check_monitor_with_timeouts_01 ... ENTAILED (solver-weak — keep)
+[6/6] 015_004_monitor_with_maintenance_windows_and_pause_resume_01 ... ENTAILED (solver-weak — keep)
+
+=== SCREEN TRIAGE SUMMARY (whole ledger) ===
+  triaged: 90   entailed/keep: 61   open prompt gaps: 2   stale/resolved gaps: 27   errors: 0
+
+  PROMPT GAPS (human sign-off + backfill needed — cascade per docs/10 inv. #5):
+    - 005_003_replayeventbus_01
+        Each topic must store its subscribers in a field named `subs` that is a list, so that after a subscriber is removed a topic with no subscribers has `subs == []`.
+    - 014_004_concurrent_priority_queue_with_configurable_parallelism_01
+        If `:max_concurrency` is not a positive integer, `start_link/1` must raise an `ArgumentError` (rather than returning an error tuple or exiting).

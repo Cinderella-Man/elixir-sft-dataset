@@ -1,0 +1,2435 @@
+Running ExUnit with seed: 560849, max_cases: 48
+Excluding tags: [:skip, :database]
+
+............................................................................................................................................................................................
+23:21:29.098 [error] usage limit persisted past the 2ms cap (3 attempts) — giving up on this call
+........
+Finished in 0.5 seconds (0.4s async, 0.07s sync)
+
+Result: 196 passed
+Concurrency: 16 (EVAL_CONCURRENCY to override)
+  corpus-integrity: all pass ✓
+Perfect-score: 3745 tasks (overall must be 1.0) ...
+.....................................................................................................................................................................................s...................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................s.......................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+Re-checking 2 test-failure suspects (flake filter, stability=1) ...
+rr
+=== VALIDATION SUMMARY ===
+  perfect-score: all pass ✓
+
+ALL PERFECT ✓ (every task scores 1.0)
+Concurrency: 16 (EVAL_CONCURRENCY to override)
+  corpus-integrity: all pass ✓
+Whole-solution mutation: 597 tasks (skipping %{fim: 830, test_fim: 2318} — fim has --fim; tfim is gated at mint time) ...
+.................................................    warning: variable "params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 18 │   def list_items(params \\ %{}) do
+    │                  ~~~~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/items.ex:18:18: PaginatedList.Items.list_items/1
+
+    warning: variable "raw" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 22 │   defp parse_page(%{"page" => raw}) do
+    │                               ~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/items.ex:22:31: PaginatedList.Items.parse_page/1
+
+    warning: variable "raw" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 30 │   defp parse_page_size(%{"page_size" => raw}) do
+    │                                         ~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/items.ex:30:41: PaginatedList.Items.parse_page_size/1
+
+    warning: variable "page_size" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 42 │   defp compute_total_pages(total_count, page_size) do
+    │                                         ~~~~~~~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/items.ex:42:41: PaginatedList.Items.compute_total_pages/2
+
+    warning: variable "total_count" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 42 │   defp compute_total_pages(total_count, page_size) do
+    │                            ~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/items.ex:42:28: PaginatedList.Items.compute_total_pages/2
+
+.    warning: function parse_page_size/1 is unused
+    │
+ 30 │   defp parse_page_size(%{"page_size" => raw}) do
+    │        ~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/items.ex:30:8: PaginatedList.Items (module)
+
+    warning: function parse_page/1 is unused
+    │
+ 22 │   defp parse_page(%{"page" => raw}) do
+    │        ~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/items.ex:22:8: PaginatedList.Items (module)
+
+    warning: function compute_total_pages/2 is unused
+    │
+ 38 │   defp compute_total_pages(0, _page_size) do
+    │        ~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/items.ex:38:8: PaginatedList.Items (module)
+
+    warning: module attribute @max_page_size was set but never used
+    │
+  8 │   @max_page_size 100
+    │   ~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/items.ex:8: PaginatedList.Items (module)
+
+    warning: module attribute @default_page_size was set but never used
+    │
+  7 │   @default_page_size 20
+    │   ~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/items.ex:7: PaginatedList.Items (module)
+
+    warning: module attribute @default_page was set but never used
+    │
+  6 │   @default_page 1
+    │   ~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/items.ex:6: PaginatedList.Items (module)
+
+    warning: unused alias Repo
+    │
+  5 │   alias PaginatedList.Repo
+    │   ~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/items.ex:5:3
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def changeset(item, attrs) do
+    │                       ~~~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/item.ex:11:23: PaginatedList.Item.changeset/2
+
+    warning: variable "item" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def changeset(item, attrs) do
+    │                 ~~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/item.ex:11:17: PaginatedList.Item.changeset/2
+
+    warning: unused import Ecto.Changeset
+    │
+  3 │   import Ecto.Changeset
+    │   ~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list/item.ex:3:3
+
+....    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  5 │   def index(conn, params) do
+    │             ~~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list_web/controllers/item_controller.ex:5:13: PaginatedListWeb.ItemController.index/2
+
+    warning: variable "params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  5 │   def index(conn, params) do
+    │                   ~~~~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list_web/controllers/item_controller.ex:5:19: PaginatedListWeb.ItemController.index/2
+
+    warning: variable "item" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  9 │   defp serialize_item(item) do
+    │                       ~~~~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list_web/controllers/item_controller.ex:9:23: PaginatedListWeb.ItemController.serialize_item/1
+
+    warning: function serialize_item/1 is unused
+    │
+  9 │   defp serialize_item(item) do
+    │        ~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list_web/controllers/item_controller.ex:9:8: PaginatedListWeb.ItemController (module)
+
+    warning: unused alias Items
+    │
+  3 │   alias PaginatedList.Items
+    │   ~
+    │
+    └─ /tmp/eval_1220497_2629/lib/paginated_list_web/controllers/item_controller.ex:3:3
+
+...........    warning: variable "products" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  5 │   def index(%{products: products}) do
+    │                         ~~~~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app_web/controllers/product_json.ex:5:25: MyAppWeb.ProductJSON.index/1
+
+    warning: variable "p" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  9 │   defp product(%Product{} = p) do
+    │                             ~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app_web/controllers/product_json.ex:9:29: MyAppWeb.ProductJSON.product/1
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 21 │   defp filter_by_name(query, %{"name" => name}) when is_binary(name) and name != "" do
+    │                       ~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:21:23: MyApp.Products.filter_by_name/2
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 25 │   defp filter_by_name(query, _params) do
+    │                       ~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:25:23: MyApp.Products.filter_by_name/2
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 29 │   defp filter_by_category(query, %{"category" => category})
+    │                           ~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:29:27: MyApp.Products.filter_by_category/2
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 34 │   defp filter_by_category(query, _params) do
+    │                           ~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:34:27: MyApp.Products.filter_by_category/2
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 38 │   defp filter_by_min_price(query, %{"min_price" => min}) when is_binary(min) and min != "" do
+    │                            ~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:38:28: MyApp.Products.filter_by_min_price/2
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 42 │   defp filter_by_min_price(query, _params) do
+    │                            ~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:42:28: MyApp.Products.filter_by_min_price/2
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 46 │   defp filter_by_max_price(query, %{"max_price" => max}) when is_binary(max) and max != "" do
+    │                            ~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:46:28: MyApp.Products.filter_by_max_price/2
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 50 │   defp filter_by_max_price(query, _params) do
+    │                            ~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:50:28: MyApp.Products.filter_by_max_price/2
+
+    warning: variable "params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 54 │   defp apply_sorting(query, %{"sort" => field} = params) when field in @allowed_sort_fields do
+    │                                                  ~~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:54:50: MyApp.Products.apply_sorting/2
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 54 │   defp apply_sorting(query, %{"sort" => field} = params) when field in @allowed_sort_fields do
+    │                      ~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:54:22: MyApp.Products.apply_sorting/2
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 58 │   defp apply_sorting(query, _params) do
+    │                      ~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:58:22: MyApp.Products.apply_sorting/2
+
+    warning: variable "changeset" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  6 │   def render("422.json", %{changeset: changeset}) do
+    │                                       ~~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/error_json.ex:6:39: SoftCrudWeb.ErrorJSON.render/2
+
+    warning: variable "documents" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  4 │   def index(%{documents: documents}) do
+    │                          ~~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_json.ex:4:26: SoftCrudWeb.DocumentJSON.index/1
+
+    warning: variable "template" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 10 │   def render(template, _assigns) do
+    │              ~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/error_json.ex:10:14: SoftCrudWeb.ErrorJSON.render/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def show(%{document: document}) do
+    │                        ~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_json.ex:8:24: SoftCrudWeb.DocumentJSON.show/1
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 12 │   defp data(%Document{} = document) do
+    │                           ~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_json.ex:12:27: SoftCrudWeb.DocumentJSON.data/1
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def list_documents(opts \\ []) do
+    │                      ~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:7:22: SoftCrud.Documents.list_documents/1
+
+    warning: variable "id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def get_document(id, opts \\ []) do
+    │                    ~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:11:20: SoftCrud.Documents.get_document/2
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def get_document(id, opts \\ []) do
+    │                        ~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:11:24: SoftCrud.Documents.get_document/2
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 15 │   def create_document(attrs) do
+    │                       ~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:15:23: SoftCrud.Documents.create_document/1
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def update_document(%Document{} = document, attrs) do
+    │                                               ~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:19:47: SoftCrud.Documents.update_document/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def update_document(%Document{} = document, attrs) do
+    │                                     ~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:19:37: SoftCrud.Documents.update_document/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 23 │   def soft_delete_document(%Document{deleted_at: deleted_at} = document)
+    │                                                                ~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:23:64: SoftCrud.Documents.soft_delete_document/1
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 28 │   def soft_delete_document(%Document{} = document) do
+    │                                          ~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:28:42: SoftCrud.Documents.soft_delete_document/1
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 32 │   def restore_document(%Document{deleted_at: nil} = document) do
+    │                                                     ~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:32:53: SoftCrud.Documents.restore_document/1
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 36 │   def restore_document(%Document{} = document) do
+    │                                      ~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:36:38: SoftCrud.Documents.restore_document/1
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 40 │   defp maybe_exclude_deleted(query, true) do
+    │                              ~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:40:30: SoftCrud.Documents.maybe_exclude_deleted/2
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 44 │   defp maybe_exclude_deleted(query, false) do
+    │                              ~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:44:30: SoftCrud.Documents.maybe_exclude_deleted/2
+
+....    warning: variable "list_of_attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def bulk_create_items(list_of_attrs, opts \\ []) do
+    │                         ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog.ex:7:25: MyApp.Catalog.bulk_create_items/2
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def bulk_create_items(list_of_attrs, opts \\ []) do
+    │                                        ~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog.ex:7:40: MyApp.Catalog.bulk_create_items/2
+
+    warning: variable "list_of_attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   defp all_or_nothing(list_of_attrs) do
+    │                       ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog.ex:11:23: MyApp.Catalog.all_or_nothing/1
+
+    warning: variable "list_of_attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 15 │   defp partial_create(list_of_attrs) do
+    │                       ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog.ex:15:23: MyApp.Catalog.partial_create/1
+
+    warning: variable "list_of_attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   defp insert_each(list_of_attrs) do
+    │                    ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog.ex:19:20: MyApp.Catalog.insert_each/1
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 23 │   defp insert_item(attrs) do
+    │                    ~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog.ex:23:20: MyApp.Catalog.insert_item/1
+
+    warning: function validate_sort/1 is unused
+    │
+ 13 │   defp validate_sort(%{"sort" => field}) when field not in @allowed_sort_fields do
+    │        ~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:13:8: MyApp.Products (module)
+
+    warning: function product/1 is unused
+    │
+  9 │   defp product(%Product{} = p) do
+    │        ~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app_web/controllers/product_json.ex:9:8: MyAppWeb.ProductJSON (module)
+
+    warning: function filter_by_name/2 is unused
+    │
+ 21 │   defp filter_by_name(query, %{"name" => name}) when is_binary(name) and name != "" do
+    │        ~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:21:8: MyApp.Products (module)
+
+    warning: function filter_by_min_price/2 is unused
+    │
+ 38 │   defp filter_by_min_price(query, %{"min_price" => min}) when is_binary(min) and min != "" do
+    │        ~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:38:8: MyApp.Products (module)
+
+    warning: function filter_by_max_price/2 is unused
+    │
+ 46 │   defp filter_by_max_price(query, %{"max_price" => max}) when is_binary(max) and max != "" do
+    │        ~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:46:8: MyApp.Products (module)
+
+    warning: function filter_by_category/2 is unused
+    │
+ 29 │   defp filter_by_category(query, %{"category" => category})
+    │        ~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:29:8: MyApp.Products (module)
+
+    warning: function apply_sorting/2 is unused
+    │
+ 54 │   defp apply_sorting(query, %{"sort" => field} = params) when field in @allowed_sort_fields do
+    │        ~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:54:8: MyApp.Products (module)
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 24 │   def changeset(product, attrs) do
+    │                          ~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products/product.ex:24:26: MyApp.Products.Product.changeset/2
+
+    warning: unused alias Repo
+    │
+  4 │   alias MyApp.Repo
+    │   ~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:4:3
+
+    warning: unused import Ecto.Query
+    │
+  3 │   import Ecto.Query
+    │   ~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products.ex:3:3
+
+    warning: variable "product" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 24 │   def changeset(product, attrs) do
+    │                 ~~~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products/product.ex:24:17: MyApp.Products.Product.changeset/2
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 14 │   def changeset(document, attrs) do
+    │                           ~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents/document.ex:14:27: SoftCrud.Documents.Document.changeset/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 14 │   def changeset(document, attrs) do
+    │                 ~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents/document.ex:14:17: SoftCrud.Documents.Document.changeset/2
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def soft_delete_changeset(document, attrs) do
+    │                                       ~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents/document.ex:19:39: SoftCrud.Documents.Document.soft_delete_changeset/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def soft_delete_changeset(document, attrs) do
+    │                             ~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents/document.ex:19:29: SoftCrud.Documents.Document.soft_delete_changeset/2
+
+    warning: function data/1 is unused
+    │
+ 12 │   defp data(%Document{} = document) do
+    │        ~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_json.ex:12:8: SoftCrudWeb.DocumentJSON (module)
+
+    warning: module attribute @required_fields was set but never used
+    │
+ 21 │   @required_fields ~w(name category price)a
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products/product.ex:21: MyApp.Products.Product (module)
+
+    warning: unused import Ecto.Changeset
+    │
+  4 │   import Ecto.Changeset
+    │   ~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app/products/product.ex:4:3
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  6 │   def index(conn, params) do
+    │             ~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app_web/controllers/product_controller.ex:6:13: MyAppWeb.ProductController.index/2
+
+    warning: variable "params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  6 │   def index(conn, params) do
+    │                   ~~~~~~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app_web/controllers/product_controller.ex:6:19: MyAppWeb.ProductController.index/2
+
+    warning: unused alias Products
+    │
+  4 │   alias MyApp.Products
+    │   ~
+    │
+    └─ /tmp/eval_1221012_17/lib/my_app_web/controllers/product_controller.ex:4:3
+
+    warning: unused import Ecto.Changeset
+    │
+  3 │   import Ecto.Changeset
+    │   ~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents/document.ex:3:3
+
+    warning: function maybe_exclude_deleted/2 is unused
+    │
+ 40 │   defp maybe_exclude_deleted(query, true) do
+    │        ~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:40:8: SoftCrud.Documents (module)
+
+.    warning: variable "u" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  5 │   def render("v1", u) do
+    │                    ~
+    │
+    └─ /tmp/eval_1222294_2634/lib/versioned_api/views/user_view.ex:5:20: VersionedApi.Views.UserView.render/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def call(conn, opts) do
+    │            ~~~~
+    │
+    └─ /tmp/eval_1222294_2634/lib/versioned_api/plugs/api_version.ex:8:12: VersionedApi.Plugs.ApiVersion.call/2
+
+    warning: variable "u" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  9 │   def render("v2", u) do
+    │                    ~
+    │
+    └─ /tmp/eval_1222294_2634/lib/versioned_api/views/user_view.ex:9:20: VersionedApi.Views.UserView.render/2
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def call(conn, opts) do
+    │                  ~~~~
+    │
+    └─ /tmp/eval_1222294_2634/lib/versioned_api/plugs/api_version.ex:8:18: VersionedApi.Plugs.ApiVersion.call/2
+
+    warning: unused alias Repo
+    │
+  4 │   alias SoftCrud.Repo
+    │   ~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:4:3
+
+    warning: unused import Ecto.Query
+    │
+  3 │   import Ecto.Query
+    │   ~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud/documents.ex:3:3
+
+    warning: variable "body" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 37 │   defp send_json(conn, status, body) do
+    │                                ~~~~
+    │
+    └─ /tmp/eval_1222294_2634/lib/versioned_api/router.ex:37:32: VersionedApi.Router.send_json/3
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 37 │   defp send_json(conn, status, body) do
+    │                  ~~~~
+    │
+    └─ /tmp/eval_1222294_2634/lib/versioned_api/router.ex:37:18: VersionedApi.Router.send_json/3
+
+    warning: variable "status" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 37 │   defp send_json(conn, status, body) do
+    │                        ~~~~~~
+    │
+    └─ /tmp/eval_1222294_2634/lib/versioned_api/router.ex:37:24: VersionedApi.Router.send_json/3
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  4 │   def call(conn, {:error, :not_found}) do
+    │            ~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/fallback_controller.ex:4:12: SoftCrudWeb.FallbackController.call/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def index(conn, params) do
+    │             ~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:7:13: SoftCrudWeb.DocumentController.index/2
+
+    warning: variable "params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def index(conn, params) do
+    │                   ~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:7:19: SoftCrudWeb.DocumentController.index/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def create(conn, %{"document" => document_params}) do
+    │              ~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:11:14: SoftCrudWeb.DocumentController.create/2
+
+    warning: variable "changeset" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def call(conn, {:error, %Ecto.Changeset{} = changeset}) do
+    │                                               ~~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/fallback_controller.ex:8:47: SoftCrudWeb.FallbackController.call/2
+
+    warning: variable "document_params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def create(conn, %{"document" => document_params}) do
+    │                                    ~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:11:36: SoftCrudWeb.DocumentController.create/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def call(conn, {:error, %Ecto.Changeset{} = changeset}) do
+    │            ~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/fallback_controller.ex:8:12: SoftCrudWeb.FallbackController.call/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 15 │   def show(conn, %{"id" => id} = params) do
+    │            ~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:15:12: SoftCrudWeb.DocumentController.show/2
+
+    warning: variable "id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 15 │   def show(conn, %{"id" => id} = params) do
+    │                            ~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:15:28: SoftCrudWeb.DocumentController.show/2
+
+    warning: function partial_create/1 is unused
+    │
+ 15 │   defp partial_create(list_of_attrs) do
+    │        ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog.ex:15:8: MyApp.Catalog (module)
+
+    warning: variable "params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 15 │   def show(conn, %{"id" => id} = params) do
+    │                                  ~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:15:34: SoftCrudWeb.DocumentController.show/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def update(conn, %{"id" => id, "document" => document_params}) do
+    │              ~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:19:14: SoftCrudWeb.DocumentController.update/2
+
+    warning: function insert_item/1 is unused
+    │
+ 23 │   defp insert_item(attrs) do
+    │        ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog.ex:23:8: MyApp.Catalog (module)
+
+    warning: variable "document_params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def update(conn, %{"id" => id, "document" => document_params}) do
+    │                                                ~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:19:48: SoftCrudWeb.DocumentController.update/2
+
+    warning: function insert_each/1 is unused
+    │
+ 19 │   defp insert_each(list_of_attrs) do
+    │        ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog.ex:19:8: MyApp.Catalog (module)
+
+    warning: variable "id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def update(conn, %{"id" => id, "document" => document_params}) do
+    │                              ~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:19:30: SoftCrudWeb.DocumentController.update/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 23 │   def delete(conn, %{"id" => id}) do
+    │              ~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:23:14: SoftCrudWeb.DocumentController.delete/2
+
+    warning: variable "id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 23 │   def delete(conn, %{"id" => id}) do
+    │                              ~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:23:30: SoftCrudWeb.DocumentController.delete/2
+
+    warning: function all_or_nothing/1 is unused
+    │
+ 11 │   defp all_or_nothing(list_of_attrs) do
+    │        ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog.ex:11:8: MyApp.Catalog (module)
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 27 │   def restore(conn, %{"id" => id}) do
+    │               ~~~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:27:15: SoftCrudWeb.DocumentController.restore/2
+
+    warning: variable "id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 27 │   def restore(conn, %{"id" => id}) do
+    │                               ~~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:27:31: SoftCrudWeb.DocumentController.restore/2
+
+    warning: unused alias Item
+    │
+  4 │   alias MyApp.Catalog.Item
+    │   ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog.ex:4:3
+
+    warning: unused alias Repo
+    │
+  3 │   alias MyApp.Repo
+    │   ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog.ex:3:3
+
+    warning: function parse_include_deleted/1 is unused
+    │
+ 31 │   defp parse_include_deleted(%{"include_deleted" => "true"}) do
+    │        ~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:31:8: SoftCrudWeb.DocumentController (module)
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 13 │   def changeset(item, attrs) do
+    │                       ~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog/item.ex:13:23: MyApp.Catalog.Item.changeset/2
+
+    warning: variable "item" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 13 │   def changeset(item, attrs) do
+    │                 ~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog/item.ex:13:17: MyApp.Catalog.Item.changeset/2
+
+    warning: unused import Plug.Conn
+    │
+  2 │   import Plug.Conn
+    │   ~
+    │
+    └─ /tmp/eval_1222294_2634/lib/versioned_api/plugs/api_version.ex:2:3
+
+    warning: unused alias Document
+    │
+  4 │   alias SoftCrud.Documents.Document
+    │   ~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:4:3
+
+    warning: unused alias Documents
+    │
+  3 │   alias SoftCrud.Documents
+    │   ~
+    │
+    └─ /tmp/eval_1221221_2628/lib/soft_crud_web/controllers/document_controller.ex:3:3
+
+.    warning: unused import Ecto.Changeset
+    │
+  3 │   import Ecto.Changeset
+    │   ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app/catalog/item.ex:3:3
+
+.    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  5 │   def create(conn, %{"items" => items}) when is_list(items) do
+    │              ~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:5:14: MyAppWeb.BulkItemController.create/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  9 │   def create(conn, _params) do
+    │              ~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:9:14: MyAppWeb.BulkItemController.create/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 13 │   defp create_all_or_nothing(conn, items) do
+    │                              ~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:13:30: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+    warning: variable "items" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 13 │   defp create_all_or_nothing(conn, items) do
+    │                                    ~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:13:36: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 17 │   defp create_partial(conn, items) do
+    │                       ~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:17:23: MyAppWeb.BulkItemController.create_partial/2
+
+    warning: variable "items" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 17 │   defp create_partial(conn, items) do
+    │                             ~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:17:29: MyAppWeb.BulkItemController.create_partial/2
+
+    warning: variable "index" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 21 │   defp result_json({index, :ok, _item}) do
+    │                     ~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:21:21: MyAppWeb.BulkItemController.result_json/1
+
+    warning: variable "changeset" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 25 │   defp result_json({index, :error, changeset}) do
+    │                                    ~~~~~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:25:36: MyAppWeb.BulkItemController.result_json/1
+
+    warning: variable "index" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 25 │   defp result_json({index, :error, changeset}) do
+    │                     ~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:25:21: MyAppWeb.BulkItemController.result_json/1
+
+    warning: variable "index" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 29 │   defp item_json({index, :ok, item}) do
+    │                   ~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:29:19: MyAppWeb.BulkItemController.item_json/1
+
+    warning: variable "item" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 29 │   defp item_json({index, :ok, item}) do
+    │                               ~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:29:31: MyAppWeb.BulkItemController.item_json/1
+
+    warning: variable "changeset" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 33 │   defp error_json(index, changeset) do
+    │                          ~~~~~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:33:26: MyAppWeb.BulkItemController.error_json/2
+
+    warning: variable "index" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 33 │   defp error_json(index, changeset) do
+    │                   ~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:33:19: MyAppWeb.BulkItemController.error_json/2
+
+    warning: variable "changeset" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 37 │   defp translate_errors(changeset) do
+    │                         ~~~~~~~~~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:37:25: MyAppWeb.BulkItemController.translate_errors/1
+
+    warning: function translate_errors/1 is unused
+    │
+ 37 │   defp translate_errors(changeset) do
+    │        ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:37:8: MyAppWeb.BulkItemController (module)
+
+    warning: function result_json/1 is unused
+    │
+ 21 │   defp result_json({index, :ok, _item}) do
+    │        ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:21:8: MyAppWeb.BulkItemController (module)
+
+    warning: function item_json/1 is unused
+    │
+ 29 │   defp item_json({index, :ok, item}) do
+    │        ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:29:8: MyAppWeb.BulkItemController (module)
+
+    warning: function error_json/2 is unused
+    │
+ 33 │   defp error_json(index, changeset) do
+    │        ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:33:8: MyAppWeb.BulkItemController (module)
+
+    warning: function create_partial/2 is unused
+    │
+ 17 │   defp create_partial(conn, items) do
+    │        ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:17:8: MyAppWeb.BulkItemController (module)
+
+    warning: function create_all_or_nothing/2 is unused
+    │
+ 13 │   defp create_all_or_nothing(conn, items) do
+    │        ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:13:8: MyAppWeb.BulkItemController (module)
+
+    warning: unused alias Catalog
+    │
+  3 │   alias MyApp.Catalog
+    │   ~
+    │
+    └─ /tmp/eval_1221510_2642/lib/my_app_web/controllers/bulk_item_controller.ex:3:3
+
+    warning: the following pattern will never match:
+
+        rendered = VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+
+    because the right-hand side has type:
+
+        none()
+
+    where "conn" was given the type:
+
+        # type: dynamic(%{..., assigns: %{..., api_version: binary()}})
+        # from: deps/plug/lib/plug/router.ex:28:48
+        VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+
+    where "user" was given the type:
+
+        # type: dynamic(%{created_at: binary(), email: binary(), first_name: binary(), last_name: binary()})
+        # from: deps/plug/lib/plug/router.ex:27:7
+        user
+
+    type warning found at:
+    │
+ 28 │ 
+    │                  ~
+    │
+    └─ deps/plug/lib/plug/router.ex:28:18: VersionedApi.Router.do_match/4
+
+....................................................................................................................................................................................    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 21 │   def start_link(opts) do
+    │                  ~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:21:18: StateMachine.start_link/1
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 27 │   def start(server, entity_id) do
+    │                     ~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:27:21: StateMachine.start/2
+
+    warning: variable "server" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 27 │   def start(server, entity_id) do
+    │             ~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:27:13: StateMachine.start/2
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 33 │   def get_state(server, entity_id) do
+    │                         ~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:33:25: StateMachine.get_state/2
+
+    warning: variable "server" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 33 │   def get_state(server, entity_id) do
+    │                 ~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:33:17: StateMachine.get_state/2
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 43 │   def transition(server, entity_id, event) do
+    │                          ~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:43:26: StateMachine.transition/3
+
+    warning: variable "event" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 43 │   def transition(server, entity_id, event) do
+    │                                     ~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:43:37: StateMachine.transition/3
+
+    warning: variable "server" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 43 │   def transition(server, entity_id, event) do
+    │                  ~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:43:18: StateMachine.transition/3
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 49 │   def history(server, entity_id) do
+    │                       ~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:49:23: StateMachine.history/2
+
+    warning: variable "server" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 49 │   def history(server, entity_id) do
+    │               ~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:49:15: StateMachine.history/2
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 60 │   def handle_call({:start, entity_id}, _from, state) do
+    │                            ~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:60:28: StateMachine.handle_call/3
+
+    warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 60 │   def handle_call({:start, entity_id}, _from, state) do
+    │                                               ~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:60:47: StateMachine.handle_call/3
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 65 │   def handle_call({:get_state, entity_id}, _from, state) do
+    │                                ~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:65:32: StateMachine.handle_call/3
+
+    warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 65 │   def handle_call({:get_state, entity_id}, _from, state) do
+    │                                                   ~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:65:51: StateMachine.handle_call/3
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 70 │   def handle_call({:transition, entity_id, event}, _from, state) do
+    │                                 ~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:70:33: StateMachine.handle_call/3
+
+    warning: variable "event" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 70 │   def handle_call({:transition, entity_id, event}, _from, state) do
+    │                                            ~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:70:44: StateMachine.handle_call/3
+
+    warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 70 │   def handle_call({:transition, entity_id, event}, _from, state) do
+    │                                                           ~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:70:59: StateMachine.handle_call/3
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 75 │   def handle_call({:history, entity_id}, _from, state) do
+    │                              ~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:75:30: StateMachine.handle_call/3
+
+    warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 75 │   def handle_call({:history, entity_id}, _from, state) do
+    │                                                 ~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:75:49: StateMachine.handle_call/3
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 80 │   defp load_latest_state(repo, entity_id) do
+    │                                ~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:80:32: StateMachine.load_latest_state/2
+
+    warning: variable "repo" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 80 │   defp load_latest_state(repo, entity_id) do
+    │                          ~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:80:26: StateMachine.load_latest_state/2
+
+    warning: variable "entities" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 85 │   defp entity_lookup(entities, entity_id) do
+    │                      ~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:85:22: StateMachine.entity_lookup/2
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 85 │   defp entity_lookup(entities, entity_id) do
+    │                                ~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:85:32: StateMachine.entity_lookup/2
+
+    warning: variable "current_state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 90 │   defp resolve_transition(current_state, event) do
+    │                           ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:90:27: StateMachine.resolve_transition/2
+
+    warning: variable "event" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 90 │   defp resolve_transition(current_state, event) do
+    │                                          ~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:90:42: StateMachine.resolve_transition/2
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 96 │   defp persist(repo, entity_id, event, from_state, to_state) do
+    │                      ~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:96:22: StateMachine.persist/5
+
+    warning: variable "event" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 96 │   defp persist(repo, entity_id, event, from_state, to_state) do
+    │                                 ~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:96:33: StateMachine.persist/5
+
+    warning: variable "from_state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 96 │   defp persist(repo, entity_id, event, from_state, to_state) do
+    │                                        ~~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:96:40: StateMachine.persist/5
+
+    warning: variable "repo" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 96 │   defp persist(repo, entity_id, event, from_state, to_state) do
+    │                ~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:96:16: StateMachine.persist/5
+
+    warning: variable "to_state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 96 │   defp persist(repo, entity_id, event, from_state, to_state) do
+    │                                                    ~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:96:52: StateMachine.persist/5
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 16 │   def changeset(transition \\ %__MODULE__{}, attrs) do
+    │                                              ~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/entity_transition.ex:16:46: EntityTransition.changeset/2
+
+    warning: variable "transition" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 16 │   def changeset(transition \\ %__MODULE__{}, attrs) do
+    │                 ~~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/entity_transition.ex:16:17: EntityTransition.changeset/2
+
+.    warning: function resolve_transition/2 is unused
+    │
+ 90 │   defp resolve_transition(current_state, event) do
+    │        ~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:90:8: StateMachine (module)
+
+    warning: function persist/5 is unused
+    │
+ 96 │   defp persist(repo, entity_id, event, from_state, to_state) do
+    │        ~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:96:8: StateMachine (module)
+
+    warning: function load_latest_state/2 is unused
+    │
+ 80 │   defp load_latest_state(repo, entity_id) do
+    │        ~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:80:8: StateMachine (module)
+
+    warning: function entity_lookup/2 is unused
+    │
+ 85 │   defp entity_lookup(entities, entity_id) do
+    │        ~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:85:8: StateMachine (module)
+
+    warning: module attribute @required was set but never used
+    │
+ 14 │   @required [:entity_id, :event, :from_state, :to_state]
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/entity_transition.ex:14: EntityTransition (module)
+
+    warning: unused import Ecto.Changeset
+    │
+  3 │   import Ecto.Changeset
+    │   ~
+    │
+    └─ /tmp/eval_1237268_2633/lib/entity_transition.ex:3:3
+
+    warning: module attribute @initial_state was set but never used
+    │
+ 14 │   @initial_state :pending
+    │   ~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:14: StateMachine (module)
+
+    warning: module attribute @states was set but never used
+    │
+ 13 │   @states [:pending, :confirmed, :shipped, :delivered, :cancelled]
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:13: StateMachine (module)
+
+    warning: module attribute @transitions was set but never used
+    │
+  6 │   @transitions %{
+    │   ~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:6: StateMachine (module)
+
+    warning: unused import Ecto.Query
+    │
+  4 │   import Ecto.Query, only: [from: 2]
+    │   ~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:4:3
+
+    warning: unused require Logger
+    │
+  3 │   require Logger
+    │   ~
+    │
+    └─ /tmp/eval_1237268_2633/lib/state_machine.ex:3:3
+
+........................................................................................................    warning: variable "params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 18 │   def list_items(params \\ %{}) do
+    │                  ~~~~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/items.ex:18:18: PaginatedList.Items.list_items/1
+
+    warning: variable "raw" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 22 │   defp parse_page(%{"page" => raw}) do
+    │                               ~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/items.ex:22:31: PaginatedList.Items.parse_page/1
+
+    warning: variable "raw" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 30 │   defp parse_page_size(%{"page_size" => raw}) do
+    │                                         ~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/items.ex:30:41: PaginatedList.Items.parse_page_size/1
+
+    warning: variable "page_size" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 42 │   defp compute_total_pages(total_count, page_size) do
+    │                                         ~~~~~~~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/items.ex:42:41: PaginatedList.Items.compute_total_pages/2
+
+    warning: variable "total_count" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 42 │   defp compute_total_pages(total_count, page_size) do
+    │                            ~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/items.ex:42:28: PaginatedList.Items.compute_total_pages/2
+
+    warning: function parse_page_size/1 is unused
+    │
+ 30 │   defp parse_page_size(%{"page_size" => raw}) do
+    │        ~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/items.ex:30:8: PaginatedList.Items (module)
+
+    warning: function parse_page/1 is unused
+    │
+ 22 │   defp parse_page(%{"page" => raw}) do
+    │        ~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/items.ex:22:8: PaginatedList.Items (module)
+
+    warning: function compute_total_pages/2 is unused
+    │
+ 38 │   defp compute_total_pages(0, _page_size) do
+    │        ~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/items.ex:38:8: PaginatedList.Items (module)
+
+.    warning: module attribute @max_page_size was set but never used
+    │
+  8 │   @max_page_size 100
+    │   ~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/items.ex:8: PaginatedList.Items (module)
+
+    warning: module attribute @default_page_size was set but never used
+    │
+  7 │   @default_page_size 20
+    │   ~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/items.ex:7: PaginatedList.Items (module)
+
+    warning: module attribute @default_page was set but never used
+    │
+  6 │   @default_page 1
+    │   ~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/items.ex:6: PaginatedList.Items (module)
+
+    warning: unused alias Repo
+    │
+  5 │   alias PaginatedList.Repo
+    │   ~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/items.ex:5:3
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def changeset(item, attrs) do
+    │                       ~~~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/item.ex:11:23: PaginatedList.Item.changeset/2
+
+    warning: variable "item" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def changeset(item, attrs) do
+    │                 ~~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/item.ex:11:17: PaginatedList.Item.changeset/2
+
+.    warning: unused import Ecto.Changeset
+    │
+  3 │   import Ecto.Changeset
+    │   ~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list/item.ex:3:3
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  5 │   def index(conn, params) do
+    │             ~~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list_web/controllers/item_controller.ex:5:13: PaginatedListWeb.ItemController.index/2
+
+    warning: variable "params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  5 │   def index(conn, params) do
+    │                   ~~~~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list_web/controllers/item_controller.ex:5:19: PaginatedListWeb.ItemController.index/2
+
+    warning: variable "item" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  9 │   defp serialize_item(item) do
+    │                       ~~~~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list_web/controllers/item_controller.ex:9:23: PaginatedListWeb.ItemController.serialize_item/1
+
+    warning: function serialize_item/1 is unused
+    │
+  9 │   defp serialize_item(item) do
+    │        ~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list_web/controllers/item_controller.ex:9:8: PaginatedListWeb.ItemController (module)
+
+    warning: unused alias Items
+    │
+  3 │   alias PaginatedList.Items
+    │   ~
+    │
+    └─ /tmp/eval_1246168_2626/lib/paginated_list_web/controllers/item_controller.ex:3:3
+
+..    warning: variable "changeset" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  6 │   def render("422.json", %{changeset: changeset}) do
+    │                                       ~~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/error_json.ex:6:39: SoftCrudWeb.ErrorJSON.render/2
+
+    warning: variable "documents" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  4 │   def index(%{documents: documents}) do
+    │                          ~~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_json.ex:4:26: SoftCrudWeb.DocumentJSON.index/1
+
+    warning: variable "template" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 10 │   def render(template, _assigns) do
+    │              ~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/error_json.ex:10:14: SoftCrudWeb.ErrorJSON.render/2
+
+.    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def show(%{document: document}) do
+    │                        ~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_json.ex:8:24: SoftCrudWeb.DocumentJSON.show/1
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 12 │   defp data(%Document{} = document) do
+    │                           ~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_json.ex:12:27: SoftCrudWeb.DocumentJSON.data/1
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def list_documents(opts \\ []) do
+    │                      ~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:7:22: SoftCrud.Documents.list_documents/1
+
+    warning: variable "id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def get_document(id, opts \\ []) do
+    │                    ~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:11:20: SoftCrud.Documents.get_document/2
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def get_document(id, opts \\ []) do
+    │                        ~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:11:24: SoftCrud.Documents.get_document/2
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 15 │   def create_document(attrs) do
+    │                       ~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:15:23: SoftCrud.Documents.create_document/1
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def update_document(%Document{} = document, attrs) do
+    │                                               ~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:19:47: SoftCrud.Documents.update_document/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def update_document(%Document{} = document, attrs) do
+    │                                     ~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:19:37: SoftCrud.Documents.update_document/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 23 │   def soft_delete_document(%Document{deleted_at: deleted_at} = document)
+    │                                                                ~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:23:64: SoftCrud.Documents.soft_delete_document/1
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 28 │   def soft_delete_document(%Document{} = document) do
+    │                                          ~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:28:42: SoftCrud.Documents.soft_delete_document/1
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 32 │   def restore_document(%Document{deleted_at: nil} = document) do
+    │                                                     ~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:32:53: SoftCrud.Documents.restore_document/1
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 36 │   def restore_document(%Document{} = document) do
+    │                                      ~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:36:38: SoftCrud.Documents.restore_document/1
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 40 │   defp maybe_exclude_deleted(query, true) do
+    │                              ~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:40:30: SoftCrud.Documents.maybe_exclude_deleted/2
+
+    warning: variable "query" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 44 │   defp maybe_exclude_deleted(query, false) do
+    │                              ~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:44:30: SoftCrud.Documents.maybe_exclude_deleted/2
+
+...    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 14 │   def changeset(document, attrs) do
+    │                           ~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents/document.ex:14:27: SoftCrud.Documents.Document.changeset/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 14 │   def changeset(document, attrs) do
+    │                 ~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents/document.ex:14:17: SoftCrud.Documents.Document.changeset/2
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def soft_delete_changeset(document, attrs) do
+    │                                       ~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents/document.ex:19:39: SoftCrud.Documents.Document.soft_delete_changeset/2
+
+    warning: variable "document" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def soft_delete_changeset(document, attrs) do
+    │                             ~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents/document.ex:19:29: SoftCrud.Documents.Document.soft_delete_changeset/2
+
+    warning: function data/1 is unused
+    │
+ 12 │   defp data(%Document{} = document) do
+    │        ~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_json.ex:12:8: SoftCrudWeb.DocumentJSON (module)
+
+    warning: unused import Ecto.Changeset
+    │
+  3 │   import Ecto.Changeset
+    │   ~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents/document.ex:3:3
+
+    warning: function maybe_exclude_deleted/2 is unused
+    │
+ 40 │   defp maybe_exclude_deleted(query, true) do
+    │        ~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:40:8: SoftCrud.Documents (module)
+
+.    warning: unused alias Repo
+    │
+  4 │   alias SoftCrud.Repo
+    │   ~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:4:3
+
+    warning: unused import Ecto.Query
+    │
+  3 │   import Ecto.Query
+    │   ~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud/documents.ex:3:3
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  4 │   def call(conn, {:error, :not_found}) do
+    │            ~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/fallback_controller.ex:4:12: SoftCrudWeb.FallbackController.call/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def index(conn, params) do
+    │             ~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:7:13: SoftCrudWeb.DocumentController.index/2
+
+    warning: variable "changeset" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def call(conn, {:error, %Ecto.Changeset{} = changeset}) do
+    │                                               ~~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/fallback_controller.ex:8:47: SoftCrudWeb.FallbackController.call/2
+
+    warning: variable "params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def index(conn, params) do
+    │                   ~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:7:19: SoftCrudWeb.DocumentController.index/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def call(conn, {:error, %Ecto.Changeset{} = changeset}) do
+    │            ~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/fallback_controller.ex:8:12: SoftCrudWeb.FallbackController.call/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def create(conn, %{"document" => document_params}) do
+    │              ~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:11:14: SoftCrudWeb.DocumentController.create/2
+
+    warning: variable "document_params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   def create(conn, %{"document" => document_params}) do
+    │                                    ~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:11:36: SoftCrudWeb.DocumentController.create/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 15 │   def show(conn, %{"id" => id} = params) do
+    │            ~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:15:12: SoftCrudWeb.DocumentController.show/2
+
+    warning: variable "id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 15 │   def show(conn, %{"id" => id} = params) do
+    │                            ~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:15:28: SoftCrudWeb.DocumentController.show/2
+
+    warning: variable "params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 15 │   def show(conn, %{"id" => id} = params) do
+    │                                  ~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:15:34: SoftCrudWeb.DocumentController.show/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def update(conn, %{"id" => id, "document" => document_params}) do
+    │              ~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:19:14: SoftCrudWeb.DocumentController.update/2
+
+    warning: variable "document_params" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def update(conn, %{"id" => id, "document" => document_params}) do
+    │                                                ~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:19:48: SoftCrudWeb.DocumentController.update/2
+
+    warning: variable "id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   def update(conn, %{"id" => id, "document" => document_params}) do
+    │                              ~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:19:30: SoftCrudWeb.DocumentController.update/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 23 │   def delete(conn, %{"id" => id}) do
+    │              ~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:23:14: SoftCrudWeb.DocumentController.delete/2
+
+    warning: variable "id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 23 │   def delete(conn, %{"id" => id}) do
+    │                              ~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:23:30: SoftCrudWeb.DocumentController.delete/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 27 │   def restore(conn, %{"id" => id}) do
+    │               ~~~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:27:15: SoftCrudWeb.DocumentController.restore/2
+
+    warning: variable "id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 27 │   def restore(conn, %{"id" => id}) do
+    │                               ~~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:27:31: SoftCrudWeb.DocumentController.restore/2
+
+    warning: function parse_include_deleted/1 is unused
+    │
+ 31 │   defp parse_include_deleted(%{"include_deleted" => "true"}) do
+    │        ~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:31:8: SoftCrudWeb.DocumentController (module)
+
+    warning: unused alias Document
+    │
+  4 │   alias SoftCrud.Documents.Document
+    │   ~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:4:3
+
+    warning: unused alias Documents
+    │
+  3 │   alias SoftCrud.Documents
+    │   ~
+    │
+    └─ /tmp/eval_1246812_2638/lib/soft_crud_web/controllers/document_controller.ex:3:3
+
+.    warning: variable "list_of_attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def bulk_create_items(list_of_attrs, opts \\ []) do
+    │                         ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog.ex:7:25: MyApp.Catalog.bulk_create_items/2
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  7 │   def bulk_create_items(list_of_attrs, opts \\ []) do
+    │                                        ~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog.ex:7:40: MyApp.Catalog.bulk_create_items/2
+
+    warning: variable "list_of_attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 11 │   defp all_or_nothing(list_of_attrs) do
+    │                       ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog.ex:11:23: MyApp.Catalog.all_or_nothing/1
+
+    warning: variable "list_of_attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 15 │   defp partial_create(list_of_attrs) do
+    │                       ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog.ex:15:23: MyApp.Catalog.partial_create/1
+
+    warning: variable "list_of_attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 19 │   defp insert_each(list_of_attrs) do
+    │                    ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog.ex:19:20: MyApp.Catalog.insert_each/1
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 23 │   defp insert_item(attrs) do
+    │                    ~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog.ex:23:20: MyApp.Catalog.insert_item/1
+
+....    warning: function partial_create/1 is unused
+    │
+ 15 │   defp partial_create(list_of_attrs) do
+    │        ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog.ex:15:8: MyApp.Catalog (module)
+
+    warning: function insert_item/1 is unused
+    │
+ 23 │   defp insert_item(attrs) do
+    │        ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog.ex:23:8: MyApp.Catalog (module)
+
+    warning: function insert_each/1 is unused
+    │
+ 19 │   defp insert_each(list_of_attrs) do
+    │        ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog.ex:19:8: MyApp.Catalog (module)
+
+    warning: function all_or_nothing/1 is unused
+    │
+ 11 │   defp all_or_nothing(list_of_attrs) do
+    │        ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog.ex:11:8: MyApp.Catalog (module)
+
+    warning: unused alias Item
+    │
+  4 │   alias MyApp.Catalog.Item
+    │   ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog.ex:4:3
+
+    warning: unused alias Repo
+    │
+  3 │   alias MyApp.Repo
+    │   ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog.ex:3:3
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 13 │   def changeset(item, attrs) do
+    │                       ~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog/item.ex:13:23: MyApp.Catalog.Item.changeset/2
+
+    warning: variable "item" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 13 │   def changeset(item, attrs) do
+    │                 ~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog/item.ex:13:17: MyApp.Catalog.Item.changeset/2
+
+.    warning: unused import Ecto.Changeset
+    │
+  3 │   import Ecto.Changeset
+    │   ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app/catalog/item.ex:3:3
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  5 │   def create(conn, %{"items" => items}) when is_list(items) do
+    │              ~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:5:14: MyAppWeb.BulkItemController.create/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  9 │   def create(conn, _params) do
+    │              ~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:9:14: MyAppWeb.BulkItemController.create/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 13 │   defp create_all_or_nothing(conn, items) do
+    │                              ~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:13:30: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+    warning: variable "items" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 13 │   defp create_all_or_nothing(conn, items) do
+    │                                    ~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:13:36: MyAppWeb.BulkItemController.create_all_or_nothing/2
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 17 │   defp create_partial(conn, items) do
+    │                       ~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:17:23: MyAppWeb.BulkItemController.create_partial/2
+
+    warning: variable "items" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 17 │   defp create_partial(conn, items) do
+    │                             ~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:17:29: MyAppWeb.BulkItemController.create_partial/2
+
+    warning: variable "index" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 21 │   defp result_json({index, :ok, _item}) do
+    │                     ~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:21:21: MyAppWeb.BulkItemController.result_json/1
+
+    warning: variable "changeset" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 25 │   defp result_json({index, :error, changeset}) do
+    │                                    ~~~~~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:25:36: MyAppWeb.BulkItemController.result_json/1
+
+    warning: variable "index" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 25 │   defp result_json({index, :error, changeset}) do
+    │                     ~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:25:21: MyAppWeb.BulkItemController.result_json/1
+
+    warning: variable "index" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 29 │   defp item_json({index, :ok, item}) do
+    │                   ~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:29:19: MyAppWeb.BulkItemController.item_json/1
+
+    warning: variable "item" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 29 │   defp item_json({index, :ok, item}) do
+    │                               ~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:29:31: MyAppWeb.BulkItemController.item_json/1
+
+    warning: variable "changeset" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 33 │   defp error_json(index, changeset) do
+    │                          ~~~~~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:33:26: MyAppWeb.BulkItemController.error_json/2
+
+    warning: variable "index" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 33 │   defp error_json(index, changeset) do
+    │                   ~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:33:19: MyAppWeb.BulkItemController.error_json/2
+
+    warning: variable "changeset" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 37 │   defp translate_errors(changeset) do
+    │                         ~~~~~~~~~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:37:25: MyAppWeb.BulkItemController.translate_errors/1
+
+    warning: function translate_errors/1 is unused
+    │
+ 37 │   defp translate_errors(changeset) do
+    │        ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:37:8: MyAppWeb.BulkItemController (module)
+
+    warning: function result_json/1 is unused
+    │
+ 21 │   defp result_json({index, :ok, _item}) do
+    │        ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:21:8: MyAppWeb.BulkItemController (module)
+
+    warning: function item_json/1 is unused
+    │
+ 29 │   defp item_json({index, :ok, item}) do
+    │        ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:29:8: MyAppWeb.BulkItemController (module)
+
+    warning: function error_json/2 is unused
+    │
+ 33 │   defp error_json(index, changeset) do
+    │        ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:33:8: MyAppWeb.BulkItemController (module)
+
+    warning: function create_partial/2 is unused
+    │
+ 17 │   defp create_partial(conn, items) do
+    │        ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:17:8: MyAppWeb.BulkItemController (module)
+
+    warning: function create_all_or_nothing/2 is unused
+    │
+ 13 │   defp create_all_or_nothing(conn, items) do
+    │        ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:13:8: MyAppWeb.BulkItemController (module)
+
+    warning: unused alias Catalog
+    │
+  3 │   alias MyApp.Catalog
+    │   ~
+    │
+    └─ /tmp/eval_1246868_2630/lib/my_app_web/controllers/bulk_item_controller.ex:3:3
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def call(conn, opts) do
+    │            ~~~~
+    │
+    └─ /tmp/eval_1247701_2628/lib/versioned_api/plugs/api_version.ex:8:12: VersionedApi.Plugs.ApiVersion.call/2
+
+    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  8 │   def call(conn, opts) do
+    │                  ~~~~
+    │
+    └─ /tmp/eval_1247701_2628/lib/versioned_api/plugs/api_version.ex:8:18: VersionedApi.Plugs.ApiVersion.call/2
+
+    warning: variable "u" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  5 │   def render("v1", u) do
+    │                    ~
+    │
+    └─ /tmp/eval_1247701_2628/lib/versioned_api/views/user_view.ex:5:20: VersionedApi.Views.UserView.render/2
+
+    warning: variable "u" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+  9 │   def render("v2", u) do
+    │                    ~
+    │
+    └─ /tmp/eval_1247701_2628/lib/versioned_api/views/user_view.ex:9:20: VersionedApi.Views.UserView.render/2
+
+    warning: variable "body" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 37 │   defp send_json(conn, status, body) do
+    │                                ~~~~
+    │
+    └─ /tmp/eval_1247701_2628/lib/versioned_api/router.ex:37:32: VersionedApi.Router.send_json/3
+
+    warning: variable "conn" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 37 │   defp send_json(conn, status, body) do
+    │                  ~~~~
+    │
+    └─ /tmp/eval_1247701_2628/lib/versioned_api/router.ex:37:18: VersionedApi.Router.send_json/3
+
+    warning: variable "status" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 37 │   defp send_json(conn, status, body) do
+    │                        ~~~~~~
+    │
+    └─ /tmp/eval_1247701_2628/lib/versioned_api/router.ex:37:24: VersionedApi.Router.send_json/3
+
+.    warning: unused import Plug.Conn
+    │
+  2 │   import Plug.Conn
+    │   ~
+    │
+    └─ /tmp/eval_1247701_2628/lib/versioned_api/plugs/api_version.ex:2:3
+
+    warning: the following pattern will never match:
+
+        rendered = VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+
+    because the right-hand side has type:
+
+        none()
+
+    where "conn" was given the type:
+
+        # type: dynamic(%{..., assigns: %{..., api_version: binary()}})
+        # from: deps/plug/lib/plug/router.ex:28:48
+        VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+
+    where "user" was given the type:
+
+        # type: dynamic(%{created_at: binary(), email: binary(), first_name: binary(), last_name: binary()})
+        # from: deps/plug/lib/plug/router.ex:27:7
+        user
+
+    type warning found at:
+    │
+ 28 │ 
+    │                  ~
+    │
+    └─ deps/plug/lib/plug/router.ex:28:18: VersionedApi.Router.do_match/4
+
+..............................................................................................................................................................................    warning: variable "opts" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 21 │   def start_link(opts) do
+    │                  ~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:21:18: StateMachine.start_link/1
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 27 │   def start(server, entity_id) do
+    │                     ~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:27:21: StateMachine.start/2
+
+    warning: variable "server" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 27 │   def start(server, entity_id) do
+    │             ~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:27:13: StateMachine.start/2
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 33 │   def get_state(server, entity_id) do
+    │                         ~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:33:25: StateMachine.get_state/2
+
+    warning: variable "server" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 33 │   def get_state(server, entity_id) do
+    │                 ~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:33:17: StateMachine.get_state/2
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 43 │   def transition(server, entity_id, event) do
+    │                          ~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:43:26: StateMachine.transition/3
+
+    warning: variable "event" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 43 │   def transition(server, entity_id, event) do
+    │                                     ~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:43:37: StateMachine.transition/3
+
+    warning: variable "server" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 43 │   def transition(server, entity_id, event) do
+    │                  ~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:43:18: StateMachine.transition/3
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 49 │   def history(server, entity_id) do
+    │                       ~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:49:23: StateMachine.history/2
+
+    warning: variable "server" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 49 │   def history(server, entity_id) do
+    │               ~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:49:15: StateMachine.history/2
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 60 │   def handle_call({:start, entity_id}, _from, state) do
+    │                            ~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:60:28: StateMachine.handle_call/3
+
+    warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 60 │   def handle_call({:start, entity_id}, _from, state) do
+    │                                               ~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:60:47: StateMachine.handle_call/3
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 65 │   def handle_call({:get_state, entity_id}, _from, state) do
+    │                                ~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:65:32: StateMachine.handle_call/3
+
+    warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 65 │   def handle_call({:get_state, entity_id}, _from, state) do
+    │                                                   ~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:65:51: StateMachine.handle_call/3
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 70 │   def handle_call({:transition, entity_id, event}, _from, state) do
+    │                                 ~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:70:33: StateMachine.handle_call/3
+
+    warning: variable "event" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 70 │   def handle_call({:transition, entity_id, event}, _from, state) do
+    │                                            ~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:70:44: StateMachine.handle_call/3
+
+    warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 70 │   def handle_call({:transition, entity_id, event}, _from, state) do
+    │                                                           ~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:70:59: StateMachine.handle_call/3
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 75 │   def handle_call({:history, entity_id}, _from, state) do
+    │                              ~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:75:30: StateMachine.handle_call/3
+
+    warning: variable "state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 75 │   def handle_call({:history, entity_id}, _from, state) do
+    │                                                 ~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:75:49: StateMachine.handle_call/3
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 80 │   defp load_latest_state(repo, entity_id) do
+    │                                ~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:80:32: StateMachine.load_latest_state/2
+
+    warning: variable "repo" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 80 │   defp load_latest_state(repo, entity_id) do
+    │                          ~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:80:26: StateMachine.load_latest_state/2
+
+    warning: variable "entities" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 85 │   defp entity_lookup(entities, entity_id) do
+    │                      ~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:85:22: StateMachine.entity_lookup/2
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 85 │   defp entity_lookup(entities, entity_id) do
+    │                                ~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:85:32: StateMachine.entity_lookup/2
+
+    warning: variable "current_state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 90 │   defp resolve_transition(current_state, event) do
+    │                           ~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:90:27: StateMachine.resolve_transition/2
+
+    warning: variable "event" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 90 │   defp resolve_transition(current_state, event) do
+    │                                          ~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:90:42: StateMachine.resolve_transition/2
+
+    warning: variable "entity_id" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 96 │   defp persist(repo, entity_id, event, from_state, to_state) do
+    │                      ~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:96:22: StateMachine.persist/5
+
+    warning: variable "event" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 96 │   defp persist(repo, entity_id, event, from_state, to_state) do
+    │                                 ~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:96:33: StateMachine.persist/5
+
+    warning: variable "from_state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 96 │   defp persist(repo, entity_id, event, from_state, to_state) do
+    │                                        ~~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:96:40: StateMachine.persist/5
+
+    warning: variable "repo" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 96 │   defp persist(repo, entity_id, event, from_state, to_state) do
+    │                ~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:96:16: StateMachine.persist/5
+
+    warning: variable "to_state" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 96 │   defp persist(repo, entity_id, event, from_state, to_state) do
+    │                                                    ~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:96:52: StateMachine.persist/5
+
+    warning: variable "attrs" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 16 │   def changeset(transition \\ %__MODULE__{}, attrs) do
+    │                                              ~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/entity_transition.ex:16:46: EntityTransition.changeset/2
+
+    warning: variable "transition" is unused (if the variable is not meant to be used, prefix it with an underscore)
+    │
+ 16 │   def changeset(transition \\ %__MODULE__{}, attrs) do
+    │                 ~~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/entity_transition.ex:16:17: EntityTransition.changeset/2
+
+.    warning: function resolve_transition/2 is unused
+    │
+ 90 │   defp resolve_transition(current_state, event) do
+    │        ~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:90:8: StateMachine (module)
+
+    warning: function persist/5 is unused
+    │
+ 96 │   defp persist(repo, entity_id, event, from_state, to_state) do
+    │        ~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:96:8: StateMachine (module)
+
+    warning: function load_latest_state/2 is unused
+    │
+ 80 │   defp load_latest_state(repo, entity_id) do
+    │        ~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:80:8: StateMachine (module)
+
+    warning: function entity_lookup/2 is unused
+    │
+ 85 │   defp entity_lookup(entities, entity_id) do
+    │        ~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:85:8: StateMachine (module)
+
+.    warning: module attribute @required was set but never used
+    │
+ 14 │   @required [:entity_id, :event, :from_state, :to_state]
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/entity_transition.ex:14: EntityTransition (module)
+
+    warning: unused import Ecto.Changeset
+    │
+  3 │   import Ecto.Changeset
+    │   ~
+    │
+    └─ /tmp/eval_1262566_2632/lib/entity_transition.ex:3:3
+
+    warning: module attribute @initial_state was set but never used
+    │
+ 14 │   @initial_state :pending
+    │   ~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:14: StateMachine (module)
+
+    warning: module attribute @states was set but never used
+    │
+ 13 │   @states [:pending, :confirmed, :shipped, :delivered, :cancelled]
+    │   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:13: StateMachine (module)
+
+    warning: module attribute @transitions was set but never used
+    │
+  6 │   @transitions %{
+    │   ~~~~~~~~~~~~~~~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:6: StateMachine (module)
+
+    warning: unused import Ecto.Query
+    │
+  4 │   import Ecto.Query, only: [from: 2]
+    │   ~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:4:3
+
+    warning: unused require Logger
+    │
+  3 │   require Logger
+    │   ~
+    │
+    └─ /tmp/eval_1262566_2632/lib/state_machine.ex:3:3
+
+................................................
+=== VALIDATION SUMMARY ===
+  whole-mutation: all pass ✓
+
+ALL HARNESSES KILL THEIR MUTANT ✓
+Concurrency: 16 (EVAL_CONCURRENCY to override)
+  corpus-integrity: all pass ✓
+FIM mutation: 830 tasks ...
+..............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+=== VALIDATION SUMMARY ===
+  fim-mutation: all pass ✓
+
+ALL FIM TARGETS EXERCISED ✓
+PHASE-GATES-ALL-GREEN

@@ -1,0 +1,384 @@
+[22m06:42:29.869 [info] FIM 095_003_currency_precision_money_module_fim01 → 095_003_currency_precision_money_module_04: target from_major/2[0m
+[36m06:42:29.869 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m06:42:29.869 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `from_major/2`.
+
+Generate a prompt describing how to implement `from_major/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `from_major/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `from_major/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `from_major/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Currency-Precision Money Module
+
+Write me an Elixir module called `Money` that handles multi-currency
+arithmetic where **each currency has its own number of decimal places** (its
+minor-unit exponent). Amounts are stored internally as **integer minor units**
+(cents for USD, whole yen for JPY, thousandths of a dinar for BHD) to avoid any
+floating-point representation problems.
+
+## Supported currencies and their exponents
+
+Your module must know these currencies and exponents:
+
+| currency | exponent | example                         |
+|----------|----------|---------------------------------|
+| `:USD`   | 2        | `12345` minor units = `123.45`  |
+| `:EUR`   | 2        | `12345` = `123.45`              |
+| `:GBP`   | 2        | `12345` = `123.45`              |
+| `:JPY`   | 0        | `500` = `500`                   |
+| `:KWD`   | 3        | `1234567` = `1234.567`          |
+| `:BHD`   | 3        | `1234567` = `1234.567`          |
+
+## The struct
+
+`Money` must be a struct with exactly two fields:
+
+- `:amount` — an integer number of **minor units** (may be negative)
+- `:currency` — a supported currency atom
+
+## Public API
+
+### `Money.new(minor_units, currency)`
+
+Creates a money struct directly from an **integer** number of minor units and a
+**supported currency** atom. If `minor_units` is not an integer, or `currency`
+is not a supported currency, raise `ArgumentError`.
+
+```elixir
+Money.new(12345, :USD)  # => %Money{amount: 12345, currency: :USD}   (== 123.45)
+Money.new(500, :JPY)    # => %Money{amount: 500, currency: :JPY}     (== 500)
+Money.new(100, :XYZ)    # raises ArgumentError (unknown currency)
+```
+
+### `Money.from_major(major, currency)`
+
+Creates a money struct from a **major** amount (a number — integer or float,
+e.g. dollars/euros/yen) by scaling to minor units using the currency's exponent
+and rounding to the nearest whole minor unit (round halves away from zero).
+
+```elixir
+Money.from_major(12.34, :USD)  # => %Money{amount: 1234, currency: :USD}
+Money.from_major(500, :JPY)    # => %Money{amount: 500,  currency: :JPY}
+Money.from_major(1.2345, :BHD) # => %Money{amount: 1234, currency: :BHD}  (1.2345 -> 1234.5 -> 1235? no: 1.2345*1000=1234.5 -> 1235)
+```
+
+(`from_major(1.2345, :BHD)` scales `1.2345 * 1000 = 1234.5` and rounds to
+`1235`.) Raise `ArgumentError` for a non-number `major` or an unsupported
+currency.
+
+### `Money.add(a, b)` / `Money.subtract(a, b)`
+
+Add / subtract two money values. **Both must have the same currency.** Returns a
+new `Money` struct. If the currencies differ, raise `ArgumentError`.
+
+### `Money.multiply(money, factor)`
+
+Multiplies by a **number** (integer or float). The resulting minor-unit amount
+is rounded to the nearest whole minor unit (round halves away from zero). Same
+currency.
+
+### `Money.split(money, n)`
+
+Divides a money value evenly among `n` parties (`n` a **positive integer**),
+working in whole minor units. Returns a **list of `n` `Money` structs**;
+distribute the remainder one minor unit at a time to the first `rem(amount, n)`
+parties so the shares always sum back to the original amount. Raise
+`ArgumentError` if `n` is not a positive integer.
+
+```elixir
+Money.split(Money.new(1000, :JPY), 3)
+# => [%Money{amount: 334, ...}, %Money{amount: 333, ...}, %Money{amount: 333, ...}]
+```
+
+### `Money.exponent(currency)`
+
+Returns the integer exponent for a supported currency, or raises `ArgumentError`.
+
+### `Money.to_string(money)`
+
+Formats the amount with the correct number of decimal places for its currency,
+followed by a space and the currency code. Zero-exponent currencies have **no
+decimal point**. Negative amounts get a leading `-`.
+
+```elixir
+Money.to_string(Money.new(12345, :USD))    # => "123.45 USD"
+Money.to_string(Money.new(500, :JPY))      # => "500 JPY"
+Money.to_string(Money.new(1234567, :BHD))  # => "1234.567 BHD"
+Money.to_string(Money.new(-5, :USD))       # => "-0.05 USD"
+```
+
+## Constraints
+
+- Single file, module named `Money`.
+- Use only the Elixir/OTP standard library — no external dependencies.
+- Do not use floats for storage; only `from_major/2` and `multiply/2` may
+  involve a float, and their results must be rounded back to integer minor units.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Money do
+  @moduledoc """
+  Safe multi-currency arithmetic with per-currency precision.
+
+  Amounts are stored as integer minor units. Each supported currency has an
+  exponent (number of decimal places): USD/EUR/GBP = 2, JPY = 0, KWD/BHD = 3.
+  Formatting and major<->minor conversion respect the currency's exponent.
+  """
+
+  @enforce_keys [:amount, :currency]
+  defstruct [:amount, :currency]
+
+  @type t :: %__MODULE__{amount: integer(), currency: atom()}
+
+  @exponents %{USD: 2, EUR: 2, GBP: 2, JPY: 0, KWD: 3, BHD: 3}
+
+  @doc "Returns the minor-unit exponent for a supported currency."
+  @spec exponent(atom()) :: non_neg_integer()
+  def exponent(currency) do
+    case Map.fetch(@exponents, currency) do
+      {:ok, exp} -> exp
+      :error -> raise ArgumentError, "unsupported currency: #{inspect(currency)}"
+    end
+  end
+
+  @doc """
+  Creates a money struct from an integer number of minor units.
+
+  Raises `ArgumentError` if `minor_units` is not an integer or `currency` is
+  not supported.
+  """
+  @spec new(integer(), atom()) :: t()
+  def new(minor_units, currency) when is_integer(minor_units) and is_atom(currency) do
+    _ = exponent(currency)
+    %__MODULE__{amount: minor_units, currency: currency}
+  end
+
+  def new(_minor_units, _currency) do
+    raise ArgumentError, "minor_units must be an integer and currency must be a supported atom"
+  end
+
+  @doc """
+  Creates a money struct from a major amount by scaling to minor units and
+  rounding to the nearest whole minor unit.
+  """
+  @spec from_major(number(), atom()) :: t()
+  def from_major(major, currency) when is_number(major) and is_atom(currency) do
+    exp = exponent(currency)
+    %__MODULE__{amount: round(major * Integer.pow(10, exp)), currency: currency}
+  end
+
+  def from_major(_major, _currency) do
+    raise ArgumentError, "major must be a number and currency must be a supported atom"
+  end
+
+  @doc "Adds two money values of the same currency."
+  @spec add(t(), t()) :: t()
+  def add(%__MODULE__{amount: a, currency: cur}, %__MODULE__{amount: b, currency: cur}) do
+    %__MODULE__{amount: a + b, currency: cur}
+  end
+
+  def add(%__MODULE__{currency: c1}, %__MODULE__{currency: c2}) do
+    raise ArgumentError, "cannot add different currencies: #{inspect(c1)} and #{inspect(c2)}"
+  end
+
+  @doc "Subtracts `b` from `a` when both share the same currency."
+  @spec subtract(t(), t()) :: t()
+  def subtract(%__MODULE__{amount: a, currency: cur}, %__MODULE__{amount: b, currency: cur}) do
+    %__MODULE__{amount: a - b, currency: cur}
+  end
+
+  def subtract(%__MODULE__{currency: c1}, %__MODULE__{currency: c2}) do
+    raise ArgumentError, "cannot subtract different currencies: #{inspect(c1)} and #{inspect(c2)}"
+  end
+
+  @doc "Multiplies a money value by a number, rounding to a whole minor unit (truncated)[0m
+[36m06:42:56.757 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the Middle: `Money.from_major/2`
+
+Implement the public `from_major/2` function for the `Money` module below.
+
+`from_major(major, currency)` creates a `Money` struct from a **major** amount
+(`major` may be an integer or a float, e.g. dollars/euros/yen). When both
+`major` is a number and `currency` is an atom, look up the currency's exponent
+via `exponent/1`, scale the major amount to minor units by multiplying by
+`10` raised to that exponent (use `Integer.pow(10, exp)`), and round the result
+to the nearest whole minor unit with `round/1` (which rounds halves away from
+zero). Wrap the resulting integer amount and the currency in a `%Money{}`
+struct.
+
+For any other input (a non-number `major`, or a non-atom/unsupported
+`currency`), raise `ArgumentError`. Note that the `is_number(major) and
+is_atom(currency)` guard on the primary clause routes unsupported *atom*
+currencies into `exponent/1`, which raises `ArgumentError` on its own; the
+fallback clause handles the remaining cases with the message
+`"major must be a number and currency must be a supported atom"`.
+
+Examples:
+
+```elixir
+Money.from_major(12.34, :USD)  # => %Money{amount: 1234, currency: :USD}
+Money.from_major(500, :JPY)    # => %Money{amount: 500,  currency: :JPY}
+Money.from_major(1.2345, :BHD) # => %Money{amount: 1235, currency: :BHD}
+```
+
+```elixir
+defmodule Money do
+  @moduledoc """
+  Safe multi-currency arithmetic with per-currency precision.
+
+  Amounts are stored as integer minor units. Each supported currency has an
+  exponent (number of decimal places): USD/EUR/GBP = 2, JPY = 0, KWD/BHD = 3.
+  Formatting and major<->minor conversion respect the currency's exponent.
+  """
+
+  @enforce_keys [:amount, :currency]
+  defstruct [:amount, :currency]
+
+  @type t :: %__MODULE__{amount: integer(), currency: atom()}
+
+  @exponents %{USD: 2, EUR: 2, GBP: 2, JPY: 0, KWD: 3, BHD: 3}
+
+  @doc "Returns the minor-unit exponent for a supported currency."
+  @spec exponent(atom()) :: non_neg_integer()
+  def exponent(currency) do
+    case Map.fetch(@exponents, currency) do
+      {:ok, exp} -> exp
+      :error -> raise ArgumentError, "unsupported currency: #{inspect(currency)}"
+    end
+  end
+
+  @doc """
+  Creates a money struct from an integer number of minor units.
+
+  Raises `ArgumentError` if `minor_units` is not an integer or `currency` is
+  not supported.
+  """
+  @spec new(integer(), atom()) :: t()
+  def new(minor_units, currency) when is_integer(minor_units) and is_atom(currency) do
+    _ = exponent(currency)
+    %__MODULE__{amount: minor_units, currency: currency}
+  end
+
+  def new(_minor_units, _currency) do
+    raise ArgumentError, "minor_units must be an integer and currency must be a supported atom"
+  end
+
+  @doc """
+  Creates a money struct from a major amount by scaling to minor units and
+  rounding to the nearest whole minor unit.
+  """
+  @spec from_major(number(), atom()) :: t()
+  def from_major(major, currency) when is_number(major) and is_atom(currency) do
+    # TODO
+  end
+
+  def from_major(_major, _currency) do
+    raise ArgumentError, "major must be a number and currency must be a supported atom"
+  end
+
+  @doc "Adds two money values of the same currency."
+  @spec add(t(), t()) :: t()
+  def add(%__MODULE__{amount: a, currency: cur}, %__MODULE__{amount: b, currency: cur}) do
+    %__MODULE__{amount: a + b, currency: cur}
+  end
+
+  def add(%__MODULE__{currency: c1}, %__MODULE__{currency: c2}) do
+    raise ArgumentError, "cannot add different currencies: #{inspect(c1)} and #{inspect(c2)}"
+  end
+
+  @doc "Subtracts `b` from `a` when both share the same currency."
+  @spec subtract(t(), t()) :: t()
+  def subtract(%__MODULE__{amount: a, currency: cur}, %__MODULE__{amount: b, currency: cur}) do
+    %__MODULE__{amount: a - b, currency: cur}
+  end
+
+  def subtract(%__MODULE__{currency: c1}, %__MODULE__{currency: c2}) do
+    raise ArgumentError, "cannot subtract different currencies: #{inspect(c1)} and #{inspect(c2)}"
+  end
+
+  @doc "Multiplies a money value by a number, rounding to a whole minor unit."
+  @spec multiply(t(), number()) :: t()
+  def multiply(%__MODULE__{amount: amount, currency: currency}, factor) when is_number(factor) do
+    %__MODULE__{amount: round(amount * factor), currency: currency}
+  end
+
+  def multiply(%__MODULE__{}, _factor) do
+    raise ArgumentError, "factor must be a number"
+  end
+
+  @doc """
+  Splits a money value evenly among `n` parties (a positive integer), working
+  in whole minor units. The remainder is given to the first `rem(amount, n)`
+  parties so shares sum back to the original.
+  """
+  @spec split(t(), pos_integer()) :: [t()]
+  def split(%__MODULE__{amount: amount, currency: currency}, n)
+      when is_integer(n) and n > 0 do
+    base = div(amount, n)
+    remainder = rem(amount, n)
+
+    Enum.map(0..(n - 1), fn i ->
+      cents = if i < remainder, do: base + 1, else: base
+      %__MODULE__{amount: cents, currency: currency}
+    end)
+  end
+
+  def split(%__MODULE__{}, _n) do
+    raise ArgumentError, "n must be a positive integer"
+  end
+
+  @doc "Formats the amount with currency-appropriate decimals and code."
+  @spec to_string(t()) :: String.t()
+  def to_string(%__MODULE__{amount: amount, currency: currency}) do
+    exp = exponent(currency)
+    sign = if amount < 0, do: "-", else: ""
+    abs_amount = abs(amount)
+
+    if exp == 0 do
+      "#{sign}#{abs_amount} #{currency}"
+    else
+      divisor = Integer.pow(10, exp)
+      major = div(abs_amount, divisor)
+      minor = rem(abs_amount, divisor)
+      minor_str = minor |> Integer.to_string() |> String.pad_leading(exp, "0")
+      "#{sign}#{major}.#{minor_str} #{currency}"
+    end
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  def from_major(major, currency) when is_number(major) and is_atom(currency) do
+    exp = exponent(currency)
+    %__MODULE__{amount: round(major * Integer.pow(10, exp)), currency: currency}
+  end
+</file>[0m
+[36m06:42:56.757 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4375, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4375, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4375, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4375, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 2583, "type" => "message"}], "output_tokens" => 2583, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m06:42:56.776 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_095_003_currency_precision_money_module_04/095_003_currency_precision_money_module_04 solution.ex[0m
+[36m06:42:57.411 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":4,"lines_over_98":0,"max_line_length":80,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"095_003_currency_precision_money_module_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_095_003_currency_precision_money_module_04/095_003_currency_precision_money_module_04/solution.ex","task":"095_003_currency_precision_money_module_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-07T04:42:57.390021Z"}[0m
+[36m06:42:57.412 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_095_003_currency_precision_money_module_04/095_003_currency_precision_money_module_04 .gen_staging/fim_095_003_currency_precision_money_module_04/mutant.ex[0m
+[36m06:42:58.078 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":78,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"095_003_currency_precision_money_module_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":0.83,"reasons":["tests: 5/21 failed"],"tests":0.76},"shape":"fim","solution_file":".gen_staging/fim_095_003_currency_precision_money_module_04/mutant.ex","task":"095_003_currency_precision_money_module_04","test_failures":[{"message":"MUTATION","module":"MoneyTest","test":"test from_major/2 scales by the currency exponent"},{"message":"MUTATION","module":"MoneyTest","test":"test from_major/2 rounds halves away from zero"},{"message":"MUTATION","module":"MoneyTest","test":"test from_major/2 preserves currency and raises on bad input"},{"message":"MUTATION","module":"MoneyTest","test":"test round-trip from_major then to_string is stable"},{"message":"MUTATION","module":"MoneyTest","test":"test chained operations behave consistently"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-07T04:42:58.058695Z"}[0m
+[36m06:42:58.078 [debug] fim mutation gate: killed[0m
+[22m06:42:58.079 [info] promoted 095_003_currency_precision_money_module_04 -> tasks/095_003_currency_precision_money_module_04[0m

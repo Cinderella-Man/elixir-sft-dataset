@@ -1,0 +1,413 @@
+14:16:18.214 [info] FIM 061_003_timeout_and_retry_parallel_map_fim03 → 061_003_timeout_and_retry_parallel_map_04: target pmap/3
+14:16:18.214 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:16:18.214 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `pmap/3`.
+
+Generate a prompt describing how to implement `pmap/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `pmap/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `pmap/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `pmap/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `RetryMap` that applies a function to a collection in
+parallel, enforcing a maximum concurrency limit **and** giving each element a per-attempt
+timeout with bounded retries.
+
+I need one public function:
+- `RetryMap.pmap(collection, func, opts)` where `opts` is a keyword list accepting:
+  - `:max_concurrency` — the maximum number of tasks alive at once (default `5`)
+  - `:timeout` — the per-attempt timeout in milliseconds (default `5000`)
+  - `:max_attempts` — the maximum number of attempts per element (default `1`)
+
+It applies `func` to each element in parallel with at most `max_concurrency` tasks alive
+simultaneously, and returns a list — in the **same order** as the input — of tagged
+results, one per element.
+
+Per-element semantics:
+- If an attempt returns a value within `:timeout`, that element's result is `{:ok, value}`.
+- If an attempt does **not** finish within `:timeout`, kill that attempt and retry, up to a
+  total of `:max_attempts` attempts. If all attempts time out, the result is
+  `{:error, :timeout}`.
+- If `func` raises (or the task exits abnormally), that is a **permanent** failure — do
+  **not** retry — and the result is `{:error, {:exception, reason}}` (or a similarly tagged
+  error for a non-exception failure). A crash or timeout for one element must not affect any
+  other element.
+
+For concurrency enforcement: use a pool/semaphore approach so that at no point are more than
+`max_concurrency` tasks alive simultaneously. A freed slot is filled from the queue once an
+element reaches a terminal result; a retry of a timed-out element reuses that element's slot.
+
+You will also need to write a helper GenServer called `ConcurrencyCounter` in the same file.
+It must expose:
+- `ConcurrencyCounter.start_link(opts)` — starts the process, accepts `:name`
+- `ConcurrencyCounter.increment(server)` — increments the active count, returns the new value
+- `ConcurrencyCounter.decrement(server)` — decrements the active count, returns the new value
+- `ConcurrencyCounter.peak(server)` — returns the highest value the counter has ever reached
+
+`ConcurrencyCounter` is intended for use in tests to verify the concurrency limit is actually
+respected at runtime; your `pmap` implementation itself does not need to use it.
+
+Give me the complete implementation in a single file. Use only OTP and the standard library —
+no external dependencies. Do not use `Task.async_stream`; implement the scheduling, timeout,
+and retry logic yourself using `spawn_monitor`, `Process.send_after`, and `Process.exit`.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule ConcurrencyCounter do
+  @moduledoc """
+  A GenServer that tracks an active-task count and remembers the highest value
+  it has ever reached (the "peak"). Intended for tests to verify that
+  `RetryMap.pmap/3` never exceeds its declared concurrency limit at runtime.
+  """
+
+  use GenServer
+
+  @doc """
+  Starts the counter process.
+
+  Accepts a `:name` option (defaulting to `#{inspect(__MODULE__)}`); any other
+  options are forwarded to `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, server_opts} =
+      case Keyword.pop(opts, :name) do
+        {nil, rest} -> {__MODULE__, rest}
+        {name, rest} -> {name, rest}
+      end
+
+    GenServer.start_link(__MODULE__, %{count: 0, peak: 0}, [{:name, name} | server_opts])
+  end
+
+  @doc "Increments the active count and returns the new value."
+  @spec increment(GenServer.server()) :: integer()
+  def increment(server), do: GenServer.call(server, :increment)
+
+  @doc "Decrements the active count and returns the new value."
+  @spec decrement(GenServer.server()) :: integer()
+  def decrement(server), do: GenServer.call(server, :decrement)
+
+  @doc "Returns the highest value the counter has ever reached."
+  @spec peak(GenServer.server()) :: integer()
+  def peak(server), do: GenServer.call(server, :peak)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:increment, _from, %{count: count, peak: peak} = state) do
+    new_count = count + 1
+    {:reply, new_count, %{state | count: new_count, peak: max(new_count, peak)}}
+  end
+
+  def handle_call(:decrement, _from, %{count: count} = state) do
+    new_count = count - 1
+    {:reply, new_count, %{state | count: new_count}}
+  end
+
+  def handle_call(:peak, _from, %{peak: peak} = state), do: {:reply, peak, state}
+end
+
+
+defmodule RetryMap do
+  @moduledoc """
+  Concurrency-limited parallel map with per-attempt timeouts and bounded retries.
+
+  Each element yields a tagged result: `{:ok, value}` on success,
+  `{:error, :timeout}` after exhausting timed-out attempts, or a tagged error
+  such as `{:error, {:exception, reason}}` for a permanent (non-retried) crash.
+  """
+
+  @doc """
+  Applies `func` to each element of `collection` in parallel and returns a list
+  of tagged results in the **same order** as the input.
+
+  At most `:max_concurrency` tasks are alive at once. Each attempt is given
+  `:timeout` milliseconds; a timed-out attempt is killed and retried up to
+  `:max_attempts` total attempts before yielding `{:error, :timeout}`. A raised
+  exception (or abnormal exit) is a permanent failure and is not retried.
+
+  ## Options
+
+    * `:max_concurrency` — maximum tasks alive simultaneously (default `5`)
+    * `:timeout` — per-attempt timeout in milliseconds (default `5000`)
+    * `:max_attempts` — maximum attempts per element (default `1`)
+  """
+  @spec pmap(Enumerable.t(), (term() -> term()), keyword()) :: [{:ok, term()} | {:error, term()}]
+  def pmap(collection, func, opts) when is_function(func, 1) and is_list(opts) do
+    max_concurrency = Keyword.get(opts, :max_concurrency, 5)
+    timeout = Keyword.get(opts, :timeout, 5000)
+    max_attempts = Keyword.get(opts, :max_attempts, 1)
+
+    unless is_integer(max_concurrency) and max_concurrency >= 1,
+      do: raise(ArgumentError, ":max_concurrency must be a positive integer")
+
+    unless is_integer(timeout) and timeout >= 0,
+      do: raise(ArgumentError, ":timeout must be a non-negative integer")
+
+    unless is_integer(max_attempts) and max_attempts >= 1,
+      do: raise(ArgumentError, ":max_attempts must be a positive integer")
+
+    indexed =
+      collection
+      |> Enum.to_list()
+      |> Enum.with_index()
+      |> Enum.map(fn {elem, idx} -> {elem, idx, max_attempts} end)
+
+    total = length(indexed)
+
+    if total == 0 do
+      []
+    else
+      cfg = %{func: func, timeout: timeout}
+      {seed, queue} = Enum.split(indexed, max_concurrency)
+
+      running =
+        Enum.reduce(seed, %{}, fn {elem, idx, attempts}, acc ->
+          {ref, entry} = start_attempt(self(), func, elem, idx, attempts, timeout)
+          Map.put(acc, ref, entry)
+        end)
+
+      results = loop(running, queue, cfg, %{})
+      Enum.map(0..(total - 1), &Map.fetch!(results, &1))
+    end
+  end
+
+  # Spawns one attempt for `elem`, arms a per-attempt timeout, and returns the
+  # bookkeeping entry keyed by a fresh ref.
+  de (truncated)
+14:17:01.092 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the public `pmap/3` function of the `RetryMap` module.
+
+`pmap(collection, func, opts)` applies `func` to every element of `collection` in
+parallel and returns a list of tagged results in the **same order** as the input,
+one result per element.
+
+It reads three options from the `opts` keyword list:
+
+  * `:max_concurrency` — the maximum number of tasks alive at once (default `5`)
+  * `:timeout` — the per-attempt timeout in milliseconds (default `5000`)
+  * `:max_attempts` — the maximum number of attempts per element (default `1`)
+
+It must:
+
+  1. Read the three options with their defaults, then validate them, raising
+     `ArgumentError` if `:max_concurrency` is not a positive integer, if
+     `:timeout` is not a non-negative integer, or if `:max_attempts` is not a
+     positive integer.
+  2. Materialize `collection` into a list and pair each element with its original
+     index and its remaining attempt budget (`max_attempts`), so results can be
+     reassembled in input order. If the collection is empty, return `[]`.
+  3. Seed up to `max_concurrency` attempts (via the `start_attempt/6` helper),
+     keeping the remaining elements in a queue, and run the scheduling `loop/4`
+     until every element has reached a terminal result — filling a freed slot from
+     the queue once an element finishes, and reusing an element's slot for a retry.
+  4. Reassemble the collected results (a map keyed by index) into a list ordered
+     from index `0` to the last index, and return it.
+
+Per-element semantics (implemented by the private helpers, not by `pmap/3`
+directly): a value produced within `:timeout` yields `{:ok, value}`; a timed-out
+attempt is killed and retried up to `:max_attempts` before yielding
+`{:error, :timeout}`; a raised exception or abnormal exit is a permanent,
+non-retried failure tagged accordingly. A crash or timeout for one element must
+not affect any other element.
+
+The whole module is below. Only the body of `pmap/3` has been replaced with
+`# TODO`; every other function is complete.
+
+```elixir
+defmodule ConcurrencyCounter do
+  @moduledoc """
+  A GenServer that tracks an active-task count and remembers the highest value
+  it has ever reached (the "peak"). Intended for tests to verify that
+  `RetryMap.pmap/3` never exceeds its declared concurrency limit at runtime.
+  """
+
+  use GenServer
+
+  @doc """
+  Starts the counter process.
+
+  Accepts a `:name` option (defaulting to `#{inspect(__MODULE__)}`); any other
+  options are forwarded to `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, server_opts} =
+      case Keyword.pop(opts, :name) do
+        {nil, rest} -> {__MODULE__, rest}
+        {name, rest} -> {name, rest}
+      end
+
+    GenServer.start_link(__MODULE__, %{count: 0, peak: 0}, [{:name, name} | server_opts])
+  end
+
+  @doc "Increments the active count and returns the new value."
+  @spec increment(GenServer.server()) :: integer()
+  def increment(server), do: GenServer.call(server, :increment)
+
+  @doc "Decrements the active count and returns the new value."
+  @spec decrement(GenServer.server()) :: integer()
+  def decrement(server), do: GenServer.call(server, :decrement)
+
+  @doc "Returns the highest value the counter has ever reached."
+  @spec peak(GenServer.server()) :: integer()
+  def peak(server), do: GenServer.call(server, :peak)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call(:increment, _from, %{count: count, peak: peak} = state) do
+    new_count = count + 1
+    {:reply, new_count, %{state | count: new_count, peak: max(new_count, peak)}}
+  end
+
+  def handle_call(:decrement, _from, %{count: count} = state) do
+    new_count = count - 1
+    {:reply, new_count, %{state | count: new_count}}
+  end
+
+  def handle_call(:peak, _from, %{peak: peak} = state), do: {:reply, peak, state}
+end
+
+
+defmodule RetryMap do
+  @moduledoc """
+  Concurrency-limited parallel map with per-attempt timeouts and bounded retries.
+
+  Each element yields a tagged result: `{:ok, value}` on success,
+  `{:error, :timeout}` after exhausting timed-out attempts, or a tagged error
+  such as `{:error, {:exception, reason}}` for a permanent (non-retried) crash.
+  """
+
+  @doc """
+  Applies `func` to each element of `collection` in parallel and returns a list
+  of tagged results in the **same order** as the input.
+
+  At most `:max_concurrency` tasks are alive at once. Each attempt is given
+  `:timeout` milliseconds; a timed-out attempt is killed and retried up to
+  `:max_attempts` total attempts before yielding `{:error, :timeout}`. A raised
+  exception (or abnormal exit) is a permanent failure and is not retried.
+
+  ## Options
+
+    * `:max_concurrency` — maximum tasks alive simultaneously (default `5`)
+    * `:timeout` — per-attempt timeout in milliseconds (default `5000`)
+    * `:max_attempts` — maximum attempts per element (default `1`)
+  """
+  @spec pmap(Enumerable.t(), (term() -> term()), keyword()) :: [{:ok, term()} | {:error, term()}]
+  def pmap(collection, func, opts) when is_function(func, 1) and is_list(opts) do
+    # TODO
+  end
+
+  # Spawns one attempt for `elem`, arms a per-attempt timeout, and returns the
+  # bookkeeping entry keyed by a fresh ref.
+  defp start_attempt(parent, func, elem, idx, attempts_left, timeout) do
+    ref = make_ref()
+
+    {pid, mon} =
+      spawn_monitor(fn ->
+        result =
+          try do
+            {:ok, func.(elem)}
+          rescue
+            e -> {:error, {:exception, e}}
+          catch
+            :exit, r -> {:error, {:exit, r}}
+            :throw, t -> {:error, {:throw, t}}
+          end
+
+        send(parent, {ref, result})
+      end)
+
+    timer = Process.send_after(parent, {:timeout, ref}, timeout)
+    {ref, {pid, mon, idx, elem, attempts_left, timer}}
+  end
+
+  defp loop(running, queue, _cfg, results) when map_size(running) == 0 and queue == [] do
+    results
+  end
+
+  defp loop(running, queue, cfg, results) do
+    receive do
+      {ref, {:ok, value}} when is_map_key(running, ref) ->
+        {_pid, mon, idx, _elem, _al, timer} = Map.fetch!(running, ref)
+        cleanup(mon, timer)
+        running = Map.delete(running, ref)
+        results = Map.put(results, idx, {:ok, value})
+        {running, queue} = fill(running, queue, cfg)
+        loop(running, queue, cfg, results)
+
+      {ref, {:error, reason}} when is_map_key(running, ref) ->
+        {_pid, mon, idx, _elem, _al, timer} = Map.fetch!(running, ref)
+        cleanup(mon, timer)
+        running = Map.delete(running, ref)
+        results = Map.put(results, idx, {:error, reason})
+        {running, queue} = fill(running, queue, cfg)
+        loop(running, queue, cfg, results)
+
+      {:timeout, ref} when is_map_key(running, ref) ->
+        {pid, mon, idx, elem, attempts_left, timer} = Map.fetch!(running, ref)
+        cleanup(mon, timer)
+        Process.exit(pid, :kill)
+        drain(ref)
+        running = Map.delete(running, ref)
+        remaining = attempts_left - 1
+
+        if remaining > 0 do
+          {r, entry} = start_attempt(self(), cfg.func, elem, idx, remaining, cfg.timeout)
+          loop(Map.put(running, r, entry), queue, cfg, results)
+        else
+          results = Map.put(results, idx, {:error, :timeout})
+          {running, queue} = fill(running, queue, cfg)
+          loop(running, queue, cfg, results)
+        end
+
+      {:DOWN, mon, :process, _pid, reason} ->
+        case Enum.find(running, fn {_r, {_p, m, _i, _e, _a, _t}} -> m == mon end) do
+          {ref, {_pid, _mon, idx, _elem, _al, timer}} ->
+            Process.cancel_timer(timer)
+            drain(ref)
+            running = Map.delete(running, ref)
+            results = Map.put(results, idx, {:error, {:down, reason}})
+            {running, queue} = fill(running, queue, cfg)
+            loop(running, queue, cfg, results)
+
+          nil ->
+            loop(running, queue, cfg, results)
+        end
+
+      _other ->
+        loop(running, queue, cfg, results)
+    end
+  end
+
+  defp fill(running, [], _cfg), do: {running, [ (truncated)
+14:17:01.093 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4908, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4908, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4908, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4908, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 4129, "type" => "message"}], "output_tokens" => 4129, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:17:01.112 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_061_003_timeout_and_retry_parallel_map_04/061_003_timeout_and_retry_parallel_map_04 solution.ex
+14:17:02.355 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":38,"lines_over_98":0,"max_line_length":82,"mode":"fim","pipe_chain_count":3,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"061_003_timeout_and_retry_parallel_map_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_061_003_timeout_and_retry_parallel_map_04/061_003_timeout_and_retry_parallel_map_04/solution.ex","task":"061_003_timeout_and_retry_parallel_map_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-04T12:17:02.330849Z"}
+14:17:02.356 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_061_003_timeout_and_retry_parallel_map_04/061_003_timeout_and_retry_parallel_map_04 .gen_staging/fim_061_003_timeout_and_retry_parallel_map_04/mutant.ex
+14:17:02.979 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":79,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"parent":"061_003_timeout_and_retry_parallel_map_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.4,"mode":"fim","overall":0.32,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 8/9 failed"],"tests":0.11},"shape":"fim","solution_file":".gen_staging/fim_061_003_timeout_and_retry_parallel_map_04/mutant.ex","task":"061_003_timeout_and_retry_parallel_map_04","test_failures":[{"message":"MUTATION","module":"RetryMapTest","test":"test empty collection returns []"},{"message":"MUTATION","module":"RetryMapTest","test":"test all success returns tagged results in order"},{"message":"MUTATION","module":"RetryMapTest","test":"test order preserved when tasks finish out of order"},{"message":"MUTATION","module":"RetryMapTest","test":"test an element that times out once but succeeds on retry returns {:ok, value}"},{"message":"MUTATION","module":"RetryMapTest","test":"test an element that always times out returns {:error, :timeout} after exhausting attempts"},{"message":"MUTATION","module":"RetryMapTest","test":"test an exception is permanent and is NOT retried"},{"message":"MUTATION","module":"RetryMapTest","test":"test a crash in one element does not affect the others"},{"message":"MUTATION","module":"RetryMapTest","test":"test never exceeds max_concurrency simultaneous tasks"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-04T12:17:02.955909Z"}
+14:17:02.979 [debug] fim mutation gate: killed
+14:17:02.980 [info] promoted 061_003_timeout_and_retry_parallel_map_04 -> tasks/061_003_timeout_and_retry_parallel_map_04

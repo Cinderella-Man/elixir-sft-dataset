@@ -1,0 +1,426 @@
+[22m07:10:26.269 [info] FIM 096_003_stateful_sanitizer_server_with_policy_and_metrics_fim01 → 096_003_stateful_sanitizer_server_with_policy_and_metrics_02: target do_strip_html/1[0m
+[36m07:10:26.269 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m07:10:26.269 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `do_strip_html/1`.
+
+Generate a prompt describing how to implement `do_strip_html/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `do_strip_html/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `do_strip_html/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `do_strip_html/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Sanitizer` implemented as a **GenServer** that sanitizes user input while tracking metrics across concurrent callers. This is the stateful, process-based counterpart of a plain sanitizer: many client processes call into one server, which serializes state updates and aggregates counters safely.
+
+Public API:
+
+- `Sanitizer.start_link(opts \\ [])` — start the server. Supported options:
+  - `:name` — optional registered name.
+  - `:max_filename_length` — integer, default `255`. Filenames longer than this (after cleaning) are truncated to this length.
+
+- `Sanitizer.sanitize_identifier(server, input)` — clean a SQL identifier. Keep only `[A-Za-z0-9_]`; if empty after stripping return `{:error, :empty}`; if it starts with a digit prepend `_`; otherwise `{:ok, cleaned}`.
+
+- `Sanitizer.sanitize_filename(server, input)` — clean a filename. Strip null bytes, strip `/` and `\`, keep only `[A-Za-z0-9_.-]`, collapse runs of 2+ dots to one dot, trim leading/trailing dots. Empty result → `{:error, :empty}`. Otherwise truncate to `:max_filename_length` if needed and return `{:ok, cleaned}`.
+
+- `Sanitizer.strip_html(server, input)` — remove HTML. First remove `<script>…</script>` and `<style>…</style>` blocks **including their content** (case-insensitive, across newlines), then remove every remaining `<…>` tag, keeping surrounding text. Return `{:ok, cleaned, tags_stripped}` where `tags_stripped` is the total number of `<…>` tag tokens present in the original input.
+
+- `Sanitizer.metrics(server)` — return the current metrics map with these integer keys: `:identifiers`, `:identifiers_blocked`, `:filenames`, `:filenames_blocked`, `:filenames_truncated`, `:tags_stripped`, `:html_calls`.
+
+- `Sanitizer.reset_metrics(server)` — zero all metrics; reply `:ok`.
+
+Metric rules:
+- Every identifier call increments `:identifiers`; if it returned `{:error, :empty}` also increment `:identifiers_blocked`.
+- Every filename call increments `:filenames`; if it returned `{:error, :empty}` also increment `:filenames_blocked`; if it was truncated also increment `:filenames_truncated`.
+- Every `strip_html` call increments `:html_calls` and adds the stripped tag count to `:tags_stripped`.
+
+Because a GenServer serializes calls, metrics must be exact even when hundreds of processes call concurrently. Standard library only — no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Sanitizer do
+  @moduledoc """
+  GenServer-based input sanitizer that aggregates metrics across concurrent
+  callers. State updates are serialized by the server, so counters remain
+  exact even under heavy concurrent load.
+
+  Standard library only — no external dependencies.
+  """
+
+  use GenServer
+
+  @typedoc "Aggregated sanitization metrics."
+  @type metrics :: %{
+          identifiers: non_neg_integer(),
+          identifiers_blocked: non_neg_integer(),
+          filenames: non_neg_integer(),
+          filenames_blocked: non_neg_integer(),
+          filenames_truncated: non_neg_integer(),
+          tags_stripped: non_neg_integer(),
+          html_calls: non_neg_integer()
+        }
+
+  @default_metrics %{
+    identifiers: 0,
+    identifiers_blocked: 0,
+    filenames: 0,
+    filenames_blocked: 0,
+    filenames_truncated: 0,
+    tags_stripped: 0,
+    html_calls: 0
+  }
+
+  # ── Client API ─────────────────────────────────────────────────────────────
+
+  @doc """
+  Start the sanitizer server.
+
+  Options:
+    * `:name` — optional registered name.
+    * `:max_filename_length` — integer, default `255`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Clean a SQL identifier, keeping only `[A-Za-z0-9_]`.
+
+  Returns `{:error, :empty}` when nothing remains, prepends `_` when the
+  result starts with a digit, otherwise `{:ok, cleaned}`.
+  """
+  @spec sanitize_identifier(GenServer.server(), binary()) ::
+          {:ok, binary()} | {:error, :empty}
+  def sanitize_identifier(server, input) when is_binary(input),
+    do: GenServer.call(server, {:identifier, input})
+
+  @doc """
+  Clean a filename, stripping path separators and unsafe characters, and
+  truncating to `:max_filename_length` when needed.
+
+  Returns `{:error, :empty}` when nothing remains, otherwise `{:ok, cleaned}`.
+  """
+  @spec sanitize_filename(GenServer.server(), binary()) ::
+          {:ok, binary()} | {:error, :empty}
+  def sanitize_filename(server, input) when is_binary(input),
+    do: GenServer.call(server, {:filename, input})
+
+  @doc """
+  Remove HTML from `input`.
+
+  Drops `<script>`/`<style>` blocks including their content, then strips every
+  remaining tag. Returns `{:ok, cleaned, tags_stripped}` where `tags_stripped`
+  is the number of `<…>` tokens in the original input.
+  """
+  @spec strip_html(GenServer.server(), binary()) ::
+          {:ok, binary(), non_neg_integer()}
+  def strip_html(server, input) when is_binary(input),
+    do: GenServer.call(server, {:html, input})
+
+  @doc """
+  Return the current metrics map.
+  """
+  @spec metrics(GenServer.server()) :: metrics()
+  def metrics(server), do: GenServer.call(server, :metrics)
+
+  @doc """
+  Zero all metrics and reply `:ok`.
+  """
+  @spec reset_metrics(GenServer.server()) :: :ok
+  def reset_metrics(server), do: GenServer.call(server, :reset_metrics)
+
+  # ── Server callbacks ───────────────────────────────────────────────────────
+
+  @impl true
+  def init(opts) do
+    max_len = Keyword.get(opts, :max_filename_length, 255)
+    {:ok, %{max_filename_length: max_len, metrics: @default_metrics}}
+  end
+
+  @impl true
+  def handle_call({:identifier, input}, _from, state) do
+    case do_identifier(input) do
+      {:ok, s} ->
+        {:reply, {:ok, s}, inc(state, [:identifiers])}
+
+      {:error, :empty} = err ->
+        {:reply, err, inc(state, [:identifiers, :identifiers_blocked])}
+    end
+  end
+
+  @impl true
+  def handle_call({:filename, input}, _from, %{max_filename_length: max} = state) do
+    case do_filename(input) do
+      {:error, :empty} = err ->
+        {:reply, err, inc(state, [:filenames, :filenames_blocked])}
+
+      {:ok, name} ->
+        {truncated?, final} =
+          if String.length(name) > max do
+            {true, String.slice(name, 0, max)}
+          else
+            {false, name}
+          end
+
+        keys = if truncated?, do: [:filenames, :filenames_truncated], else: [:filenames]
+        {:reply, {:ok, final}, inc(state, keys)}
+    end
+  end
+
+  @impl true
+  def handle_call({:html, input}, _from, state) do
+    {cleaned, count} = do_strip_html(input)
+
+    metrics =
+      state.m (truncated)[0m
+[36m07:10:58.590 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `do_strip_html/1` function. It takes the original `input`
+binary and returns a `{cleaned, count}` tuple.
+
+`count` is the total number of `<…>` tag tokens present in the **original**
+input — count every match of a `<…>` token (a `<`, any run of non-`>`
+characters, then `>`) before any stripping happens.
+
+`cleaned` is produced by two passes over the input, in order:
+
+  1. First remove `<script>…</script>` and `<style>…</style>` blocks
+     **including their content**. The match must be case-insensitive and span
+     newlines, and the closing tag must match the opening tag name (script
+     closes script, style closes style).
+  2. Then remove every remaining `<…>` tag token, keeping the surrounding
+     text intact.
+
+Return the resulting cleaned string together with the original tag `count` as
+`{cleaned, count}`.
+
+```elixir
+defmodule Sanitizer do
+  @moduledoc """
+  GenServer-based input sanitizer that aggregates metrics across concurrent
+  callers. State updates are serialized by the server, so counters remain
+  exact even under heavy concurrent load.
+
+  Standard library only — no external dependencies.
+  """
+
+  use GenServer
+
+  @typedoc "Aggregated sanitization metrics."
+  @type metrics :: %{
+          identifiers: non_neg_integer(),
+          identifiers_blocked: non_neg_integer(),
+          filenames: non_neg_integer(),
+          filenames_blocked: non_neg_integer(),
+          filenames_truncated: non_neg_integer(),
+          tags_stripped: non_neg_integer(),
+          html_calls: non_neg_integer()
+        }
+
+  @default_metrics %{
+    identifiers: 0,
+    identifiers_blocked: 0,
+    filenames: 0,
+    filenames_blocked: 0,
+    filenames_truncated: 0,
+    tags_stripped: 0,
+    html_calls: 0
+  }
+
+  # ── Client API ─────────────────────────────────────────────────────────────
+
+  @doc """
+  Start the sanitizer server.
+
+  Options:
+    * `:name` — optional registered name.
+    * `:max_filename_length` — integer, default `255`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  @doc """
+  Clean a SQL identifier, keeping only `[A-Za-z0-9_]`.
+
+  Returns `{:error, :empty}` when nothing remains, prepends `_` when the
+  result starts with a digit, otherwise `{:ok, cleaned}`.
+  """
+  @spec sanitize_identifier(GenServer.server(), binary()) ::
+          {:ok, binary()} | {:error, :empty}
+  def sanitize_identifier(server, input) when is_binary(input),
+    do: GenServer.call(server, {:identifier, input})
+
+  @doc """
+  Clean a filename, stripping path separators and unsafe characters, and
+  truncating to `:max_filename_length` when needed.
+
+  Returns `{:error, :empty}` when nothing remains, otherwise `{:ok, cleaned}`.
+  """
+  @spec sanitize_filename(GenServer.server(), binary()) ::
+          {:ok, binary()} | {:error, :empty}
+  def sanitize_filename(server, input) when is_binary(input),
+    do: GenServer.call(server, {:filename, input})
+
+  @doc """
+  Remove HTML from `input`.
+
+  Drops `<script>`/`<style>` blocks including their content, then strips every
+  remaining tag. Returns `{:ok, cleaned, tags_stripped}` where `tags_stripped`
+  is the number of `<…>` tokens in the original input.
+  """
+  @spec strip_html(GenServer.server(), binary()) ::
+          {:ok, binary(), non_neg_integer()}
+  def strip_html(server, input) when is_binary(input),
+    do: GenServer.call(server, {:html, input})
+
+  @doc """
+  Return the current metrics map.
+  """
+  @spec metrics(GenServer.server()) :: metrics()
+  def metrics(server), do: GenServer.call(server, :metrics)
+
+  @doc """
+  Zero all metrics and reply `:ok`.
+  """
+  @spec reset_metrics(GenServer.server()) :: :ok
+  def reset_metrics(server), do: GenServer.call(server, :reset_metrics)
+
+  # ── Server callbacks ───────────────────────────────────────────────────────
+
+  @impl true
+  def init(opts) do
+    max_len = Keyword.get(opts, :max_filename_length, 255)
+    {:ok, %{max_filename_length: max_len, metrics: @default_metrics}}
+  end
+
+  @impl true
+  def handle_call({:identifier, input}, _from, state) do
+    case do_identifier(input) do
+      {:ok, s} ->
+        {:reply, {:ok, s}, inc(state, [:identifiers])}
+
+      {:error, :empty} = err ->
+        {:reply, err, inc(state, [:identifiers, :identifiers_blocked])}
+    end
+  end
+
+  @impl true
+  def handle_call({:filename, input}, _from, %{max_filename_length: max} = state) do
+    case do_filename(input) do
+      {:error, :empty} = err ->
+        {:reply, err, inc(state, [:filenames, :filenames_blocked])}
+
+      {:ok, name} ->
+        {truncated?, final} =
+          if String.length(name) > max do
+            {true, String.slice(name, 0, max)}
+          else
+            {false, name}
+          end
+
+        keys = if truncated?, do: [:filenames, :filenames_truncated], else: [:filenames]
+        {:reply, {:ok, final}, inc(state, keys)}
+    end
+  end
+
+  @impl true
+  def handle_call({:html, input}, _from, state) do
+    {cleaned, count} = do_strip_html(input)
+
+    metrics =
+      state.metrics
+      |> Map.update!(:html_calls, &(&1 + 1))
+      |> Map.update!(:tags_stripped, &(&1 + count))
+
+    {:reply, {:ok, cleaned, count}, %{state | metrics: metrics}}
+  end
+
+  @impl true
+  def handle_call(:metrics, _from, state), do: {:reply, state.metrics, state}
+
+  @impl true
+  def handle_call(:reset_metrics, _from, state),
+    do: {:reply, :ok, %{state | metrics: @default_metrics}}
+
+  # ── Metric helper ──────────────────────────────────────────────────────────
+
+  defp inc(state, keys) do
+    metrics = Enum.reduce(keys, state.metrics, fn k, m -> Map.update!(m, k, &(&1 + 1)) end)
+    %{state | metrics: metrics}
+  end
+
+  # ── Pure sanitization primitives ───────────────────────────────────────────
+
+  defp do_identifier(input) do
+    sanitized = String.replace(input, ~r/[^a-zA-Z0-9_]/, "")
+
+    cond do
+      sanitized == "" -> {:error, :empty}
+      String.match?(sanitized, ~r/\A[0-9]/) -> {:ok, "_" <> sanitized}
+      true -> {:ok, sanitized}
+    end
+  end
+
+  defp do_filename(input) do
+    sanitized =
+      input
+      |> String.replace("\0", "")
+      |> String.replace("/", "")
+      |> String.replace("\\", "")
+      |> String.replace(~r/[^a-zA-Z0-9_\-.]/, "")
+      |> String.replace(~r/\.{2,}/, ".")
+      |> String.trim(".")
+
+    if sanitized == "", do: {:error, :empty}, else: {:ok, sanitized}
+  end
+
+  defp do_strip_html(input) do
+    # TODO
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp do_strip_html(input) do
+    count = length(Regex.scan(~r/<[^>]*>/, input))
+
+    cleaned =
+      input
+      |> then(fn s -> Regex.replace(~r/<(script|style)\b[^>]*>.*?<\/\1>/is, s, "") end)
+      |> then(fn s -> Regex.replace(~r/<[^>]*>/, s, "") end)
+
+    {cleaned, count}
+  end
+</file>[0m
+[36m07:10:58.590 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4314, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4314, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4314, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4314, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 2980, "type" => "message"}], "output_tokens" => 2980, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m07:10:58.610 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_096_003_stateful_sanitizer_server_with_policy_and_metrics_02/096_003_stateful_sanitizer_server_with_policy_and_metrics_02 solution.ex[0m
+[36m07:10:59.261 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":10,"lines_over_98":0,"max_line_length":87,"mode":"fim","pipe_chain_count":2,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"096_003_stateful_sanitizer_server_with_policy_and_metrics_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_096_003_stateful_sanitizer_server_with_policy_and_metrics_02/096_003_stateful_sanitizer_server_with_policy_and_metrics_02/solution.ex","task":"096_003_stateful_sanitizer_server_with_policy_and_metrics_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":7,"timestamp":"2026-07-07T05:10:59.239126Z"}[0m
+[36m07:10:59.262 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_096_003_stateful_sanitizer_server_with_policy_and_metrics_02/096_003_stateful_sanitizer_server_with_policy_and_metrics_02 .gen_staging/fim_096_003_stateful_sanitizer_server_with_policy_and_metrics_02/mutant.ex[0m
+[36m07:10:59.934 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":28,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"096_003_stateful_sanitizer_server_with_policy_and_metrics_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.68,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 3/7 failed"],"tests":0.57},"shape":"fim","solution_file":".gen_staging/fim_096_003_stateful_sanitizer_server_with_policy_and_metrics_02/mutant.ex","task":"096_003_stateful_sanitizer_server_with_policy_and_metrics_02","test_failures":[{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Sanitizer, :do_strip_html, 1, [file: ~c\"/tmp/evalfim_558787_2629.ex\", line: 185, error_info: %{module: Exception}]}, {Sanitizer, :handle_call, 3, [file: ~c\"/tmp/evalfim_558787_2629.ex\", line: 135]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"SanitizerTest","test":"test html stripping + metrics removes script content and counts tags"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Sanitizer, :do_strip_html, 1, [file: ~c\"/tmp/evalfim_558787_2629.ex\", line: 185, error_info: %{module: Exception}]}, {Sanitizer, :handle_call, 3, [file: ~c\"/tmp/evalfim_558787_2629.ex\", line: 135]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"SanitizerTest","test":"test html stripping + metrics no tags means zero stripped"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{Sanitizer, :do_strip_html, 1, [file: ~c\"/tmp/evalfim_558787_2629.ex\", line: 185, error_info: %{module: Exception}]}, {Sanitizer, :handle_call, 3, [file: ~c\"/tmp/evalfim_558787_2629.ex\", line: 135]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"SanitizerTest","test":"test reset_metrics zeroes everything"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":4,"tests_ran":true,"tests_skipped":0,"tests_total":7,"timestamp":"2026-07-07T05:10:59.912907Z"}[0m
+[36m07:10:59.934 [debug] fim mutation gate: killed[0m
+[22m07:10:59.936 [info] promoted 096_003_stateful_sanitizer_server_with_policy_and_metrics_02 -> tasks/096_003_stateful_sanitizer_server_with_policy_and_metrics_02[0m

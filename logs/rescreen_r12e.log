@@ -1,0 +1,68 @@
+Blind-solve screen: 11 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/11] 005_001_pubsub_event_bus_01 ... GREEN
+[2/11] 025_003_coalescing_batch_long_poll_with_linger_window_01 ... RED (test coalesces a burst of notifications into one batched response: {:EXIT, #PID<0.213.0>}: {{:badmap, [notifications_server: :notifications_3650, timeout_ms: 500, linger_ms: 120]}, [{:maps, :put, [:poller, %{notifications_server: :notifications_3650, timeout_ms: 500,)
+[3/11] 036_002_hierarchical_heading_outline_parser_01 ... RED (compile: invalid syntax found on /tmp/screen_3320719_4807.ex:20:26:
+    error: syntax error before: ','
+    │
+ 20 │   @heading_regex ~r/^(#{1,6})\s+(.+?)\s*$/
+    │                          ^
+    │
+    └─ /tmp)
+[4/11] 061_001_parallel_map_with_concurrency_limit_01 ... RED (test a crashing function returns {:error, reason} for that item: {:EXIT, #PID<0.270.0>}: {%RuntimeError{message: "boom"}, [{ParallelMapTest, :"-test a crashing function returns {:error, reason} for that item/1-fun-0-", 1, [file: ~c"tasks/061_001_parallel_map_with_c)
+[5/11] 074_002_collection_and_structural_assertion_helpers_01 ... RED (test assert_sorted_by/2 fails and reports the first out-of-order pair: 
+
+Assertion with =~ failed
+code:  assert result =~ "index 1"
+left:  "Expected enumerable to be sorted ascending by key_fun, but it is not.\n\nfirst out-of-order pair at indexes 1 and 2:\n  element[1]:)
+[6/11] 075_004_schema_driven_generator_interpreter_01 ... GREEN
+[7/11] 077_004_max_overlap_interval_tree_01 ... GREEN
+[8/11] 101_001_sliding_window_counter_01 ... RED (test events outside the window are not counted: 
+
+match (=) failed
+code:  assert 0 = SlidingCounter.count(sc, "k", 1000)
+left:  0
+right: 1
+)
+[9/11] 110_002_histogram_based_approximate_rolling_percentile_01 ... GREEN
+[10/11] 134_001_schema_inference_from_csv_01 ... RED (compile: invalid syntax found on /tmp/screen_3320719_6151.ex:224:38:
+     error: unexpected token: "\" (column 38, code point U+005C)
+     │
+ 224 │       match = Regex.run(~r{^(\d{2})/(\d{2})/(\d{4})$}, value))
+[11/11] 134_002_nullable_unique_column_profiler_01 ... RED (compile: invalid syntax found on /tmp/screen_3320719_6343.ex:197:30:
+     error: unexpected token: "\" (column 30, code point U+005C)
+     │
+ 197 │       Regex.match?(~r{^\d{2}/\d{2}/\d{4}$}, value) -> valid_u)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 11   green: 4   RED: 7   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 025_003_coalescing_batch_long_poll_with_linger_window_01: test coalesces a burst of notifications into one batched response: {:EXIT, #PID<0.213.0>}: {{:badmap, [notifications_server: :notifications_3650, timeout_ms: 500, linger_ms: 120]}, [{:maps, :put, [:poller, %{notifications_server: :notifications_3650, timeout_ms: 500,
+    - 036_002_hierarchical_heading_outline_parser_01: compile: invalid syntax found on /tmp/screen_3320719_4807.ex:20:26:
+    error: syntax error before: ','
+    │
+ 20 │   @heading_regex ~r/^(#{1,6})\s+(.+?)\s*$/
+    │                          ^
+    │
+    └─ /tmp
+    - 061_001_parallel_map_with_concurrency_limit_01: test a crashing function returns {:error, reason} for that item: {:EXIT, #PID<0.270.0>}: {%RuntimeError{message: "boom"}, [{ParallelMapTest, :"-test a crashing function returns {:error, reason} for that item/1-fun-0-", 1, [file: ~c"tasks/061_001_parallel_map_with_c
+    - 074_002_collection_and_structural_assertion_helpers_01: test assert_sorted_by/2 fails and reports the first out-of-order pair: 
+
+Assertion with =~ failed
+code:  assert result =~ "index 1"
+left:  "Expected enumerable to be sorted ascending by key_fun, but it is not.\n\nfirst out-of-order pair at indexes 1 and 2:\n  element[1]:
+    - 101_001_sliding_window_counter_01: test events outside the window are not counted: 
+
+match (=) failed
+code:  assert 0 = SlidingCounter.count(sc, "k", 1000)
+left:  0
+right: 1
+
+    - 134_001_schema_inference_from_csv_01: compile: invalid syntax found on /tmp/screen_3320719_6151.ex:224:38:
+     error: unexpected token: "\" (column 38, code point U+005C)
+     │
+ 224 │       match = Regex.run(~r{^(\d{2})/(\d{2})/(\d{4})$}, value)
+    - 134_002_nullable_unique_column_profiler_01: compile: invalid syntax found on /tmp/screen_3320719_6343.ex:197:30:
+     error: unexpected token: "\" (column 30, code point U+005C)
+     │
+ 197 │       Regex.match?(~r{^\d{2}/\d{2}/\d{4}$}, value) -> valid_u

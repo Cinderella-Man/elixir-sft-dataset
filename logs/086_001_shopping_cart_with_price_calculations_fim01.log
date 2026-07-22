@@ -1,0 +1,472 @@
+[22m06:09:31.293 [info] FIM 086_001_shopping_cart_with_price_calculations_fim01 → 086_001_shopping_cart_with_price_calculations_02: target build_item_summary/1[0m
+[36m06:09:31.293 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m06:09:31.293 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `build_item_summary/1`.
+
+Generate a prompt describing how to implement `build_item_summary/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `build_item_summary/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `build_item_summary/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `build_item_summary/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir context module called `Cart` that implements an in-memory shopping cart with price calculations.
+
+I need these functions in the public API:
+- `Cart.new(opts \\ [])` to create a new cart struct. It should accept a `:tax_rate` option as a float (e.g. `0.08` for 8%). If not provided, default to `0.0`.
+- `Cart.add_item(cart, product_id, quantity, unit_price)` which adds the given quantity of a product at the given unit price. If the product already exists in the cart, increase its quantity. Reject with `{:error, :invalid_quantity}` if quantity is not a positive integer.
+- `Cart.remove_item(cart, product_id)` which removes a product entirely from the cart. If the product is not in the cart, return the cart unchanged.
+- `Cart.update_quantity(cart, product_id, quantity)` which sets the quantity of an existing item. If quantity is 0, remove the item entirely. If the product is not in the cart, return `{:error, :not_found}`. Reject with `{:error, :invalid_quantity}` if quantity is negative.
+- `Cart.calculate_totals(cart)` which returns a map with the following keys:
+  - `:subtotal` — sum of each item's `unit_price * quantity` after per-item discounts
+  - `:tax` — `subtotal * tax_rate`
+  - `:grand_total` — `subtotal + tax`
+  - `:items` — a list of maps, one per cart item, each containing `:product_id`, `:quantity`, `:unit_price`, `:discount_rate`, and `:line_total`
+
+The discount rule is: if a single line item has a quantity of 10 or more, that item gets a 10% discount applied to its unit price before computing the line total. Items with quantity below 10 receive no discount.
+
+The `Cart` struct must be a pure data structure with no database, no GenServer, and no processes — just plain Elixir structs and functions. All monetary values are floats. Give me the complete module in a single file with no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Cart do
+  @moduledoc """
+  An in-memory shopping cart context.
+
+  Manages a collection of line items and computes subtotals, tax, and grand
+  totals entirely in-process — no database or GenServer required.
+
+  ## Discount rule
+  Any line item whose quantity is ≥ 10 receives a 10 % discount on its unit
+  price before the line total is calculated.  Items below that threshold are
+  priced at full rate.
+
+  ## Example
+
+      iex> cart = Cart.new(tax_rate: 0.08)
+      iex> cart = Cart.add_item(cart, "sku-1", 2, 9.99) |> elem(1)
+      iex> cart = Cart.add_item(cart, "sku-2", 10, 5.00) |> elem(1)
+      iex> Cart.calculate_totals(cart)
+      %{
+        subtotal: 64.98,       # (2 * 9.99) + (10 * 5.00 * 0.90)
+        tax: 5.1984,
+        grand_total: 70.1784,
+        items: [...]
+      }
+  """
+
+  @bulk_discount_threshold 10
+  @bulk_discount_rate 0.10
+
+  # ---------------------------------------------------------------------------
+  # Structs
+  # ---------------------------------------------------------------------------
+
+  defmodule Item do
+    @moduledoc "A single line item inside a `Cart`."
+
+    @enforce_keys [:product_id, :quantity, :unit_price]
+    defstruct [:product_id, :quantity, :unit_price, discount_rate: 0.0]
+  end
+
+  @enforce_keys [:tax_rate, :items]
+  defstruct tax_rate: 0.0, items: %{}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Creates and returns a new, empty `%Cart{}`.
+
+  ## Options
+
+    * `:tax_rate` — a non-negative float representing the sales-tax rate,
+      e.g. `0.08` for 8 %.  Defaults to `0.0`.
+
+  ## Examples
+
+      iex> Cart.new()
+      %Cart{tax_rate: 0.0, items: %{}}
+
+      iex> Cart.new(tax_rate: 0.07)
+      %Cart{tax_rate: 0.07, items: %{}}
+  """
+  @spec new(keyword()) :: %Cart{}
+  def new(opts \\ []) do
+    tax_rate = Keyword.get(opts, :tax_rate, 0.0)
+    %Cart{tax_rate: tax_rate, items: %{}}
+  end
+
+  @doc """
+  Adds `quantity` units of `product_id` at `unit_price` to `cart`.
+
+  If the product already exists the quantities are summed; the stored
+  `unit_price` is left unchanged (first price wins).
+
+  Returns `{:ok, updated_cart}` on success or `{:error, :invalid_quantity}`
+  when `quantity` is not a positive integer.
+
+  ## Examples
+
+      iex> {:ok, cart} = Cart.new() |> Cart.add_item("p1", 3, 4.99)
+      iex> cart.items["p1"].quantity
+      3
+
+      iex> Cart.new() |> Cart.add_item("p1", 0, 4.99)
+      {:error, :invalid_quantity}
+  """
+  @spec add_item(%Cart{}, term(), pos_integer(), float()) ::
+          {:ok, %Cart{}} | {:error, :invalid_quantity}
+  def add_item(%Cart{} = cart, product_id, quantity, unit_price)
+      when is_integer(quantity) and quantity > 0 do
+    updated_items =
+      Map.update(
+        cart.items,
+        product_id,
+        %Item{product_id: product_id, quantity: quantity, unit_price: unit_price},
+        fn %Item{} = existing -> %Item{existing | quantity: existing.quantity + quantity} end
+      )
+
+    {:ok, %Cart{cart | items: updated_items}}
+  end
+
+  def add_item(%Cart{}, _product_id, _quantity, _unit_price),
+    do: {:error, :invalid_quantity}
+
+  @doc """
+  Removes `product_id` from `cart` entirely.
+
+  If the product is not present the cart is returned unchanged (no error).
+
+  ## Examples
+
+      iex> {:ok, cart} = Cart.new() |> Cart.add_item("p1", 1, 1.00)
+      iex> cart = Cart.remove_item(cart, "p1")
+      iex> Map.has_key?(cart.items, "p1")
+      false
+
+      iex> cart = Cart.new()
+      iex> Cart.remove_item(cart, "missing") == cart
+      true
+  """
+  @spec remove_item(%Cart{}, term()) :: %Cart{}
+  def remove_item(%Cart{} = cart, product_id) do
+    %Cart{cart | items: Map.delete(cart.items, product_id)}
+  end
+
+  @doc """
+  Sets the quantity of an existing `product_id` to `quantity`.
+
+  * If `quantity` is `0` the item is removed entirely.
+  * If the product is not in the cart, returns `{:error, :not_found}`.
+  * If `quantity` is negative, returns `{:error, :invalid_quantity}`.
+
+  ## Examples
+
+      iex> {:ok, cart} = Cart.new() |> Cart.add_item("p1", 3, 2.50)
+      iex> {:ok, cart} = Cart.update_quantity(cart, "p1", 7)
+      iex> cart.items["p1"].quantity
+      7
+
+      iex> {:ok, cart} = Cart.new() |> Cart.add_item("p1", 3, 2.50)
+      iex> cart = Cart.update_quantity(cart, "p1", 0) |> elem(1)
+      iex> Map.has_key?(cart.items, "p1")
+      false
+  """
+  @spec update_quantity(%Cart{}, term(), non_neg_integer()) ::
+          {:ok, %Cart{}} | {:error, :not_found | :invalid_quantity}
+  def update_quantity(%Cart{} = cart, product_id, quantity)
+      when is_integer(quantity) and quantity >= 0 do
+    case Map.fetch(cart.items, product_id) do
+      :error ->
+        {:error, :not_found}
+
+      {:ok, _item} when quantity == 0 ->
+        {:ok, remove_item(cart, product_id)}
+
+      {:ok, %Item{} = item} ->
+        updated_item = %Item{item | quantity: quantity}
+        {:ok, %Cart{cart | items: Map.put(cart.items, product_id, updated_item)}}
+    end
+  end
+
+ (truncated)[0m
+[36m06:10:07.421 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `build_item_summary/1` function. It accepts a single `%Cart.Item{}`
+struct and returns a summary map for that line item. Destructure the item's `product_id`,
+`quantity`, and `unit_price`. Determine the `discount_rate`: if the item's `quantity` is
+greater than or equal to `@bulk_discount_threshold` (10), use `@bulk_discount_rate` (0.10);
+otherwise use `0.0`. Compute the `line_total` as `unit_price * (1.0 - discount_rate) * quantity`.
+Return a map containing `:product_id`, `:quantity`, `:unit_price`, `:discount_rate`, and
+`:line_total`, where `:unit_price` is the original (pre-discount) unit price.
+
+```elixir
+defmodule Cart do
+  @moduledoc """
+  An in-memory shopping cart context.
+
+  Manages a collection of line items and computes subtotals, tax, and grand
+  totals entirely in-process — no database or GenServer required.
+
+  ## Discount rule
+  Any line item whose quantity is ≥ 10 receives a 10 % discount on its unit
+  price before the line total is calculated.  Items below that threshold are
+  priced at full rate.
+
+  ## Example
+
+      iex> cart = Cart.new(tax_rate: 0.08)
+      iex> cart = Cart.add_item(cart, "sku-1", 2, 9.99) |> elem(1)
+      iex> cart = Cart.add_item(cart, "sku-2", 10, 5.00) |> elem(1)
+      iex> Cart.calculate_totals(cart)
+      %{
+        subtotal: 64.98,       # (2 * 9.99) + (10 * 5.00 * 0.90)
+        tax: 5.1984,
+        grand_total: 70.1784,
+        items: [...]
+      }
+  """
+
+  @bulk_discount_threshold 10
+  @bulk_discount_rate 0.10
+
+  # ---------------------------------------------------------------------------
+  # Structs
+  # ---------------------------------------------------------------------------
+
+  defmodule Item do
+    @moduledoc "A single line item inside a `Cart`."
+
+    @enforce_keys [:product_id, :quantity, :unit_price]
+    defstruct [:product_id, :quantity, :unit_price, discount_rate: 0.0]
+  end
+
+  @enforce_keys [:tax_rate, :items]
+  defstruct tax_rate: 0.0, items: %{}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Creates and returns a new, empty `%Cart{}`.
+
+  ## Options
+
+    * `:tax_rate` — a non-negative float representing the sales-tax rate,
+      e.g. `0.08` for 8 %.  Defaults to `0.0`.
+
+  ## Examples
+
+      iex> Cart.new()
+      %Cart{tax_rate: 0.0, items: %{}}
+
+      iex> Cart.new(tax_rate: 0.07)
+      %Cart{tax_rate: 0.07, items: %{}}
+  """
+  @spec new(keyword()) :: %Cart{}
+  def new(opts \\ []) do
+    tax_rate = Keyword.get(opts, :tax_rate, 0.0)
+    %Cart{tax_rate: tax_rate, items: %{}}
+  end
+
+  @doc """
+  Adds `quantity` units of `product_id` at `unit_price` to `cart`.
+
+  If the product already exists the quantities are summed; the stored
+  `unit_price` is left unchanged (first price wins).
+
+  Returns `{:ok, updated_cart}` on success or `{:error, :invalid_quantity}`
+  when `quantity` is not a positive integer.
+
+  ## Examples
+
+      iex> {:ok, cart} = Cart.new() |> Cart.add_item("p1", 3, 4.99)
+      iex> cart.items["p1"].quantity
+      3
+
+      iex> Cart.new() |> Cart.add_item("p1", 0, 4.99)
+      {:error, :invalid_quantity}
+  """
+  @spec add_item(%Cart{}, term(), pos_integer(), float()) ::
+          {:ok, %Cart{}} | {:error, :invalid_quantity}
+  def add_item(%Cart{} = cart, product_id, quantity, unit_price)
+      when is_integer(quantity) and quantity > 0 do
+    updated_items =
+      Map.update(
+        cart.items,
+        product_id,
+        %Item{product_id: product_id, quantity: quantity, unit_price: unit_price},
+        fn %Item{} = existing -> %Item{existing | quantity: existing.quantity + quantity} end
+      )
+
+    {:ok, %Cart{cart | items: updated_items}}
+  end
+
+  def add_item(%Cart{}, _product_id, _quantity, _unit_price),
+    do: {:error, :invalid_quantity}
+
+  @doc """
+  Removes `product_id` from `cart` entirely.
+
+  If the product is not present the cart is returned unchanged (no error).
+
+  ## Examples
+
+      iex> {:ok, cart} = Cart.new() |> Cart.add_item("p1", 1, 1.00)
+      iex> cart = Cart.remove_item(cart, "p1")
+      iex> Map.has_key?(cart.items, "p1")
+      false
+
+      iex> cart = Cart.new()
+      iex> Cart.remove_item(cart, "missing") == cart
+      true
+  """
+  @spec remove_item(%Cart{}, term()) :: %Cart{}
+  def remove_item(%Cart{} = cart, product_id) do
+    %Cart{cart | items: Map.delete(cart.items, product_id)}
+  end
+
+  @doc """
+  Sets the quantity of an existing `product_id` to `quantity`.
+
+  * If `quantity` is `0` the item is removed entirely.
+  * If the product is not in the cart, returns `{:error, :not_found}`.
+  * If `quantity` is negative, returns `{:error, :invalid_quantity}`.
+
+  ## Examples
+
+      iex> {:ok, cart} = Cart.new() |> Cart.add_item("p1", 3, 2.50)
+      iex> {:ok, cart} = Cart.update_quantity(cart, "p1", 7)
+      iex> cart.items["p1"].quantity
+      7
+
+      iex> {:ok, cart} = Cart.new() |> Cart.add_item("p1", 3, 2.50)
+      iex> cart = Cart.update_quantity(cart, "p1", 0) |> elem(1)
+      iex> Map.has_key?(cart.items, "p1")
+      false
+  """
+  @spec update_quantity(%Cart{}, term(), non_neg_integer()) ::
+          {:ok, %Cart{}} | {:error, :not_found | :invalid_quantity}
+  def update_quantity(%Cart{} = cart, product_id, quantity)
+      when is_integer(quantity) and quantity >= 0 do
+    case Map.fetch(cart.items, product_id) do
+      :error ->
+        {:error, :not_found}
+
+      {:ok, _item} when quantity == 0 ->
+        {:ok, remove_item(cart, product_id)}
+
+      {:ok, %Item{} = item} ->
+        updated_item = %Item{item | quantity: quantity}
+        {:ok, %Cart{cart | items: Map.put(cart.items, product_id, updated_item)}}
+    end
+  end
+
+  def update_quantity(%Cart{}, _product_id, _quantity),
+    do: {:error, :invalid_quantity}
+
+  @doc """
+  Calculates and returns a summary map for the current state of `cart`.
+
+  The returned map contains:
+
+    * `:items`       — list of per-item breakdown maps (see below)
+    * `:subtotal`    — sum of all `:line_total` values
+    * `:tax`         — `subtotal * tax_rate`
+    * `:grand_total` — `subtotal + tax`
+
+  Each entry in `:items` is a map with:
+
+    * `:product_id`    — the product identifier
+    * `:quantity`      — current quantity
+    * `:unit_price`    — original unit price (before any discount)
+    * `:discount_rate` — `0.10` when quantity ≥ 10, otherwise `0.0`
+    * `:line_total`    — `unit_price * (1 - discount_rate) * quantity`
+
+  ## Examples
+
+      iex> cart = Cart.new(tax_rate: 0.10)
+      iex> {:ok, cart} = Cart.add_item(cart, "a", 10, 20.00)
+      iex> totals = Cart.calculate_totals(cart)
+      iex> totals.subtotal
+      180.0    # 10 * 20.00 * 0.90
+      iex> totals.tax
+      18.0
+      iex> totals.grand_total
+      198.0
+  """
+  @spec calculate_totals(%Cart{}) :: %{
+          subtotal: float(),
+          tax: float(),
+          grand_total: float(),
+          items: [map()]
+        }
+  def calculate_totals(%Cart{items: items, tax_rate: tax_rate}) do
+    item_summaries =
+      items
+      |> Map.values()
+      |> Enum.map(&build_item_summary/1)
+
+    subtotal = Enum.reduce(item_summaries, 0.0, fn i, acc -> acc + i.line_total end)
+    tax = subtotal * tax_rate
+    grand_total = subtotal + tax
+
+    %{
+      items: item_summaries,
+      subtotal: subtotal,
+      tax: tax,
+      grand_total: grand_total
+    }
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp build_item_summary(%Item{
+         product_id: product_id,
+         quantity: quantity,
+         unit_price: unit_price
+       }) do
+    # TODO
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp build_item_summary(%Item{
+         product_id: product_id,
+         quantity: quantity,
+         unit_price: unit_price
+       }) do
+    discount_rate = if quantity >= @bulk_discount_threshold, do: @bulk_discount_rate, else: 0.0
+    line_total = unit_price * (1.0 - discount_rate)  (truncated)[0m
+[36m06:10:07.421 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4706, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4706, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4706, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4706, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 3669, "type" => "message"}], "output_tokens" => 3669, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m06:10:07.440 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_086_001_shopping_cart_with_price_calculations_02/086_001_shopping_cart_with_price_calculations_02 solution.ex[0m
+[36m06:10:08.124 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":16,"lines_over_98":0,"max_line_length":95,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"086_001_shopping_cart_with_price_calculations_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_086_001_shopping_cart_with_price_calculations_02/086_001_shopping_cart_with_price_calculations_02/solution.ex","task":"086_001_shopping_cart_with_price_calculations_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-07T04:10:08.102930Z"}[0m
+[36m06:10:08.125 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_086_001_shopping_cart_with_price_calculations_02/086_001_shopping_cart_with_price_calculations_02 .gen_staging/fim_086_001_shopping_cart_with_price_calculations_02/mutant.ex[0m
+[36m06:10:08.796 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":1,"max_line_length":101,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"parent":"086_001_shopping_cart_with_price_calculations_01","score":{"analysis":0.67,"analysis_max_points":3,"compilation":0.5,"mode":"fim","overall":0.51,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 10/19 failed","analysis: no lines over 98 chars (found 1) → 0/1 pts"],"tests":0.47},"shape":"fim","solution_file":".gen_staging/fim_086_001_shopping_cart_with_price_calculations_02/mutant.ex","task":"086_001_shopping_cart_with_price_calculations_02","test_failures":[{"message":"MUTATION","module":"CartTest","test":"test add_item adds a new product"},{"message":"MUTATION","module":"CartTest","test":"test add_item accumulates quantity for existing product"},{"message":"MUTATION","module":"CartTest","test":"test remove_item is a no-op for unknown product"},{"message":"MUTATION","module":"CartTest","test":"test update_quantity changes the quantity of an item"},{"message":"MUTATION","module":"CartTest","test":"test 9 items: no discount applied"},{"message":"MUTATION","module":"CartTest","test":"test 10 items: 10% discount applied"},{"message":"MUTATION","module":"CartTest","test":"test discount threshold is per line item, not per cart"},{"message":"MUTATION","module":"CartTest","test":"test tax is applied on top of the discounted subtotal"},{"message":"MUTATION","module":"CartTest","test":"test zero tax rate produces no tax"},{"message":"MUTATION","module":"CartTest","test":"test full lifecycle: add, update, remove, recalculate"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-07T04:10:08.776289Z"}[0m
+[36m06:10:08.796 [debug] fim mutation gate: killed[0m
+[22m06:10:08.798 [info] promoted 086_001_shopping_cart_with_price_calculations_02 -> tasks/086_001_shopping_cart_with_price_calculations_02[0m

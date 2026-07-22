@@ -1,0 +1,204 @@
+14:42:44.389 [info] FIM candidate-select for 063_002_quorum_first_n_concurrent_fetcher_01 (up to 3)
+14:42:44.389 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:42:44.389 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+# Quorum First-N Concurrent Fetcher
+
+Write me an Elixir module called `QuorumFetcher` that races data fetches from multiple sources concurrently and returns **as soon as a quorum of successes is reached**, cancelling everything still in flight.
+
+I need this function in the public API:
+
+- `QuorumFetcher.fetch_first(sources, count, timeout_ms)` where:
+  - `sources` is a list of `{name, fetch_fn}` tuples. `name` can be any term (atom, string, tuple, etc.) and `fetch_fn` is a zero-arity function that either returns `{:ok, result}` or returns `{:error, reason}` / raises.
+  - `count` is the number of **successful** fetches required (the quorum).
+  - `timeout_ms` is a single global wall-clock budget shared across every fetch.
+
+All fetches begin concurrently the moment `fetch_first` is called. The function returns a map of `%{name => result_tuple}` covering **every** source, where each value is one of:
+
+- `{:ok, value}` — this fetch completed successfully (winners plus any source that had already succeeded).
+- `{:error, reason}` — this fetch returned `{:error, reason}` or raised (crashes are captured, never counted as a success).
+- `{:error, :cancelled}` — the quorum was reached and this source was still running, so it was cancelled.
+- `{:error, :timeout}` — the global timeout expired before the quorum could be reached and this source had not finished.
+
+Semantics:
+
+- The function returns the instant the `count`-th success arrives; it must not wait for slower sources.
+- When the quorum is reached, any still-running fetch processes must be killed immediately — no zombies. Still-running sources are reported as `{:error, :cancelled}`.
+- If the quorum can never be met before the timeout, sources that finished are reported with their real outcome (`{:ok, …}` or `{:error, reason}`) and unfinished sources become `{:error, :timeout}`.
+- If `sources` is empty, return `%{}` immediately.
+- If `count <= 0`, the quorum is trivially satisfied: nothing is run and every source is reported as `{:error, :cancelled}`.
+- The function returns only after every spawned process is done or confirmed dead.
+
+Do not use any external dependencies — only Elixir's standard library and OTP primitives (`Task`, `Process`, etc.).
+
+Give me the complete implementation in a single file with a single module.
+
+=== MODULE ===
+```elixir
+defmodule QuorumFetcher do
+  @moduledoc """
+  Races concurrent fetches under a single global timeout and returns as soon as
+  a quorum of successful results is reached.
+
+  All fetches start at the same instant. The moment the `count`-th success
+  arrives, any source still running is killed and reported as
+  `{:error, :cancelled}`. If the quorum cannot be met before the shared deadline
+  fires, unfinished sources are reported as `{:error, :timeout}`.
+  """
+
+  @doc """
+  Fetch concurrently, returning once `count` sources have succeeded.
+
+  Returns a map of `%{name => result_tuple}` covering every source, where each
+  value is `{:ok, value}`, `{:error, reason}`, `{:error, :cancelled}`, or
+  `{:error, :timeout}`.
+  """
+  @spec fetch_first(
+          [{term(), (-> {:ok, term()} | {:error, term()})}],
+          integer(),
+          non_neg_integer()
+        ) :: %{term() => {:ok, term()} | {:error, term()}}
+  def fetch_first([], _count, _timeout_ms), do: %{}
+
+  def fetch_first(sources, count, _timeout_ms)
+      when is_list(sources) and is_integer(count) and count <= 0 do
+    Map.new(sources, fn {name, _fetch_fn} -> {name, {:error, :cancelled}} end)
+  end
+
+  def fetch_first(sources, count, timeout_ms)
+      when is_list(sources) and is_integer(count) and is_integer(timeout_ms) and
+             timeout_ms >= 0 do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    tagged =
+      Enum.map(sources, fn {name, fetch_fn} ->
+        task = Task.async(fn -> safe_call(fetch_fn) end)
+        {task.ref, name, task}
+      end)
+
+    ref_to_name = Map.new(tagged, fn {ref, name, _task} -> {ref, name} end)
+    ref_to_task = Map.new(tagged, fn {ref, _name, task} -> {ref, task} end)
+    all_refs = MapSet.new(Map.keys(ref_to_name))
+
+    {results, reached?} = collect(%{}, 0, count, all_refs, deadline)
+
+    fill_result = if reached?, do: {:error, :cancelled}, else: {:error, :timeout}
+
+    final =
+      Enum.reduce(all_refs, results, fn ref, acc ->
+        if Map.has_key?(acc, ref) do
+          acc
+        else
+          Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill)
+          Map.put(acc, ref, fill_result)
+        end
+      end)
+
+    Map.new(final, fn {ref, result} -> {Map.fetch!(ref_to_name, ref), result} end)
+  end
+
+  # Blocks until the quorum is met, every task has reported, or the deadline
+  # elapses. Returns `{results_by_ref, reached_quorum?}`.
+  defp collect(results, success_count, quorum, all_refs, deadline) do
+    cond do
+      success_count >= quorum ->
+        {results, true}
+
+      map_size(results) == MapSet.size(all_refs) ->
+        {results, false}
+
+      true ->
+        remaining = deadline - System.monotonic_time(:millisecond)
+
+        if remaining <= 0 do
+          {results, false}
+        else
+          receive do
+            {ref, reply} when is_reference(ref) ->
+              if MapSet.member?(all_refs, ref) and not Map.has_key?(results, ref) do
+                Process.demonitor(ref, [:flush])
+
+                new_success =
+                  case reply do
+                    {:ok, _} -> success_count + 1
+                    _ -> success_count
+                  end
+
+                collect(Map.put(results, ref, reply), new_success, quorum, all_refs, deadline)
+              else
+                collect(results, success_count, quorum, all_refs, deadline)
+              end
+
+            {:DOWN, ref, :process, _pid, reason} ->
+              if MapSet.member?(all_refs, ref) and not Map.has_key?(results, ref) do
+                collect(
+                  Map.put(results, ref, {:error, reason}),
+                  success_count,
+                  quorum,
+                  all_refs,
+                  deadline
+                )
+              else
+                collect(results, success_count, quorum, all_refs, deadline)
+              end
+          after
+            remaining ->
+              {results, false}
+          end
+        end
+    end
+  end
+
+  # Normalises any exception, throw, exit, or unexpected return into a tagged
+  # `{:ok, _} | {:error, _}` tuple so a fetch can never crash the caller.
+  defp safe_call(fetch_fn) do
+    case fetch_fn.() do
+      {:ok, _} = ok -> ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_return, other}}
+    end
+  rescue
+    exception -> {:error, exception}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+end
+```
+
+Return ONE file `candidates.md` containing at most 3 lines, each a single
+function target written as `name/arity` (e.g. `refill_and_expire/2`), most valuable
+first, and NOTHING else.
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - candidates.md — one function target (name/arity) per line
+
+
+14:42:50.388 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+collect/5
+fetch_first/3
+safe_call/1
+</file>
+14:42:50.388 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3152, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3152, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3152, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3152, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 200, "type" => "message"}], "output_tokens" => 200, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

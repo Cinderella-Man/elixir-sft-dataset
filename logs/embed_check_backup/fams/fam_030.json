@@ -1,0 +1,77 @@
+{
+ "parent": "tasks/039_001_diff_generator_for_record_lists_01",
+ "dirs": [
+  {
+   "dir": "tasks/039_001_diff_generator_for_record_lists_02",
+   "kind": "module-FIM",
+   "parent": "tasks/039_001_diff_generator_for_record_lists_01",
+   "diff": [
+    "note: child gold not located in the parent (parent drifted at the target?)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:125:     all_fields =",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:126:       (Map.keys(old_record) ++ Map.keys(new_record))",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:127:       |> Enum.uniq()",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:128:",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:129:     Enum.reduce(all_fields, %{}, fn field, acc ->",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:130:       old_value = Map.get(old_record, field, :missing)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:131:       new_value = Map.get(new_record, field, :missing)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:132:",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:133:       if old_value == new_value do",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:134:         acc",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:135:       else",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:136:         Map.put(acc, field, {old_value, new_value})",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:137:       end",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:138:     end)"
+   ]
+  },
+  {
+   "dir": "tasks/039_001_diff_generator_for_record_lists_04",
+   "kind": "module-FIM",
+   "parent": "tasks/039_001_diff_generator_for_record_lists_01",
+   "diff": [
+    "note: child gold not located in the parent (parent drifted at the target?)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:57:     key = Keyword.get(opts, :key, :id)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:58:",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:59:     old_index = index_by(old_list, key)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:60:     new_index = index_by(new_list, key)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:61:",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:62:     old_keys = MapSet.new(Map.keys(old_index))",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:63:     new_keys = MapSet.new(Map.keys(new_index))",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:64:",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:65:     added = new_keys |> MapSet.difference(old_keys) |> map_set_to_records(new_index)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:66:     removed = old_keys |> MapSet.difference(new_keys) |> map_set_to_records(old_index)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:67:",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:68:     changed =",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:69:       old_keys",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:70:       |> MapSet.intersection(new_keys)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:71:       |> changed_entries(old_index, new_index, key)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:72:",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:73:     %{added: added, removed: removed, changed: changed}"
+   ]
+  },
+  {
+   "dir": "tasks/wt_039_001_diff_generator_for_record_lists",
+   "kind": "wt_",
+   "parent": "tasks/039_001_diff_generator_for_record_lists_01",
+   "diff": [
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:18:   @type record_t :: map()",
+    "- extra in embed      tasks/wt_039_001_diff_generator_for_record_lists/prompt.md:52:   @type record :: map()",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:28:           added: [record_t()],",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:29:           removed: [record_t()],",
+    "- extra in embed      tasks/wt_039_001_diff_generator_for_record_lists/prompt.md:62:           added: [record()],",
+    "- extra in embed      tasks/wt_039_001_diff_generator_for_record_lists/prompt.md:63:           removed: [record()],",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:55:   @spec diff([record_t()], [record_t()], keyword()) :: diff_result()",
+    "- extra in embed      tasks/wt_039_001_diff_generator_for_record_lists/prompt.md:89:   @spec diff([record()], [record()], keyword()) :: diff_result()",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:69:       old_keys",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:70:       |> MapSet.intersection(new_keys)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:71:       |> changed_entries(old_index, new_index, key)",
+    "- extra in embed      tasks/wt_039_001_diff_generator_for_record_lists/prompt.md:103:       old_keys |> MapSet.intersection(new_keys) |> changed_entries(old_index, new_index, key)",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:81:   @spec index_by([record_t()], atom()) :: %{term() => record_t()}",
+    "- extra in embed      tasks/wt_039_001_diff_generator_for_record_lists/prompt.md:113:   @spec index_by([record()], atom()) :: %{term() => record()}",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:88:   @spec map_set_to_records(MapSet.t(), %{term() => record_t()}) :: [record_t()]",
+    "- extra in embed      tasks/wt_039_001_diff_generator_for_record_lists/prompt.md:120:   @spec map_set_to_records(MapSet.t(), %{term() => record()}) :: [record()]",
+    "- missing from embed  tasks/039_001_diff_generator_for_record_lists_01/solution.ex:123:   @spec diff_records(record_t(), record_t()) :: %{atom() => field_diff()}",
+    "- extra in embed      tasks/wt_039_001_diff_generator_for_record_lists/prompt.md:155:   @spec diff_records(record(), record()) :: %{atom() => field_diff()}"
+   ]
+  }
+ ]
+}

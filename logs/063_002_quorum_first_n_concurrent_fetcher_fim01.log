@@ -1,0 +1,383 @@
+14:42:50.420 [info] FIM 063_002_quorum_first_n_concurrent_fetcher_fim01 → 063_002_quorum_first_n_concurrent_fetcher_02: target collect/5
+14:42:50.420 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:42:50.420 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `collect/5`.
+
+Generate a prompt describing how to implement `collect/5` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `collect/5` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `collect/5` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `collect/5` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Quorum First-N Concurrent Fetcher
+
+Write me an Elixir module called `QuorumFetcher` that races data fetches from multiple sources concurrently and returns **as soon as a quorum of successes is reached**, cancelling everything still in flight.
+
+I need this function in the public API:
+
+- `QuorumFetcher.fetch_first(sources, count, timeout_ms)` where:
+  - `sources` is a list of `{name, fetch_fn}` tuples. `name` can be any term (atom, string, tuple, etc.) and `fetch_fn` is a zero-arity function that either returns `{:ok, result}` or returns `{:error, reason}` / raises.
+  - `count` is the number of **successful** fetches required (the quorum).
+  - `timeout_ms` is a single global wall-clock budget shared across every fetch.
+
+All fetches begin concurrently the moment `fetch_first` is called. The function returns a map of `%{name => result_tuple}` covering **every** source, where each value is one of:
+
+- `{:ok, value}` — this fetch completed successfully (winners plus any source that had already succeeded).
+- `{:error, reason}` — this fetch returned `{:error, reason}` or raised (crashes are captured, never counted as a success).
+- `{:error, :cancelled}` — the quorum was reached and this source was still running, so it was cancelled.
+- `{:error, :timeout}` — the global timeout expired before the quorum could be reached and this source had not finished.
+
+Semantics:
+
+- The function returns the instant the `count`-th success arrives; it must not wait for slower sources.
+- When the quorum is reached, any still-running fetch processes must be killed immediately — no zombies. Still-running sources are reported as `{:error, :cancelled}`.
+- If the quorum can never be met before the timeout, sources that finished are reported with their real outcome (`{:ok, …}` or `{:error, reason}`) and unfinished sources become `{:error, :timeout}`.
+- If `sources` is empty, return `%{}` immediately.
+- If `count <= 0`, the quorum is trivially satisfied: nothing is run and every source is reported as `{:error, :cancelled}`.
+- The function returns only after every spawned process is done or confirmed dead.
+
+Do not use any external dependencies — only Elixir's standard library and OTP primitives (`Task`, `Process`, etc.).
+
+Give me the complete implementation in a single file with a single module.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule QuorumFetcher do
+  @moduledoc """
+  Races concurrent fetches under a single global timeout and returns as soon as
+  a quorum of successful results is reached.
+
+  All fetches start at the same instant. The moment the `count`-th success
+  arrives, any source still running is killed and reported as
+  `{:error, :cancelled}`. If the quorum cannot be met before the shared deadline
+  fires, unfinished sources are reported as `{:error, :timeout}`.
+  """
+
+  @doc """
+  Fetch concurrently, returning once `count` sources have succeeded.
+
+  Returns a map of `%{name => result_tuple}` covering every source, where each
+  value is `{:ok, value}`, `{:error, reason}`, `{:error, :cancelled}`, or
+  `{:error, :timeout}`.
+  """
+  @spec fetch_first(
+          [{term(), (-> {:ok, term()} | {:error, term()})}],
+          integer(),
+          non_neg_integer()
+        ) :: %{term() => {:ok, term()} | {:error, term()}}
+  def fetch_first([], _count, _timeout_ms), do: %{}
+
+  def fetch_first(sources, count, _timeout_ms)
+      when is_list(sources) and is_integer(count) and count <= 0 do
+    Map.new(sources, fn {name, _fetch_fn} -> {name, {:error, :cancelled}} end)
+  end
+
+  def fetch_first(sources, count, timeout_ms)
+      when is_list(sources) and is_integer(count) and is_integer(timeout_ms) and
+             timeout_ms >= 0 do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    tagged =
+      Enum.map(sources, fn {name, fetch_fn} ->
+        task = Task.async(fn -> safe_call(fetch_fn) end)
+        {task.ref, name, task}
+      end)
+
+    ref_to_name = Map.new(tagged, fn {ref, name, _task} -> {ref, name} end)
+    ref_to_task = Map.new(tagged, fn {ref, _name, task} -> {ref, task} end)
+    all_refs = MapSet.new(Map.keys(ref_to_name))
+
+    {results, reached?} = collect(%{}, 0, count, all_refs, deadline)
+
+    fill_result = if reached?, do: {:error, :cancelled}, else: {:error, :timeout}
+
+    final =
+      Enum.reduce(all_refs, results, fn ref, acc ->
+        if Map.has_key?(acc, ref) do
+          acc
+        else
+          Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill)
+          Map.put(acc, ref, fill_result)
+        end
+      end)
+
+    Map.new(final, fn {ref, result} -> {Map.fetch!(ref_to_name, ref), result} end)
+  end
+
+  # Blocks until the quorum is met, every task has reported, or the deadline
+  # elapses. Returns `{results_by_ref, reached_quorum?}`.
+  defp collect(results, success_count, quorum, all_refs, deadline) do
+    cond do
+      success_count >= quorum ->
+        {results, true}
+
+      map_size(results) == MapSet.size(all_refs) ->
+        {results, false}
+
+      true ->
+        remaining = deadline - System.monotonic_time(:millisecond)
+
+        if remaining <= 0 do
+          {results, false}
+        else
+          receive do
+            {ref, reply} when is_reference(ref) ->
+              if MapSet.member?(all_refs, ref) and not Map.has_key?(results, ref) do
+                Process.demonitor(ref, [:flush])
+
+                new_success =
+                  case reply do
+                    {:ok, _} -> success_count + 1
+                    _ -> success_count
+                  end
+
+                collect(Map.put(results, ref, reply), new_success, quorum, all_refs, deadline)
+              else
+                collect(results, success_count, quorum, all_refs, deadline)
+              end
+
+            {:DOWN, ref, :process, _pid, reason} ->
+              if MapSet.member?(all_refs, ref) and not Map.has_key?(results, ref) do
+                collect(
+                  Map.put(results, ref, {:error, reason}),
+                  success_count,
+                  quorum,
+                  all_refs,
+                  deadline
+                )
+              else
+                collect(results, success_count, quorum, all_refs, deadline)
+              end
+          after
+            remaining ->
+              {results, false}
+          end
+        end
+    end
+  end
+
+  # Normalises any exception, throw, exit, or unexpected return into a tagged
+  # `{:ok, _} | {:error, _}` tuple so a fetch can never crash the caller.
+  defp safe_call(fetch_fn) do
+    case fetch_fn.() do
+      {:ok, _} = ok -> ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_return, other}}
+    end
+  rescue
+    exception -> {:error, exception}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exa (truncated)
+14:43:23.728 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Implement `collect/5`
+
+Implement the private `collect/5` function, the receive-loop engine that powers
+`QuorumFetcher.fetch_first/3`. It is called with
+`collect(results, success_count, quorum, all_refs, deadline)` where:
+
+- `results` is a map of `%{task_ref => result_tuple}` accumulated so far.
+- `success_count` is how many `{:ok, _}` results have been collected so far.
+- `quorum` is the number of successes required to stop early.
+- `all_refs` is a `MapSet` of every task's monitor reference.
+- `deadline` is an absolute `System.monotonic_time(:millisecond)` value marking
+  the shared wall-clock budget.
+
+`collect/5` blocks until one of three things happens and returns
+`{results_by_ref, reached_quorum?}`:
+
+- **Quorum reached** — as soon as `success_count >= quorum`, return
+  `{results, true}` immediately without waiting for anything else.
+- **Everything reported** — if every ref has produced a result
+  (`map_size(results) == MapSet.size(all_refs)`), return `{results, false}`.
+- **Deadline elapsed** — compute the remaining time as
+  `deadline - System.monotonic_time(:millisecond)`; if it is `<= 0`, return
+  `{results, false}` at once.
+
+Otherwise, wait (for at most `remaining` milliseconds) for the next message:
+
+- A `Task` reply `{ref, reply}` where `ref` is a reference: if `ref` belongs to
+  `all_refs` and hasn't already been recorded, demonitor it with
+  `Process.demonitor(ref, [:flush])` (so the eventual `:DOWN` is discarded),
+  increment `success_count` only when `reply` is `{:ok, _}`, record the reply in
+  `results`, and recurse. If the ref is unknown or already recorded, recurse
+  unchanged.
+- A monitor `{:DOWN, ref, :process, _pid, reason}` message: if `ref` belongs to
+  `all_refs` and hasn't already been recorded, record it as `{:error, reason}`
+  and recurse (a crash is never a success). If the ref is unknown or already
+  recorded, recurse unchanged.
+- If the `after remaining` timeout fires first, return `{results, false}`.
+
+Every recursive call must thread through the updated `results` and
+`success_count` while leaving `quorum`, `all_refs`, and `deadline` unchanged.
+
+```elixir
+defmodule QuorumFetcher do
+  @moduledoc """
+  Races concurrent fetches under a single global timeout and returns as soon as
+  a quorum of successful results is reached.
+
+  All fetches start at the same instant. The moment the `count`-th success
+  arrives, any source still running is killed and reported as
+  `{:error, :cancelled}`. If the quorum cannot be met before the shared deadline
+  fires, unfinished sources are reported as `{:error, :timeout}`.
+  """
+
+  @doc """
+  Fetch concurrently, returning once `count` sources have succeeded.
+
+  Returns a map of `%{name => result_tuple}` covering every source, where each
+  value is `{:ok, value}`, `{:error, reason}`, `{:error, :cancelled}`, or
+  `{:error, :timeout}`.
+  """
+  @spec fetch_first(
+          [{term(), (-> {:ok, term()} | {:error, term()})}],
+          integer(),
+          non_neg_integer()
+        ) :: %{term() => {:ok, term()} | {:error, term()}}
+  def fetch_first([], _count, _timeout_ms), do: %{}
+
+  def fetch_first(sources, count, _timeout_ms)
+      when is_list(sources) and is_integer(count) and count <= 0 do
+    Map.new(sources, fn {name, _fetch_fn} -> {name, {:error, :cancelled}} end)
+  end
+
+  def fetch_first(sources, count, timeout_ms)
+      when is_list(sources) and is_integer(count) and is_integer(timeout_ms) and
+             timeout_ms >= 0 do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    tagged =
+      Enum.map(sources, fn {name, fetch_fn} ->
+        task = Task.async(fn -> safe_call(fetch_fn) end)
+        {task.ref, name, task}
+      end)
+
+    ref_to_name = Map.new(tagged, fn {ref, name, _task} -> {ref, name} end)
+    ref_to_task = Map.new(tagged, fn {ref, _name, task} -> {ref, task} end)
+    all_refs = MapSet.new(Map.keys(ref_to_name))
+
+    {results, reached?} = collect(%{}, 0, count, all_refs, deadline)
+
+    fill_result = if reached?, do: {:error, :cancelled}, else: {:error, :timeout}
+
+    final =
+      Enum.reduce(all_refs, results, fn ref, acc ->
+        if Map.has_key?(acc, ref) do
+          acc
+        else
+          Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill)
+          Map.put(acc, ref, fill_result)
+        end
+      end)
+
+    Map.new(final, fn {ref, result} -> {Map.fetch!(ref_to_name, ref), result} end)
+  end
+
+  # Blocks until the quorum is met, every task has reported, or the deadline
+  # elapses. Returns `{results_by_ref, reached_quorum?}`.
+  defp collect(results, success_count, quorum, all_refs, deadline) do
+    # TODO
+  end
+
+  # Normalises any exception, throw, exit, or unexpected return into a tagged
+  # `{:ok, _} | {:error, _}` tuple so a fetch can never crash the caller.
+  defp safe_call(fetch_fn) do
+    case fetch_fn.() do
+      {:ok, _} = ok -> ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_return, other}}
+    end
+  rescue
+    exception -> {:error, exception}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+end
+```
+</file>
+<file path="solution.ex">
+  defp collect(results, success_count, quorum, all_refs, deadline) do
+    cond do
+      success_count >= quorum ->
+        {results, true}
+
+      map_size(results) == MapSet.size(all_refs) ->
+        {results, false}
+
+      true ->
+        remaining = deadline - System.monotonic_time(:millisecond)
+
+        if remaining <= 0 do
+          {results, false}
+        else
+          receive do
+            {ref, reply} when is_reference(ref) ->
+              if MapSet.member?(all_refs, ref) and not Map.has_key?(results, ref) do
+                Process.demonitor(ref, [:flush])
+
+                new_success =
+                  case reply do
+                    {:ok, _} -> success_count + 1
+                    _ -> success_count
+                  end
+
+                collect(Map.put(results, ref, reply), new_success, quorum, all_refs, deadline)
+              else
+                collect(results, success_count, quorum, all_refs, deadline)
+              end
+
+            {:DOWN, ref, :process, _pid, reason} ->
+              if MapSet.member?(all_refs, ref) and not Map.has_key?(results, ref) do
+                collect(
+                  Map.put(results, ref, {:error, reason}),
+                  success_count,
+                  quorum,
+                  all_refs,
+                  deadline
+                )
+              else
+                collect(results, success_count, quorum, all_refs, deadline)
+              end
+          after
+            remaining ->
+              {results, false}
+          end
+        end
+    end
+  end
+</file>
+14:43:23.728 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3316, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3316, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3316, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3316, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2728, "type" => "message"}], "output_tokens" => 2728, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:43:23.747 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_063_002_quorum_first_n_concurrent_fetcher_02/063_002_quorum_first_n_concurrent_fetcher_02 solution.ex
+14:43:24.949 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":49,"lines_over_98":0,"max_line_length":94,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"063_002_quorum_first_n_concurrent_fetcher_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_063_002_quorum_first_n_concurrent_fetcher_02/063_002_quorum_first_n_concurrent_fetcher_02/solution.ex","task":"063_002_quorum_first_n_concurrent_fetcher_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T12:43:24.927730Z"}
+14:43:24.950 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_063_002_quorum_first_n_concurrent_fetcher_02/063_002_quorum_first_n_concurrent_fetcher_02 .gen_staging/fim_063_002_quorum_first_n_concurrent_fetcher_02/mutant.ex
+14:43:25.596 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":67,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"parent":"063_002_quorum_first_n_concurrent_fetcher_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.4,"mode":"fim","overall":0.41,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 6/8 failed"],"tests":0.25},"shape":"fim","solution_file":".gen_staging/fim_063_002_quorum_first_n_concurrent_fetcher_02/mutant.ex","task":"063_002_quorum_first_n_concurrent_fetcher_02","test_failures":[{"message":"MUTATION","module":"QuorumFetcherTest","test":"test returns as soon as the quorum of successes is reached and cancels the rest"},{"message":"MUTATION","module":"QuorumFetcherTest","test":"test sources that finish with an error do not count toward the quorum"},{"message":"MUTATION","module":"QuorumFetcherTest","test":"test a crashing source is reported as an error, not a success"},{"message":"MUTATION","module":"QuorumFetcherTest","test":"test still-running sources become :timeout when the quorum can't be met in time"},{"message":"MUTATION","module":"QuorumFetcherTest","test":"test supports arbitrary term keys"},{"message":"MUTATION","module":"QuorumFetcherTest","test":"test cancelled and timed-out sources leave no zombie processes behind"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":8,"timestamp":"2026-07-04T12:43:25.575455Z"}
+14:43:25.596 [debug] fim mutation gate: killed
+14:43:25.598 [info] promoted 063_002_quorum_first_n_concurrent_fetcher_02 -> tasks/063_002_quorum_first_n_concurrent_fetcher_02

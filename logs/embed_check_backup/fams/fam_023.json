@@ -1,0 +1,80 @@
+{
+ "parent": "tasks/034_001_data_reconciliation_engine_01",
+ "dirs": [
+  {
+   "dir": "tasks/034_001_data_reconciliation_engine_02",
+   "kind": "module-FIM",
+   "parent": "tasks/034_001_data_reconciliation_engine_01",
+   "diff": [
+    "note: child gold not located in the parent (parent drifted at the target?)",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:151:     Enum.reduce(fields, %{}, fn field, acc ->",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:152:       lv = Map.get(left, field)",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:153:       rv = Map.get(right, field)",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:154:",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:155:       if lv == rv do",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:156:         acc",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:157:       else",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:158:         Map.put(acc, field, %{left: lv, right: rv})",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:159:       end",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:160:     end)"
+   ]
+  },
+  {
+   "dir": "tasks/034_001_data_reconciliation_engine_03",
+   "kind": "module-FIM",
+   "parent": "tasks/034_001_data_reconciliation_engine_01",
+   "diff": [
+    "note: child gold not located in the parent (parent drifted at the target?)",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:134:   defp resolve_compare_fields(_left, _right, _key_fields, compare_fields)",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:135:        when is_list(compare_fields),",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:136:        do: compare_fields",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:137:",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:138:   defp resolve_compare_fields(left, right, key_fields, nil) do",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:139:     all_fields =",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:140:       (Map.keys(left) ++ Map.keys(right))",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:141:       |> Enum.uniq()",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:142:",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:143:     key_set = MapSet.new(key_fields)",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:144:     Enum.reject(all_fields, &MapSet.member?(key_set, &1))"
+   ]
+  },
+  {
+   "dir": "tasks/034_001_data_reconciliation_engine_04",
+   "kind": "module-FIM",
+   "parent": "tasks/034_001_data_reconciliation_engine_01",
+   "diff": [
+    "note: child gold not located in the parent (parent drifted at the target?)",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:125:     key_fields",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:126:     |> Enum.map(&Map.get(record, &1))",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:127:     |> List.to_tuple()"
+   ]
+  },
+  {
+   "dir": "tasks/wt_034_001_data_reconciliation_engine",
+   "kind": "wt_",
+   "parent": "tasks/034_001_data_reconciliation_engine_01",
+   "diff": [
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:24:   @type record_t :: map()",
+    "- extra in embed      tasks/wt_034_001_data_reconciliation_engine/prompt.md:68:   @type record :: map()",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:28:           left: record_t(),",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:29:           right: record_t(),",
+    "- extra in embed      tasks/wt_034_001_data_reconciliation_engine/prompt.md:72:           left: record(),",
+    "- extra in embed      tasks/wt_034_001_data_reconciliation_engine/prompt.md:73:           right: record(),",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:35:           only_in_left: [record_t()],",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:36:           only_in_right: [record_t()]",
+    "- extra in embed      tasks/wt_034_001_data_reconciliation_engine/prompt.md:79:           only_in_left: [record()],",
+    "- extra in embed      tasks/wt_034_001_data_reconciliation_engine/prompt.md:80:           only_in_right: [record()]",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:58:   @spec reconcile([record_t()], [record_t()], keyword()) :: result()",
+    "- extra in embed      tasks/wt_034_001_data_reconciliation_engine/prompt.md:102:   @spec reconcile([record()], [record()], keyword()) :: result()",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:116:   @spec index_by([record_t()], [atom()]) :: %{tuple() => record_t()}",
+    "- extra in embed      tasks/wt_034_001_data_reconciliation_engine/prompt.md:160:   @spec index_by([record()], [atom()]) :: %{tuple() => record()}",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:123:   @spec composite_key(record_t(), [atom()]) :: tuple()",
+    "- extra in embed      tasks/wt_034_001_data_reconciliation_engine/prompt.md:167:   @spec composite_key(record(), [atom()]) :: tuple()",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:133:   @spec resolve_compare_fields(record_t(), record_t(), [atom()], [atom()] | nil) :: [atom()]",
+    "- extra in embed      tasks/wt_034_001_data_reconciliation_engine/prompt.md:177:   @spec resolve_compare_fields(record(), record(), [atom()], [atom()] | nil) :: [atom()]",
+    "- missing from embed  tasks/034_001_data_reconciliation_engine_01/solution.ex:149:   @spec diff(record_t(), record_t(), [atom()]) :: diff_map()",
+    "- extra in embed      tasks/wt_034_001_data_reconciliation_engine/prompt.md:193:   @spec diff(record(), record(), [atom()]) :: diff_map()"
+   ]
+  }
+ ]
+}

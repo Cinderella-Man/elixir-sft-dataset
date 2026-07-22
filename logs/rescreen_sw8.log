@@ -1,0 +1,78 @@
+======== rescreen 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01
+keep_land: 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test returns budget_exhausted when time runs out: 
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+
+22:27:36.359 [warning] transient error (error_max_turns ) on keep_land_judge (013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01) — retry 1/5 after 2000ms
+
+22:28:23.618 [warning] transient error (error_max_turns ) on keep_land_judge (013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01) — retry 2/5 after 4000ms
+
+22:28:50.048 [warning] transient error (error_max_turns ) on keep_land_judge (013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01) — retry 3/5 after 8000ms
+  NOT ENTAILED — the candidate itself under-specifies this demand:
+  The prompt specifies the delay formula and a single pre-scheduling budget check, but it never pins down the observable details that decide the exact attempt count in this scenario: how many times the injected clock is sampled per attempt (decisive when the harness's fake clock advances per call), whether the budget is re-checked when the retry timer fires before the next attempt, and whether an elapsed + capped_delay sum exactly equal to budget_ms still permits scheduling. A careful reader can therefore land on an implementation that exhausts one round earlier (2 attempts) while still honoring every stated rule.
+  Missing contract: Call the :clock function exactly once when the execution starts and exactly once after each failed attempt (never re-check the budget when the retry timer fires), and treat `elapsed_since_start + capped_delay == budget_ms` as still fitting so that only a strictly greater sum aborts — e.g. with budget_ms: 200, base_delay_ms: 100 and a random function returning its min, the execution makes exactly 3 attempts before returning :budget_exhausted.
+  Packet saved for reference: logs/keep_review/013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01. Nothing landed.
+
+======== rescreen 020_004_asynchronous_validation_pipeline_upload_01
+keep_land: 020_004_asynchronous_validation_pipeline_upload_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — compile: .gen_staging/keep_land_020_004_asynchronous_validation_pipeline_upload_01/solution.ex: cannot compile module FileUpload.Store (errors have been logged)
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+
+22:32:11.675 [warning] transient error (error_max_turns ) on keep_land_judge (020_004_asynchronous_validation_pipeline_upload_01) — retry 1/5 after 2000ms
+
+22:32:24.675 [warning] transient error (error_max_turns ) on keep_land_judge (020_004_asynchronous_validation_pipeline_upload_01) — retry 2/5 after 4000ms
+
+22:32:44.030 [warning] transient error (error_max_turns ) on keep_land_judge (020_004_asynchronous_validation_pipeline_upload_01) — retry 3/5 after 8000ms
+
+22:33:05.513 [warning] transient error (error_max_turns ) on keep_land_judge (020_004_asynchronous_validation_pipeline_upload_01) — retry 4/5 after 16000ms
+
+22:33:43.674 [warning] transient error (error_max_turns ) on keep_land_judge (020_004_asynchronous_validation_pipeline_upload_01) — retry 5/5 after 32000ms
+  ERROR — judge call failed: {:transient, "error_max_turns "}
+======== rescreen 031_001_csv_importer_with_validation_and_error_report_01
+keep_land: 031_001_csv_importer_with_validation_and_error_report_01 — rescreen of the CURRENT pair (1 solver call)
+  GREEN — S6 evidence row appended; nothing to land.
+======== rescreen 032_001_json_to_ecto_bulk_ingestion_pipeline_01
+keep_land: 032_001_json_to_ecto_bulk_ingestion_pipeline_01 — rescreen of the CURRENT pair (1 solver call)
+  GREEN — S6 evidence row appended; nothing to land.
+======== rescreen 041_004_weight_aware_cost_bounded_lru_cache_01
+keep_land: 041_004_weight_aware_cost_bounded_lru_cache_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — compile: .gen_staging/keep_land_041_004_weight_aware_cost_bounded_lru_cache_01/solution.ex: cannot compile module WeightedLRUCache (errors have been logged)
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+
+22:36:45.100 [warning] transient error (error_max_turns ) on keep_land_judge (041_004_weight_aware_cost_bounded_lru_cache_01) — retry 1/5 after 2000ms
+
+22:37:02.872 [warning] transient error (error_max_turns ) on keep_land_judge (041_004_weight_aware_cost_bounded_lru_cache_01) — retry 2/5 after 4000ms
+
+22:37:16.601 [warning] transient error (error_max_turns ) on keep_land_judge (041_004_weight_aware_cost_bounded_lru_cache_01) — retry 3/5 after 8000ms
+
+22:37:35.609 [warning] transient error (error_max_turns ) on keep_land_judge (041_004_weight_aware_cost_bounded_lru_cache_01) — retry 4/5 after 16000ms
+
+22:38:04.154 [warning] transient error (error_max_turns ) on keep_land_judge (041_004_weight_aware_cost_bounded_lru_cache_01) — retry 5/5 after 32000ms
+  ERROR — judge call failed: {:transient, "error_max_turns "}
+======== rescreen 074_002_collection_and_structural_assertion_helpers_01
+keep_land: 074_002_collection_and_structural_assertion_helpers_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — test assert_subset/2 fails and lists the missing elements: 
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+  NOT ENTAILED — the candidate itself under-specifies this demand:
+  The prompt requires the message to identify the missing elements, and the solver's message does exactly that ("Missing elements (1): [4]"), but the test does a case-sensitive `=~ "missing"` match; nothing in the prompt fixes the capitalization or exact wording of the label, so a lowercase-"missing" substring is not entailed.
+  Missing contract: The `assert_subset` failure message must contain the lowercase literal substring `missing` (e.g. a line like `Missing elements ...` will NOT satisfy this — use wording such as `The following elements are missing: [...]`).
+  Packet saved for reference: logs/keep_review/074_002_collection_and_structural_assertion_helpers_01. Nothing landed.
+
+======== rescreen 100_004_stateful_totp_vault_genserver_with_replay_protection_01
+keep_land: 100_004_stateful_totp_vault_genserver_with_replay_protection_01 — rescreen of the CURRENT pair (1 solver call)
+  GREEN — S6 evidence row appended; nothing to land.
+======== rescreen 100_003_counter_based_hotp_with_resynchronization_window_01
+keep_land: 100_003_counter_based_hotp_with_resynchronization_window_01 — rescreen of the CURRENT pair (1 solver call)
+  RED — compile: .gen_staging/keep_land_100_003_counter_based_hotp_with_resynchronization_window_01/solution.ex: cannot compile module HOTP (errors have been logged)
+  judging entailment vs the CANDIDATE prompt (1 judge call)
+
+22:41:10.489 [warning] transient error (error_max_turns ) on keep_land_judge (100_003_counter_based_hotp_with_resynchronization_window_01) — retry 1/5 after 2000ms
+
+22:41:22.336 [warning] transient error (error_max_turns ) on keep_land_judge (100_003_counter_based_hotp_with_resynchronization_window_01) — retry 2/5 after 4000ms
+
+22:41:39.033 [warning] transient error (error_max_turns ) on keep_land_judge (100_003_counter_based_hotp_with_resynchronization_window_01) — retry 3/5 after 8000ms
+
+22:41:59.507 [warning] transient error (error_max_turns ) on keep_land_judge (100_003_counter_based_hotp_with_resynchronization_window_01) — retry 4/5 after 16000ms
+
+22:42:27.546 [warning] transient error (error_max_turns ) on keep_land_judge (100_003_counter_based_hotp_with_resynchronization_window_01) — retry 5/5 after 32000ms
+  ERROR — judge call failed: {:transient, "error_max_turns "}

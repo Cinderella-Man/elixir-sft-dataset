@@ -1,0 +1,401 @@
+14:56:12.432 [info] FIM 064_001_work_stealing_task_queue_fim01 → 064_001_work_stealing_task_queue_02: target try_steal/4
+14:56:12.432 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:56:12.432 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `try_steal/4`.
+
+Generate a prompt describing how to implement `try_steal/4` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `try_steal/4` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `try_steal/4` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `try_steal/4` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `WorkStealQueue` that distributes work across N worker processes using a work-stealing algorithm.
+
+I need one primary public function:
+
+- `WorkStealQueue.run(items, worker_count, process_fn)` — takes a list of items, a number of worker processes to spawn, and a one-arity function to apply to each item. Returns a list of `%{item: item, result: term, worker_id: non_neg_integer}` maps — one per input item, in any order.
+
+**How it should work internally:**
+
+1. Partition the input list as evenly as possible across `worker_count` workers. Each worker gets a local queue (a list it owns).
+2. Spawn all workers as `Task`s or plain processes. Each worker processes its local queue sequentially using `process_fn`.
+3. When a worker empties its local queue, it should *steal* work from the busiest worker (the one with the most items remaining). Stealing takes items from the back half of the victim's queue. If no other worker has any remaining work, the stealing worker simply exits.
+4. Each worker must tag every result with its own `worker_id` (an integer from `0` to `worker_count - 1`) so callers can verify which worker processed which item.
+
+**Coordination requirements:**
+
+- Workers need a shared coordination mechanism (e.g. an `Agent` or `GenServer`) that tracks each worker's remaining queue so that steal attempts can find the busiest worker atomically enough to avoid races. You may accept occasional failed steals (the victim emptied before the steal completed) — just handle that case gracefully by retrying or moving on.
+- The function must be synchronous: `run/3` should block until every item has been processed and then return the complete result list.
+
+**Constraints:**
+- Use only OTP/stdlib — no external dependencies.
+- The solution should work correctly when `worker_count` is greater than `length(items)` (some workers get empty queues from the start).
+- `process_fn` may be slow or fast — the algorithm should naturally cause faster workers to pick up slack from slower ones.
+
+Give me the complete implementation in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule WorkStealQueue do
+  @moduledoc """
+  Distributes work across N worker processes using a work-stealing algorithm.
+
+  Each worker owns a local queue. When a worker exhausts its queue it inspects
+  the shared coordinator to find the busiest peer and steals the back-half of
+  that peer's remaining work.  The coordinator is an `Agent` whose state is a
+  plain map `%{worker_id => [remaining_items]}`, giving each steal attempt an
+  atomic snapshot of all queues.
+
+  ## Example
+
+      results =
+        WorkStealQueue.run(1..20 |> Enum.to_list(), 4, fn n ->
+          Process.sleep(:rand.uniform(50))
+          n * n
+        end)
+
+      # => [%{item: 3, result: 9, worker_id: 2}, ...]  (order varies)
+  """
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Process every item in `items` by applying `process_fn` across `worker_count`
+  parallel workers, then return a list of result maps (one per item, any order).
+
+  Each map has the shape:
+      %{item: original_item, result: process_fn_return_value, worker_id: 0..worker_count-1}
+
+  `run/3` blocks until every item has been processed.
+  """
+  @spec run(list(), pos_integer(), (any() -> any())) :: [
+          %{item: any(), result: any(), worker_id: non_neg_integer()}
+        ]
+  def run(items, worker_count, process_fn)
+      when is_list(items) and is_integer(worker_count) and worker_count > 0 and
+             is_function(process_fn, 1) do
+    # Divide the input list into `worker_count` chunks as evenly as possible.
+    partitions = partition(items, worker_count)
+
+    # The coordinator Agent holds a map of %{id => remaining_queue}.
+    # All queue mutations (pop, steal) go through this Agent so they are
+    # serialised and workers see a consistent picture of who has work left.
+    {:ok, coordinator} =
+      Agent.start_link(fn ->
+        partitions
+        |> Enum.with_index()
+        |> Map.new(fn {queue, id} -> {id, queue} end)
+      end)
+
+    # Spawn one Task per worker and await all of them.
+    results =
+      0..(worker_count - 1)
+      |> Enum.map(fn id ->
+        Task.async(fn -> run_worker(id, coordinator, process_fn) end)
+      end)
+      |> Task.await_many(:infinity)
+      |> List.flatten()
+
+    Agent.stop(coordinator)
+    results
+  end
+
+  # ---------------------------------------------------------------------------
+  # Worker logic
+  # ---------------------------------------------------------------------------
+
+  # Entry-point for each worker Task.  Results accumulate tail-recursively.
+  defp run_worker(id, coordinator, process_fn) do
+    process_local_queue(id, coordinator, process_fn, _acc = [])
+  end
+
+  # Process items from this worker's own queue until it is empty, then try to
+  # steal.  Using an accumulator keeps the recursion stack-friendly.
+  defp process_local_queue(id, coordinator, process_fn, acc) do
+    case pop_item(id, coordinator) do
+      {:ok, item} ->
+        result = process_fn.(item)
+        entry = %{item: item, result: result, worker_id: id}
+        process_local_queue(id, coordinator, process_fn, [entry | acc])
+
+      :empty ->
+        try_steal(id, coordinator, process_fn, acc)
+    end
+  end
+
+  # When the local queue is empty, look for the busiest other worker and steal
+  # half its remaining items.  If no work exists anywhere, we are done.
+  defp try_steal(id, coordinator, process_fn, acc) do
+    case find_victim(id, coordinator) do
+      nil ->
+        # No other worker has any remaining work — we are finished.
+        acc
+
+      victim_id ->
+        case steal_half(victim_id, coordinator) do
+          [] ->
+            # The victim emptied its queue between the time we identified it
+            # and the time we tried to steal.  Try again with a fresh scan.
+            try_steal(id, coordinator, process_fn, acc)
+
+          stolen ->
+            # Deposit the stolen items into our own queue and resume normal
+            # processing.  Prepend so we work through them immediately.
+            Agent.update(coordinator, fn state ->
+              Map.update(state, id, stolen, fn existing -> stolen ++ existing end)
+            end)
+
+            process_local_queue(id, coordinator, process_fn, acc)
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Coordinator operations (all go through the Agent)
+  # ---------------------------------------------------------------------------
+
+  # Atomically pop the head item from worker `id`'s queue.
+  @spec pop_item(non_neg_integer(), pid()) :: {:ok, any()} | :empty
+  defp pop_item(id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      case Map.fetch!(state, id) do
+        [] ->
+          {:empty, state}
+
+        [head | tail] ->
+          {{:ok, head},  (truncated)
+14:56:52.967 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `try_steal/4` function.
+
+This function is called by a worker (`process_local_queue/4`) once its own local
+queue is empty. Its job is to acquire more work by stealing from a peer, or to
+finish if no work remains anywhere.
+
+`try_steal/4` receives `id` (the current worker's id), `coordinator` (the pid of
+the shared `Agent` holding `%{worker_id => remaining_queue}`), `process_fn` (the
+one-arity function applied to each item), and `acc` (the list of result maps this
+worker has accumulated so far).
+
+It must:
+
+1. Find the busiest other worker to steal from by calling `find_victim(id, coordinator)`.
+2. If `find_victim/2` returns `nil` — meaning no other worker has any remaining
+   work — the worker is finished, so return `acc`.
+3. Otherwise, given a `victim_id`, attempt to steal the back half of that victim's
+   queue with `steal_half(victim_id, coordinator)`.
+   - If `steal_half/2` returns `[]` — the victim emptied (or shrank below the
+     steal threshold) between finding it and stealing — retry the whole steal
+     attempt with a fresh scan by calling `try_steal(id, coordinator, process_fn, acc)`
+     again (with the same accumulator).
+   - If `steal_half/2` returns a non-empty list `stolen`, deposit those items into
+     this worker's own queue in the coordinator using `Agent.update/2`. Use
+     `Map.update/4` on the state keyed by `id`, defaulting to `stolen`, and when a
+     queue already exists prepend the stolen items (`stolen ++ existing`) so they
+     are worked through immediately. Then resume normal processing by calling
+     `process_local_queue(id, coordinator, process_fn, acc)`.
+
+```elixir
+defmodule WorkStealQueue do
+  @moduledoc """
+  Distributes work across N worker processes using a work-stealing algorithm.
+
+  Each worker owns a local queue. When a worker exhausts its queue it inspects
+  the shared coordinator to find the busiest peer and steals the back-half of
+  that peer's remaining work.  The coordinator is an `Agent` whose state is a
+  plain map `%{worker_id => [remaining_items]}`, giving each steal attempt an
+  atomic snapshot of all queues.
+
+  ## Example
+
+      results =
+        WorkStealQueue.run(1..20 |> Enum.to_list(), 4, fn n ->
+          Process.sleep(:rand.uniform(50))
+          n * n
+        end)
+
+      # => [%{item: 3, result: 9, worker_id: 2}, ...]  (order varies)
+  """
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Process every item in `items` by applying `process_fn` across `worker_count`
+  parallel workers, then return a list of result maps (one per item, any order).
+
+  Each map has the shape:
+      %{item: original_item, result: process_fn_return_value, worker_id: 0..worker_count-1}
+
+  `run/3` blocks until every item has been processed.
+  """
+  @spec run(list(), pos_integer(), (any() -> any())) :: [
+          %{item: any(), result: any(), worker_id: non_neg_integer()}
+        ]
+  def run(items, worker_count, process_fn)
+      when is_list(items) and is_integer(worker_count) and worker_count > 0 and
+             is_function(process_fn, 1) do
+    # Divide the input list into `worker_count` chunks as evenly as possible.
+    partitions = partition(items, worker_count)
+
+    # The coordinator Agent holds a map of %{id => remaining_queue}.
+    # All queue mutations (pop, steal) go through this Agent so they are
+    # serialised and workers see a consistent picture of who has work left.
+    {:ok, coordinator} =
+      Agent.start_link(fn ->
+        partitions
+        |> Enum.with_index()
+        |> Map.new(fn {queue, id} -> {id, queue} end)
+      end)
+
+    # Spawn one Task per worker and await all of them.
+    results =
+      0..(worker_count - 1)
+      |> Enum.map(fn id ->
+        Task.async(fn -> run_worker(id, coordinator, process_fn) end)
+      end)
+      |> Task.await_many(:infinity)
+      |> List.flatten()
+
+    Agent.stop(coordinator)
+    results
+  end
+
+  # ---------------------------------------------------------------------------
+  # Worker logic
+  # ---------------------------------------------------------------------------
+
+  # Entry-point for each worker Task.  Results accumulate tail-recursively.
+  defp run_worker(id, coordinator, process_fn) do
+    process_local_queue(id, coordinator, process_fn, _acc = [])
+  end
+
+  # Process items from this worker's own queue until it is empty, then try to
+  # steal.  Using an accumulator keeps the recursion stack-friendly.
+  defp process_local_queue(id, coordinator, process_fn, acc) do
+    case pop_item(id, coordinator) do
+      {:ok, item} ->
+        result = process_fn.(item)
+        entry = %{item: item, result: result, worker_id: id}
+        process_local_queue(id, coordinator, process_fn, [entry | acc])
+
+      :empty ->
+        try_steal(id, coordinator, process_fn, acc)
+    end
+  end
+
+  # When the local queue is empty, look for the busiest other worker and steal
+  # half its remaining items.  If no work exists anywhere, we are done.
+  defp try_steal(id, coordinator, process_fn, acc) do
+    # TODO
+  end
+
+  # ---------------------------------------------------------------------------
+  # Coordinator operations (all go through the Agent)
+  # ---------------------------------------------------------------------------
+
+  # Atomically pop the head item from worker `id`'s queue.
+  @spec pop_item(non_neg_integer(), pid()) :: {:ok, any()} | :empty
+  defp pop_item(id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      case Map.fetch!(state, id) do
+        [] ->
+          {:empty, state}
+
+        [head | tail] ->
+          {{:ok, head}, Map.put(state, id, tail)}
+      end
+    end)
+  end
+
+  # Return the id of the worker (other than `thief_id`) with the longest queue,
+  # or `nil` if every other worker's queue is empty.
+  @spec find_victim(non_neg_integer(), pid()) :: non_neg_integer() | nil
+  defp find_victim(thief_id, coordinator) do
+    Agent.get(coordinator, fn state ->
+      state
+      |> Enum.reject(fn {id, queue} -> id == thief_id or queue == [] end)
+      |> case do
+        [] ->
+          nil
+
+        candidates ->
+          {victim_id, _queue} = Enum.max_by(candidates, fn {_id, q} -> length(q) end)
+          victim_id
+      end
+    end)
+  end
+
+  # Atomically remove the back half of the victim's queue and return it.
+  # Stealing from the *back* is safe: the victim consumes from the *front*, so
+  # the items we take are the furthest from being processed imminently.
+  # Returns `[]` if the victim's queue is now too small to bother stealing from.
+  @spec steal_half(non_neg_integer(), pid()) :: list()
+  defp steal_half(victim_id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      queue = Map.fetch!(state, victim_id)
+      len = length(queue)
+
+      if len < 2 do
+        # Not worth stealing a single item that the victim is about to take.
+        {[], state}
+      else
+        steal_count = div(len, 2)
+        keep_count = len - steal_count
+        {keep, stolen} = Enum.split(queue, keep_count)
+        {stolen, Map.put(state, victim_id, keep)}
+      end
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Partitioning
+  # ---------------------------------------------------------------------------
+
+  # Divide `items` into `n` chunks as evenly as possible.
+  # The first `rem(length, n)` chunks get one extra item.
+  # Always returns exactly `n` lists (some may be `[]` when n > length(items)).
+  @spec partition(list(), pos_integer()) :: [list()]
+  defp partition(items, n) do
+    total = length(items)
+    base_size = div(total, n)
+    # How many workers get one extra item
+    extras = rem(total, n)
+
+    {chunks, _remaining} =
+      Enum.reduce(0..(n - 1), {[], items}, fn i, {acc, rest} ->
+        chunk_size = if i < extras, do: base_size + 1, else: base_size
+        {chunk, tail} = Enum.split(rest, chunk_size)
+        {[chunk | acc], tail}
+      end)
+
+    Enum.rev (truncated)
+14:56:52.967 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4184, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4184, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4184, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4184, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3501, "type" => "message"}], "output_tokens" => 3501, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:56:52.986 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_064_001_work_stealing_task_queue_02/064_001_work_stealing_task_queue_02 solution.ex
+14:56:53.736 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":26,"lines_over_98":0,"max_line_length":82,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"064_001_work_stealing_task_queue_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_064_001_work_stealing_task_queue_02/064_001_work_stealing_task_queue_02/solution.ex","task":"064_001_work_stealing_task_queue_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T12:56:53.712745Z"}
+14:56:53.737 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_064_001_work_stealing_task_queue_02/064_001_work_stealing_task_queue_02 .gen_staging/fim_064_001_work_stealing_task_queue_02/mutant.ex
+14:56:54.414 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":51,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"parent":"064_001_work_stealing_task_queue_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.4,"mode":"fim","overall":0.24,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 11/11 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_064_001_work_stealing_task_queue_02/mutant.ex","task":"064_001_work_stealing_task_queue_02","test_failures":[{"message":"{:EXIT, #PID<0.208.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_848934_2247.ex\", line: 93, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test all items are returned"},{"message":"{:EXIT, #PID<0.214.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_848934_2247.ex\", line: 93, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test results contain correct computed values"},{"message":"{:EXIT, #PID<0.218.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_848934_2247.ex\", line: 93, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test worker_ids are within bounds"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_848934_2247.ex\", line: 93, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test with more items than workers, all workers are used"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_848934_2247.ex\", line: 93, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test worker_count greater than item count still processes everything"},{"message":"{:EXIT, #PID<0.243.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_848934_2247.ex\", line: 93, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test fast workers process more items than slow ones (stealing occurred)"},{"message":"{:EXIT, #PID<0.249.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_848934_2247.ex\", line: 93, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test single worker processes all items without stealing"},{"message":"{:EXIT, #PID<0.252.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_848934_2247.ex\", line: 93, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test empty item list returns empty results"},{"message":"{:EXIT, #PID<0.258.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_848934_2247.ex\", line: 93, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test single item is processed correctly"},{"message":"{:EXIT, #PID<0.263.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_848934_2247.ex\", line: 93, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test process_fn returning complex terms works"},{"message":"{:EXIT, #PID<0.267.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_848934_2247.ex\", line: 93, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test no duplicate processing — each item processed exactly once"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T12:56:54.390899Z"}
+14:56:54.414 [debug] fim mutation gate: killed
+14:56:54.415 [info] promoted 064_001_work_stealing_task_queue_02 -> tasks/064_001_work_stealing_task_queue_02

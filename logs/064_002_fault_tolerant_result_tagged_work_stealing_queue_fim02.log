@@ -1,0 +1,399 @@
+14:58:44.916 [info] FIM 064_002_fault_tolerant_result_tagged_work_stealing_queue_fim02 → 064_002_fault_tolerant_result_tagged_work_stealing_queue_03: target steal_half/2
+14:58:44.916 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:58:44.916 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `steal_half/2`.
+
+Generate a prompt describing how to implement `steal_half/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `steal_half/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `steal_half/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `steal_half/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `WorkStealQueue` that distributes work across N worker processes using a work-stealing algorithm, but with **fault-tolerant, result-tagged** semantics: the `process_fn` you hand it is allowed to blow up (raise, throw, or exit) on some items, and a single bad item must never take down a worker or lose any other item.
+
+I need one primary public function:
+
+- `WorkStealQueue.run(items, worker_count, process_fn)` — takes a list of items, a number of worker processes to spawn, and a one-arity function to apply to each item. Returns a list of `%{item: item, result: tagged_result, worker_id: non_neg_integer}` maps — exactly one per input item, in any order.
+
+**Result tagging:**
+
+- If `process_fn.(item)` returns normally with value `v`, the result field must be `{:ok, v}`.
+- If `process_fn.(item)` **raises** an exception, the result field must be `{:error, %{kind: :error, reason: message}}` where `message` is the exception's message string.
+- If `process_fn.(item)` **throws** a value `t`, the result field must be `{:error, %{kind: :throw, reason: t}}`.
+- If `process_fn.(item)` **exits** with reason `r`, the result field must be `{:error, %{kind: :exit, reason: r}}`.
+
+A failure on one item must NOT prevent the owning worker from continuing with the rest of its queue, and must NOT prevent stealing.
+
+**How it should work internally:**
+
+1. Partition the input list as evenly as possible across `worker_count` workers. Each worker gets a local queue (a list it owns).
+2. Spawn all workers as `Task`s. Each worker processes its local queue sequentially, wrapping every `process_fn` call so exceptions/throws/exits are captured and tagged (never propagated).
+3. When a worker empties its local queue, it should *steal* work from the busiest worker (the one with the most items remaining). Stealing takes items from the back half of the victim's queue. If no other worker has any remaining work, the stealing worker simply exits.
+4. Each worker must tag every result with its own `worker_id` (an integer from `0` to `worker_count - 1`).
+
+**Coordination requirements:**
+
+- Workers need a shared coordination mechanism (e.g. an `Agent` or `GenServer`) that tracks each worker's remaining queue so steal attempts can find the busiest worker atomically enough to avoid races. Occasional failed steals (victim emptied first) should be handled gracefully by retrying or moving on.
+- `run/3` must be synchronous: block until every item has been processed (successfully or with a captured error) and then return the complete result list.
+
+**Constraints:**
+- Use only OTP/stdlib — no external dependencies.
+- Must work correctly when `worker_count` is greater than `length(items)`.
+- `process_fn` may be slow or fast — faster workers should naturally pick up slack.
+
+Give me the complete implementation in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule WorkStealQueue do
+  @moduledoc """
+  Fault-tolerant, result-tagged work-stealing task queue.
+
+  Distributes work across N worker `Task`s using a work-stealing algorithm.
+  Each worker owns a local queue; when it empties it steals the back-half of
+  the busiest peer's queue. Coordination goes through an `Agent` whose state is
+  a plain map `%{worker_id => [remaining_items]}`, giving each steal attempt an
+  atomic snapshot of all queues.
+
+  Unlike a plain work-stealing queue, every `process_fn` invocation is wrapped
+  so that raises, throws, and exits are *captured* and turned into a tagged
+  `{:error, %{kind: ..., reason: ...}}` result. A misbehaving item can never
+  kill its worker or lose sibling items.
+
+  ## Example
+
+      WorkStealQueue.run([1, 2, 3], 2, fn
+        2 -> raise "boom"
+        n -> n * 10
+      end)
+      # => [%{item: 1, result: {:ok, 10}, worker_id: 0},
+      #     %{item: 2, result: {:error, %{kind: :error, reason: "boom"}}, worker_id: 0},
+      #     %{item: 3, result: {:ok, 30}, worker_id: 1}]   (order varies)
+  """
+
+  @type tagged_result :: {:ok, any()} | {:error, %{kind: :error | :throw | :exit, reason: any()}}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Process every item by applying `process_fn` across `worker_count` parallel,
+  fault-tolerant workers. Returns one result map per item (any order). Blocks
+  until all items have been processed.
+  """
+  @spec run(list(), pos_integer(), (any() -> any())) :: [
+          %{item: any(), result: tagged_result(), worker_id: non_neg_integer()}
+        ]
+  def run(items, worker_count, process_fn)
+      when is_list(items) and is_integer(worker_count) and worker_count > 0 and
+             is_function(process_fn, 1) do
+    partitions = partition(items, worker_count)
+
+    {:ok, coordinator} =
+      Agent.start_link(fn ->
+        partitions
+        |> Enum.with_index()
+        |> Map.new(fn {queue, id} -> {id, queue} end)
+      end)
+
+    results =
+      0..(worker_count - 1)
+      |> Enum.map(fn id ->
+        Task.async(fn -> run_worker(id, coordinator, process_fn) end)
+      end)
+      |> Task.await_many(:infinity)
+      |> List.flatten()
+
+    Agent.stop(coordinator)
+    results
+  end
+
+  # ---------------------------------------------------------------------------
+  # Worker logic
+  # ---------------------------------------------------------------------------
+
+  defp run_worker(id, coordinator, process_fn) do
+    process_local_queue(id, coordinator, process_fn, [])
+  end
+
+  defp process_local_queue(id, coordinator, process_fn, acc) do
+    case pop_item(id, coordinator) do
+      {:ok, item} ->
+        result = safe_apply(process_fn, item)
+        entry = %{item: item, result: result, worker_id: id}
+        process_local_queue(id, coordinator, process_fn, [entry | acc])
+
+      :empty ->
+        try_steal(id, coordinator, process_fn, acc)
+    end
+  end
+
+  # Wrap a single item's processing so raise/throw/exit become tagged results.
+  @spec safe_apply((any() -> any()), any()) :: tagged_result()
+  defp safe_apply(process_fn, item) do
+    try do
+      {:ok, process_fn.(item)}
+    rescue
+      e -> {:error, %{kind: :error, reason: Exception.message(e)}}
+    catch
+      :throw, value -> {:error, %{kind: :throw, reason: value}}
+      :exit, reason -> {:error, %{kind: :exit, reason: reason}}
+    end
+  end
+
+  defp try_steal(id, coordinator, process_fn, acc) do
+    case find_victim(id, coordinator) do
+      nil ->
+        acc
+
+      victim_id ->
+        case steal_half(victim_id, coordinator) do
+          [] ->
+            try_steal(id, coordinator, process_fn, acc)
+
+          stolen ->
+            Agent.update(coordinator, fn state ->
+              Map.update(state, id, stolen, fn existing -> stolen ++ existing end)
+            end)
+
+            process_local_queue(id, coordinator, process_fn, acc)
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Coordinator operati (truncated)
+14:59:20.094 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `steal_half/2` function. It takes a `victim_id` and the
+`coordinator` Agent pid, and atomically steals the back half of the victim's
+remaining queue. Using a single `Agent.get_and_update/2` call, fetch the
+victim's current queue and compute its length. If the queue has fewer than 2
+items, steal nothing: return `[]` and leave the coordinator state unchanged.
+Otherwise, take the back half — steal `div(len, 2)` items, keeping the front
+`len - div(len, 2)` items with the victim. Split the queue at the keep count
+into `{keep, stolen}`, write `keep` back as the victim's new queue, and return
+`stolen` (the list of items removed from the victim). The returned list is what
+the calling thief will prepend to its own local queue.
+
+```elixir
+defmodule WorkStealQueue do
+  @moduledoc """
+  Fault-tolerant, result-tagged work-stealing task queue.
+
+  Distributes work across N worker `Task`s using a work-stealing algorithm.
+  Each worker owns a local queue; when it empties it steals the back-half of
+  the busiest peer's queue. Coordination goes through an `Agent` whose state is
+  a plain map `%{worker_id => [remaining_items]}`, giving each steal attempt an
+  atomic snapshot of all queues.
+
+  Unlike a plain work-stealing queue, every `process_fn` invocation is wrapped
+  so that raises, throws, and exits are *captured* and turned into a tagged
+  `{:error, %{kind: ..., reason: ...}}` result. A misbehaving item can never
+  kill its worker or lose sibling items.
+
+  ## Example
+
+      WorkStealQueue.run([1, 2, 3], 2, fn
+        2 -> raise "boom"
+        n -> n * 10
+      end)
+      # => [%{item: 1, result: {:ok, 10}, worker_id: 0},
+      #     %{item: 2, result: {:error, %{kind: :error, reason: "boom"}}, worker_id: 0},
+      #     %{item: 3, result: {:ok, 30}, worker_id: 1}]   (order varies)
+  """
+
+  @type tagged_result :: {:ok, any()} | {:error, %{kind: :error | :throw | :exit, reason: any()}}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Process every item by applying `process_fn` across `worker_count` parallel,
+  fault-tolerant workers. Returns one result map per item (any order). Blocks
+  until all items have been processed.
+  """
+  @spec run(list(), pos_integer(), (any() -> any())) :: [
+          %{item: any(), result: tagged_result(), worker_id: non_neg_integer()}
+        ]
+  def run(items, worker_count, process_fn)
+      when is_list(items) and is_integer(worker_count) and worker_count > 0 and
+             is_function(process_fn, 1) do
+    partitions = partition(items, worker_count)
+
+    {:ok, coordinator} =
+      Agent.start_link(fn ->
+        partitions
+        |> Enum.with_index()
+        |> Map.new(fn {queue, id} -> {id, queue} end)
+      end)
+
+    results =
+      0..(worker_count - 1)
+      |> Enum.map(fn id ->
+        Task.async(fn -> run_worker(id, coordinator, process_fn) end)
+      end)
+      |> Task.await_many(:infinity)
+      |> List.flatten()
+
+    Agent.stop(coordinator)
+    results
+  end
+
+  # ---------------------------------------------------------------------------
+  # Worker logic
+  # ---------------------------------------------------------------------------
+
+  defp run_worker(id, coordinator, process_fn) do
+    process_local_queue(id, coordinator, process_fn, [])
+  end
+
+  defp process_local_queue(id, coordinator, process_fn, acc) do
+    case pop_item(id, coordinator) do
+      {:ok, item} ->
+        result = safe_apply(process_fn, item)
+        entry = %{item: item, result: result, worker_id: id}
+        process_local_queue(id, coordinator, process_fn, [entry | acc])
+
+      :empty ->
+        try_steal(id, coordinator, process_fn, acc)
+    end
+  end
+
+  # Wrap a single item's processing so raise/throw/exit become tagged results.
+  @spec safe_apply((any() -> any()), any()) :: tagged_result()
+  defp safe_apply(process_fn, item) do
+    try do
+      {:ok, process_fn.(item)}
+    rescue
+      e -> {:error, %{kind: :error, reason: Exception.message(e)}}
+    catch
+      :throw, value -> {:error, %{kind: :throw, reason: value}}
+      :exit, reason -> {:error, %{kind: :exit, reason: reason}}
+    end
+  end
+
+  defp try_steal(id, coordinator, process_fn, acc) do
+    case find_victim(id, coordinator) do
+      nil ->
+        acc
+
+      victim_id ->
+        case steal_half(victim_id, coordinator) do
+          [] ->
+            try_steal(id, coordinator, process_fn, acc)
+
+          stolen ->
+            Agent.update(coordinator, fn state ->
+              Map.update(state, id, stolen, fn existing -> stolen ++ existing end)
+            end)
+
+            process_local_queue(id, coordinator, process_fn, acc)
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Coordinator operations
+  # ---------------------------------------------------------------------------
+
+  @spec pop_item(non_neg_integer(), pid()) :: {:ok, any()} | :empty
+  defp pop_item(id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      case Map.fetch!(state, id) do
+        [] -> {:empty, state}
+        [head | tail] -> {{:ok, head}, Map.put(state, id, tail)}
+      end
+    end)
+  end
+
+  @spec find_victim(non_neg_integer(), pid()) :: non_neg_integer() | nil
+  defp find_victim(thief_id, coordinator) do
+    Agent.get(coordinator, fn state ->
+      state
+      |> Enum.reject(fn {id, queue} -> id == thief_id or queue == [] end)
+      |> case do
+        [] ->
+          nil
+
+        candidates ->
+          {victim_id, _queue} = Enum.max_by(candidates, fn {_id, q} -> length(q) end)
+          victim_id
+      end
+    end)
+  end
+
+  @spec steal_half(non_neg_integer(), pid()) :: list()
+  defp steal_half(victim_id, coordinator) do
+    # TODO
+  end
+
+  # ---------------------------------------------------------------------------
+  # Partitioning
+  # ---------------------------------------------------------------------------
+
+  @spec partition(list(), pos_integer()) :: [list()]
+  defp partition(items, n) do
+    total = length(items)
+    base_size = div(total, n)
+    extras = rem(total, n)
+
+    {chunks, _remaining} =
+      Enum.reduce(0..(n - 1), {[], items}, fn i, {acc, rest} ->
+        chunk_size = if i < extras, do: base_size + 1, else: base_size
+        {chunk, tail} = Enum.split(rest, chunk_size)
+        {[chunk | acc], tail}
+      end)
+
+    Enum.reverse(chunks)
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  @spec steal_half(non_neg_integer(), pid()) :: list()
+  defp steal_half(victim_id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      queue = Map.fetch!(state, victim_id)
+      len = length(queue)
+
+      if len < 2 do
+        {[], state}
+      else
+        steal_count = div(len, 2)
+        keep_count = len - steal_count
+        {keep, stolen} = Enum.split(queue, keep_count)
+        {stolen, Map.put(state, victim_id, keep)}
+      end
+    end)
+  end
+</file>
+14:59:20.094 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4210, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4210, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4210, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4210, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3202, "type" => "message"}], "output_tokens" => 3202, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:59:20.113 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_064_002_fault_tolerant_result_tagged_work_stealing_queue_03/064_002_fault_tolerant_result_tagged_work_stealing_queue_03 solution.ex
+14:59:20.905 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":16,"lines_over_98":0,"max_line_length":54,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"064_002_fault_tolerant_result_tagged_work_stealing_queue_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_064_002_fault_tolerant_result_tagged_work_stealing_queue_03/064_002_fault_tolerant_result_tagged_work_stealing_queue_03/solution.ex","task":"064_002_fault_tolerant_result_tagged_work_stealing_queue_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T12:59:20.881205Z"}
+14:59:20.905 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_064_002_fault_tolerant_result_tagged_work_stealing_queue_03/064_002_fault_tolerant_result_tagged_work_stealing_queue_03 .gen_staging/fim_064_002_fault_tolerant_result_tagged_work_stealing_queue_03/mutant.ex
+14:59:21.581 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":52,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"parent":"064_002_fault_tolerant_result_tagged_work_stealing_queue_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.6,"mode":"fim","overall":0.78,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 3/12 failed"],"tests":0.75},"shape":"fim","solution_file":".gen_staging/fim_064_002_fault_tolerant_result_tagged_work_stealing_queue_03/mutant.ex","task":"064_002_fault_tolerant_result_tagged_work_stealing_queue_03","test_failures":[{"message":"{:EXIT, #PID<0.234.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :steal_half, 2, [file: ~c\"/tmp/evalfim_851416_2629.ex\", line: 151, error_info: %{module: Exception}]}, {WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_851416_2629.ex\", line: 104]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test worker_ids are within bounds"},{"message":"{:EXIT, #PID<0.241.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :steal_half, 2, [file: ~c\"/tmp/evalfim_851416_2629.ex\", line: 151, error_info: %{module: Exception}]}, {WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_851416_2629.ex\", line: 104]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test worker_count greater than item count still processes everything"},{"message":"{:EXIT, #PID<0.253.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :steal_half, 2, [file: ~c\"/tmp/evalfim_851416_2629.ex\", line: 151, error_info: %{module: Exception}]}, {WorkStealQueue, :try_steal, 4, [file: ~c\"/tmp/evalfim_851416_2629.ex\", line: 104]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"WorkStealQueueTest","test":"test fast workers pick up slack, and errors do not break stealing"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T12:59:21.558695Z"}
+14:59:21.581 [debug] fim mutation gate: killed
+14:59:21.583 [info] promoted 064_002_fault_tolerant_result_tagged_work_stealing_queue_03 -> tasks/064_002_fault_tolerant_result_tagged_work_stealing_queue_03

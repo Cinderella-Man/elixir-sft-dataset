@@ -1,0 +1,32 @@
+[pre-push] mix format --check-formatted && mix compile --warnings-as-errors && mix test
+[pre-push] validate touched families: *001_001*,*001_002*,*001_003*,*001_004*,*002_001*,*002_002*,*002_003*,*002_004*,*003_001*,*003_002*,*003_003*,*003_004*,*004_001*,*004_002*,*004_003*,*004_004*,*005_001*,*005_002*,*005_003*,*005_004*
+ALL PERFECT ✓ (every task scores 1.0)
+ALL HARNESSES KILL THEIR MUTANT ✓
+[pre-push] format check (corpus-wide, matching CI)
+total: 0 deviating, 0 errors — GATE (--check: exits 1 when anything deviates; --apply to rewrite)
+[pre-push] bugfix embed staleness check on touched families
+bugfix embeds: %{unchanged: 60} (report only)
+[pre-push] temp-path lint (parallel-eval collisions)
+temp-path lint: 158 shared-path harness(es), 0 violations ✓
+[pre-push] S6 freshness (blind verdicts must match current harnesses)
+screen freshness over 332 root(s): fresh=321, fresh_legacy=6, fresh_via_strengthen=5
+screen freshness: OK ✓ (every root has fresh blind evidence)
+[pre-push] wt_ spec/harness staleness check (all wt_ dirs)
+resync_embeds over 331 dirs: %{unchanged: 331} (report only)
+[pre-push] tfim embed staleness check on touched families
+tfim embeds: %{unchanged: 408} (report only)
+[pre-push] adapt_ embed staleness check on touched families
+adapt embeds: %{unchanged: 15} (report only)
+[pre-push] dedoc_ embed staleness check on touched families
+dedoc embeds: %{unchanged: 20} (report only)
+[pre-push] sfim spec-embed staleness check on touched families
+sfim-spec resync: %{unchanged: 172}
+[pre-push] tdd_ staleness check on touched families
+tdd embeds: %{unchanged: 20} (report only)
+[pre-push] specfim_ staleness check on touched families
+specfim embeds: %{unchanged: 79} (report only)
+[pre-push] bundle-FIM staleness check on touched families
+bundlefim embeds: %{} (report only)
+[pre-push] OK
+To github.com:Cinderella-Man/elixir-sft-dataset.git
+   d09f4b074..6b769f333  main -> main

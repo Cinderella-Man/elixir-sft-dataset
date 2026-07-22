@@ -1,0 +1,1125 @@
+Concurrency: 16 (EVAL_CONCURRENCY to override)
+  corpus-integrity: all pass ✓
+Semantic mutants (report-only): 17 tasks, ≤40 mutants each ...
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_5322.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_6282.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+...............
+
+=== SEMANTIC-MUTANT REPORT (kill-rate = behavior changes noticed) ===
+  tasks: 17   mutants: 369   killed: 168 (45.5%)   mean per-task rate: 0.45   non-compiling dropped: 6
+
+  kill-rate histogram:
+    0.0–0.1:  0
+    0.1–0.2:  0
+    0.2–0.3:  0
+    0.3–0.4: █ 1
+    0.4–0.5: ████████████████ 16
+    0.5–0.6:  0
+    0.6–0.7:  0
+    0.7–0.8:  0
+    0.8–0.9:  0
+    0.9–1.0:  0
+
+  20 weakest tasks (most unnoticed behavior changes):
+    - 077_001_interval_tree_for_overlapping_range_queries_01: 9/24 (survivors: L98 s162: 0 -> 1; L104 s197: 1 -> 2; L104 s197: 1 -> 0; L154 s330: 0 -> 1; …)
+    - 105_001_genserver_based_debouncer_01: 2/5 (survivors: L49 s78: >= -> >; L49 s80: 0 -> 1; L66 s149: return :ok -> :error)
+    - 013_001_exponential_backoff_retry_worker_01: 9/22 (survivors: L37 s162: 1 -> 2; L37 s162: 1 -> 0; L57 s241: 3 -> 4; L57 s241: 3 -> 2; …)
+    - 074_001_custom_exunit_assertion_helpers_01: 7/17 (survivors: L95 s223: 5 -> 6; L95 s223: 5 -> 4; L116 s313: <= -> <; L149 s387: 1000 -> 1001; …)
+    - 013_002_timeout_guarded_retry_worker_01: 11/26 (survivors: L31 s159: 1 -> 2; L31 s159: 1 -> 0; L68 s366: {:error, _} -> {:ok, _}; L95 s497: 3 -> 4; …)
+    - 107_002_keyed_event_aggregator_with_per_key_batching_01: 6/14 (survivors: L19 s15: 100 -> 101; L19 s15: 100 -> 99; L20 s18: 1000 -> 1001; L20 s18: 1000 -> 999; …)
+    - 041_001_lru_cache_backed_by_ets_01: 5/11 (survivors: L142 s260: > -> >=; L147 s293: true -> false; L166 s320: 0 -> 1; L221 s555: 1 -> 2; …)
+    - 001_001_rate_limiter_01: 7/15 (survivors: L64 s103: > -> >=; L65 s108: > -> >=; L65 s110: 0 -> 1; L100 s239: > -> >=; …)
+    - 101_001_sliding_window_counter_01: 8/17 (survivors: L39 s15: 1000 -> 1001; L39 s15: 1000 -> 999; L46 s21: 60 -> 61; L46 s21: 60 -> 59; …)
+    - 063_004_bounded_concurrency_concurrent_fetcher_01: 8/17 (survivors: L27 s65: > -> >=; L28 s70: >= -> >; L28 s72: 0 -> 1; L48 s142: <= -> <; …)
+    - 023_002_in_flight_coalescing_idempotent_payments_01: 8/17 (survivors: L77 s309: return :ok -> :error; L77 s315: 0 -> 1; L105 s435: > -> >=; L118 s524: {:error, _} -> {:ok, _}; …)
+    - 002_002_rolling_window_error_rate_cb_01: 17/36 (survivors: L64 s177: 20 -> 21; L64 s177: 20 -> 19; L66 s197: 10 -> 11; L66 s197: 10 -> 9; …)
+    - 104_004_usage_recycling_connection_pool_01: 19/40 (survivors: L11 s29: 0 -> 1; L11 s32: 10 -> 11; L11 s32: 10 -> 9; L30 s118: >= -> >; …)
+    - 041_002_lfu_cache_backed_by_ets_01: 11/23 (survivors: L94 s228: > -> >=; L99 s261: true -> false; L116 s288: 0 -> 1; L129 s359: 1 -> 2; …)
+    - 041_003_sharded_lru_cache_with_consistent_key_routing_01: 11/23 (survivors: L90 s252: 0 -> 1; L90 s255: 1 -> 2; L113 s382: > -> >=; L117 s405: > -> >=; …)
+    - 079_001_bloom_filter_01: 13/27 (survivors: L58 s58: > -> >=; L58 s60: 0 -> 1; L59 s63: > -> >=; L60 s66: < -> <=; …)
+    - 075_001_property_based_test_generators_01: 17/35 (survivors: L53 s63: 18 -> 19; L53 s64: 120 -> 121; L53 s64: 120 -> 119; L71 s108: 0 -> 1; …)
+
+SEMANTIC-MUTANT REPORT COMPLETE (report-only — no gate)
+Concurrency: 16 (EVAL_CONCURRENCY to override)
+  corpus-integrity: all pass ✓
+Semantic mutants (report-only): 680 tasks, ≤40 mutants each ...
+................................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_38338.ex:55: WorkerPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+....warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_44290.ex:60: CancellablePool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_43970.ex:63: PriorityWorkerPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_48514.ex:61: RetryPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.........warning: using map.field notation (without parentheses) to invoke function :invalid_filter.min_age() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_67714.ex:105: QueryPaginator.apply_filters/2
+  /tmp/smut_67714.ex:15: QueryPaginator.paginate/2
+  tasks/016_003_validated_sortable_filterable_list_pagination_01/test_harness.exs:75: QueryPaginatorTest."test rejects a non-integer age filter"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+................warning: using map.field notation (without parentheses) to invoke function :not_found.record() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_97986.ex:184: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_97986.ex:149: FileUpload.Router.plug_builder_call/2
+  tasks/020_003_per_tenant_quota_enforced_upload_01/test_harness.exs:176: FileUploadTest."test delete of unknown id returns 404"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :forbidden.record() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_98434.ex:184: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_98434.ex:149: FileUpload.Router.plug_builder_call/2
+  tasks/020_003_per_tenant_quota_enforced_upload_01/test_harness.exs:168: FileUploadTest."test delete by wrong account is forbidden"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: using map.field notation (without parentheses) to invoke function :not_found.id() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_101826.ex:212: FileUpload.Router.status_body/1
+  /tmp/smut_101826.ex:144: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_101826.ex:122: FileUpload.Router.plug_builder_call/2
+  tasks/020_004_asynchronous_validation_pipeline_upload_01/test_harness.exs:172: FileUploadTest."test GET on unknown id returns 404"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+......warning: using map.field notation (without parentheses) to invoke function :not_found.id() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_112066.ex:212: FileUpload.Router.status_body/1
+  /tmp/smut_112066.ex:144: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_112066.ex:122: FileUpload.Router.plug_builder_call/2
+  tasks/020_004_asynchronous_validation_pipeline_upload_01/test_harness.exs:172: FileUploadTest."test GET on unknown id returns 404"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: using map.field notation (without parentheses) to invoke function :valid.parent_id() is deprecated, you must add parentheses instead: remote.function()
+  tasks/019_002_dependency_ordered_bulk_create_with_cascade_skip_01/test_harness.exs:75: CatalogTest."test resolves an in-batch parent even when the child appears before the parent"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :valid.parent_id() is deprecated, you must add parentheses instead: remote.function()
+  tasks/019_002_dependency_ordered_bulk_create_with_cascade_skip_01/test_harness.exs:92: CatalogTest."test resolves a multi-level dependency chain"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :valid.parent_id() is deprecated, you must add parentheses instead: remote.function()
+  tasks/019_002_dependency_ordered_bulk_create_with_cascade_skip_01/test_harness.exs:160: CatalogTest."test partial mode still creates a valid dependent with the correct parent_id"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.................................................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_176706.ex:81: OrderedRecordDiff.lcs/2
+  /tmp/smut_176706.ex:24: OrderedRecordDiff.diff/3
+  tasks/039_003_ordered_record_diff_with_move_detection_01/test_harness.exs:12: OrderedRecordDiffTest."test two empty lists produce an empty diff"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_177346.ex:81: anonymous fn/3 in OrderedRecordDiff.lcs/2
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  /tmp/smut_177346.ex:81: OrderedRecordDiff.lcs/2
+  /tmp/smut_177346.ex:24: OrderedRecordDiff.diff/3
+  tasks/039_003_ordered_record_diff_with_move_detection_01/test_harness.exs:12: OrderedRecordDiffTest."test two empty lists produce an empty diff"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...........warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_187266.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_188418.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+..................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_34115.ex:74: ParallelMap.pmap/3
+  tasks/061_001_parallel_map_with_concurrency_limit_01/test_harness.exs:20: ParallelMapTest."test maps over an empty collection"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_38211.ex:94: WeightedMap.pmap/4
+  tasks/061_004_weight_budget_parallel_map_01/test_harness.exs:14: WeightedMapTest."test empty collection returns []"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_40323.ex:97: RetryMap.pmap/3
+  tasks/061_003_timeout_and_retry_parallel_map_01/test_harness.exs:9: RetryMapTest."test empty collection returns []"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_41027.ex:97: RetryMap.pmap/3
+  tasks/061_003_timeout_and_retry_parallel_map_01/test_harness.exs:56: RetryMapTest."test an element that always times out returns {:error, :timeout} after exhausting attempts"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.....warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_50115.ex:24: WorkStealQueue.run/4
+  tasks/064_004_instrumented_work_stealing_queue_with_steal_metrics_01/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_50691.ex:24: WorkStealQueue.run/4
+  tasks/064_004_instrumented_work_stealing_queue_with_steal_metrics_01/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.........warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_201154.ex:134: WorkStealQueue.build_metrics/2
+  /tmp/smut_201154.ex:34: WorkStealQueue.run/4
+  tasks/064_004_instrumented_work_stealing_queue_with_steal_metrics_01/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_201410.ex:134: WorkStealQueue.build_metrics/2
+  /tmp/smut_201410.ex:34: WorkStealQueue.run/4
+  tasks/064_004_instrumented_work_stealing_queue_with_steal_metrics_01/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_203714.ex:156: WorkStealQueue.partition/2
+  /tmp/smut_203714.ex:16: WorkStealQueue.run/4
+  tasks/064_004_instrumented_work_stealing_queue_with_steal_metrics_01/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_204226.ex:156: WorkStealQueue.partition/2
+  /tmp/smut_204226.ex:16: WorkStealQueue.run/4
+  tasks/064_004_instrumented_work_stealing_queue_with_steal_metrics_01/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...............warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_218562.ex:7: CommandGenerators.stack_program/1
+  tasks/075_003_stateful_command_sequence_generators_01/test_harness.exs:221: CommandGeneratorsTest."test max_length 0 is a valid argument and produces only the empty program"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_49603.ex:19: WorkStealQueue.run/3
+  tasks/064_003_priority_aware_work_stealing_queue_01/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.............warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_239298.ex:46: RingBuffer.to_list/1
+  tasks/078_001_ring_buffer_01/test_harness.exs:51: RingBufferTest."test to_list returns items in insertion order when under capacity"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_239874.ex:74: RingDeque.to_list/1
+  tasks/078_003_double_ended_ring_buffer_deque_01/test_harness.exs:151: RingDequeTest."test capacity-1 deque holds exactly one item from either end"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_240834.ex:46: RingBuffer.to_list/1
+  tasks/078_001_ring_buffer_01/test_harness.exs:25: RingBufferTest."test new buffer returns empty list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_241346.ex:54: RejectingRingBuffer.to_list/1
+  tasks/078_002_reject_when_full_bounded_fifo_queue_01/test_harness.exs:76: RejectingRingBufferTest."test pop removes items oldest-first"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_241602.ex:46: RingBuffer.to_list/1
+  tasks/078_001_ring_buffer_01/test_harness.exs:175: RingBufferTest."test capacity-1 buffer always holds exactly one item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_60547.ex:98: ConcurrentRingBuffer.do_to_list/1
+  /tmp/smut_60547.ex:58: ConcurrentRingBuffer.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_61635.ex:54: RejectingRingBuffer.to_list/1
+  tasks/078_002_reject_when_full_bounded_fifo_queue_01/test_harness.exs:19: RejectingRingBufferTest."test new buffer returns :error for peeks and :empty for pop"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_61699.ex:98: ConcurrentRingBuffer.do_to_list/1
+  /tmp/smut_61699.ex:58: ConcurrentRingBuffer.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_61955.ex:54: RejectingRingBuffer.to_list/1
+  tasks/078_002_reject_when_full_bounded_fifo_queue_01/test_harness.exs:76: RejectingRingBufferTest."test pop removes items oldest-first"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_62019.ex:22: BloomFilter.add/2
+  tasks/079_001_bloom_filter_01/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_62339.ex:54: RejectingRingBuffer.to_list/1
+  tasks/078_002_reject_when_full_bounded_fifo_queue_01/test_harness.exs:76: RejectingRingBufferTest."test pop removes items oldest-first"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_62595.ex:98: ConcurrentRingBuffer.do_to_list/1
+  /tmp/smut_62595.ex:58: ConcurrentRingBuffer.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_62851.ex:22: BloomFilter.add/2
+  tasks/079_001_bloom_filter_01/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_63619.ex:74: RingDeque.to_list/1
+  tasks/078_003_double_ended_ring_buffer_deque_01/test_harness.exs:151: RingDequeTest."test capacity-1 deque holds exactly one item from either end"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_63683.ex:33: BloomFilter.member?/2
+  tasks/079_001_bloom_filter_01/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_63939.ex:74: RingDeque.to_list/1
+  tasks/078_003_double_ended_ring_buffer_deque_01/test_harness.exs:151: RingDequeTest."test capacity-1 deque holds exactly one item from either end"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_64579.ex:33: BloomFilter.member?/2
+  tasks/079_001_bloom_filter_01/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...........warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_243522.ex:19: WorkStealQueue.run/3
+  tasks/064_003_priority_aware_work_stealing_queue_01/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.....warning: using map.field notation (without parentheses) to invoke function :invalid_type.code() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_89731.ex:39: PromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: using map.field notation (without parentheses) to invoke function :invalid_type.code() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_91331.ex:32: StackablePromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+..warning: using map.field notation (without parentheses) to invoke function :invalid_type.code() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_244866.ex:39: PromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+..warning: using map.field notation (without parentheses) to invoke function :invalid_tiers.code() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_250178.ex:37: TieredPromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.......warning: using map.field notation (without parentheses) to invoke function :below_min_order.type() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_259202.ex:106: anonymous fn/1 in StackablePromoCodes.process/5
+  (elixir 1.20.2) lib/enum.ex:4542: Enum.filter_list/2
+  /tmp/smut_259202.ex:106: StackablePromoCodes.process/5
+  /tmp/smut_259202.ex:47: StackablePromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_263426.ex:52: Money.split/2
+  tasks/095_001_multi_currency_money_module_01/test_harness.exs:134: MoneyTest."test split/2 by 1 returns the original amount in a single-element list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_264642.ex:52: Money.split/2
+  tasks/095_001_multi_currency_money_module_01/test_harness.exs:134: MoneyTest."test split/2 by 1 returns the original amount in a single-element list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..........warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_276354.ex:113: WorkStealQueue.partition/2
+  /tmp/smut_276354.ex:10: WorkStealQueue.run/3
+  tasks/064_001_work_stealing_task_queue_01/test_harness.exs:109: WorkStealQueueTest."test single worker processes all items without stealing"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_278082.ex:113: WorkStealQueue.partition/2
+  /tmp/smut_278082.ex:10: WorkStealQueue.run/3
+  tasks/064_001_work_stealing_task_queue_01/test_harness.exs:109: WorkStealQueueTest."test single worker processes all items without stealing"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_280194.ex:134: WorkStealQueue.partition/2
+  /tmp/smut_280194.ex:11: WorkStealQueue.run/3
+  tasks/064_003_priority_aware_work_stealing_queue_01/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_280962.ex:126: WorkStealQueue.partition/2
+  /tmp/smut_280962.ex:11: WorkStealQueue.run/3
+  tasks/064_002_fault_tolerant_result_tagged_work_stealing_queue_01/test_harness.exs:86: WorkStealQueueTest."test a worker keeps processing its queue after a failing item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_281794.ex:134: WorkStealQueue.partition/2
+  /tmp/smut_281794.ex:11: WorkStealQueue.run/3
+  tasks/064_003_priority_aware_work_stealing_queue_01/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_282946.ex:126: WorkStealQueue.partition/2
+  /tmp/smut_282946.ex:11: WorkStealQueue.run/3
+  tasks/064_002_fault_tolerant_result_tagged_work_stealing_queue_01/test_harness.exs:86: WorkStealQueueTest."test a worker keeps processing its queue after a failing item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_22916.ex:74: Money.split/2
+  tasks/095_003_currency_precision_money_module_01/test_harness.exs:108: anonymous fn/3 in MoneyTest."test split/2 always sums back to the original amount"/1
+  (elixir 1.20.2) lib/enum.ex:4659: Enum.reduce/3
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  tasks/095_003_currency_precision_money_module_01/test_harness.exs:107: MoneyTest."test split/2 always sums back to the original amount"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_24516.ex:74: Money.split/2
+  tasks/095_003_currency_precision_money_module_01/test_harness.exs:108: anonymous fn/3 in MoneyTest."test split/2 always sums back to the original amount"/1
+  (elixir 1.20.2) lib/enum.ex:4659: Enum.reduce/3
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  tasks/095_003_currency_precision_money_module_01/test_harness.exs:107: MoneyTest."test split/2 always sums back to the original amount"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..............warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_297922.ex:35: HOTP.valid?/4
+  tasks/100_003_counter_based_hotp_with_resynchronization_window_01/test_harness.exs:92: HOTPTest."test valid? resynchronizes forward within the look-ahead window"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+........................................................warning: using map.field notation (without parentheses) to invoke function :not_found.etag() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_384450.ex:111: ConditionalObjectStorage.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+......warning: using map.field notation (without parentheses) to invoke function :not_found.etag() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_391490.ex:111: ConditionalObjectStorage.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+...................................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_449602.ex:53: CommandGenerators.account_program/1
+  tasks/075_003_stateful_command_sequence_generators_01/test_harness.exs:222: CommandGeneratorsTest."test max_length 0 is a valid argument and produces only the empty program"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.........................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_468802.ex:55: WorkerPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_471170.ex:63: PriorityWorkerPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_471618.ex:60: CancellablePool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+....warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_478786.ex:61: RetryPool.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+..........warning: using map.field notation (without parentheses) to invoke function :invalid_filter.min_age() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_496066.ex:105: QueryPaginator.apply_filters/2
+  /tmp/smut_496066.ex:15: QueryPaginator.paginate/2
+  tasks/wt_016_003_validated_sortable_filterable_list_pagination/test_harness.exs:75: QueryPaginatorTest."test rejects a non-integer age filter"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...............warning: using map.field notation (without parentheses) to invoke function :not_found.record() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_142211.ex:184: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_142211.ex:149: FileUpload.Router.plug_builder_call/2
+  tasks/wt_020_003_per_tenant_quota_enforced_upload/test_harness.exs:176: FileUploadTest."test delete of unknown id returns 404"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :forbidden.record() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_142467.ex:184: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_142467.ex:149: FileUpload.Router.plug_builder_call/2
+  tasks/wt_020_003_per_tenant_quota_enforced_upload/test_harness.exs:168: FileUploadTest."test delete by wrong account is forbidden"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :not_found.id() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_142723.ex:212: FileUpload.Router.status_body/1
+  /tmp/smut_142723.ex:144: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_142723.ex:122: FileUpload.Router.plug_builder_call/2
+  tasks/wt_020_004_asynchronous_validation_pipeline_upload/test_harness.exs:172: FileUploadTest."test GET on unknown id returns 404"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...warning: using map.field notation (without parentheses) to invoke function :not_found.id() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_531202.ex:212: FileUpload.Router.status_body/1
+  /tmp/smut_531202.ex:144: anonymous fn/3 in FileUpload.Router.do_match/4
+  deps/plug/lib/plug/router.ex:263: anonymous fn/4 in FileUpload.Router.dispatch/2
+  (telemetry 1.4.1) /home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl:359: :telemetry.span/3
+  deps/plug/lib/plug/router.ex:259: FileUpload.Router.dispatch/2
+  /tmp/smut_531202.ex:122: FileUpload.Router.plug_builder_call/2
+  tasks/wt_020_004_asynchronous_validation_pipeline_upload/test_harness.exs:172: FileUploadTest."test GET on unknown id returns 404"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...warning: using map.field notation (without parentheses) to invoke function :valid.parent_id() is deprecated, you must add parentheses instead: remote.function()
+  tasks/wt_019_002_dependency_ordered_bulk_create_with_cascade_skip/test_harness.exs:75: CatalogTest."test resolves an in-batch parent even when the child appears before the parent"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :valid.parent_id() is deprecated, you must add parentheses instead: remote.function()
+  tasks/wt_019_002_dependency_ordered_bulk_create_with_cascade_skip/test_harness.exs:92: CatalogTest."test resolves a multi-level dependency chain"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: using map.field notation (without parentheses) to invoke function :valid.parent_id() is deprecated, you must add parentheses instead: remote.function()
+  tasks/wt_019_002_dependency_ordered_bulk_create_with_cascade_skip/test_harness.exs:160: CatalogTest."test partial mode still creates a valid dependent with the correct parent_id"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+....................................................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_608898.ex:81: OrderedRecordDiff.lcs/2
+  /tmp/smut_608898.ex:24: OrderedRecordDiff.diff/3
+  tasks/wt_039_003_ordered_record_diff_with_move_detection/test_harness.exs:12: OrderedRecordDiffTest."test two empty lists produce an empty diff"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_609538.ex:81: anonymous fn/3 in OrderedRecordDiff.lcs/2
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  /tmp/smut_609538.ex:81: OrderedRecordDiff.lcs/2
+  /tmp/smut_609538.ex:24: OrderedRecordDiff.diff/3
+  tasks/wt_039_003_ordered_record_diff_with_move_detection/test_harness.exs:12: OrderedRecordDiffTest."test two empty lists produce an empty diff"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+............warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_614018.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_614978.ex:95: LRUCacheSharded.init/1
+  (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2
+  (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.................warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_640706.ex:74: ParallelMap.pmap/3
+  tasks/wt_061_001_parallel_map_with_concurrency_limit/test_harness.exs:20: ParallelMapTest."test maps over an empty collection"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_643586.ex:94: WeightedMap.pmap/4
+  tasks/wt_061_004_weight_budget_parallel_map/test_harness.exs:14: WeightedMapTest."test empty collection returns []"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_646338.ex:97: RetryMap.pmap/3
+  tasks/wt_061_003_timeout_and_retry_parallel_map/test_harness.exs:9: RetryMapTest."test empty collection returns []"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_647170.ex:97: RetryMap.pmap/3
+  tasks/wt_061_003_timeout_and_retry_parallel_map/test_harness.exs:56: RetryMapTest."test an element that always times out returns {:error, :timeout} after exhausting attempts"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+......warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_652674.ex:24: WorkStealQueue.run/4
+  tasks/wt_064_004_instrumented_work_stealing_queue_with_steal_metrics/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_653186.ex:24: WorkStealQueue.run/4
+  tasks/wt_064_004_instrumented_work_stealing_queue_with_steal_metrics/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...........warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_664066.ex:134: WorkStealQueue.build_metrics/2
+  /tmp/smut_664066.ex:34: WorkStealQueue.run/4
+  tasks/wt_064_004_instrumented_work_stealing_queue_with_steal_metrics/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_163523.ex:134: WorkStealQueue.build_metrics/2
+  /tmp/smut_163523.ex:34: WorkStealQueue.run/4
+  tasks/wt_064_004_instrumented_work_stealing_queue_with_steal_metrics/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_666242.ex:156: WorkStealQueue.partition/2
+  /tmp/smut_666242.ex:16: WorkStealQueue.run/4
+  tasks/wt_064_004_instrumented_work_stealing_queue_with_steal_metrics/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_666562.ex:156: WorkStealQueue.partition/2
+  /tmp/smut_666562.ex:16: WorkStealQueue.run/4
+  tasks/wt_064_004_instrumented_work_stealing_queue_with_steal_metrics/test_harness.exs:60: WorkStealQueueTest."test single worker performs no steals"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.......warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_674562.ex:70: CommandGenerators.account_command/1
+  /tmp/smut_674562.ex:61: CommandGenerators.account_build/3
+  (stream_data 1.3.0) lib/stream_data.ex:434: anonymous fn/2 in StreamData.bind/2
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:67: StreamData.LazyTree.filter_map/2
+  (stream_data 1.3.0) lib/stream_data.ex:384: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: StreamData.check_all/7
+  tasks/075_003_stateful_command_sequence_generators_01/test_harness.exs:93: CommandGeneratorsTest."property CommandGenerators.account_program always produces a valid account program (balance never negative)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_675394.ex:70: CommandGenerators.account_command/1
+  /tmp/smut_675394.ex:61: CommandGenerators.account_build/3
+  (stream_data 1.3.0) lib/stream_data.ex:434: anonymous fn/2 in StreamData.bind/2
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:67: StreamData.LazyTree.filter_map/2
+  (stream_data 1.3.0) lib/stream_data.ex:384: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_678018.ex:7: CommandGenerators.stack_program/1
+  tasks/wt_075_003_stateful_command_sequence_generators/test_harness.exs:221: CommandGeneratorsTest."test max_length 0 is a valid argument and produces only the empty program"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_161923.ex:19: WorkStealQueue.run/3
+  tasks/wt_064_003_priority_aware_work_stealing_queue/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+............warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_697474.ex:74: RingDeque.to_list/1
+  tasks/wt_078_003_double_ended_ring_buffer_deque/test_harness.exs:151: RingDequeTest."test capacity-1 deque holds exactly one item from either end"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_698114.ex:46: RingBuffer.to_list/1
+  tasks/wt_078_001_ring_buffer/test_harness.exs:51: RingBufferTest."test to_list returns items in insertion order when under capacity"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_698754.ex:54: RejectingRingBuffer.to_list/1
+  tasks/wt_078_002_reject_when_full_bounded_fifo_queue/test_harness.exs:76: RejectingRingBufferTest."test pop removes items oldest-first"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_699586.ex:46: RingBuffer.to_list/1
+  tasks/wt_078_001_ring_buffer/test_harness.exs:25: RingBufferTest."test new buffer returns empty list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_700290.ex:46: RingBuffer.to_list/1
+  tasks/wt_078_001_ring_buffer/test_harness.exs:175: RingBufferTest."test capacity-1 buffer always holds exactly one item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_703874.ex:54: RejectingRingBuffer.to_list/1
+  tasks/wt_078_002_reject_when_full_bounded_fifo_queue/test_harness.exs:19: RejectingRingBufferTest."test new buffer returns :error for peeks and :empty for pop"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_704386.ex:54: RejectingRingBuffer.to_list/1
+  tasks/wt_078_002_reject_when_full_bounded_fifo_queue/test_harness.exs:76: RejectingRingBufferTest."test pop removes items oldest-first"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_704770.ex:54: RejectingRingBuffer.to_list/1
+  tasks/wt_078_002_reject_when_full_bounded_fifo_queue/test_harness.exs:76: RejectingRingBufferTest."test pop removes items oldest-first"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_705346.ex:98: ConcurrentRingBuffer.do_to_list/1
+  /tmp/smut_705346.ex:58: ConcurrentRingBuffer.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_706562.ex:74: RingDeque.to_list/1
+  tasks/wt_078_003_double_ended_ring_buffer_deque/test_harness.exs:151: RingDequeTest."test capacity-1 deque holds exactly one item from either end"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_706626.ex:98: ConcurrentRingBuffer.do_to_list/1
+  /tmp/smut_706626.ex:58: ConcurrentRingBuffer.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_707010.ex:74: RingDeque.to_list/1
+  tasks/wt_078_003_double_ended_ring_buffer_deque/test_harness.exs:151: RingDequeTest."test capacity-1 deque holds exactly one item from either end"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_707458.ex:98: ConcurrentRingBuffer.do_to_list/1
+  /tmp/smut_707458.ex:58: ConcurrentRingBuffer.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_708802.ex:22: BloomFilter.add/2
+  tasks/wt_079_001_bloom_filter/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_709698.ex:22: BloomFilter.add/2
+  tasks/wt_079_001_bloom_filter/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_710722.ex:33: BloomFilter.member?/2
+  tasks/wt_079_001_bloom_filter/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_711618.ex:33: BloomFilter.member?/2
+  tasks/wt_079_001_bloom_filter/test_harness.exs:183: BloomFilterTest."test new/2 accepts the smallest positive expected size (n = 1)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+............warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_702786.ex:19: WorkStealQueue.run/3
+  tasks/wt_064_003_priority_aware_work_stealing_queue/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: using map.field notation (without parentheses) to invoke function :invalid_type.code() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_728450.ex:39: PromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: using map.field notation (without parentheses) to invoke function :invalid_type.code() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_729282.ex:32: StackablePromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+..warning: using map.field notation (without parentheses) to invoke function :invalid_type.code() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_731906.ex:39: PromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+...warning: using map.field notation (without parentheses) to invoke function :invalid_tiers.code() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_736706.ex:37: TieredPromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.....warning: using map.field notation (without parentheses) to invoke function :below_min_order.type() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_744770.ex:106: anonymous fn/1 in StackablePromoCodes.process/5
+  (elixir 1.20.2) lib/enum.ex:4542: Enum.filter_list/2
+  /tmp/smut_744770.ex:106: StackablePromoCodes.process/5
+  /tmp/smut_744770.ex:47: StackablePromoCodes.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+..warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_750018.ex:52: Money.split/2
+  tasks/wt_095_001_multi_currency_money_module/test_harness.exs:134: MoneyTest."test split/2 by 1 returns the original amount in a single-element list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_751298.ex:52: Money.split/2
+  tasks/wt_095_001_multi_currency_money_module/test_harness.exs:134: MoneyTest."test split/2 by 1 returns the original amount in a single-element list"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+............warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_767298.ex:74: Money.split/2
+  tasks/wt_095_003_currency_precision_money_module/test_harness.exs:108: anonymous fn/3 in MoneyTest."test split/2 always sums back to the original amount"/1
+  (elixir 1.20.2) lib/enum.ex:4659: Enum.reduce/3
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  tasks/wt_095_003_currency_precision_money_module/test_harness.exs:107: MoneyTest."test split/2 always sums back to the original amount"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_769090.ex:113: WorkStealQueue.partition/2
+  /tmp/smut_769090.ex:10: WorkStealQueue.run/3
+  tasks/wt_064_001_work_stealing_task_queue/test_harness.exs:109: WorkStealQueueTest."test single worker processes all items without stealing"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_769026.ex:74: Money.split/2
+  tasks/wt_095_003_currency_precision_money_module/test_harness.exs:108: anonymous fn/3 in MoneyTest."test split/2 always sums back to the original amount"/1
+  (elixir 1.20.2) lib/enum.ex:4659: Enum.reduce/3
+  (elixir 1.20.2) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
+  tasks/wt_095_003_currency_precision_money_module/test_harness.exs:107: MoneyTest."test split/2 always sums back to the original amount"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_770882.ex:113: WorkStealQueue.partition/2
+  /tmp/smut_770882.ex:10: WorkStealQueue.run/3
+  tasks/wt_064_001_work_stealing_task_queue/test_harness.exs:109: WorkStealQueueTest."test single worker processes all items without stealing"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_772610.ex:134: WorkStealQueue.partition/2
+  /tmp/smut_772610.ex:11: WorkStealQueue.run/3
+  tasks/wt_064_003_priority_aware_work_stealing_queue/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_774338.ex:134: WorkStealQueue.partition/2
+  /tmp/smut_774338.ex:11: WorkStealQueue.run/3
+  tasks/wt_064_003_priority_aware_work_stealing_queue/test_harness.exs:47: WorkStealQueueTest."test a single worker processes items in strictly descending priority order"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_775170.ex:126: WorkStealQueue.partition/2
+  /tmp/smut_775170.ex:11: WorkStealQueue.run/3
+  tasks/wt_064_002_fault_tolerant_result_tagged_work_stealing_queue/test_harness.exs:86: WorkStealQueueTest."test a worker keeps processing its queue after a failing item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_776898.ex:126: WorkStealQueue.partition/2
+  /tmp/smut_776898.ex:11: WorkStealQueue.run/3
+  tasks/wt_064_002_fault_tolerant_result_tagged_work_stealing_queue/test_harness.exs:86: WorkStealQueueTest."test a worker keeps processing its queue after a failing item"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+............warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_796482.ex:35: HOTP.valid?/4
+  tasks/wt_100_003_counter_based_hotp_with_resynchronization_window/test_harness.exs:92: HOTPTest."test valid? resynchronizes forward within the look-ahead window"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+...........................................................warning: using map.field notation (without parentheses) to invoke function :not_found.etag() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_172995.ex:111: ConditionalObjectStorage.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+......warning: using map.field notation (without parentheses) to invoke function :not_found.etag() is deprecated, you must add parentheses instead: remote.function()
+  /tmp/smut_886466.ex:111: ConditionalObjectStorage.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+.........warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_892930.ex:53: CommandGenerators.account_program/1
+  tasks/wt_075_003_stateful_command_sequence_generators/test_harness.exs:222: CommandGeneratorsTest."test max_length 0 is a valid argument and produces only the empty program"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+.warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_893954.ex:70: CommandGenerators.account_command/1
+  /tmp/smut_893954.ex:61: CommandGenerators.account_build/3
+  (stream_data 1.3.0) lib/stream_data.ex:434: anonymous fn/2 in StreamData.bind/2
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:67: StreamData.LazyTree.filter_map/2
+  (stream_data 1.3.0) lib/stream_data.ex:384: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: StreamData.check_all/7
+  tasks/wt_075_003_stateful_command_sequence_generators/test_harness.exs:93: CommandGeneratorsTest."property CommandGenerators.account_program always produces a valid account program (balance never negative)"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/smut_894082.ex:70: CommandGenerators.account_command/1
+  /tmp/smut_894082.ex:61: CommandGenerators.account_build/3
+  (stream_data 1.3.0) lib/stream_data.ex:434: anonymous fn/2 in StreamData.bind/2
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:67: StreamData.LazyTree.filter_map/2
+  (stream_data 1.3.0) lib/stream_data.ex:384: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data.ex:355: anonymous fn/5 in StreamData.bind_filter/3
+  (stream_data 1.3.0) lib/stream_data.ex:198: anonymous fn/3 in StreamData.bind_filter/5
+  (stream_data 1.3.0) lib/stream_data/lazy_tree.ex:36: StreamData.LazyTree.map/2
+  (stream_data 1.3.0) lib/stream_data.ex:388: StreamData.bind_filter/5
+
+.
+
+=== SEMANTIC-MUTANT REPORT (kill-rate = behavior changes noticed) ===
+  tasks: 679   mutants: 16632   killed: 12680 (76.2%)   mean per-task rate: 0.778   non-compiling dropped: 1478
+
+  kill-rate histogram:
+    0.0–0.1:  0
+    0.1–0.2:  0
+    0.2–0.3: ██ 2
+    0.3–0.4:  0
+    0.4–0.5: ████████████████████ 20
+    0.5–0.6: █████████████████████████████████████████████████████████████████████████████████ 81
+    0.6–0.7: ███████████████████████████████████████████████████████████████████████████████████████████████████████ 103
+    0.7–0.8: ████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████ 140
+    0.8–0.9: ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████ 146
+    0.9–1.0: ███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████ 187
+
+  20 weakest tasks (most unnoticed behavior changes):
+    - repair_074_003_concurrency_and_message_assertion_helpers_01_00: 3/15 (survivors: L47 s63: 1000 -> 1001; L47 s63: 1000 -> 999; L62 s95: 1000 -> 1001; L62 s95: 1000 -> 999; …)
+    - repair_074_003_concurrency_and_message_assertion_helpers_01_01: 3/15 (survivors: L47 s63: 1000 -> 1001; L47 s63: 1000 -> 999; L62 s95: 1000 -> 1001; L62 s95: 1000 -> 999; …)
+    - 077_001_interval_tree_for_overlapping_range_queries_01: 12/30 (survivors: L98 s162: 0 -> 1; L104 s196: + -> -; L104 s197: 1 -> 2; L104 s197: 1 -> 0; …)
+    - 097_004_stateful_password_policy_server_with_reuse_history_01: 12/30 (survivors: L15 s15: 5 -> 6; L15 s15: 5 -> 4; L81 s319: 8 -> 7; L82 s329: 128 -> 127; …)
+    - wt_077_001_interval_tree_for_overlapping_range_queries: 12/30 (survivors: L98 s162: 0 -> 1; L104 s196: + -> -; L104 s197: 1 -> 2; L104 s197: 1 -> 0; …)
+    - wt_097_004_stateful_password_policy_server_with_reuse_history: 12/30 (survivors: L15 s15: 5 -> 6; L15 s15: 5 -> 4; L81 s319: 8 -> 7; L82 s329: 128 -> 127; …)
+    - 037_001_data_anonymizer_01: 15/36 (survivors: L130 s206: 2 -> 3; L130 s206: 2 -> 1; L165 s335: rem -> div; L168 s342: 4 -> 3; …)
+    - wt_037_001_data_anonymizer: 15/36 (survivors: L130 s206: 2 -> 3; L130 s206: 2 -> 1; L165 s335: rem -> div; L168 s342: 4 -> 3; …)
+    - 100_004_stateful_totp_vault_genserver_with_replay_protection_01: 17/40 (survivors: L22 s21: 6 -> 5; L24 s27: 20 -> 19; L29 s30: 16 -> 15; L113 s304: 1 -> 2; …)
+    - 023_002_in_flight_coalescing_idempotent_payments_01: 9/21 (survivors: L77 s309: return :ok -> :error; L77 s315: 0 -> 1; L105 s435: > -> >=; L118 s524: {:error, _} -> {:ok, _}; …)
+    - wt_023_002_in_flight_coalescing_idempotent_payments: 9/21 (survivors: L77 s309: return :ok -> :error; L77 s315: 0 -> 1; L105 s435: > -> >=; L118 s524: {:error, _} -> {:ok, _}; …)
+    - 003_004_shared_pool_bucket_01: 18/40 (survivors: L68 s127: 0 -> 1; L70 s135: > -> >=; L73 s151: * -> +; L88 s215: 0 -> 1; …)
+    - wt_003_004_shared_pool_bucket: 18/40 (survivors: L68 s127: 0 -> 1; L70 s135: > -> >=; L73 s151: * -> +; L88 s215: 0 -> 1; …)
+    - wt_100_004_stateful_totp_vault_genserver_with_replay_protection: 18/40 (survivors: L22 s21: 6 -> 5; L24 s27: 20 -> 19; L29 s30: 16 -> 15; L113 s304: 1 -> 2; …)
+    - 101_003_weighted_sliding_sum_counter_01: 12/26 (survivors: L25 s15: 1000 -> 1001; L25 s15: 1000 -> 999; L30 s21: * -> +; L30 s22: * -> +; …)
+    - repair_101_003_weighted_sliding_sum_counter_01_00: 12/26 (survivors: L25 s15: 1000 -> 1001; L25 s15: 1000 -> 999; L30 s21: * -> +; L30 s22: * -> +; …)
+    - repair_101_003_weighted_sliding_sum_counter_01_01: 12/26 (survivors: L25 s15: 1000 -> 1001; L25 s15: 1000 -> 999; L30 s21: * -> +; L30 s22: * -> +; …)
+    - wt_101_003_weighted_sliding_sum_counter: 12/26 (survivors: L25 s15: 1000 -> 1001; L25 s15: 1000 -> 999; L30 s21: * -> +; L30 s22: * -> +; …)
+    - 041_001_lru_cache_backed_by_ets_01: 6/13 (survivors: L142 s260: > -> >=; L147 s293: true -> false; L166 s320: 0 -> 1; L221 s553: + -> -; …)
+    - wt_041_001_lru_cache_backed_by_ets: 6/13 (survivors: L142 s260: > -> >=; L147 s293: true -> false; L166 s320: 0 -> 1; L221 s553: + -> -; …)
+
+SEMANTIC-MUTANT REPORT COMPLETE (report-only — no gate)

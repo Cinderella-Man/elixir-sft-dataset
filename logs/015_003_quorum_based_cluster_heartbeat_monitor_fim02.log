@@ -1,0 +1,403 @@
+16:05:14.810 [info] FIM 015_003_quorum_based_cluster_heartbeat_monitor_fim02 → 015_003_quorum_based_cluster_heartbeat_monitor_03: target handle_info/2
+16:05:14.810 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+16:05:14.810 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `handle_info/2`.
+
+Generate a prompt describing how to implement `handle_info/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `handle_info/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `handle_info/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `handle_info/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Quorum-Based Cluster Heartbeat Monitor
+
+Write me an Elixir module called `ClusterMonitor` — a `GenServer` that supervises a
+set of registered **clusters**, where each cluster is a group of independent
+endpoints, and decides the cluster's `:up`/`:down` status by **quorum**: the cluster
+is `:up` when at least a configured number of its endpoints report healthy on a
+single poll. Use only the OTP standard library, no external dependencies, and give me
+the complete module in a single file.
+
+Unlike a consecutive-failure monitor, the status here is recomputed **fresh** on
+every poll from the current health of all endpoints — there is no running
+consecutive-failure counter.
+
+## The singleton and its lifecycle
+
+`ClusterMonitor` is a singleton process. The convenience functions below
+(`register_cluster`, `poll`, `cluster_state`, `snapshot`, `unregister`) take **no
+server argument** — they operate on the process registered under the module name
+`ClusterMonitor`.
+
+- `ClusterMonitor.start_link(opts \\ [])` starts and links the process and returns
+  the usual `GenServer.on_start()` result. `opts` is a keyword list defaulting to
+  `[]`. The process must be registered under the name `ClusterMonitor` (i.e.
+  `__MODULE__`) so the no-argument convenience API can find it. A `:name` option may
+  override the registered name, but the convenience functions always target
+  `ClusterMonitor`.
+- Starting the server does no monitoring work; a freshly started server tracks zero
+  clusters, and `ClusterMonitor.snapshot()` returns `%{}`.
+
+## Registering clusters
+
+`ClusterMonitor.register_cluster(name, check_funcs, interval_ms, opts \\ [])`
+
+- `name` is any term used as the key (strings, atoms, tuples all work and are
+  compared by value).
+- `check_funcs` is a **non-empty list** of **zero-arity** endpoint functions, each
+  returning either `:ok` (that endpoint is healthy) or `{:error, reason}` (that
+  endpoint is unhealthy). The number of functions is the cluster's `total`.
+- `interval_ms` is a **positive integer**: how often, in milliseconds, the monitor
+  polls the whole cluster after registration.
+- `opts` is a keyword list:
+  - `:quorum` — a **positive integer** `Q`: the cluster is `:up` when at least `Q`
+    endpoints are healthy on a poll. Defaults to a strict majority,
+    `div(total, 2) + 1`.
+  - `:notify` — a **two-arity** function `notify.(name, healthy_count)` invoked when
+    the cluster transitions from `:up` to `:down` (see below). Defaults to a no-op.
+
+`register_cluster/4` returns `:ok`.
+
+Guards: `check_funcs` must be a non-empty list, `interval_ms` must be a positive
+integer, and every element of `check_funcs` must be a zero-arity function. Violating
+any of these is outside the contract and raises `FunctionClauseError`; guard the
+public function accordingly.
+
+On registration:
+
+- The cluster's status starts as `:up`, and until the first poll runs,
+  `cluster_state/1` reports `healthy` equal to `total`.
+- Registration itself does **not** poll. The first poll happens one `interval_ms`
+  later, then repeats every `interval_ms` thereafter (implemented with
+  `Process.send_after/3`, re-scheduling itself after each poll).
+
+Re-registering an already-registered `name` **replaces** its configuration (endpoint
+functions, interval, quorum, notify) and **resets** its status to `:up` with
+`healthy` equal to the new `total`.
+
+### Lifecycle rule for re-registration (important)
+
+When a cluster is re-registered, the **previous registration's scheduled polls must
+never run again**. After a re-registration:
+
+- The old endpoint functions are never called again by any leftover/previously-
+  scheduled timer.
+- Polls for that cluster happen only at the **new** interval, calling the **new**
+  endpoint functions.
+
+Superseded timer chains are dead. (A robust way to achieve this is to tag each
+registration with a generation token and ignore scheduled poll messages whose token
+no longer matches the current registration.)
+
+## Performing a poll
+
+Each poll — whether triggered by the periodic timer or by `poll/1` below — does
+exactly the following:
+
+- Calls **every** endpoint function once.
+- Computes `healthy` = the number of endpoints that returned `:ok`.
+- Sets the new status to `:up` if `healthy` is greater than or equal to `quorum`,
+  otherwise `:down`.
+- If the status transitions from `:up` to `:down` on this poll, the notify function
+  is called **exactly once** as `notify.(name, healthy)`, with the `healthy` count
+  from this poll.
+- A transition from `:down` to `:up` (recovery) does **not** call the notify
+  function. A poll that finds the cluster already `:down` and still `:down` does
+  **not** call notify again.
+
+The recorded `healthy` and `total` are updated to reflect this poll.
+
+## Deterministic single poll
+
+`ClusterMonitor.poll(name)` synchronously performs **one** poll for the named cluster
+immediately — identical work to a scheduled interval tick (calling every endpoint,
+recomputing `healthy`/status, and firing notify on an `:up` -> `:down` transition).
+It returns `{:ok, status}` where `status` is the resulting status (`:up` or
+`:down`), or `{:error, :not_found}` if no such cluster is registered. `poll/1` does
+not alter or reschedule the periodic timer.
+
+## Querying and removing
+
+- `ClusterMonitor.cluster_state(name)` returns a map
+  `%{status: :up | :down, healthy: non_neg_integer(), total: pos_integer()}` for a
+  registered cluster, or `{:error, :not_found}` if the cluster is unknown.
+- `ClusterMonitor.snapshot()` returns a map `%{name => status}` containing every
+  currently registered cluster and its `:up`/`:down` status. With no clusters
+  registered it returns `%{}`.
+- `ClusterMonitor.unregister(name)` removes a cluster. It returns `:ok` if the
+  cluster existed (after removal it no longer appears in `snapshot/0` and
+  `cluster_state/1` returns `{:error, :not_found}`), or `{:error, :not_found}` if no
+  such cluster was registered. After removal the cluster's scheduled polls must never
+  run again — its timer chain is dead.
+
+## Robustness
+
+Any unexpected message sent to the server (anything other than the messages it uses
+for its own scheduling) must be ignored: it must not crash the process or alter
+state.
+
+Clusters are fully independent: polling one cluster never affects another cluster's
+status, `healthy`, or `total`.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule ClusterMonitor do
+  @moduledoc """
+  A singleton `GenServer` that supervises registered *clusters* and decides each
+  cluster's `:up`/`:down` status by **quorum**.
+
+  A cluster is a group of independent, zero-arity endpoint functions. On every poll
+  the monitor calls all endpoints, counts how many report `:ok`, and sets the status
+  to `:up` when that count is at least the configured quorum, otherwise `:down`. The
+  status is recomputed fresh on every poll — there is no running consecutive-failure
+  counter.
+
+  The process is registered under the module name `ClusterMonitor`, so the
+  convenience functi (truncated)
+16:05:59.759 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the `handle_info/2` GenServer callback for `ClusterMonitor`.
+
+This callback handles the scheduled periodic poll messages that the monitor sends to
+itself with `Process.send_after/3`, and it must also safely absorb any other,
+unexpected message.
+
+A scheduled poll message has the shape `{:poll, name, gen}`, where `name` is the
+cluster key and `gen` is the generation token (`t:reference/0`) that was assigned to
+the cluster when it was registered. When such a message arrives:
+
+- Look up `name` in `state.clusters`. If it is **not** present, do nothing to the
+  state and simply reply `{:noreply, state}` (the cluster was unregistered).
+- If it **is** present but its current `:gen` does **not** match the `gen` carried by
+  the message, ignore the message and reply `{:noreply, state}`. This is how
+  superseded timer chains from a replaced (re-registered) cluster are discarded — a
+  stale scheduled poll must never call the old endpoint functions.
+- If it is present **and** its `:gen` matches the message's `gen`, perform one poll of
+  the cluster using the `run_poll/2` helper (which calls every endpoint, recomputes
+  `healthy`/status, and fires the notify callback on an `:up` -> `:down` transition).
+  Then re-schedule the next poll for this same cluster and generation by sending
+  `{:poll, name, gen}` to `self()` after the cluster's `interval_ms` via
+  `Process.send_after/3`, and reply `{:noreply, ...}` with the updated state (the
+  cluster's entry replaced by the polled result).
+
+Any other message (anything that is not a matching, current scheduled poll) must be
+ignored: it must not crash the process or alter the state — just reply
+`{:noreply, state}`.
+
+```elixir
+defmodule ClusterMonitor do
+  @moduledoc """
+  A singleton `GenServer` that supervises registered *clusters* and decides each
+  cluster's `:up`/`:down` status by **quorum**.
+
+  A cluster is a group of independent, zero-arity endpoint functions. On every poll
+  the monitor calls all endpoints, counts how many report `:ok`, and sets the status
+  to `:up` when that count is at least the configured quorum, otherwise `:down`. The
+  status is recomputed fresh on every poll — there is no running consecutive-failure
+  counter.
+
+  The process is registered under the module name `ClusterMonitor`, so the
+  convenience functions (`register_cluster/4`, `poll/1`, `cluster_state/1`,
+  `snapshot/0`, `unregister/1`) take no server argument.
+
+  Each registration is tagged with a generation token (a `t:reference/0`). Scheduled
+  poll messages carrying a stale token are ignored, so superseded timer chains from
+  replaced or removed registrations never run again.
+  """
+
+  use GenServer
+
+  @typedoc "A zero-arity endpoint health check."
+  @type check_fun :: (-> :ok | {:error, term()})
+
+  @typedoc "The resulting status of a cluster."
+  @type status :: :up | :down
+
+  ## Public API
+
+  @doc """
+  Starts and links the singleton monitor.
+
+  `opts` is a keyword list. A `:name` option overrides the registered name, but the
+  convenience functions always target `ClusterMonitor`. A freshly started server
+  tracks zero clusters.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) when is_list(opts) do
+    {name, rest} = Keyword.pop(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, rest, name: name)
+  end
+
+  @doc """
+  Registers (or replaces) a cluster named `name`.
+
+  `check_funcs` is a non-empty list of zero-arity functions returning `:ok` or
+  `{:error, reason}`. `interval_ms` is a positive integer poll interval. Supported
+  `opts`: `:quorum` (positive integer, defaults to a strict majority) and `:notify`
+  (a two-arity function invoked on an `:up` -> `:down` transition, defaults to a
+  no-op).
+
+  Registration does not poll; the first poll runs one `interval_ms` later. The status
+  starts as `:up` with `healthy` equal to `total`. Re-registering replaces the
+  configuration and resets the status. Always returns `:ok`.
+  """
+  @spec register_cluster(term(), [check_fun(), ...], pos_integer(), keyword()) :: :ok
+  def register_cluster(name, check_funcs, interval_ms, opts \\ [])
+      when is_list(check_funcs) and check_funcs != [] and
+             is_integer(interval_ms) and interval_ms > 0 and is_list(opts) do
+    :ok = Enum.each(check_funcs, &assert_zero_arity!/1)
+    GenServer.call(__MODULE__, {:register, name, check_funcs, interval_ms, opts})
+  end
+
+  @doc """
+  Performs exactly one poll for `name` immediately, identical to a scheduled tick.
+
+  Returns `{:ok, status}` with the resulting status, or `{:error, :not_found}` if the
+  cluster is unknown. Does not alter or reschedule the periodic timer.
+  """
+  @spec poll(term()) :: {:ok, status()} | {:error, :not_found}
+  def poll(name) do
+    GenServer.call(__MODULE__, {:poll, name})
+  end
+
+  @doc """
+  Returns the current state of the registered cluster `name`.
+
+  The map has keys `:status`, `:healthy` and `:total`. Returns `{:error, :not_found}`
+  if the cluster is unknown.
+  """
+  @spec cluster_state(term()) ::
+          %{status: status(), healthy: non_neg_integer(), total: pos_integer()}
+          | {:error, :not_found}
+  def cluster_state(name) do
+    GenServer.call(__MODULE__, {:cluster_state, name})
+  end
+
+  @doc """
+  Returns a map of every registered cluster name to its current status.
+
+  Returns `%{}` when no clusters are registered.
+  """
+  @spec snapshot() :: %{optional(term()) => status()}
+  def snapshot do
+    GenServer.call(__MODULE__, :snapshot)
+  end
+
+  @doc """
+  Removes the cluster `name`.
+
+  Returns `:ok` if the cluster existed, or `{:error, :not_found}` otherwise. After
+  removal the cluster's scheduled polls never run again.
+  """
+  @spec unregister(term()) :: :ok | {:error, :not_found}
+  def unregister(name) do
+    GenServer.call(__MODULE__, {:unregister, name})
+  end
+
+  ## GenServer callbacks
+
+  @impl true
+  def init(_opts) do
+    {:ok, %{clusters: %{}}}
+  end
+
+  @impl true
+  def handle_call({:register, name, check_funcs, interval_ms, opts}, _from, state) do
+    total = length(check_funcs)
+    quorum = Keyword.get(opts, :quorum, div(total, 2) + 1)
+    notify = Keyword.get(opts, :notify, fn _name, _healthy -> :ok end)
+    gen = make_ref()
+
+    cluster = %{
+      check_funcs: check_funcs,
+      interval_ms: interval_ms,
+      quorum: quorum,
+      notify: notify,
+      status: :up,
+      healthy: total,
+      total: total,
+      gen: gen
+    }
+
+    Process.send_after(self(), {:poll, name, gen}, interval_ms)
+    {:reply, :ok, put_in(state.clusters[name], cluster)}
+  end
+
+  def handle_call({:poll, name}, _from, state) do
+    case Map.fetch(state.clusters, name) do
+      {:ok, cluster} ->
+        updated = run_poll(cluster, name)
+        {:reply, {:ok, updated.status}, put_in(state.clusters[name], updated)}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:cluster_state, name}, _from, state) do
+    case Map.fetch(state.clusters, name) do
+      {:ok, cluster} ->
+        view = %{status: cluster.status, healthy: cluster.healthy, total: cluster.total}
+        {:reply, view, state}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call(:snapshot, _from, state) do
+    view = Map.new(state.clusters, fn {name, cluster} -> {name, cluster.status} end)
+    {:reply, view, state}
+  end
+
+  def handle_call({:unregister, name}, _from, state) do
+    case Map.fetch(state.clusters, name) do
+      {:ok, _cluster} ->
+        {:reply, :ok, %{state | clusters: Map.delete(state.clusters, name)}}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  @impl true
+  def handle_info(msg, state) do
+    # TODO
+  end
+
+  ## Internal helpers
+
+  @spec run_poll(map(), term()) :: map()
+  defp run_poll(cluster, name) do
+    healthy = Enum.count(cluster.check_funcs, fn check -> check.() == :ok end)
+    new_status = if healthy >= cluster.quorum, do: :up, else: :down
+
+    if cluster.status == :up and new_status == :down do
+      cluster.notify.(name, healthy)
+    en (truncated)
+16:05:59.759 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9586, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9586, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9586, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9586, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 4166, "type" => "message"}], "output_tokens" => 4166, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+16:05:59.788 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_015_003_quorum_based_cluster_heartbeat_monitor_03/015_003_quorum_based_cluster_heartbeat_monitor_03 solution.ex
+16:06:01.501 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":16,"lines_over_98":0,"max_line_length":75,"mode":"fim","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"015_003_quorum_based_cluster_heartbeat_monitor_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_015_003_quorum_based_cluster_heartbeat_monitor_03/015_003_quorum_based_cluster_heartbeat_monitor_03/solution.ex","task":"015_003_quorum_based_cluster_heartbeat_monitor_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-15T14:06:01.473362Z","warning_details":[]}
+16:06:01.519 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_015_003_quorum_based_cluster_heartbeat_monitor_03/015_003_quorum_based_cluster_heartbeat_monitor_03 .gen_staging/fim_015_003_quorum_based_cluster_heartbeat_monitor_03/mutant.ex
+16:06:07.571 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":8,"lines_over_98":0,"max_line_length":45,"mode":"fim","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"parent":"015_003_quorum_based_cluster_heartbeat_monitor_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.6,"mode":"fim","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 6/17 failed"],"tests":0.65},"shape":"fim","solution_file":".gen_staging/fim_015_003_quorum_based_cluster_heartbeat_monitor_03/mutant.ex","task":"015_003_quorum_based_cluster_heartbeat_monitor_03","test_failures":[{"message":"\n\nAssertion failed, no matching message after 1000ms\n     The process mailbox is empty.\ncode: assert_receive {:probe, :a}\n","module":"ClusterMonitorTest","test":"test re-registering a cluster kills the previous schedule"},{"message":"\n\nAssertion failed, no matching message after 1000ms\n     The process mailbox is empty.\ncode: assert_receive {:probe, :c}\n","module":"ClusterMonitorTest","test":"test unregister removes a cluster and kills its schedule"},{"message":"\n\nAssertion failed, no matching message after 1000ms\n     The process mailbox is empty.\ncode: assert_receive {:probe, :a}\n","module":"ClusterMonitorTest","test":"test periodic polling runs at the configured interval"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{ClusterMonitor, :handle_info, 2, [file: ~c\"/tmp/evalfim_3060769_2627.ex\", line: 182, error_info: %{module: Exception}]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [ClusterMonitor, {:cluster_state, \"c\"}, 5000]}}","module":"ClusterMonitorTest","test":"test unexpected messages do not crash the server"},{"message":"\n\nAssertion failed, no matching message after 1000ms\n     The process mailbox is empty.\ncode: assert_receive {:down, \"c\", 0}\n","module":"ClusterMonitorTest","test":"test a scheduled poll fires notify on an up to down transition"},{"message":"\n\nAssertion failed, no matching message after 1000ms\n     The process mailbox is empty.\ncode: assert_receive {:probe, :first}\n","module":"ClusterMonitorTest","test":"test registration defers the first poll until one interval elapses"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":17,"timestamp":"2026-07-15T14:06:07.546547Z","warning_details":["evalfim_3060769_2627.ex: line 177: variable \"gen\" is unused (if the variable is not meant to be used, prefix it with an underscore)","evalfim_3060769_2627.ex: line 177: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","evalfim_3060769_2627.ex: line 177: variable \"state\" is unused (if the variable is not meant to be used, prefix it with an underscore)","evalfim_3060769_2627.ex: line 181: variable \"state\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+16:06:07.571 [debug] fim mutation gate: killed
+16:06:07.590 [info] promoted 015_003_quorum_based_cluster_heartbeat_monitor_03 -> tasks/015_003_quorum_based_cluster_heartbeat_monitor_03

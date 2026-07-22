@@ -1,0 +1,180 @@
+=== [chain] stage 1: rescreen repaired accepts (~22 calls) — 2026-07-13T14:58:13+02:00
+Repaired-accept population: 74 task(s) (written to logs/rescreen_repaired_population.txt)
+Blind-solve screen: 22 task(s) to screen (52 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/22] 022_004_invitation_accept_decline_nested_membership_workflow_01 ... RED (test GET members returns 200 with active members for a member: key :store not found in:
+
+    []
+)
+[2/22] 034_002_cardinality_classifying_multi_key_reconciler_01 ... GREEN
+[3/22] 034_003_rule_driven_tolerant_reconciler_with_compiled_config_01 ... GREEN
+[4/22] 034_004_incremental_streaming_reconciler_genserver_01 ... GREEN
+[5/22] 098_004_replay_protected_single_use_token_01 ... GREEN
+[6/22] 100_002_provisioning_uri_driven_multi_algorithm_totp_verifier_01 ... RED (compile: /tmp/screen_2180626_8901.ex: cannot compile module AuthenticatorURI (errors have been logged))
+[7/22] 100_003_counter_based_hotp_with_resynchronization_window_01 ... RED (compile: /tmp/screen_2180626_9093.ex: cannot compile module HOTP (errors have been logged))
+[8/22] 100_004_stateful_totp_vault_genserver_with_replay_protection_01 ... RED (compile: /tmp/screen_2180626_9285.ex: cannot compile module TOTPVault (errors have been logged))
+[9/22] 101_002_sliding_window_distinct_cardinality_counter_01 ... GREEN
+[10/22] 101_003_weighted_sliding_sum_counter_01 ... RED (test amounts outside the window are not included: 
+
+Assertion with == failed
+code:  assert 0 == SlidingSum.sum(sc, "k", 1000)
+left:  0
+right: 5
+)
+[11/22] 101_004_sliding_window_threshold_alerter_01 ... GREEN
+[12/22] 102_002_optimistic_concurrency_persisted_state_machine_01 ... RED (test migration change/0 builds a working entity_transitions table with its index: function Repo.Migrations.CreateEntityTransitions.__migration__/0 is undefined (module Repo.Migrations.CreateEntityTransitions is not available))
+[13/22] 102_003_auto_expiring_persisted_state_machine_01 ... RED (test start/2 returns :pending for a brand-new entity: {:invalid, %ExUnit.TestModule{file: "/home/kamil/projects/elixir-sft-dataset/tasks/102_003_auto_expiring_persisted_state_machine_01/test_harness.exs", name: StateMachineTest, setup_all?: true, state: )
+[14/22] 102_004_threshold_approval_persisted_state_machine_01 ... RED (harness_load: Test harness compilation failed: module Repo.Migrations.CreateEntityTransitions is not an Ecto.Migration)
+[15/22] 623_003_bm25_ranked_inverted_index_01 ... GREEN
+[16/22] 624_002_merge_commit_dag_with_topological_log_and_merge_base_01 ... RED (test log walks a linear chain newest-to-oldest: 
+
+Assertion with == failed
+code:  assert hd(log).hash == c3
+left:  "ebbbf9fbafcdff39ecdc7d339cb2d141a8e1cb7f"
+right: "49bc6730ff75d4a3553572bf79d0f6a28b4bd500"
+)
+[17/22] 624_004_branch_references_with_atomic_cas_updates_and_reachability_gc_01 ... GREEN
+[18/22] 625_002_versioned_object_store_with_delete_markers_01 ... GREEN
+[19/22] 625_003_lifecycle_ttl_object_store_with_lazy_expiration_01 ... GREEN
+[20/22] 626_002_pre_aggregated_rollup_time_series_db_01 ... GREEN
+[21/22] 626_003_reset_aware_counter_time_series_db_01 ... GREEN
+[22/22] 626_004_sharded_concurrent_time_series_db_01 ... RED (test periodic :cleanup_tick message runs cleanup across shards: 
+
+Assertion with == failed
+code:  assert points == [{5000, 2}]
+left:  [{100, 1}, {5000, 2}]
+right: [{5000, 2}]
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 22   green: 12   RED: 10   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 022_004_invitation_accept_decline_nested_membership_workflow_01: test GET members returns 200 with active members for a member: key :store not found in:
+
+    []
+
+    - 100_002_provisioning_uri_driven_multi_algorithm_totp_verifier_01: compile: /tmp/screen_2180626_8901.ex: cannot compile module AuthenticatorURI (errors have been logged)
+    - 100_003_counter_based_hotp_with_resynchronization_window_01: compile: /tmp/screen_2180626_9093.ex: cannot compile module HOTP (errors have been logged)
+    - 100_004_stateful_totp_vault_genserver_with_replay_protection_01: compile: /tmp/screen_2180626_9285.ex: cannot compile module TOTPVault (errors have been logged)
+    - 101_003_weighted_sliding_sum_counter_01: test amounts outside the window are not included: 
+
+Assertion with == failed
+code:  assert 0 == SlidingSum.sum(sc, "k", 1000)
+left:  0
+right: 5
+
+    - 102_002_optimistic_concurrency_persisted_state_machine_01: test migration change/0 builds a working entity_transitions table with its index: function Repo.Migrations.CreateEntityTransitions.__migration__/0 is undefined (module Repo.Migrations.CreateEntityTransitions is not available)
+    - 102_003_auto_expiring_persisted_state_machine_01: test start/2 returns :pending for a brand-new entity: {:invalid, %ExUnit.TestModule{file: "/home/kamil/projects/elixir-sft-dataset/tasks/102_003_auto_expiring_persisted_state_machine_01/test_harness.exs", name: StateMachineTest, setup_all?: true, state: 
+    - 102_004_threshold_approval_persisted_state_machine_01: harness_load: Test harness compilation failed: module Repo.Migrations.CreateEntityTransitions is not an Ecto.Migration
+    - 624_002_merge_commit_dag_with_topological_log_and_merge_base_01: test log walks a linear chain newest-to-oldest: 
+
+Assertion with == failed
+code:  assert hd(log).hash == c3
+left:  "ebbbf9fbafcdff39ecdc7d339cb2d141a8e1cb7f"
+right: "49bc6730ff75d4a3553572bf79d0f6a28b4bd500"
+
+    - 626_004_sharded_concurrent_time_series_db_01: test periodic :cleanup_tick message runs cleanup across shards: 
+
+Assertion with == failed
+code:  assert points == [{5000, 2}]
+left:  [{100, 1}, {5000, 2}]
+right: [{5000, 2}]
+
+
+screen exited with status 0 — verdicts: `-- --report`
+=== [chain] stage 1 exit=0 — 2026-07-13T15:16:21+02:00
+Repaired-accept population: 74 task(s) (written to logs/rescreen_repaired_population.txt)
+
+=== RETRO BLIND SCREEN (repaired accepts, 74 suspects) ===
+  PASS (prompt-sufficient):            55
+  FAIL, triaged entailed (kept as-is): 9
+  FAIL, OPEN (needs triage):           10
+  transport errors:                    0
+  not yet screened:                    0
+
+  FAIL(open) 022_004_invitation_accept_decline_nested_membership_workflow_01
+  FAIL(open) 100_002_provisioning_uri_driven_multi_algorithm_totp_verifier_01
+  FAIL(open) 100_003_counter_based_hotp_with_resynchronization_window_01
+  FAIL(open) 100_004_stateful_totp_vault_genserver_with_replay_protection_01
+  FAIL(open) 101_003_weighted_sliding_sum_counter_01
+  FAIL(open) 102_002_optimistic_concurrency_persisted_state_machine_01
+  FAIL(open) 102_003_auto_expiring_persisted_state_machine_01
+  FAIL(open) 102_004_threshold_approval_persisted_state_machine_01
+  FAIL(open) 624_002_merge_commit_dag_with_topological_log_and_merge_base_01
+  FAIL(open) 626_004_sharded_concurrent_time_series_db_01
+=== [chain] stage 2: enrich 063_004 (--force, zero-budget semantics) — 2026-07-13T15:16:22+02:00
+enriching 1 prompt(s), sequential, ledger logs/enrich_prompts.jsonl
+
+[1/1] 063_004_bounded_concurrency_concurrent_fetcher_01 ... rejected — enriched prompt still not blind-solvable (tests failed) — failing: test runs at most max_concurrency fetches at a time; test sources still queued or running when the timeout fires are reported as :timeout
+
+=== ENRICH LEDGER (19 row(s)) === %{"applied" => 16, "rejected" => 3}
+  001_001_rate_limiter_01: 22 → 109 lines
+  002_002_rolling_window_error_rate_cb_01: 28 → 68 lines
+  013_002_timeout_guarded_retry_worker_01: 15 → 63 lines
+  041_001_lru_cache_backed_by_ets_01: REJECTED — enriched prompt still not blind-solvable (compile failed)
+  041_002_lfu_cache_backed_by_ets_01: 16 → 52 lines
+  041_003_sharded_lru_cache_with_consistent_key_routing_01: 19 → 57 lines
+  063_004_bounded_concurrency_concurrent_fetcher_01: 25 → 59 lines
+  074_001_custom_exunit_assertion_helpers_01: 18 → 46 lines
+  075_001_property_based_test_generators_01: 17 → 73 lines
+  041_001_lru_cache_backed_by_ets_01: 14 → 35 lines
+  079_001_bloom_filter_01: 11 → 62 lines
+  105_001_genserver_based_debouncer_01: 52 → 98 lines
+  107_002_keyed_event_aggregator_with_per_key_batching_01: 53 → 98 lines
+  013_001_exponential_backoff_retry_worker_01: 15 → 60 lines
+  023_002_in_flight_coalescing_idempotent_payments_01: 20 → 66 lines
+  077_001_interval_tree_for_overlapping_range_queries_01: REJECTED — enriched prompt still not blind-solvable (tests failed) — failing: test correct results with many intervals in
+  101_001_sliding_window_counter_01: 35 → 110 lines
+  077_001_interval_tree_for_overlapping_range_queries_01: 15 → 42 lines
+  063_004_bounded_concurrency_concurrent_fetcher_01: REJECTED — enriched prompt still not blind-solvable (tests failed) — failing: test runs at most max_concurrency fetches a
+=== [chain] stage 2 exit=0 — 2026-07-13T15:18:14+02:00
+=== [chain] stage 2b: canonical S6 screen of 063_004 (new sha only) — 2026-07-13T15:18:14+02:00
+Blind-solve screen: 0 task(s) to screen (1 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+
+Nothing screened.
+=== [chain] stage 2b exit=0 — 2026-07-13T15:18:15+02:00
+=== [chain] stage 3: strengthen 063_004 + 101_001 (targeted) — 2026-07-13T15:18:15+02:00
+strengthening 2 family(ies), sequential, ledger logs/strengthen_harnesses.jsonl
+
+[1/2] 063_004_bounded_concurrency_concurrent_fetcher_01 (ledgered 0.47) ... applied
+[2/2] 101_001_sliding_window_counter_01 (ledgered 0.47) ... rejected — house/harness lint: test_harness.exs reaches into internal state via `:sys.get_state`/`:sys.replace_state` (7 call(s)) — assert observable behavior through the public API instead
+
+=== STRENGTHEN LEDGER (60 row(s)) === %{"already_ok" => 10, "applied" => 17, "rejected" => 33}
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  105_001_genserver_based_debouncer_01: 0.4 → 0.8 (+3 test(s))
+  013_002_timeout_guarded_retry_worker_01: 0.4 → 0.84 (+6 test(s))
+  107_002_keyed_event_aggregator_with_per_key_batching_01: 0.43 → 0.79 (+3 test(s))
+  001_001_rate_limiter_01: 0.47 → 0.87 (+4 test(s))
+  002_002_rolling_window_error_rate_cb_01: 0.47 → 0.75 (+5 test(s))
+  104_004_usage_recycling_connection_pool_01: 0.47 → 0.82 (+9 test(s))
+  041_002_lfu_cache_backed_by_ets_01: 0.48 → 0.78 (+4 test(s))
+  079_001_bloom_filter_01: 0.48 → 1.0 (+6 test(s))
+  075_001_property_based_test_generators_01: 0.49 → 1.0 (+7 test(s))
+  074_001_custom_exunit_assertion_helpers_01: 0.41 → 1.0 (+8 test(s))
+  063_004_bounded_concurrency_concurrent_fetcher_01: 0.47 → 0.94 (+5 test(s))
+=== [chain] stage 3 exit=0 — 2026-07-13T15:27:12+02:00
+
+=== STRENGTHEN LEDGER (60 row(s)) === %{"already_ok" => 10, "applied" => 17, "rejected" => 33}
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  105_001_genserver_based_debouncer_01: 0.4 → 0.8 (+3 test(s))
+  013_002_timeout_guarded_retry_worker_01: 0.4 → 0.84 (+6 test(s))
+  107_002_keyed_event_aggregator_with_per_key_batching_01: 0.43 → 0.79 (+3 test(s))
+  001_001_rate_limiter_01: 0.47 → 0.87 (+4 test(s))
+  002_002_rolling_window_error_rate_cb_01: 0.47 → 0.75 (+5 test(s))
+  104_004_usage_recycling_connection_pool_01: 0.47 → 0.82 (+9 test(s))
+  041_002_lfu_cache_backed_by_ets_01: 0.48 → 0.78 (+4 test(s))
+  079_001_bloom_filter_01: 0.48 → 1.0 (+6 test(s))
+  075_001_property_based_test_generators_01: 0.49 → 1.0 (+7 test(s))
+  074_001_custom_exunit_assertion_helpers_01: 0.41 → 1.0 (+8 test(s))
+  063_004_bounded_concurrency_concurrent_fetcher_01: 0.47 → 0.94 (+5 test(s))
+=== [chain] CHAIN DONE — 2026-07-13T15:27:13+02:00

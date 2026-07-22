@@ -1,0 +1,1490 @@
+07:07:03.110 [info] VARIATION 098_003_revocable_stateful_token_server_01: Revocable Stateful Token Server
+07:07:03.110 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+07:07:03.110 [debug] claude -p USER prompt:
+Write me an Elixir module called `RevocableToken` that issues and validates
+signed, expiring tokens — but unlike a purely stateless token, this one
+supports **revocation**. The module is a `GenServer` that owns the signing
+secret and maintains an in-memory set of revoked tokens. Once a token is
+revoked it must fail validation on that server even though its signature is
+still cryptographically valid and it has not yet expired.
+
+Public API (all functions take a server pid or name as the first argument):
+
+- `RevocableToken.start_link(opts)` starts the server. `opts` is a keyword
+  list. The `:secret` key (a binary signing key) is required. The optional
+  `:clock` key is a zero-arity function returning a Unix epoch second; when
+  omitted the server reads `System.os_time(:second)`. This is a test seam.
+  Returns `{:ok, pid}`.
+
+- `RevocableToken.issue(server, payload, ttl_seconds)` where `payload` is any
+  Elixir term and `ttl_seconds` is a positive integer. Returns `{:ok, token}`
+  where `token` is a URL-safe binary (no padding issues, safe to embed in
+  URLs or headers) that encodes the payload, the issue timestamp, the
+  expiration timestamp, a server-generated unique id, and an HMAC-SHA256
+  signature over all of that data. Because each token carries a fresh random
+  id, issuing the same payload twice produces two *different* tokens.
+
+- `RevocableToken.verify(server, token)` decodes and validates the token
+  against that server. Return `{:ok, payload}` if the signature is valid, the
+  token is not revoked, and it has not expired. Return `{:error, :expired}`,
+  `{:error, :invalid_signature}`, `{:error, :revoked}`, or
+  `{:error, :malformed}` as described below. `verify` is read-only: verifying
+  a token any number of times does not change its status.
+
+- `RevocableToken.revoke(server, token)` marks `token` as revoked on that
+  server and returns `:ok`. Revocation is per-token: revoking one token does
+  not affect any other token. Revocation is per-server: revoking a token on
+  one server does not revoke it on another.
+
+The check order inside `verify` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header and payload → HMAC
+verification → revocation check → expiry check → payload deserialization.
+Consequences of this order:
+
+- Any failure before HMAC verification yields `:malformed` (bad base64, too
+  short to contain a MAC, a header that doesn't match the remaining bytes,
+  non-binary input, and so on).
+- An HMAC mismatch yields `:invalid_signature`. Because the signature is
+  checked before the revocation status, a token whose signature does not
+  verify against this server's secret returns `:invalid_signature` even if it
+  has been revoked on this server.
+- A revoked token with a valid signature yields `:revoked`. Because the
+  revocation check runs before the expiry check, a token that is both revoked
+  and past its expiry returns `:revoked`.
+- A valid, non-revoked, but expired token yields `:expired`. A token whose
+  `expires_at` equals the current time is already expired (use strict `<` on
+  the validity check, not `<=`).
+- A post-HMAC deserialization failure yields `:malformed`.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Use `Base.url_encode64/2` with `padding: false`.
+- The signed region must cover all fields (unique id + issue time + expiry
+  time + payload, plus any length prefix you include for framing) so that
+  none of them can be tampered with independently.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Generate the per-token unique id with `:crypto.strong_rand_bytes/1`.
+- Deserialize the payload with `:erlang.binary_to_term/2` using `[:safe]`.
+- Do not use any external dependencies — only the Elixir standard library
+  and OTP.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+07:09:07.069 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule RevocableToken do
+  @moduledoc """
+  Issues and validates signed, expiring tokens that additionally support
+  **revocation**.
+
+  Unlike a purely stateless token, a `RevocableToken` server owns the signing
+  secret and maintains an in-memory set of revoked tokens. Once a token has been
+  revoked on a server it fails validation on that server even though its HMAC
+  signature is still cryptographically valid and it has not yet expired.
+
+  Each token is a URL-safe base64 string (no padding) whose decoded bytes are:
+
+      <<id::binary-size(16), issued_at::signed-64, expires_at::signed-64,
+        payload_len::32, payload::binary-size(payload_len)>> <> mac
+
+  where `mac` is a 32-byte `HMAC-SHA256` over everything that precedes it. Every
+  field — including the random per-token id and the length prefix used for
+  framing — lies inside the signed region, so none of them can be tampered with
+  independently.
+
+  Validation inside `verify/2` proceeds in exactly this order:
+
+    1. base64 decode
+    2. split off the trailing 32-byte MAC
+    3. structural parse of the header and payload
+    4. HMAC verification
+    5. revocation check
+    6. expiry check
+    7. payload deserialization
+
+  Any failure before HMAC verification yields `:malformed`; an HMAC mismatch
+  yields `:invalid_signature`; a revoked token yields `:revoked`; an expired
+  token yields `:expired`; and a post-HMAC deserialization failure yields
+  `:malformed`.
+  """
+
+  use GenServer
+
+  import Bitwise
+
+  @id_bytes 16
+  @mac_bytes 32
+
+  @typedoc "A validation failure reason returned by `verify/2`."
+  @type error :: :expired | :invalid_signature | :revoked | :malformed
+
+  # ----------------------------------------------------------------------------
+  # Public API
+  # ----------------------------------------------------------------------------
+
+  @doc """
+  Starts a `RevocableToken` server.
+
+  `opts` is a keyword list. The `:secret` key (a binary signing key) is
+  required. The optional `:clock` key is a zero-arity function returning a Unix
+  epoch second; when omitted the server reads `System.os_time(:second)`. The
+  optional `:name` key registers the server under a name.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, init_opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, init_opts, server_opts)
+  end
+
+  @doc """
+  Issues a fresh token on `server`.
+
+  `payload` may be any Elixir term and `ttl_seconds` is a positive integer. The
+  returned token is a URL-safe binary carrying the payload, the issue and
+  expiration timestamps, a server-generated random id, and an `HMAC-SHA256`
+  signature over all of that data. Because each token carries a fresh random id,
+  issuing the same payload twice produces two different tokens.
+  """
+  @spec issue(GenServer.server(), term(), pos_integer()) :: {:ok, binary()}
+  def issue(server, payload, ttl_seconds)
+      when is_integer(ttl_seconds) and ttl_seconds > 0 do
+    GenServer.call(server, {:issue, payload, ttl_seconds})
+  end
+
+  @doc """
+  Decodes and validates `token` against `server`.
+
+  Returns `{:ok, payload}` when the signature is valid, the token is not revoked
+  and it has not expired. Otherwise returns `{:error, reason}` with `reason` one
+  of `:expired`, `:invalid_signature`, `:revoked` or `:malformed`. Verifying a
+  token any number of times does not change its status.
+  """
+  @spec verify(GenServer.server(), binary()) :: {:ok, term()} | {:error, error()}
+  def verify(server, token) do
+    GenServer.call(server, {:verify, token})
+  end
+
+  @doc """
+  Marks `token` as revoked on `server` and returns `:ok`.
+
+  Revocation is per-token (revoking one token does not affect any other) and
+  per-server (revoking a token on one server does not revoke it on another).
+  """
+  @spec revoke(GenServer.server(), binary()) :: :ok
+  def revoke(server, token) do
+    GenServer.call(server, {:revoke, token})
+  end
+
+  # ----------------------------------------------------------------------------
+  # GenServer callbacks
+  # ----------------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    secret = Keyword.fetch!(opts, :secret)
+    clock = Keyword.get(opts, :clock, fn -> System.os_time(:second) end)
+    {:ok, %{secret: secret, clock: clock, revoked: MapSet.new()}}
+  end
+
+  @impl true
+  def handle_call({:issue, payload, ttl}, _from, state) do
+    now = state.clock.()
+    expires_at = now + ttl
+    id = :crypto.strong_rand_bytes(@id_bytes)
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<id::binary-size(@id_bytes), now::signed-64, expires_at::signed-64,
+        byte_size(payload_bin)::32, payload_bin::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, state.secret, signed)
+    token = Base.url_encode64(signed <> mac, padding: false)
+    {:reply, {:ok, token}, state}
+  end
+
+  def handle_call({:verify, token}, _from, state) do
+    {:reply, do_verify(token, state), state}
+  end
+
+  def handle_call({:revoke, token}, _from, state) do
+    case token_id(token) do
+      {:ok, id} ->
+        {:reply, :ok, %{state | revoked: MapSet.put(state.revoked, id)}}
+
+      {:error, _reason} ->
+        {:reply, :ok, state}
+    end
+  end
+
+  # ----------------------------------------------------------------------------
+  # Internal helpers
+  # ----------------------------------------------------------------------------
+
+  @spec do_verify(binary(), map()) :: {:ok, term()} | {:error, error()}
+  defp do_verify(token, state) do
+    with {:ok, bin} <- decode(token),
+         {:ok, signed, mac} <- split_mac(bin),
+         {:ok, fields} <- parse(signed),
+         :ok <- check_mac(signed, mac, state.secret),
+         :ok <- check_revoked(fields.id, state.revoked),
+         :ok <- check_expiry(fields.expires_at, state.clock),
+         {:ok, payload} <- deserialize(fields.payload) do
+      {:ok, payload}
+    end
+  end
+
+  @spec token_id(term()) :: {:ok, binary()} | {:error, :malformed}
+  defp token_id(token) do
+    with {:ok, bin} <- decode(token),
+         {:ok, signed, _mac} <- split_mac(bin),
+         {:ok, fields} <- parse(signed) do
+      {:ok, fields.id}
+    end
+  end
+
+  @spec decode(term()) :: {:ok, binary()} | {:error, :malformed}
+  defp decode(token) when is_binary(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, bin} -> {:ok, bin}
+      :error -> {:error, :malformed}
+    end
+  end
+
+  defp decode(_token), do: {:error, :malformed}
+
+  @spec split_mac(binary()) ::
+          {:ok, binary(), binary()} | {:error, :malformed}
+  defp split_mac(bin) when byte_size(bin) >= @mac_bytes do
+    size = byte_size(bin) - @mac_bytes
+    <<signed::binary-size(size), mac::binary-size(@mac_bytes)>> = bin
+    {:ok, signed, mac}
+  end
+
+  defp split_mac(_bin), do: {:error, :malformed}
+
+  @spec parse(binary()) :: {:ok, map()} | {:error, :malformed}
+  defp parse(signed) do
+    case signed do
+      <<id::binary-size(@id_bytes), issued_at::signed-64, expires_at::signed-64,
+        len::32, payload::binary-size(len)>> ->
+        {:ok,
+         %{id: id, issued_at: issued_at, expires_at: expires_at, payload: payload}}
+
+      _other ->
+        {:error, :malformed}
+    end
+  end
+
+  @spec check_mac(binary(), binary(), binary()) ::
+          :ok | {:error, :invalid_signature}
+  defp check_mac(signed, mac, secret) do
+    expected = :crypto.mac(:hmac, :sha256, secret, signed)
+    if secure_compare(expected, mac), do: :ok, else: {:error, :invalid_signature}
+  end
+
+  @spec check_revoked(binary(), MapSet.t()) :: :ok | {:error, :revoked}
+  defp check_revoked(id, revoked) do
+    if MapSet.member?(revoked, id), do: {:error, :revoked}, else: :ok
+  end
+
+  @spec check_expiry(integer(), (-> integer())) :: :ok | {:error, :expired}
+  defp check_expiry(expires_at, clock) do
+    if clock.() < expires_at, do: :ok, else: {:error, :expired}
+  end
+
+  @spec deserialize(binary()) :: {:ok, term()} | {:error, :malformed}
+  defp deserialize(bin) do
+    {:ok, :erlang.b (truncated)
+07:09:07.069 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2118, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2118, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2118, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2118, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 10589, "type" => "message"}], "output_tokens" => 10589, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+07:09:07.097 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_003_revocable_stateful_token_server_01 solution.ex
+07:09:07.837 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":245,"lines_over_98":0,"max_line_length":89,"mode":"full","pipe_chain_count":0,"public_fn_count":8,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_003_revocable_stateful_token_server_01/solution.ex","task":"098_003_revocable_stateful_token_server_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-10T05:09:07.808627Z"}
+07:09:07.838 [info] cycle 098_003_revocable_stateful_token_server_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+07:09:07.838 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+07:09:07.838 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `RevocableToken` that issues and validates
+signed, expiring tokens — but unlike a purely stateless token, this one
+supports **revocation**. The module is a `GenServer` that owns the signing
+secret and maintains an in-memory set of revoked tokens. Once a token is
+revoked it must fail validation on that server even though its signature is
+still cryptographically valid and it has not yet expired.
+
+Public API (all functions take a server pid or name as the first argument):
+
+- `RevocableToken.start_link(opts)` starts the server. `opts` is a keyword
+  list. The `:secret` key (a binary signing key) is required. The optional
+  `:clock` key is a zero-arity function returning a Unix epoch second; when
+  omitted the server reads `System.os_time(:second)`. This is a test seam.
+  Returns `{:ok, pid}`.
+
+- `RevocableToken.issue(server, payload, ttl_seconds)` where `payload` is any
+  Elixir term and `ttl_seconds` is a positive integer. Returns `{:ok, token}`
+  where `token` is a URL-safe binary (no padding issues, safe to embed in
+  URLs or headers) that encodes the payload, the issue timestamp, the
+  expiration timestamp, a server-generated unique id, and an HMAC-SHA256
+  signature over all of that data. Because each token carries a fresh random
+  id, issuing the same payload twice produces two *different* tokens.
+
+- `RevocableToken.verify(server, token)` decodes and validates the token
+  against that server. Return `{:ok, payload}` if the signature is valid, the
+  token is not revoked, and it has not expired. Return `{:error, :expired}`,
+  `{:error, :invalid_signature}`, `{:error, :revoked}`, or
+  `{:error, :malformed}` as described below. `verify` is read-only: verifying
+  a token any number of times does not change its status.
+
+- `RevocableToken.revoke(server, token)` marks `token` as revoked on that
+  server and returns `:ok`. Revocation is per-token: revoking one token does
+  not affect any other token. Revocation is per-server: revoking a token on
+  one server does not revoke it on another.
+
+The check order inside `verify` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header and payload → HMAC
+verification → revocation check → expiry check → payload deserialization.
+Consequences of this order:
+
+- Any failure before HMAC verification yields `:malformed` (bad base64, too
+  short to contain a MAC, a header that doesn't match the remaining bytes,
+  non-binary input, and so on).
+- An HMAC mismatch yields `:invalid_signature`. Because the signature is
+  checked before the revocation status, a token whose signature does not
+  verify against this server's secret returns `:invalid_signature` even if it
+  has been revoked on this server.
+- A revoked token with a valid signature yields `:revoked`. Because the
+  revocation check runs before the expiry check, a token that is both revoked
+  and past its expiry returns `:revoked`.
+- A valid, non-revoked, but expired token yields `:expired`. A token whose
+  `expires_at` equals the current time is already expired (use strict `<` on
+  the validity check, not `<=`).
+- A post-HMAC deserialization failure yields `:malformed`.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Use `Base.url_encode64/2` with `padding: false`.
+- The signed region must cover all fields (unique id + issue time + expiry
+  time + payload, plus any length prefix you include for framing) so that
+  none of them can be tampered with independently.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Generate the per-token unique id with `:crypto.strong_rand_bytes/1`.
+- Deserialize the payload with `:erlang.binary_to_term/2` using `[:safe]`.
+- Do not use any external dependencies — only the Elixir standard library
+  and OTP.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule RevocableToken do
+  @moduledoc """
+  Issues and validates signed, expiring tokens that additionally support
+  **revocation**.
+
+  Unlike a purely stateless token, a `RevocableToken` server owns the signing
+  secret and maintains an in-memory set of revoked tokens. Once a token has been
+  revoked on a server it fails validation on that server even though its HMAC
+  signature is still cryptographically valid and it has not yet expired.
+
+  Each token is a URL-safe base64 string (no padding) whose decoded bytes are:
+
+      <<id::binary-size(16), issued_at::signed-64, expires_at::signed-64,
+        payload_len::32, payload::binary-size(payload_len)>> <> mac
+
+  where `mac` is a 32-byte `HMAC-SHA256` over everything that precedes it. Every
+  field — including the random per-token id and the length prefix used for
+  framing — lies inside the signed region, so none of them can be tampered with
+  independently.
+
+  Validation inside `verify/2` proceeds in exactly this order:
+
+    1. base64 decode
+    2. split off the trailing 32-byte MAC
+    3. structural parse of the header and payload
+    4. HMAC verification
+    5. revocation check
+    6. expiry check
+    7. payload deserialization
+
+  Any failure before HMAC verification yields `:malformed`; an HMAC mismatch
+  yields `:invalid_signature`; a revoked token yields `:revoked`; an expired
+  token yields `:expired`; and a post-HMAC deserialization failure yields
+  `:malformed`.
+  """
+
+  use GenServer
+
+  import Bitwise
+
+  @id_bytes 16
+  @mac_bytes 32
+
+  @typedoc "A validation failure reason returned by `verify/2`."
+  @type error :: :expired | :invalid_signature | :revoked | :malformed
+
+  # ----------------------------------------------------------------------------
+  # Public API
+  # ----------------------------------------------------------------------------
+
+  @doc """
+  Starts a `RevocableToken` server.
+
+  `opts` is a keyword list. The `:secret` key (a binary signing key) is
+  required. The optional `:clock` key is a zero-arity function returning a Unix
+  epoch second; when omitted the server reads `System.os_time(:second)`. The
+  optional `:name` key registers the server under a name.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, init_opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, init_opts, server_opts)
+  end
+
+  @doc """
+  Issues a fresh token on `server`.
+
+  `payload` may be any Elixir term and `ttl_seconds` is a positive integer. The
+  returned token is a URL-safe binary carrying the payload, the issue and
+  expiration timestamps, a server-generated random id, and an `HMAC-SHA256`
+  signature over all of that data. Because each token carries a fresh random id,
+  issuing the same payload twice produces two different tokens.
+  """
+  @spec issue(GenServer.server(), term(), pos_integer()) :: {:ok, binary()}
+  def issue(server, payload, ttl_seconds)
+      when is_integer(ttl_seconds) and ttl_seconds > 0 do
+    GenServer.call(server, {:is (truncated)
+07:18:30.088 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, I need to find and silence the single compile warning while keeping behavior identical. Let me analyze the solution carefully.
+
+After examining every binding, clause, import, and attribute, the code is largely clean — but there are two spots worth hardening against the compiler's warnings: the `import Bitwise` (safer as fully-qualified calls so it can never be flagged as an unused/partial import) and the multi-clause `handle_call/3` where only the first clause carries `@impl true` (annotating every callback clause is the robust, warning-proof form). Both changes are 100% behavior-preserving.
+
+<file path="solution.ex">
+defmodule RevocableToken do
+  @moduledoc """
+  Issues and validates signed, expiring tokens that additionally support
+  **revocation**.
+
+  Unlike a purely stateless token, a `RevocableToken` server owns the signing
+  secret and maintains an in-memory set of revoked tokens. Once a token has been
+  revoked on a server it fails validation on that server even though its HMAC
+  signature is still cryptographically valid and it has not yet expired.
+
+  Each token is a URL-safe base64 string (no padding) whose decoded bytes are:
+
+      <<id::binary-size(16), issued_at::signed-64, expires_at::signed-64,
+        payload_len::32, payload::binary-size(payload_len)>> <> mac
+
+  where `mac` is a 32-byte `HMAC-SHA256` over everything that precedes it. Every
+  field — including the random per-token id and the length prefix used for
+  framing — lies inside the signed region, so none of them can be tampered with
+  independently.
+
+  Validation inside `verify/2` proceeds in exactly this order:
+
+    1. base64 decode
+    2. split off the trailing 32-byte MAC
+    3. structural parse of the header and payload
+    4. HMAC verification
+    5. revocation check
+    6. expiry check
+    7. payload deserialization
+
+  Any failure before HMAC verification yields `:malformed`; an HMAC mismatch
+  yields `:invalid_signature`; a revoked token yields `:revoked`; an expired
+  token yields `:expired`; and a post-HMAC deserialization failure yields
+  `:malformed`.
+  """
+
+  use GenServer
+
+  @id_bytes 16
+  @mac_bytes 32
+
+  @typedoc "A validation failure reason returned by `verify/2`."
+  @type error :: :expired | :invalid_signature | :revoked | :malformed
+
+  # ----------------------------------------------------------------------------
+  # Public API
+  # ----------------------------------------------------------------------------
+
+  @doc """
+  Starts a `RevocableToken` server.
+
+  `opts` is a keyword list. The `:secret` key (a binary signing key) is
+  required. The optional `:clock` key is a zero-arity function returning a Unix
+  epoch second; when omitted the server reads `System.os_time(:second)`. The
+  optional `:name` key registers the server under a name.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, init_opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, init_opts, server_opts)
+  end
+
+  @doc """
+  Issues a fresh token on `server`.
+
+  `payload` may be any Elixir term and `ttl_seconds` is a positive integer. The
+  returned token is a URL-safe binary carrying the payload, the issue and
+  expiration timestamps, a server-generated random id, and an `HMAC-SHA256`
+  signature over all of that data. Because each token carries a fresh random id,
+  issuing the same payload twice produces two different tokens.
+  """
+  @spec issue(GenServer.server(), term(), pos_integer()) :: {:ok, binary()}
+  def issue(server, payload, ttl_seconds)
+      when is_integer(ttl_seconds) and ttl_seconds > 0 do
+    GenServer.call(server, {:issue, payload, ttl_seconds})
+  end
+
+  @doc """
+  Decodes and validates `token` against `server`.
+
+  Returns `{:ok, payload}` when the signature is valid, the token is not revoked
+  and it has not expired. Otherwise returns `{:error, reason}` with `reason` one
+  of `:expired`, `:invalid_signature`, `:revoked` or `:malformed`. Verifying a
+  token any number of times does not change its status.
+  """
+  @spec verify(GenServer.server(), binary()) :: {:ok, term()} | {:error, error()}
+  def verify(server, token) do
+    GenServer.call(server, {:verify, token})
+  end
+
+  @doc """
+  Marks `token` as revoked on `server` and returns `:ok`.
+
+  Revocation is per-token (revoking one token does not affect any other) and
+  per-server (revoking a token on one server does not revoke it on another).
+  """
+  @spec revoke(GenServer.server(), binary()) :: :ok
+  def revoke(server, token) do
+    GenServer.call(server, {:revoke, token})
+  end
+
+  # ----------------------------------------------------------------------------
+  # GenServer callbacks
+  # ----------------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    secret = Keyword.fetch!(opts, :secret)
+    clock = Keyword.get(opts, :clock, fn -> System.os_time(:second) end)
+    {:ok, %{secret: secret, clock: clock, revoked: MapSet.new()}}
+  end
+
+  @impl true
+  def handle_call({:issue, payload, ttl}, _from, state) do
+    now = state.clock.()
+    expires_at = now + ttl
+    id = :crypto.strong_rand_bytes(@id_bytes)
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<id::binary-size(@id_bytes), now::signed-64, expires_at::signed-64,
+        byte_size(payload_bin)::32, payload_bin::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, state.secret, signed)
+    token = Base.url_encode64(signed <> mac, padding: false)
+    {:reply, {:ok, token}, state}
+  end
+
+  @impl true
+  def handle_call({:verify, token}, _from, state) do
+    {:reply, do_verify(token, state), state}
+  end
+
+  @impl true
+  def handle_call({:revoke, token}, _from, state) do
+    case token_id(token) do
+      {:ok, id} ->
+        {:reply, :ok, %{state | revoked: MapSet.put(state.revoked, id)}}
+
+      {:error, _reason} ->
+        {:reply, :ok, state}
+    end
+  end
+
+  # ----------------------------------------------------------------------------
+  # Internal helpers
+  # ----------------------------------------------------------------------------
+
+  @spec do_verify(binary(), map()) :: {:ok, term()} | {:error, error()}
+  defp do_verify(token, state) do
+    with {:ok, bin} <- decode(token),
+         {:ok, signed, mac} <- split_mac(bin),
+         {:ok, fields} <- parse(signed),
+         :ok <- check_mac(signed, mac, state.secret),
+         :ok <- check_revoked(fields.id, state.revoked),
+         :ok <- check_expiry(fields.expires_at, state.clock),
+         {:ok, payload} <- deserialize(fields.payload) do
+      {:ok, payload}
+    end
+  end
+
+  @spec token_id(term()) :: {:ok, binary()} | {:error, :malformed}
+  defp token_id(token) do
+    with {:ok, bin} <- decode(token),
+         {:ok, signed, _mac} <- split_mac(bin),
+         {:ok, fields} <- parse(signed) do
+      {:ok, fields.id}
+    end
+  end
+
+  @spec decode(term()) :: {:ok, binary()} | {:error, :malformed}
+  defp decode(token) when is_binary(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, bin} -> {:ok, bin}
+      :error -> {:error, :malformed}
+    end
+  end
+
+  defp decode(_token), do: {:error, :malformed}
+
+  @spec split_mac(binary()) ::
+          {:ok, binary(), binary()} | {:error, :malformed}
+  defp split_mac(bin) when byte_size(bin) >= @mac_bytes do
+    size = byte_size(bin) - @mac_bytes
+    <<signed::binary-size(size), mac::binary-size(@mac_bytes)>> = bin
+    {:ok, signed, mac}
+  end
+
+  defp split_mac(_bin), do: {:error, :malformed}
+
+  @spec parse(binary()) :: {:ok, map()} | {:error, :malformed}
+  defp parse(signed) do
+    case signed do
+      <<id::binary-size(@id_bytes), issued_at::signed-64, expires_at::signed-64, len::32,
+        payload::binary-size(len)>> ->
+        {:ok, %{id: id, issued_at: issued_at, expires_at: expires_at, payload: payload}}
+
+      _other ->
+        {:error, :malformed}
+    end
+  end
+
+  @spec check_mac(binary(), binary(), binary()) ::
+          :ok | {:error, :invalid_signature}
+  defp check_mac(signed, mac, secret) do
+    expected = :crypt (truncated)
+07:18:30.088 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9140, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9140, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9140, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9140, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 42075, "type" => "message"}], "output_tokens" => 42075, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+07:18:30.115 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_003_revocable_stateful_token_server_01 solution.ex
+07:18:30.857 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":245,"lines_over_98":0,"max_line_length":89,"mode":"full","pipe_chain_count":0,"public_fn_count":8,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_003_revocable_stateful_token_server_01/solution.ex","task":"098_003_revocable_stateful_token_server_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-10T05:18:30.833969Z"}
+07:18:30.858 [info] cycle 098_003_revocable_stateful_token_server_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+07:18:30.859 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+07:18:30.859 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `RevocableToken` that issues and validates
+signed, expiring tokens — but unlike a purely stateless token, this one
+supports **revocation**. The module is a `GenServer` that owns the signing
+secret and maintains an in-memory set of revoked tokens. Once a token is
+revoked it must fail validation on that server even though its signature is
+still cryptographically valid and it has not yet expired.
+
+Public API (all functions take a server pid or name as the first argument):
+
+- `RevocableToken.start_link(opts)` starts the server. `opts` is a keyword
+  list. The `:secret` key (a binary signing key) is required. The optional
+  `:clock` key is a zero-arity function returning a Unix epoch second; when
+  omitted the server reads `System.os_time(:second)`. This is a test seam.
+  Returns `{:ok, pid}`.
+
+- `RevocableToken.issue(server, payload, ttl_seconds)` where `payload` is any
+  Elixir term and `ttl_seconds` is a positive integer. Returns `{:ok, token}`
+  where `token` is a URL-safe binary (no padding issues, safe to embed in
+  URLs or headers) that encodes the payload, the issue timestamp, the
+  expiration timestamp, a server-generated unique id, and an HMAC-SHA256
+  signature over all of that data. Because each token carries a fresh random
+  id, issuing the same payload twice produces two *different* tokens.
+
+- `RevocableToken.verify(server, token)` decodes and validates the token
+  against that server. Return `{:ok, payload}` if the signature is valid, the
+  token is not revoked, and it has not expired. Return `{:error, :expired}`,
+  `{:error, :invalid_signature}`, `{:error, :revoked}`, or
+  `{:error, :malformed}` as described below. `verify` is read-only: verifying
+  a token any number of times does not change its status.
+
+- `RevocableToken.revoke(server, token)` marks `token` as revoked on that
+  server and returns `:ok`. Revocation is per-token: revoking one token does
+  not affect any other token. Revocation is per-server: revoking a token on
+  one server does not revoke it on another.
+
+The check order inside `verify` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header and payload → HMAC
+verification → revocation check → expiry check → payload deserialization.
+Consequences of this order:
+
+- Any failure before HMAC verification yields `:malformed` (bad base64, too
+  short to contain a MAC, a header that doesn't match the remaining bytes,
+  non-binary input, and so on).
+- An HMAC mismatch yields `:invalid_signature`. Because the signature is
+  checked before the revocation status, a token whose signature does not
+  verify against this server's secret returns `:invalid_signature` even if it
+  has been revoked on this server.
+- A revoked token with a valid signature yields `:revoked`. Because the
+  revocation check runs before the expiry check, a token that is both revoked
+  and past its expiry returns `:revoked`.
+- A valid, non-revoked, but expired token yields `:expired`. A token whose
+  `expires_at` equals the current time is already expired (use strict `<` on
+  the validity check, not `<=`).
+- A post-HMAC deserialization failure yields `:malformed`.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Use `Base.url_encode64/2` with `padding: false`.
+- The signed region must cover all fields (unique id + issue time + expiry
+  time + payload, plus any length prefix you include for framing) so that
+  none of them can be tampered with independently.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Generate the per-token unique id with `:crypto.strong_rand_bytes/1`.
+- Deserialize the payload with `:erlang.binary_to_term/2` using `[:safe]`.
+- Do not use any external dependencies — only the Elixir standard library
+  and OTP.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule RevocableToken do
+  @moduledoc """
+  Issues and validates signed, expiring tokens that additionally support
+  **revocation**.
+
+  Unlike a purely stateless token, a `RevocableToken` server owns the signing
+  secret and maintains an in-memory set of revoked tokens. Once a token has been
+  revoked on a server it fails validation on that server even though its HMAC
+  signature is still cryptographically valid and it has not yet expired.
+
+  Each token is a URL-safe base64 string (no padding) whose decoded bytes are:
+
+      <<id::binary-size(16), issued_at::signed-64, expires_at::signed-64,
+        payload_len::32, payload::binary-size(payload_len)>> <> mac
+
+  where `mac` is a 32-byte `HMAC-SHA256` over everything that precedes it. Every
+  field — including the random per-token id and the length prefix used for
+  framing — lies inside the signed region, so none of them can be tampered with
+  independently.
+
+  Validation inside `verify/2` proceeds in exactly this order:
+
+    1. base64 decode
+    2. split off the trailing 32-byte MAC
+    3. structural parse of the header and payload
+    4. HMAC verification
+    5. revocation check
+    6. expiry check
+    7. payload deserialization
+
+  Any failure before HMAC verification yields `:malformed`; an HMAC mismatch
+  yields `:invalid_signature`; a revoked token yields `:revoked`; an expired
+  token yields `:expired`; and a post-HMAC deserialization failure yields
+  `:malformed`.
+  """
+
+  use GenServer
+
+  @id_bytes 16
+  @mac_bytes 32
+
+  @typedoc "A validation failure reason returned by `verify/2`."
+  @type error :: :expired | :invalid_signature | :revoked | :malformed
+
+  # ----------------------------------------------------------------------------
+  # Public API
+  # ----------------------------------------------------------------------------
+
+  @doc """
+  Starts a `RevocableToken` server.
+
+  `opts` is a keyword list. The `:secret` key (a binary signing key) is
+  required. The optional `:clock` key is a zero-arity function returning a Unix
+  epoch second; when omitted the server reads `System.os_time(:second)`. The
+  optional `:name` key registers the server under a name.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, init_opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, init_opts, server_opts)
+  end
+
+  @doc """
+  Issues a fresh token on `server`.
+
+  `payload` may be any Elixir term and `ttl_seconds` is a positive integer. The
+  returned token is a URL-safe binary carrying the payload, the issue and
+  expiration timestamps, a server-generated random id, and an `HMAC-SHA256`
+  signature over all of that data. Because each token carries a fresh random id,
+  issuing the same payload twice produces two different tokens.
+  """
+  @spec issue(GenServer.server(), term(), pos_integer()) :: {:ok, binary()}
+  def issue(server, payload, ttl_seconds)
+      when is_integer(ttl_seconds) and ttl_seconds > 0 do
+    GenServer.call(server, {:issue, payload, ttl_ (truncated)
+07:24:22.175 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this carefully, I traced the single compile warning to a type mismatch at a test call site.
+
+The test `"non-binary input returns :malformed"` calls `RevocableToken.verify(server, 12345)` with an **integer**, and the documented behavior explicitly supports non-binary input (there's even a `defp decode(_token), do: {:error, :malformed}` clause for it). But the `@spec` for `verify/2` narrows the token argument to `binary()`. On recent Elixir the type checker flags that call against the too-narrow spec — that's the lone warning.
+
+The fix is to widen the `verify/2` spec to `term()`, matching its actual contract. Behavior is unchanged.
+
+<file path="solution.ex">
+defmodule RevocableToken do
+  @moduledoc """
+  Issues and validates signed, expiring tokens that additionally support
+  **revocation**.
+
+  Unlike a purely stateless token, a `RevocableToken` server owns the signing
+  secret and maintains an in-memory set of revoked tokens. Once a token has been
+  revoked on a server it fails validation on that server even though its HMAC
+  signature is still cryptographically valid and it has not yet expired.
+
+  Each token is a URL-safe base64 string (no padding) whose decoded bytes are:
+
+      <<id::binary-size(16), issued_at::signed-64, expires_at::signed-64,
+        payload_len::32, payload::binary-size(payload_len)>> <> mac
+
+  where `mac` is a 32-byte `HMAC-SHA256` over everything that precedes it. Every
+  field — including the random per-token id and the length prefix used for
+  framing — lies inside the signed region, so none of them can be tampered with
+  independently.
+
+  Validation inside `verify/2` proceeds in exactly this order:
+
+    1. base64 decode
+    2. split off the trailing 32-byte MAC
+    3. structural parse of the header and payload
+    4. HMAC verification
+    5. revocation check
+    6. expiry check
+    7. payload deserialization
+
+  Any failure before HMAC verification yields `:malformed`; an HMAC mismatch
+  yields `:invalid_signature`; a revoked token yields `:revoked`; an expired
+  token yields `:expired`; and a post-HMAC deserialization failure yields
+  `:malformed`.
+  """
+
+  use GenServer
+
+  @id_bytes 16
+  @mac_bytes 32
+
+  @typedoc "A validation failure reason returned by `verify/2`."
+  @type error :: :expired | :invalid_signature | :revoked | :malformed
+
+  # ----------------------------------------------------------------------------
+  # Public API
+  # ----------------------------------------------------------------------------
+
+  @doc """
+  Starts a `RevocableToken` server.
+
+  `opts` is a keyword list. The `:secret` key (a binary signing key) is
+  required. The optional `:clock` key is a zero-arity function returning a Unix
+  epoch second; when omitted the server reads `System.os_time(:second)`. The
+  optional `:name` key registers the server under a name.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, init_opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, init_opts, server_opts)
+  end
+
+  @doc """
+  Issues a fresh token on `server`.
+
+  `payload` may be any Elixir term and `ttl_seconds` is a positive integer. The
+  returned token is a URL-safe binary carrying the payload, the issue and
+  expiration timestamps, a server-generated random id, and an `HMAC-SHA256`
+  signature over all of that data. Because each token carries a fresh random id,
+  issuing the same payload twice produces two different tokens.
+  """
+  @spec issue(GenServer.server(), term(), pos_integer()) :: {:ok, binary()}
+  def issue(server, payload, ttl_seconds)
+      when is_integer(ttl_seconds) and ttl_seconds > 0 do
+    GenServer.call(server, {:issue, payload, ttl_seconds})
+  end
+
+  @doc """
+  Decodes and validates `token` against `server`.
+
+  Returns `{:ok, payload}` when the signature is valid, the token is not revoked
+  and it has not expired. Otherwise returns `{:error, reason}` with `reason` one
+  of `:expired`, `:invalid_signature`, `:revoked` or `:malformed`. Verifying a
+  token any number of times does not change its status. Non-binary input yields
+  `{:error, :malformed}`.
+  """
+  @spec verify(GenServer.server(), term()) :: {:ok, term()} | {:error, error()}
+  def verify(server, token) do
+    GenServer.call(server, {:verify, token})
+  end
+
+  @doc """
+  Marks `token` as revoked on `server` and returns `:ok`.
+
+  Revocation is per-token (revoking one token does not affect any other) and
+  per-server (revoking a token on one server does not revoke it on another).
+  """
+  @spec revoke(GenServer.server(), term()) :: :ok
+  def revoke(server, token) do
+    GenServer.call(server, {:revoke, token})
+  end
+
+  # ----------------------------------------------------------------------------
+  # GenServer callbacks
+  # ----------------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    secret = Keyword.fetch!(opts, :secret)
+    clock = Keyword.get(opts, :clock, fn -> System.os_time(:second) end)
+    {:ok, %{secret: secret, clock: clock, revoked: MapSet.new()}}
+  end
+
+  @impl true
+  def handle_call({:issue, payload, ttl}, _from, state) do
+    now = state.clock.()
+    expires_at = now + ttl
+    id = :crypto.strong_rand_bytes(@id_bytes)
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<id::binary-size(@id_bytes), now::signed-64, expires_at::signed-64,
+        byte_size(payload_bin)::32, payload_bin::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, state.secret, signed)
+    token = Base.url_encode64(signed <> mac, padding: false)
+    {:reply, {:ok, token}, state}
+  end
+
+  def handle_call({:verify, token}, _from, state) do
+    {:reply, do_verify(token, state), state}
+  end
+
+  def handle_call({:revoke, token}, _from, state) do
+    case token_id(token) do
+      {:ok, id} ->
+        {:reply, :ok, %{state | revoked: MapSet.put(state.revoked, id)}}
+
+      {:error, _reason} ->
+        {:reply, :ok, state}
+    end
+  end
+
+  # ----------------------------------------------------------------------------
+  # Internal helpers
+  # ----------------------------------------------------------------------------
+
+  @spec do_verify(term(), map()) :: {:ok, term()} | {:error, error()}
+  defp do_verify(token, state) do
+    with {:ok, bin} <- decode(token),
+         {:ok, signed, mac} <- split_mac(bin),
+         {:ok, fields} <- parse(signed),
+         :ok <- check_mac(signed, mac, state.secret),
+         :ok <- check_revoked(fields.id, state.revoked),
+         :ok <- check_expiry(fields.expires_at, state.clock),
+         {:ok, payload} <- deserialize(fields.payload) do
+      {:ok, payload}
+    end
+  end
+
+  @spec token_id(term()) :: {:ok, binary()} | {:error, :malformed}
+  defp token_id(token) do
+    with {:ok, bin} <- decode(token),
+         {:ok, signed, _mac} <- split_mac(bin),
+         {:ok, fields} <- parse(signed) do
+      {:ok, fields.id}
+    end
+  end
+
+  @spec decode(term()) :: {:ok, binary()} | {:error, :malformed}
+  defp decode(token) when is_binary(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, bin} -> {:ok, bin}
+      :error -> {:error, :malformed}
+    end
+  end
+
+  defp decode(_token), do: {:error, :malformed}
+
+  @spec split_mac(binary()) ::
+          {:ok, binary(), binary()} | {:error, :malformed}
+  defp split_mac(bin) when byte_size(bin) >= @mac_bytes do
+    size = byte_size(bin) - @mac_bytes
+    <<signed::binary-size(size), mac::binary-size(@mac_bytes)>> = bin
+    {:ok, signed, mac}
+  end
+
+  defp split_mac(_bin), do: {:error, :malformed}
+
+  @spec parse(binary()) :: {:ok, map()} | {:error, :malformed}
+  defp parse(signed) do
+    case signed do
+      <<id::binary-size(@id_bytes), issued_at::signed-64, expires_at::signed-64, len::32,
+        payload::binary-size(len)>> ->
+        {:ok, %{id: id, issued_at: issued_at, expires_at: expires_at, payload: payload}}
+
+      _other ->
+        {:error, :malformed}
+    end
+  end
+
+  @spec check_mac(binary(), binary(), binary()) ::
+          :ok | {:error, :invalid_signature}
+  defp chec (truncated)
+07:24:22.175 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9156, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9156, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9156, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9156, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 25932, "type" => "message"}], "output_tokens" => 25932, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+07:24:22.203 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_003_revocable_stateful_token_server_01 solution.ex
+07:24:22.947 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":244,"lines_over_98":0,"max_line_length":89,"mode":"full","pipe_chain_count":0,"public_fn_count":8,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_003_revocable_stateful_token_server_01/solution.ex","task":"098_003_revocable_stateful_token_server_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-10T05:24:22.922918Z"}
+07:24:22.948 [info] cycle 098_003_revocable_stateful_token_server_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+07:24:22.948 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+07:24:22.948 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `RevocableToken` that issues and validates
+signed, expiring tokens — but unlike a purely stateless token, this one
+supports **revocation**. The module is a `GenServer` that owns the signing
+secret and maintains an in-memory set of revoked tokens. Once a token is
+revoked it must fail validation on that server even though its signature is
+still cryptographically valid and it has not yet expired.
+
+Public API (all functions take a server pid or name as the first argument):
+
+- `RevocableToken.start_link(opts)` starts the server. `opts` is a keyword
+  list. The `:secret` key (a binary signing key) is required. The optional
+  `:clock` key is a zero-arity function returning a Unix epoch second; when
+  omitted the server reads `System.os_time(:second)`. This is a test seam.
+  Returns `{:ok, pid}`.
+
+- `RevocableToken.issue(server, payload, ttl_seconds)` where `payload` is any
+  Elixir term and `ttl_seconds` is a positive integer. Returns `{:ok, token}`
+  where `token` is a URL-safe binary (no padding issues, safe to embed in
+  URLs or headers) that encodes the payload, the issue timestamp, the
+  expiration timestamp, a server-generated unique id, and an HMAC-SHA256
+  signature over all of that data. Because each token carries a fresh random
+  id, issuing the same payload twice produces two *different* tokens.
+
+- `RevocableToken.verify(server, token)` decodes and validates the token
+  against that server. Return `{:ok, payload}` if the signature is valid, the
+  token is not revoked, and it has not expired. Return `{:error, :expired}`,
+  `{:error, :invalid_signature}`, `{:error, :revoked}`, or
+  `{:error, :malformed}` as described below. `verify` is read-only: verifying
+  a token any number of times does not change its status.
+
+- `RevocableToken.revoke(server, token)` marks `token` as revoked on that
+  server and returns `:ok`. Revocation is per-token: revoking one token does
+  not affect any other token. Revocation is per-server: revoking a token on
+  one server does not revoke it on another.
+
+The check order inside `verify` is exactly: base64 decode → split off the
+trailing 32-byte MAC → structural parse of the header and payload → HMAC
+verification → revocation check → expiry check → payload deserialization.
+Consequences of this order:
+
+- Any failure before HMAC verification yields `:malformed` (bad base64, too
+  short to contain a MAC, a header that doesn't match the remaining bytes,
+  non-binary input, and so on).
+- An HMAC mismatch yields `:invalid_signature`. Because the signature is
+  checked before the revocation status, a token whose signature does not
+  verify against this server's secret returns `:invalid_signature` even if it
+  has been revoked on this server.
+- A revoked token with a valid signature yields `:revoked`. Because the
+  revocation check runs before the expiry check, a token that is both revoked
+  and past its expiry returns `:revoked`.
+- A valid, non-revoked, but expired token yields `:expired`. A token whose
+  `expires_at` equals the current time is already expired (use strict `<` on
+  the validity check, not `<=`).
+- A post-HMAC deserialization failure yields `:malformed`.
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- Use `Base.url_encode64/2` with `padding: false`.
+- The signed region must cover all fields (unique id + issue time + expiry
+  time + payload, plus any length prefix you include for framing) so that
+  none of them can be tampered with independently.
+- Compare MACs in constant time — don't short-circuit on the first differing
+  byte.
+- Generate the per-token unique id with `:crypto.strong_rand_bytes/1`.
+- Deserialize the payload with `:erlang.binary_to_term/2` using `[:safe]`.
+- Do not use any external dependencies — only the Elixir standard library
+  and OTP.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule RevocableToken do
+  @moduledoc """
+  Issues and validates signed, expiring tokens that additionally support
+  **revocation**.
+
+  Unlike a purely stateless token, a `RevocableToken` server owns the signing
+  secret and maintains an in-memory set of revoked tokens. Once a token has been
+  revoked on a server it fails validation on that server even though its HMAC
+  signature is still cryptographically valid and it has not yet expired.
+
+  Each token is a URL-safe base64 string (no padding) whose decoded bytes are:
+
+      <<id::binary-size(16), issued_at::signed-64, expires_at::signed-64,
+        payload_len::32, payload::binary-size(payload_len)>> <> mac
+
+  where `mac` is a 32-byte `HMAC-SHA256` over everything that precedes it. Every
+  field — including the random per-token id and the length prefix used for
+  framing — lies inside the signed region, so none of them can be tampered with
+  independently.
+
+  Validation inside `verify/2` proceeds in exactly this order:
+
+    1. base64 decode
+    2. split off the trailing 32-byte MAC
+    3. structural parse of the header and payload
+    4. HMAC verification
+    5. revocation check
+    6. expiry check
+    7. payload deserialization
+
+  Any failure before HMAC verification yields `:malformed`; an HMAC mismatch
+  yields `:invalid_signature`; a revoked token yields `:revoked`; an expired
+  token yields `:expired`; and a post-HMAC deserialization failure yields
+  `:malformed`.
+  """
+
+  use GenServer
+
+  @id_bytes 16
+  @mac_bytes 32
+
+  @typedoc "A validation failure reason returned by `verify/2`."
+  @type error :: :expired | :invalid_signature | :revoked | :malformed
+
+  # ----------------------------------------------------------------------------
+  # Public API
+  # ----------------------------------------------------------------------------
+
+  @doc """
+  Starts a `RevocableToken` server.
+
+  `opts` is a keyword list. The `:secret` key (a binary signing key) is
+  required. The optional `:clock` key is a zero-arity function returning a Unix
+  epoch second; when omitted the server reads `System.os_time(:second)`. The
+  optional `:name` key registers the server under a name.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, init_opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, init_opts, server_opts)
+  end
+
+  @doc """
+  Issues a fresh token on `server`.
+
+  `payload` may be any Elixir term and `ttl_seconds` is a positive integer. The
+  returned token is a URL-safe binary carrying the payload, the issue and
+  expiration timestamps, a server-generated random id, and an `HMAC-SHA256`
+  signature over all of that data. Because each token carries a fresh random id,
+  issuing the same payload twice produces two different tokens.
+  """
+  @spec issue(GenServer.server(), term(), pos_integer()) :: {:ok, binary()}
+  def issue(server, payload, ttl_seconds)
+      when is_integer(ttl_seconds) and ttl_seconds > 0 do
+    GenServer.call(server, {:issue, payload, ttl_ (truncated)
+07:31:40.671 [debug] claude -p RESULT (stop="end_turn"):
+I analyzed the solution carefully. The token round-trip, signing, and validation logic is all correct and the tests are green. The house-style failure is "1 compile warning."
+
+The most defensible source is `parse/1`: it binds `issued_at` and packs it into a map that `verify`/`revoke`/`token_id` never read, and it accesses map fields (`fields.id`, etc.). I'll restructure `parse/1` to return a plain tuple carrying only the fields actually consumed, dropping the never-read `issued_at` binding (underscored) — eliminating the unused/dead value while keeping the on-wire binary format and all behavior byte-for-byte identical.
+
+<file path="solution.ex">
+defmodule RevocableToken do
+  @moduledoc """
+  Issues and validates signed, expiring tokens that additionally support
+  **revocation**.
+
+  Unlike a purely stateless token, a `RevocableToken` server owns the signing
+  secret and maintains an in-memory set of revoked tokens. Once a token has been
+  revoked on a server it fails validation on that server even though its HMAC
+  signature is still cryptographically valid and it has not yet expired.
+
+  Each token is a URL-safe base64 string (no padding) whose decoded bytes are:
+
+      <<id::binary-size(16), issued_at::signed-64, expires_at::signed-64,
+        payload_len::32, payload::binary-size(payload_len)>> <> mac
+
+  where `mac` is a 32-byte `HMAC-SHA256` over everything that precedes it. Every
+  field — including the random per-token id and the length prefix used for
+  framing — lies inside the signed region, so none of them can be tampered with
+  independently.
+
+  Validation inside `verify/2` proceeds in exactly this order:
+
+    1. base64 decode
+    2. split off the trailing 32-byte MAC
+    3. structural parse of the header and payload
+    4. HMAC verification
+    5. revocation check
+    6. expiry check
+    7. payload deserialization
+
+  Any failure before HMAC verification yields `:malformed`; an HMAC mismatch
+  yields `:invalid_signature`; a revoked token yields `:revoked`; an expired
+  token yields `:expired`; and a post-HMAC deserialization failure yields
+  `:malformed`.
+  """
+
+  use GenServer
+
+  @id_bytes 16
+  @mac_bytes 32
+
+  @typedoc "A validation failure reason returned by `verify/2`."
+  @type error :: :expired | :invalid_signature | :revoked | :malformed
+
+  # ----------------------------------------------------------------------------
+  # Public API
+  # ----------------------------------------------------------------------------
+
+  @doc """
+  Starts a `RevocableToken` server.
+
+  `opts` is a keyword list. The `:secret` key (a binary signing key) is
+  required. The optional `:clock` key is a zero-arity function returning a Unix
+  epoch second; when omitted the server reads `System.os_time(:second)`. The
+  optional `:name` key registers the server under a name.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, init_opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, init_opts, server_opts)
+  end
+
+  @doc """
+  Issues a fresh token on `server`.
+
+  `payload` may be any Elixir term and `ttl_seconds` is a positive integer. The
+  returned token is a URL-safe binary carrying the payload, the issue and
+  expiration timestamps, a server-generated random id, and an `HMAC-SHA256`
+  signature over all of that data. Because each token carries a fresh random id,
+  issuing the same payload twice produces two different tokens.
+  """
+  @spec issue(GenServer.server(), term(), pos_integer()) :: {:ok, binary()}
+  def issue(server, payload, ttl_seconds)
+      when is_integer(ttl_seconds) and ttl_seconds > 0 do
+    GenServer.call(server, {:issue, payload, ttl_seconds})
+  end
+
+  @doc """
+  Decodes and validates `token` against `server`.
+
+  Returns `{:ok, payload}` when the signature is valid, the token is not revoked
+  and it has not expired. Otherwise returns `{:error, reason}` with `reason` one
+  of `:expired`, `:invalid_signature`, `:revoked` or `:malformed`. Verifying a
+  token any number of times does not change its status. Non-binary input yields
+  `{:error, :malformed}`.
+  """
+  @spec verify(GenServer.server(), term()) :: {:ok, term()} | {:error, error()}
+  def verify(server, token) do
+    GenServer.call(server, {:verify, token})
+  end
+
+  @doc """
+  Marks `token` as revoked on `server` and returns `:ok`.
+
+  Revocation is per-token (revoking one token does not affect any other) and
+  per-server (revoking a token on one server does not revoke it on another).
+  """
+  @spec revoke(GenServer.server(), term()) :: :ok
+  def revoke(server, token) do
+    GenServer.call(server, {:revoke, token})
+  end
+
+  # ----------------------------------------------------------------------------
+  # GenServer callbacks
+  # ----------------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    secret = Keyword.fetch!(opts, :secret)
+    clock = Keyword.get(opts, :clock, fn -> System.os_time(:second) end)
+    {:ok, %{secret: secret, clock: clock, revoked: MapSet.new()}}
+  end
+
+  @impl true
+  def handle_call({:issue, payload, ttl}, _from, state) do
+    now = state.clock.()
+    expires_at = now + ttl
+    id = :crypto.strong_rand_bytes(@id_bytes)
+    payload_bin = :erlang.term_to_binary(payload)
+
+    signed =
+      <<id::binary-size(@id_bytes), now::signed-64, expires_at::signed-64,
+        byte_size(payload_bin)::32, payload_bin::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, state.secret, signed)
+    token = Base.url_encode64(signed <> mac, padding: false)
+    {:reply, {:ok, token}, state}
+  end
+
+  def handle_call({:verify, token}, _from, state) do
+    {:reply, do_verify(token, state), state}
+  end
+
+  def handle_call({:revoke, token}, _from, state) do
+    case token_id(token) do
+      {:ok, id} ->
+        {:reply, :ok, %{state | revoked: MapSet.put(state.revoked, id)}}
+
+      {:error, _reason} ->
+        {:reply, :ok, state}
+    end
+  end
+
+  # ----------------------------------------------------------------------------
+  # Internal helpers
+  # ----------------------------------------------------------------------------
+
+  @spec do_verify(term(), map()) :: {:ok, term()} | {:error, error()}
+  defp do_verify(token, state) do
+    with {:ok, bin} <- decode(token),
+         {:ok, signed, mac} <- split_mac(bin),
+         {:ok, id, expires_at, payload_bin} <- parse(signed),
+         :ok <- check_mac(signed, mac, state.secret),
+         :ok <- check_revoked(id, state.revoked),
+         :ok <- check_expiry(expires_at, state.clock),
+         {:ok, payload} <- deserialize(payload_bin) do
+      {:ok, payload}
+    end
+  end
+
+  @spec token_id(term()) :: {:ok, binary()} | {:error, :malformed}
+  defp token_id(token) do
+    with {:ok, bin} <- decode(token),
+         {:ok, signed, _mac} <- split_mac(bin),
+         {:ok, id, _expires_at, _payload_bin} <- parse(signed) do
+      {:ok, id}
+    end
+  end
+
+  @spec decode(term()) :: {:ok, binary()} | {:error, :malformed}
+  defp decode(token) when is_binary(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, bin} -> {:ok, bin}
+      :error -> {:error, :malformed}
+    end
+  end
+
+  defp decode(_token), do: {:error, :malformed}
+
+  @spec split_mac(binary()) ::
+          {:ok, binary(), binary()} | {:error, :malformed}
+  defp split_mac(bin) when byte_size(bin) >= @mac_bytes do
+    size = byte_size(bin) - @mac_bytes
+    <<signed::binary-size(size), mac::binary-size(@mac_bytes)>> = bin
+    {:ok, signed, mac}
+  end
+
+  defp split_mac(_bin), do: {:error, :malformed}
+
+  @spec parse(binary()) ::
+          {:ok, binary(), integer(), binary()} | {:error, :malformed}
+  defp parse(signed) do
+    case signed do
+      <<id::binary-size(@id_bytes), _issued_at::signed-64, expires_at::signed-64,
+        len::32, payload::binary-size(len)>> ->
+        {:ok, id, expires_at, payload}
+
+      _other ->
+        {:error, :malformed}
+    end
+  end
+
+  @spec check_mac(binary(), binary(), binary()) ::
+          :ok | {:error, :invalid_signature}
+  defp check_mac(signed, mac (truncated)
+07:31:40.672 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9163, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9163, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9163, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9163, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 33371, "type" => "message"}], "output_tokens" => 33371, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+07:31:40.699 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_003_revocable_stateful_token_server_01 solution.ex
+07:31:41.435 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":245,"lines_over_98":0,"max_line_length":90,"mode":"full","pipe_chain_count":0,"public_fn_count":8,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_003_revocable_stateful_token_server_01/solution.ex","task":"098_003_revocable_stateful_token_server_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":24,"tests_ran":true,"tests_skipped":0,"tests_total":24,"timestamp":"2026-07-10T05:31:41.409383Z"}
+07:31:41.436 [info] cycle 098_003_revocable_stateful_token_server_01: REJECTED after 4 attempt(s)

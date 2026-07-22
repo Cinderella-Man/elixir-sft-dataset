@@ -1,0 +1,686 @@
+18:32:06.686 [info] VARIATION 034_002_cardinality_classifying_multi_key_reconciler_01: Cardinality-Classifying Multi-Key Reconciler
+18:32:06.686 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+18:32:06.686 [debug] claude -p USER prompt:
+Write me an Elixir module called `MultiKeyReconciler` that reconciles two lists of records whose keys may repeat, classifying every shared key by its match *cardinality* instead of assuming a one-to-one join.
+
+## Public API
+
+- `MultiKeyReconciler.classify(left, right, opts)` — `left` and `right` are lists of maps, `opts` is a keyword list. Returns a report map (described below).
+- `MultiKeyReconciler.counts(report)` — takes a report produced by `classify/3` and returns a map of entry counts (described below).
+
+## Options
+
+- `:key_fields` (required) — a non-empty list of atoms forming the composite key (e.g. `[:id]` or `[:org_id, :user_id]`). If it is missing, or is not a non-empty list of atoms, raise `ArgumentError`.
+- `:compare_fields` (optional) — a list of atoms to diff on a one-to-one pair. If omitted or `nil`, compare every field present in either record of the pair, minus the key fields.
+
+## Grouping
+
+Group each side by its composite key. A record's composite key is the tuple of its values at the key fields, in the order given; a key field missing from a record contributes `nil`. Records that share a composite key form one group, and **the records inside a group keep their original input order**.
+
+Every key present on **both** sides is classified by the sizes of its two groups. Every entry carries a `:key` field, which is a **map** of `%{key_field => value}` for that group.
+
+## The report
+
+`classify/3` returns a map with exactly these six keys:
+
+- `:one_to_one` — one left record and one right record for the key. Entries are
+  `%{key: key_map, left: record, right: record, differences: diff_map}`.
+  `diff_map` is `%{field => %{left: left_value, right: right_value}}` for each compared field whose values differ under `==`; it is `%{}` when the pair agrees on all compared fields. A compared field missing from a record is treated as `nil`. The `:left` and `:right` records are the full originals, even if some of their fields were excluded from comparison.
+- `:one_to_many` — one left record, two or more right records. Entries are
+  `%{key: key_map, left: record, right: [records]}`.
+- `:many_to_one` — two or more left records, exactly one right record. Entries are
+  `%{key: key_map, left: [records], right: record}`.
+- `:many_to_many` — two or more records on both sides. Entries are
+  `%{key: key_map, left: [records], right: [records]}`.
+- `:only_in_left` — keys present only in `left`. Entries are `%{key: key_map, records: [records]}` (the group, which may hold one or many records).
+- `:only_in_right` — keys present only in `right`. Entries are `%{key: key_map, records: [records]}`.
+
+No `differences` map is computed for ambiguous (`one_to_many`, `many_to_one`, `many_to_many`) groups — those pairings are considered unresolvable without a tie-break rule, so the raw groups are handed back as-is.
+
+The order of entries within each of the six lists is unspecified; only the order of records inside a group is guaranteed.
+
+## counts/1
+
+`MultiKeyReconciler.counts(report)` returns a map with these keys, where each value is the **number of entries** (i.e. the number of keys) in the corresponding report list:
+
+`:one_to_one`, `:one_to_many`, `:many_to_one`, `:many_to_many`, `:only_in_left`, `:only_in_right`, plus
+
+- `:ambiguous` — the sum of `:one_to_many`, `:many_to_one`, and `:many_to_many`.
+
+## Constraints
+
+- Pure functions — no processes, no side effects, no external dependencies. Elixir standard library only.
+- Key matching is exact: values must be `==` on every key field.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+18:32:08.426 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+18:47:10.317 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 2, ~15 min waited so far)
+19:02:12.069 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 3, ~30 min waited so far)
+19:17:13.803 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 4, ~45 min waited so far)
+19:32:15.559 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 5, ~60 min waited so far)
+19:47:17.278 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 6, ~75 min waited so far)
+20:02:19.314 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 7, ~90 min waited so far)
+20:17:21.109 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 8, ~105 min waited so far)
+20:32:24.261 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 9, ~120 min waited so far)
+20:47:26.288 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 10, ~135 min waited so far)
+21:02:28.247 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 11, ~150 min waited so far)
+21:17:30.077 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 12, ~165 min waited so far)
+21:32:31.840 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 13, ~180 min waited so far)
+21:47:33.760 [warning] usage limit / out of credits on variation_blind_solve (034_002_cardinality_classifying_multi_key_reconciler_01) — waiting 900000ms (attempt 14, ~195 min waited so far)
+22:03:01.228 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule MultiKeyReconciler do
+  @moduledoc """
+  Reconciles two lists of record maps whose composite keys may repeat.
+
+  Instead of assuming a clean one-to-one join, every key present on both sides is
+  classified by the *cardinality* of its two groups:
+
+    * `:one_to_one` — exactly one record on each side (the only case where a field
+      level diff is computed);
+    * `:one_to_many`, `:many_to_one`, `:many_to_many` — ambiguous pairings, handed
+      back as raw groups because resolving them would require a tie-break rule;
+    * `:only_in_left` / `:only_in_right` — keys seen on a single side.
+
+  Grouping is exact: two records share a key when their values at every key field
+  are `==`. A key field absent from a record contributes `nil`. Records inside a
+  group preserve their original input order.
+
+  ## Example
+
+      iex> left = [%{id: 1, name: "a"}, %{id: 2, name: "b"}]
+      iex> right = [%{id: 1, name: "A"}, %{id: 3, name: "c"}]
+      iex> report = MultiKeyReconciler.classify(left, right, key_fields: [:id])
+      iex> MultiKeyReconciler.counts(report)[:one_to_one]
+      1
+
+  """
+
+  @type record :: map()
+  @type key_map :: %{optional(atom()) => term()}
+  @type differences :: %{optional(atom()) => %{left: term(), right: term()}}
+  @type report :: %{
+          one_to_one: [map()],
+          one_to_many: [map()],
+          many_to_one: [map()],
+          many_to_many: [map()],
+          only_in_left: [map()],
+          only_in_right: [map()]
+        }
+
+  @report_keys [
+    :one_to_one,
+    :one_to_many,
+    :many_to_one,
+    :many_to_many,
+    :only_in_left,
+    :only_in_right
+  ]
+
+  @doc """
+  Classifies every composite key found in `left` and `right`.
+
+  ## Options
+
+    * `:key_fields` (required) — non-empty list of atoms forming the composite key.
+      Raises `ArgumentError` when missing or malformed.
+    * `:compare_fields` (optional) — list of atoms to diff on a one-to-one pair.
+      Defaults to every field present in either record of the pair, minus the key
+      fields.
+
+  Returns a report map with the keys `#{inspect(@report_keys)}`.
+  """
+  @spec classify([record()], [record()], keyword()) :: report()
+  def classify(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+    compare_fields = validate_compare_fields(Keyword.get(opts, :compare_fields))
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    empty = Map.new(@report_keys, fn key -> {key, []} end)
+
+    left_keys = left_groups |> Map.keys() |> MapSet.new()
+    right_keys = right_groups |> Map.keys() |> MapSet.new()
+    all_keys = MapSet.union(left_keys, right_keys)
+
+    Enum.reduce(all_keys, empty, fn key, acc ->
+      key_map = key_map(key, key_fields)
+
+      case {Map.get(left_groups, key), Map.get(right_groups, key)} do
+        {nil, rights} ->
+          prepend(acc, :only_in_right, %{key: key_map, records: Enum.reverse(rights)})
+
+        {lefts, nil} ->
+          prepend(acc, :only_in_left, %{key: key_map, records: Enum.reverse(lefts)})
+
+        {lefts, rights} ->
+          classify_pair(acc, key_map, Enum.reverse(lefts), Enum.reverse(rights), %{
+            key_fields: key_fields,
+            compare_fields: compare_fields
+          })
+      end
+    end)
+  end
+
+  @doc """
+  Counts the entries of a report produced by `classify/3`.
+
+  Returns a map with one count per report list, plus `:ambiguous`, the sum of the
+  `:one_to_many`, `:many_to_one` and `:many_to_many` counts.
+  """
+  @spec counts(report()) :: %{optional(atom()) => non_neg_integer()}
+  def counts(report) when is_map(report) do
+    counts = Map.new(@report_keys, fn key -> {key, length(Map.fetch!(report, key))} end)
+
+    ambiguous = counts.one_to_many + counts.many_to_one + counts.many_to_many
+
+    Map.put(counts, :ambiguous, ambiguous)
+  end
+
+  # --- internals -------------------------------------------------------------
+
+  defp classify_pair(acc, key_map, [l], [r], config) do
+    differences = differences(l, r, config)
+    prepend(acc, :one_to_one, %{key: key_map, left: l, right: r, differences: differences})
+  end
+
+  defp classify_pair(acc, key_map, [l], rights, _config) do
+    prepend(acc, :one_to_many, %{key: key_map, left: l, right: rights})
+  end
+
+  defp classify_pair(acc, key_map, lefts, [r], _config) do
+    prepend(acc, :many_to_one, %{key: key_map, left: lefts, right: r})
+  end
+
+  defp classify_pair(acc, key_map, lefts, rights, _config) do
+    prepend(acc, :many_to_many, %{key: key_map, left: lefts, right: rights})
+  end
+
+  defp prepend(acc, bucket, entry), do: Map.update!(acc, bucket, &[entry | &1])
+
+  defp differences(left, right, %{key_fields: key_fields, compare_fields: compare_fields}) do
+    fields = fields_to_compare(left, right, key_fields, compare_fields)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      left_value = Map.get(left, field)
+      right_value = Map.get(right, field)
+
+      if left_value == right_value do
+        acc
+      else
+        Map.put(acc, field, %{left: left_value, right: right_value})
+      end
+    end)
+  end
+
+  defp fields_to_compare(left, right, key_fields, nil) do
+    left
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&(&1 in key_fields))
+  end
+
+  defp fields_to_compare(_left, _right, _key_fields, compare_fields), do: compare_fields
+
+  defp group_by_key(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      key = composite_key(record, key_fields)
+      Map.update(acc, key, [record], &[record | &1])
+    end)
+  end
+
+  defp composite_key(record, key_fields) do
+    key_fields
+    |> Enum.map(&Map.get(record, &1))
+    |> List.to_tuple()
+  end
+
+  defp key_map(key_tuple, key_fields) do
+    key_fields
+    |> Enum.zip(Tuple.to_list(key_tuple))
+    |> Map.new()
+  end
+
+  defp validate_key_fields(key_fields)
+       when is_list(key_fields) and key_fields != [] do
+    if Enum.all?(key_fields, &is_atom/1) do
+      key_fields
+    else
+      raise ArgumentError,
+            ":key_fields must be a non-empty list of atoms, got: #{inspect(key_fields)}"
+    end
+  end
+
+  defp validate_key_fields(other) do
+    raise ArgumentError,
+          ":key_fields must be a non-empty list of atoms, got: #{inspect(other)}"
+  end
+
+  defp validate_compare_fields(nil), do: nil
+
+  defp validate_compare_fields(fields) when is_list(fields) do
+    if Enum.all?(fields, &is_atom/1) do
+      fields
+    else
+      raise ArgumentError,
+            ":compare_fields must be a list of atoms, got: #{inspect(fields)}"
+    end
+  end
+
+  defp validate_compare_fields(other) do
+    raise ArgumentError, ":compare_fields must be a list of atoms, got: #{inspect(other)}"
+  end
+end
+</file>
+22:03:01.229 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 19860, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 19860, "cache_read_input_tokens" => 0, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 19860, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 19860, "cache_read_input_tokens" => 0, "input_tokens" => 2, "output_tokens" => 2828, "type" => "message"}], "output_tokens" => 2828, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+22:03:01.259 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_cardinality_classifying_multi_key_reconciler_01 solution.ex
+22:03:02.099 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":205,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":12,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_cardinality_classifying_multi_key_reconciler_01/solution.ex","task":"034_002_cardinality_classifying_multi_key_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-12T20:03:02.059801Z","warning_details":["solution.ex: line 28: type record/0 is overriding a built-in type"]}
+22:03:02.104 [info] cycle 034_002_cardinality_classifying_multi_key_reconciler_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them (solution.ex: line 28: type record/0 is overriding a built-in type). Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+22:03:02.104 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+22:03:02.104 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them (solution.ex: line 28: type record/0 is overriding a built-in type). Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `MultiKeyReconciler` that reconciles two lists of records whose keys may repeat, classifying every shared key by its match *cardinality* instead of assuming a one-to-one join.
+
+## Public API
+
+- `MultiKeyReconciler.classify(left, right, opts)` — `left` and `right` are lists of maps, `opts` is a keyword list. Returns a report map (described below).
+- `MultiKeyReconciler.counts(report)` — takes a report produced by `classify/3` and returns a map of entry counts (described below).
+
+## Options
+
+- `:key_fields` (required) — a non-empty list of atoms forming the composite key (e.g. `[:id]` or `[:org_id, :user_id]`). If it is missing, or is not a non-empty list of atoms, raise `ArgumentError`.
+- `:compare_fields` (optional) — a list of atoms to diff on a one-to-one pair. If omitted or `nil`, compare every field present in either record of the pair, minus the key fields.
+
+## Grouping
+
+Group each side by its composite key. A record's composite key is the tuple of its values at the key fields, in the order given; a key field missing from a record contributes `nil`. Records that share a composite key form one group, and **the records inside a group keep their original input order**.
+
+Every key present on **both** sides is classified by the sizes of its two groups. Every entry carries a `:key` field, which is a **map** of `%{key_field => value}` for that group.
+
+## The report
+
+`classify/3` returns a map with exactly these six keys:
+
+- `:one_to_one` — one left record and one right record for the key. Entries are
+  `%{key: key_map, left: record, right: record, differences: diff_map}`.
+  `diff_map` is `%{field => %{left: left_value, right: right_value}}` for each compared field whose values differ under `==`; it is `%{}` when the pair agrees on all compared fields. A compared field missing from a record is treated as `nil`. The `:left` and `:right` records are the full originals, even if some of their fields were excluded from comparison.
+- `:one_to_many` — one left record, two or more right records. Entries are
+  `%{key: key_map, left: record, right: [records]}`.
+- `:many_to_one` — two or more left records, exactly one right record. Entries are
+  `%{key: key_map, left: [records], right: record}`.
+- `:many_to_many` — two or more records on both sides. Entries are
+  `%{key: key_map, left: [records], right: [records]}`.
+- `:only_in_left` — keys present only in `left`. Entries are `%{key: key_map, records: [records]}` (the group, which may hold one or many records).
+- `:only_in_right` — keys present only in `right`. Entries are `%{key: key_map, records: [records]}`.
+
+No `differences` map is computed for ambiguous (`one_to_many`, `many_to_one`, `many_to_many`) groups — those pairings are considered unresolvable without a tie-break rule, so the raw groups are handed back as-is.
+
+The order of entries within each of the six lists is unspecified; only the order of records inside a group is guaranteed.
+
+## counts/1
+
+`MultiKeyReconciler.counts(report)` returns a map with these keys, where each value is the **number of entries** (i.e. the number of keys) in the corresponding report list:
+
+`:one_to_one`, `:one_to_many`, `:many_to_one`, `:many_to_many`, `:only_in_left`, `:only_in_right`, plus
+
+- `:ambiguous` — the sum of `:one_to_many`, `:many_to_one`, and `:many_to_many`.
+
+## Constraints
+
+- Pure functions — no processes, no side effects, no external dependencies. Elixir standard library only.
+- Key matching is exact: values must be `==` on every key field.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule MultiKeyReconciler do
+  @moduledoc """
+  Reconciles two lists of record maps whose composite keys may repeat.
+
+  Instead of assuming a clean one-to-one join, every key present on both sides is
+  classified by the *cardinality* of its two groups:
+
+    * `:one_to_one` — exactly one record on each side (the only case where a field
+      level diff is computed);
+    * `:one_to_many`, `:many_to_one`, `:many_to_many` — ambiguous pairings, handed
+      back as raw groups because resolving them would require a tie-break rule;
+    * `:only_in_left` / `:only_in_right` — keys seen on a single side.
+
+  Grouping is exact: two records share a key when their values at every key field
+  are `==`. A key field absent from a record contributes `nil`. Records inside a
+  group preserve their original input order.
+
+  ## Example
+
+      iex> left = [%{id: 1, name: "a"}, %{id: 2, name: "b"}]
+      iex> right = [%{id: 1, name: "A"}, %{id: 3, name: "c"}]
+      iex> report = MultiKeyReconciler.classify(left, right, key_fields: [:id])
+      iex> MultiKeyReconciler.counts(report)[:one_to_one]
+      1
+
+  """
+
+  @type record :: map()
+  @type key_map :: %{optional(atom()) => term()}
+  @type differences :: %{optional(atom()) => %{left: term(), right: term()}}
+  @type report :: %{
+          one_to_one: [map()],
+          one_to_many: [map()],
+          many_to_one: [map()],
+          many_to_many: [map()],
+          only_in_left: [map()],
+          only_in_right: [map()]
+        }
+
+  @report_keys [
+    :one_to_one,
+    :one_to_many,
+    :many_to_one,
+    :many_to_many,
+    :only_in_left,
+    :only_in_right
+  ]
+
+  @doc """
+  Classifies every composite key found in `left` and `right`.
+
+  ## Options
+
+    * `:key_fields` (required) — non-empty list of atoms forming the composite key.
+      Raises `ArgumentError` when missing or malformed.
+    * `:compare_fields` (optional) — list of atoms to diff on a one-to-one pair.
+      Defaults to every field present in either record of the pair, minus the key
+      fields.
+
+  Returns a report map with the keys `#{inspect(@report_keys)}`.
+  """
+  @spec classify([record()], [record()], keyword()) :: report()
+  def classify(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+    compare_fields = validate_compare_fields(Keyword.get(opts, :compare_fields))
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    empty = Map.new(@report_keys, fn key -> {key, []} end)
+
+    left_keys = left_groups |> Map.keys() |> MapSet.new()
+    right_keys = right_groups |> Map.keys() |> MapSet.new()
+    all_keys = MapSet.union(left_keys, right_keys)
+
+    Enum.reduce(all_keys, empty, fn key, acc ->
+      key_map = key_map(key, key_fields)
+
+      case {Map.get(left_groups, key), Map.get(right_groups, key)} do
+        {nil, rights} ->
+          prepend(acc, :only_in_right, %{key: key_map, records: Enum.reverse(rights)})
+
+        {lefts, nil} ->
+          prepend(acc, :only_in_left, %{key: key_map, records: Enum.reverse(lefts)})
+
+        {lefts, rights} ->
+          classify_pair(acc, k (truncated)
+22:03:26.893 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule MultiKeyReconciler do
+  @moduledoc """
+  Reconciles two lists of record maps whose composite keys may repeat.
+
+  Instead of assuming a clean one-to-one join, every key present on both sides is
+  classified by the *cardinality* of its two groups:
+
+    * `:one_to_one` — exactly one record on each side (the only case where a field
+      level diff is computed);
+    * `:one_to_many`, `:many_to_one`, `:many_to_many` — ambiguous pairings, handed
+      back as raw groups because resolving them would require a tie-break rule;
+    * `:only_in_left` / `:only_in_right` — keys seen on a single side.
+
+  Grouping is exact: two records share a key when their values at every key field
+  are `==`. A key field absent from a record contributes `nil`. Records inside a
+  group preserve their original input order.
+
+  ## Example
+
+      iex> left = [%{id: 1, name: "a"}, %{id: 2, name: "b"}]
+      iex> right = [%{id: 1, name: "A"}, %{id: 3, name: "c"}]
+      iex> report = MultiKeyReconciler.classify(left, right, key_fields: [:id])
+      iex> MultiKeyReconciler.counts(report)[:one_to_one]
+      1
+
+  """
+
+  @type entry_record :: map()
+  @type key_map :: %{optional(atom()) => term()}
+  @type differences :: %{optional(atom()) => %{left: term(), right: term()}}
+  @type report :: %{
+          one_to_one: [map()],
+          one_to_many: [map()],
+          many_to_one: [map()],
+          many_to_many: [map()],
+          only_in_left: [map()],
+          only_in_right: [map()]
+        }
+
+  @report_keys [
+    :one_to_one,
+    :one_to_many,
+    :many_to_one,
+    :many_to_many,
+    :only_in_left,
+    :only_in_right
+  ]
+
+  @doc """
+  Classifies every composite key found in `left` and `right`.
+
+  ## Options
+
+    * `:key_fields` (required) — non-empty list of atoms forming the composite key.
+      Raises `ArgumentError` when missing or malformed.
+    * `:compare_fields` (optional) — list of atoms to diff on a one-to-one pair.
+      Defaults to every field present in either record of the pair, minus the key
+      fields.
+
+  Returns a report map with the keys `#{inspect(@report_keys)}`.
+  """
+  @spec classify([entry_record()], [entry_record()], keyword()) :: report()
+  def classify(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = validate_key_fields(Keyword.get(opts, :key_fields))
+    compare_fields = validate_compare_fields(Keyword.get(opts, :compare_fields))
+
+    left_groups = group_by_key(left, key_fields)
+    right_groups = group_by_key(right, key_fields)
+
+    empty = Map.new(@report_keys, fn key -> {key, []} end)
+
+    left_keys = left_groups |> Map.keys() |> MapSet.new()
+    right_keys = right_groups |> Map.keys() |> MapSet.new()
+    all_keys = MapSet.union(left_keys, right_keys)
+
+    Enum.reduce(all_keys, empty, fn key, acc ->
+      key_map = key_map(key, key_fields)
+
+      case {Map.get(left_groups, key), Map.get(right_groups, key)} do
+        {nil, rights} ->
+          prepend(acc, :only_in_right, %{key: key_map, records: Enum.reverse(rights)})
+
+        {lefts, nil} ->
+          prepend(acc, :only_in_left, %{key: key_map, records: Enum.reverse(lefts)})
+
+        {lefts, rights} ->
+          classify_pair(acc, key_map, Enum.reverse(lefts), Enum.reverse(rights), %{
+            key_fields: key_fields,
+            compare_fields: compare_fields
+          })
+      end
+    end)
+  end
+
+  @doc """
+  Counts the entries of a report produced by `classify/3`.
+
+  Returns a map with one count per report list, plus `:ambiguous`, the sum of the
+  `:one_to_many`, `:many_to_one` and `:many_to_many` counts.
+  """
+  @spec counts(report()) :: %{optional(atom()) => non_neg_integer()}
+  def counts(report) when is_map(report) do
+    counts = Map.new(@report_keys, fn key -> {key, length(Map.fetch!(report, key))} end)
+
+    ambiguous = counts.one_to_many + counts.many_to_one + counts.many_to_many
+
+    Map.put(counts, :ambiguous, ambiguous)
+  end
+
+  # --- internals -------------------------------------------------------------
+
+  defp classify_pair(acc, key_map, [l], [r], config) do
+    differences = differences(l, r, config)
+    prepend(acc, :one_to_one, %{key: key_map, left: l, right: r, differences: differences})
+  end
+
+  defp classify_pair(acc, key_map, [l], rights, _config) do
+    prepend(acc, :one_to_many, %{key: key_map, left: l, right: rights})
+  end
+
+  defp classify_pair(acc, key_map, lefts, [r], _config) do
+    prepend(acc, :many_to_one, %{key: key_map, left: lefts, right: r})
+  end
+
+  defp classify_pair(acc, key_map, lefts, rights, _config) do
+    prepend(acc, :many_to_many, %{key: key_map, left: lefts, right: rights})
+  end
+
+  defp prepend(acc, bucket, entry), do: Map.update!(acc, bucket, &[entry | &1])
+
+  defp differences(left, right, %{key_fields: key_fields, compare_fields: compare_fields}) do
+    fields = fields_to_compare(left, right, key_fields, compare_fields)
+
+    Enum.reduce(fields, %{}, fn field, acc ->
+      left_value = Map.get(left, field)
+      right_value = Map.get(right, field)
+
+      if left_value == right_value do
+        acc
+      else
+        Map.put(acc, field, %{left: left_value, right: right_value})
+      end
+    end)
+  end
+
+  defp fields_to_compare(left, right, key_fields, nil) do
+    left
+    |> Map.keys()
+    |> Enum.concat(Map.keys(right))
+    |> Enum.uniq()
+    |> Enum.reject(&(&1 in key_fields))
+  end
+
+  defp fields_to_compare(_left, _right, _key_fields, compare_fields), do: compare_fields
+
+  defp group_by_key(records, key_fields) do
+    Enum.reduce(records, %{}, fn record, acc ->
+      key = composite_key(record, key_fields)
+      Map.update(acc, key, [record], &[record | &1])
+    end)
+  end
+
+  defp composite_key(record, key_fields) do
+    key_fields
+    |> Enum.map(&Map.get(record, &1))
+    |> List.to_tuple()
+  end
+
+  defp key_map(key_tuple, key_fields) do
+    key_fields
+    |> Enum.zip(Tuple.to_list(key_tuple))
+    |> Map.new()
+  end
+
+  defp validate_key_fields(key_fields)
+       when is_list(key_fields) and key_fields != [] do
+    if Enum.all?(key_fields, &is_atom/1) do
+      key_fields
+    else
+      raise ArgumentError,
+            ":key_fields must be a non-empty list of atoms, got: #{inspect(key_fields)}"
+    end
+  end
+
+  defp validate_key_fields(other) do
+    raise ArgumentError,
+          ":key_fields must be a non-empty list of atoms, got: #{inspect(other)}"
+  end
+
+  defp validate_compare_fields(nil), do: nil
+
+  defp validate_compare_fields(fields) when is_list(fields) do
+    if Enum.all?(fields, &is_atom/1) do
+      fields
+    else
+      raise ArgumentError,
+            ":compare_fields must be a list of atoms, got: #{inspect(fields)}"
+    end
+  end
+
+  defp validate_compare_fields(other) do
+    raise ArgumentError, ":compare_fields must be a list of atoms, got: #{inspect(other)}"
+  end
+end
+</file>
+22:03:26.894 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12288, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12288, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12288, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12288, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 2837, "type" => "message"}], "output_tokens" => 2837, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+22:03:26.923 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_cardinality_classifying_multi_key_reconciler_01 solution.ex
+22:03:27.729 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":205,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":12,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_cardinality_classifying_multi_key_reconciler_01/solution.ex","task":"034_002_cardinality_classifying_multi_key_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-12T20:03:27.701676Z","warning_details":[]}
+22:03:27.739 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_cardinality_classifying_multi_key_reconciler_01_mut solution.ex
+22:03:28.538 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":129,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":8,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":9,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.1,"mode":"full","overall":0.0,"reasons":["compilation: 9 warning(s) → hard fail (overall 0.0)","tests: 19/19 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/034_002_cardinality_classifying_multi_key_reconciler_01_mut/solution.ex","task":"034_002_cardinality_classifying_multi_key_reconciler_01_mut","test_failures":[{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test unique keys on both sides yield one_to_one entries"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test one_to_one entry carries key map, full records and differences"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test identical one_to_one pair has an empty differences map"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test a compared field missing from one record diffs as nil"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test compare_fields restricts the diff but records stay complete"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test key fields are never reported as differences by default"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test one left and many right records produce a one_to_many entry"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test many left and one right record produce a many_to_one entry"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test many records on both sides produce a many_to_many entry"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test keys absent from the other side are grouped under only_in_left / only_in_right"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test empty inputs produce an empty report"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test composite keys match only when all key fields are equal"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test a record missing a key field keys on nil"},{"message":"\n\nExpected exception ArgumentError but got RuntimeError (MUTATION)\n","module":"MultiKeyReconcilerTest","test":"test missing key_fields raises ArgumentError"},{"message":"\n\nExpected exception ArgumentError but got RuntimeError (MUTATION)\n","module":"MultiKeyReconcilerTest","test":"test empty key_fields raises ArgumentError"},{"message":"\n\nExpected exception ArgumentError but got RuntimeError (MUTATION)\n","module":"MultiKeyReconcilerTest","test":"test non-atom key_fields raise ArgumentError"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test counts reports entry counts per category plus ambiguous total"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test counts on an empty report is all zeros"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test mixed scenario"}],"tests_errors":0,"tests_excluded":0,"tests_failed":19,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-12T20:03:28.508289Z","warning_details":["solution.ex: line 99: function validate_key_fields/1 is unused","solution.ex: line 113: function validate_compare_fields/1 is unused","solution.ex: line 53: function prepend/3 is unused","solution.ex: line 95: function key_map/2 is unused","solution.ex: line 84: function group_by_key/2 is unused"]}
+22:03:28.545 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_cardinality_classifying_multi_key_reconciler_01_mut solution.ex
+22:03:29.369 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":152,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":12,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.89,"reasons":["tests: 3/19 failed"],"tests":0.84},"shape":"single","solution_file":".gen_staging/034_002_cardinality_classifying_multi_key_reconciler_01_mut/solution.ex","task":"034_002_cardinality_classifying_multi_key_reconciler_01_mut","test_failures":[{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test counts reports entry counts per category plus ambiguous total"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test counts on an empty report is all zeros"},{"message":"MUTATION","module":"MultiKeyReconcilerTest","test":"test mixed scenario"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-12T20:03:29.339442Z","warning_details":[]}
+22:03:29.369 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_002_cardinality_classifying_multi_key_reconciler_01 solution.ex (seed 1697447574)
+22:03:30.213 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":205,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":12,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_002_cardinality_classifying_multi_key_reconciler_01/solution.ex","task":"034_002_cardinality_classifying_multi_key_reconciler_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":19,"tests_ran":true,"tests_skipped":0,"tests_total":19,"timestamp":"2026-07-12T20:03:30.187483Z","warning_details":[]}
+22:03:30.216 [info] cycle 034_002_cardinality_classifying_multi_key_reconciler_01: ACCEPTED on attempt 1
+22:03:30.217 [info] promoted 034_002_cardinality_classifying_multi_key_reconciler_01 -> tasks/034_002_cardinality_classifying_multi_key_reconciler_01

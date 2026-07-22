@@ -1,0 +1,420 @@
+15:01:14.640 [info] FIM 064_003_priority_aware_work_stealing_queue_fim03 → 064_003_priority_aware_work_stealing_queue_04: target merge_desc/3
+15:01:14.640 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+15:01:14.640 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `merge_desc/3`.
+
+Generate a prompt describing how to implement `merge_desc/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `merge_desc/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `merge_desc/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `merge_desc/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `WorkStealQueue` that distributes **prioritized** work across N worker processes using a work-stealing algorithm. Higher-priority work should be done first within each worker, and when an idle worker steals, it should take the *least urgent* work off a busy peer — leaving the busy worker to keep grinding on its most urgent items.
+
+I need one primary public function:
+
+- `WorkStealQueue.run(items, worker_count, process_fn)` — `items` is a list of `{priority, payload}` tuples where `priority` is an integer (higher = more urgent). `worker_count` is the number of workers to spawn. `process_fn` is a one-arity function applied to each **payload**. Returns a list of `%{item: payload, priority: priority, result: term, worker_id: non_neg_integer}` maps — one per input tuple, in any order.
+
+**How it should work internally:**
+
+1. Partition the input list as evenly as possible across `worker_count` workers. Each worker owns a local priority queue kept sorted so the highest-priority item is always next.
+2. Spawn all workers as `Task`s. Each worker repeatedly pops and processes its **highest-priority** local item, applying `process_fn` to the payload.
+3. When a worker empties its local queue, it *steals* from the busiest worker (the one with the most items remaining). Stealing takes the **lowest-priority half** of the victim's queue (the back of its sorted queue), so the victim retains its most urgent work. If no other worker has any remaining work, the stealing worker simply exits.
+4. Each worker tags every result with its own `worker_id` (`0` to `worker_count - 1`) and echoes back the item's `priority`.
+
+**Coordination requirements:**
+
+- Use a shared coordination mechanism (e.g. an `Agent` or `GenServer`) tracking each worker's remaining sorted queue so steal attempts can find the busiest worker and slice off its lowest-priority items atomically. Failed steals (victim emptied first) should be handled gracefully by retrying or moving on.
+- `run/3` must be synchronous: block until every item is processed, then return the full result list.
+
+**Constraints:**
+- Use only OTP/stdlib — no external dependencies.
+- Must work correctly when `worker_count` is greater than `length(items)`.
+- Within a single worker, items must be processed in strictly descending priority order.
+- `process_fn` may be slow or fast — faster workers should naturally pick up the low-priority slack.
+
+Give me the complete implementation in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule WorkStealQueue do
+  @moduledoc """
+  Priority-aware work-stealing task queue.
+
+  Items are `{priority, payload}` tuples (higher priority = more urgent). Each
+  worker owns a local queue kept sorted in descending priority order and always
+  processes its most urgent item next. When a worker empties its queue it steals
+  the **lowest-priority half** of the busiest peer's queue — so a busy worker
+  keeps its most urgent work and only sheds its least urgent items.
+
+  Coordination goes through an `Agent` holding `%{worker_id => sorted_queue}`,
+  giving each steal attempt an atomic snapshot of all queues.
+
+  ## Example
+
+      WorkStealQueue.run([{5, :urgent}, {1, :later}], 2, fn p -> {:ran, p} end)
+      # => [%{item: :urgent, priority: 5, result: {:ran, :urgent}, worker_id: 0}, ...]
+  """
+
+  @type item :: {integer(), any()}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Process every `{priority, payload}` in `items` across `worker_count` workers,
+  highest priority first, stealing low-priority work when idle. Returns one
+  result map per item (any order). Blocks until everything is processed.
+  """
+  @spec run([item()], pos_integer(), (any() -> any())) :: [
+          %{item: any(), priority: integer(), result: any(), worker_id: non_neg_integer()}
+        ]
+  def run(items, worker_count, process_fn)
+      when is_list(items) and is_integer(worker_count) and worker_count > 0 and
+             is_function(process_fn, 1) do
+    partitions = partition(items, worker_count)
+
+    {:ok, coordinator} =
+      Agent.start_link(fn ->
+        partitions
+        |> Enum.with_index()
+        |> Map.new(fn {queue, id} -> {id, queue} end)
+      end)
+
+    results =
+      0..(worker_count - 1)
+      |> Enum.map(fn id ->
+        Task.async(fn -> run_worker(id, coordinator, process_fn) end)
+      end)
+      |> Task.await_many(:infinity)
+      |> List.flatten()
+
+    Agent.stop(coordinator)
+    results
+  end
+
+  # ---------------------------------------------------------------------------
+  # Worker logic
+  # ---------------------------------------------------------------------------
+
+  defp run_worker(id, coordinator, process_fn) do
+    process_local_queue(id, coordinator, process_fn, [])
+  end
+
+  defp process_local_queue(id, coordinator, process_fn, acc) do
+    case pop_item(id, coordinator) do
+      {:ok, {priority, payload}} ->
+        result = process_fn.(payload)
+        entry = %{item: payload, priority: priority, result: result, worker_id: id}
+        process_local_queue(id, coordinator, process_fn, [entry | acc])
+
+      :empty ->
+        try_steal(id, coordinator, process_fn, acc)
+    end
+  end
+
+  defp try_steal(id, coordinator, process_fn, acc) do
+    case find_victim(id, coordinator) do
+      nil ->
+        acc
+
+      victim_id ->
+        case steal_low_half(victim_id, coordinator) do
+          [] ->
+            try_steal(id, coordinator, process_fn, acc)
+
+          stolen ->
+            # `stolen` is a sorted-descending suffix; merge into our (empty or
+            # residual) queue keeping descending order.
+            Agent.update(coordinator, fn state ->
+              Map.update(state, id, stolen, fn existing -> merge_desc(existing, stolen) end)
+            end)
+
+            process_local_queue(id, coordinator, process_fn, acc)
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Coordinator operations
+  # ---------------------------------------------------------------------------
+
+  @spec pop_item(non_neg_integer(), pid()) :: {:ok, item()} | :empty
+  defp pop_item(id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      case Map.fetch!(state, id) do
+        [] -> {:empty, state}
+        [head | tail] -> {{:ok, head}, Map.put(state, id, tail)}
+      end
+    end)
+  end
+
+  @spec find_victim(non_neg_integer(), pid()) :: non_neg_integer() | nil
+  defp find_victim(thief_id, coordinator) do
+    Agent.get(coordinator, fn state ->
+      state
+      |> Enum.reject(fn {id, queue} -> id == thief_id or queue == [] end)
+      |> case do
+        [] ->
+          nil
+
+        candidates ->
+          {victim_id, _queue} = Enum.max_by(candidates, fn {_id, q} -> length(q) end)
+          victim_id
+      end
+    end)
+  end
+
+  # Take the lowest-priority half (the back of the descending-sorted queue) (truncated)
+15:02:08.329 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Task: Implement `merge_desc/2`
+
+The `WorkStealQueue` module distributes prioritized work across N worker processes
+using a work-stealing algorithm. Each worker keeps its local queue sorted in
+**descending priority order** (most urgent item first). When an idle worker steals
+the lowest-priority half of a busy peer's queue, the stolen slice — itself already
+sorted descending — must be merged back into the thief's (possibly non-empty)
+local queue while preserving the descending-priority ordering.
+
+Implement the private helper `merge_desc/2`. It takes two lists of `{priority, payload}`
+tuples, **each already sorted in descending priority order**, and returns a single
+list containing all of their elements, also sorted in descending priority order.
+
+Requirements:
+
+- Merge the two inputs like the merge step of a merge sort: repeatedly take the
+  head with the higher (or equal) priority, so the output stays sorted descending
+  by the integer `priority` (the first element of each tuple).
+- When one input is empty, return the other unchanged (it is already sorted).
+- On a tie in priority (`pa == pb`), the element from the first list should be
+  emitted first (i.e. take from the left when `pa >= pb`) — this keeps the merge
+  stable and avoids dropping equal-priority items.
+- Use only OTP/stdlib; no external dependencies. A direct recursive definition
+  (multiple function clauses) is expected here.
+
+Below is the complete module with the body of `merge_desc/2` replaced by `# TODO`.
+Every other function is intact.
+
+```elixir
+defmodule WorkStealQueue do
+  @moduledoc """
+  Priority-aware work-stealing task queue.
+
+  Items are `{priority, payload}` tuples (higher priority = more urgent). Each
+  worker owns a local queue kept sorted in descending priority order and always
+  processes its most urgent item next. When a worker empties its queue it steals
+  the **lowest-priority half** of the busiest peer's queue — so a busy worker
+  keeps its most urgent work and only sheds its least urgent items.
+
+  Coordination goes through an `Agent` holding `%{worker_id => sorted_queue}`,
+  giving each steal attempt an atomic snapshot of all queues.
+
+  ## Example
+
+      WorkStealQueue.run([{5, :urgent}, {1, :later}], 2, fn p -> {:ran, p} end)
+      # => [%{item: :urgent, priority: 5, result: {:ran, :urgent}, worker_id: 0}, ...]
+  """
+
+  @type item :: {integer(), any()}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Process every `{priority, payload}` in `items` across `worker_count` workers,
+  highest priority first, stealing low-priority work when idle. Returns one
+  result map per item (any order). Blocks until everything is processed.
+  """
+  @spec run([item()], pos_integer(), (any() -> any())) :: [
+          %{item: any(), priority: integer(), result: any(), worker_id: non_neg_integer()}
+        ]
+  def run(items, worker_count, process_fn)
+      when is_list(items) and is_integer(worker_count) and worker_count > 0 and
+             is_function(process_fn, 1) do
+    partitions = partition(items, worker_count)
+
+    {:ok, coordinator} =
+      Agent.start_link(fn ->
+        partitions
+        |> Enum.with_index()
+        |> Map.new(fn {queue, id} -> {id, queue} end)
+      end)
+
+    results =
+      0..(worker_count - 1)
+      |> Enum.map(fn id ->
+        Task.async(fn -> run_worker(id, coordinator, process_fn) end)
+      end)
+      |> Task.await_many(:infinity)
+      |> List.flatten()
+
+    Agent.stop(coordinator)
+    results
+  end
+
+  # ---------------------------------------------------------------------------
+  # Worker logic
+  # ---------------------------------------------------------------------------
+
+  defp run_worker(id, coordinator, process_fn) do
+    process_local_queue(id, coordinator, process_fn, [])
+  end
+
+  defp process_local_queue(id, coordinator, process_fn, acc) do
+    case pop_item(id, coordinator) do
+      {:ok, {priority, payload}} ->
+        result = process_fn.(payload)
+        entry = %{item: payload, priority: priority, result: result, worker_id: id}
+        process_local_queue(id, coordinator, process_fn, [entry | acc])
+
+      :empty ->
+        try_steal(id, coordinator, process_fn, acc)
+    end
+  end
+
+  defp try_steal(id, coordinator, process_fn, acc) do
+    case find_victim(id, coordinator) do
+      nil ->
+        acc
+
+      victim_id ->
+        case steal_low_half(victim_id, coordinator) do
+          [] ->
+            try_steal(id, coordinator, process_fn, acc)
+
+          stolen ->
+            # `stolen` is a sorted-descending suffix; merge into our (empty or
+            # residual) queue keeping descending order.
+            Agent.update(coordinator, fn state ->
+              Map.update(state, id, stolen, fn existing -> merge_desc(existing, stolen) end)
+            end)
+
+            process_local_queue(id, coordinator, process_fn, acc)
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Coordinator operations
+  # ---------------------------------------------------------------------------
+
+  @spec pop_item(non_neg_integer(), pid()) :: {:ok, item()} | :empty
+  defp pop_item(id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      case Map.fetch!(state, id) do
+        [] -> {:empty, state}
+        [head | tail] -> {{:ok, head}, Map.put(state, id, tail)}
+      end
+    end)
+  end
+
+  @spec find_victim(non_neg_integer(), pid()) :: non_neg_integer() | nil
+  defp find_victim(thief_id, coordinator) do
+    Agent.get(coordinator, fn state ->
+      state
+      |> Enum.reject(fn {id, queue} -> id == thief_id or queue == [] end)
+      |> case do
+        [] ->
+          nil
+
+        candidates ->
+          {victim_id, _queue} = Enum.max_by(candidates, fn {_id, q} -> length(q) end)
+          victim_id
+      end
+    end)
+  end
+
+  # Take the lowest-priority half (the back of the descending-sorted queue).
+  @spec steal_low_half(non_neg_integer(), pid()) :: [item()]
+  defp steal_low_half(victim_id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      queue = Map.fetch!(state, victim_id)
+      len = length(queue)
+
+      if len < 2 do
+        {[], state}
+      else
+        steal_count = div(len, 2)
+        keep_count = len - steal_count
+        {keep, stolen} = Enum.split(queue, keep_count)
+        {stolen, Map.put(state, victim_id, keep)}
+      end
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Sorted-queue helpers
+  # ---------------------------------------------------------------------------
+
+  defp sort_desc(chunk), do: Enum.sort_by(chunk, fn {priority, _payload} -> priority end, :desc)
+
+  # Merge two descending-sorted lists into one descending-sorted list.
+  defp merge_desc(a, b) do
+    # TODO
+  end
+
+  # ---------------------------------------------------------------------------
+  # Partitioning
+  # ---------------------------------------------------------------------------
+
+  @spec partition([item()], pos_integer()) :: [[item()]]
+  defp partition(items, n) do
+    total = length(items)
+    base_size = div(total, n)
+    extras = rem(total, n)
+
+    {chunks, _remaining} =
+      Enum.reduce(0..(n - 1), {[], items}, fn i, {acc, rest} ->
+        chunk_size = if i < extras, do: base_size + 1, else: base_size
+        {chunk, tail} = Enum.split(rest, chunk_size)
+        {[sort_desc(chunk) | acc], tail}
+      end)
+
+    Enum.reverse(chunks)
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  # Merge two descending-sorted lists into one descending-sorted list.
+  defp merge_desc(a, []), do: a
+  defp merge_desc([], b), do: b
+
+  defp merge_desc([{pa, _} = ha | ta] = left, [{pb, _} = hb | tb] = right) do
+    if pa >= pb do
+      [ha | merge_desc(ta, right)]
+    else
+      [hb | merge_desc(left, tb)]
+    end
+  end
+</file>
+15:02:08.329 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4067, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4067, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4067, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4067, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 4655, "type" => "message"}], "output_tokens" => 4655, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+15:02:08.348 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_064_003_priority_aware_work_stealing_queue_04/064_003_priority_aware_work_stealing_queue_04 solution.ex
+15:02:09.119 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":11,"lines_over_98":0,"max_line_length":77,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"064_003_priority_aware_work_stealing_queue_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_064_003_priority_aware_work_stealing_queue_04/064_003_priority_aware_work_stealing_queue_04/solution.ex","task":"064_003_priority_aware_work_stealing_queue_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-04T13:02:09.095041Z"}
+15:02:09.119 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_064_003_priority_aware_work_stealing_queue_04/064_003_priority_aware_work_stealing_queue_04 .gen_staging/fim_064_003_priority_aware_work_stealing_queue_04/mutant.ex
+15:02:09.777 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":11,"lines_over_98":0,"max_line_length":75,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":10,"compiled":true,"parent":"064_003_priority_aware_work_stealing_queue_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.82,"reasons":["compilation: 10 warning(s) → -1.0 pts","tests: 1/9 failed"],"tests":0.89},"shape":"fim","solution_file":".gen_staging/fim_064_003_priority_aware_work_stealing_queue_04/mutant.ex","task":"064_003_priority_aware_work_stealing_queue_04","test_failures":[{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WorkStealQueue, :merge_desc, 2, [file: ~c\"/tmp/evalfim_854106_2265.ex\", line: 160, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {Agent.Server, :handle_call, 3, [file: ~c\"lib/agent/server.ex\", line: 27]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WorkStealQueueTest","test":"test idle workers steal low-priority items; owners keep their most urgent work"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":9,"timestamp":"2026-07-04T13:02:09.749759Z"}
+15:02:09.777 [debug] fim mutation gate: killed
+15:02:09.779 [info] promoted 064_003_priority_aware_work_stealing_queue_04 -> tasks/064_003_priority_aware_work_stealing_queue_04

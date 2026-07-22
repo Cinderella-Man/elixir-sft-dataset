@@ -1,0 +1,71 @@
+retro audit: 1 root(s) — 1 to audit, 0 already audited at this content+gate, 0 bundle-skipped, 0 postgres-skipped
+
+=== 110_002_histogram_based_approximate_rolling_percentile_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "a reused ring slot drops the counts recorded in the previous cycle" ... KEPT (defect)
+      promise test "missing, too-short and non-numeric edges all raise ArgumentError from start_link" ... KEPT (coverage)
+      promise test "omitting slots divides the window into 60 slices by default" ... KEPT (coverage)
+      promise test "a value exactly equal to the top edge lands in the final bucket" ... KEPT (coverage)
+      promise test "the name option registers the process under the supplied name" ... KEPT (coverage)
+      promise test "exactly two edges are accepted and interpolate inside the single bucket" ... KEPT (coverage)
+      merging 6 vetted test(s) (5 coverage, 1 defect-proving; dropped 0: none dropped) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... FAIL — tests failed (13/14 passed, 1 failed, 0 errored)
+    · attempt 0: tests failed (13/14 passed) — asking for a fix
+
+14:46:46.107 [info] cycle 110_002_histogram_based_approximate_rolling_percentile_01_audit: repairing — Tests failed (1 failed, 0 errors):
+  - test a reused ring slot drops the counts recorded in the previous cycle (HistogramPercentileTest): 
+
+Expected the difference between 5.0 and 5.05 (0.04999999999999982) to be less than or equal to 0.001
+
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 14/14 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 6 public function(s) must each be killed) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] record/2 gutted to raise ... killed
+      mutant [3/6] query/2 gutted to raise ... killed
+      mutant [4/6] reset/1 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 6 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 338948487) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 338948487
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/floor_782680_1349.ex:104: HistogramPercentile.quantile/4
+  /tmp/floor_782680_1349.ex:82: HistogramPercentile.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/floor_782680_1413.ex:104: HistogramPercentile.quantile/4
+  /tmp/floor_782680_1413.ex:82: HistogramPercentile.handle_call/3
+  (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4
+  (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3
+  (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.63 (24/38) >= floor 0.6
+    · attempt 1: green (14/14) — all gates passed
+
+14:48:01.820 [info] cycle 110_002_histogram_based_approximate_rolling_percentile_01_audit: ACCEPTED on attempt 1
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 6 test(s) (5 coverage, 1 proven-defect); harness 8→14 tests; grown cycle green (module repaired against the proven defect(s))
+
+retro audit summary: %{needs_triage: 1}

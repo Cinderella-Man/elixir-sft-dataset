@@ -1,0 +1,288 @@
+08:06:19.593 [info] VARIATION 099_004_concurrent_masking_server_with_runtime_patterns_01: Concurrent Masking Server with Runtime Patterns
+08:06:19.593 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+08:06:19.593 [debug] claude -p USER prompt:
+Write me an Elixir module called `MaskingServer` — a `GenServer` that scrubs sensitive data from log-bound maps, keyword lists, and strings for concurrent callers, supports registering **extra masking patterns at runtime**, and tracks cumulative masking statistics.
+
+I need these functions in the public API:
+
+- `MaskingServer.start_link(opts)` — starts the server. `opts` is a keyword list; `opts[:sensitive_keys]` is a list of atoms and/or strings (defaulting to `[]` when absent). Key comparison during masking must be case-insensitive and work for both atom and string keys. Returns `{:ok, pid}`.
+
+- `MaskingServer.mask(server, data)` — a synchronous call that accepts a map, a keyword list, a plain list, or any other term and returns the same shape with sensitive data scrubbed.
+  - Maps and keyword lists are walked recursively. If a key matches a configured sensitive key, its value is replaced with `"[MASKED]"` regardless of the value's type. Non-sensitive keys are preserved and their values continue to be walked.
+  - Plain lists (including lists of maps or keyword lists) are walked element-by-element.
+  - Every **string value** encountered under a non-sensitive key is passed through the same pattern scrubbing as `mask_string/2`. Values replaced with `"[MASKED]"` because of a sensitive key are **not** additionally pattern-scanned.
+  - Structs, numbers, atoms, and other terms are returned unchanged.
+
+- `MaskingServer.mask_string(server, string)` — a synchronous call that scans a raw string and masks the built-in patterns plus any registered custom patterns (see `add_pattern/3`), returning the scrubbed string. The built-in patterns are:
+  - **Credit card numbers**: any sequence of 13–19 digits (optionally separated by single spaces or hyphens) — replace every digit except the last 4 with `*`, keeping separators intact. E.g. `"4111-1111-1111-1234"` → `"****-****-****-1234"`.
+  - **Email addresses**: keep only the first character of the local part and replace the rest with `***`. E.g. `"john.doe@example.com"` → `"j***@example.com"`.
+  - **SSN patterns**: sequences matching `\d{3}-\d{2}-\d{4}` — replace with `"***-**-****"`.
+
+- `MaskingServer.add_pattern(server, regex, replacement)` — registers an additional masking pattern where `regex` is a compiled `Regex` and `replacement` is a string. Returns `:ok`. When scrubbing a string, the built-in patterns are applied first (credit cards, then SSNs, then emails), and then every registered custom pattern is applied in the order it was added, each via a standard regex replace with its replacement string. Registered patterns apply to every subsequent string scrubbed by both `mask_string/2` and `mask/2`.
+
+- `MaskingServer.stats(server)` — returns a map `%{keys_masked: k, patterns_applied: p}` describing cumulative work since the server started:
+  - `:keys_masked` — the total number of values replaced with `"[MASKED]"` because their key was sensitive, summed across every `mask/2` call.
+  - `:patterns_applied` — the total number of pattern matches replaced (built-in **and** custom patterns) across every string scrubbed by every `mask/2` and `mask_string/2` call.
+
+Because all operations go through the `GenServer`, concurrent callers are serialized and the statistics stay exact under concurrency.
+
+Give me the complete module in a single file. Use only the Elixir standard library and built-in regex support — no external dependencies.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+08:09:35.568 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule MaskingServer do
+  @moduledoc """
+  A `GenServer` that scrubs sensitive data from log-bound maps, keyword lists,
+  plain lists, and strings on behalf of concurrent callers.
+
+  The server masks values whose key matches a configured *sensitive key*
+  (case-insensitively, for both atom and string keys) and scrubs string values
+  using a set of built-in patterns (credit cards, SSNs, and email addresses)
+  plus any custom patterns registered at runtime via `add_pattern/3`.
+
+  Because every operation is routed through the `GenServer`, concurrent callers
+  are serialized and the cumulative statistics returned by `stats/0` stay exact
+  under concurrency.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type stats :: %{keys_masked: non_neg_integer(), patterns_applied: non_neg_integer()}
+
+  @masked "[MASKED]"
+
+  @cc_regex ~r/\d(?:[ -]?\d){12,18}/
+  @ssn_regex ~r/\d{3}-\d{2}-\d{4}/
+  @ssn_replacement "***-**-****"
+  @email_regex ~r/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the masking server.
+
+  `opts` is a keyword list. `opts[:sensitive_keys]` is a list of atoms and/or
+  strings (defaulting to `[]`); key comparison during masking is
+  case-insensitive and works for both atom and string keys.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts)
+  end
+
+  @doc """
+  Masks sensitive data in `data`, returning the same shape.
+
+  Maps and keyword lists are walked recursively; a value under a sensitive key
+  becomes `"[MASKED]"`, while other values are walked further. Plain lists are
+  walked element-by-element. String values under non-sensitive keys are scrubbed
+  with the same patterns as `mask_string/2`. Structs, numbers, atoms, and other
+  terms are returned unchanged.
+  """
+  @spec mask(server(), term()) :: term()
+  def mask(server, data) do
+    GenServer.call(server, {:mask, data})
+  end
+
+  @doc """
+  Scans a raw string and masks the built-in patterns plus any registered custom
+  patterns, returning the scrubbed string.
+  """
+  @spec mask_string(server(), String.t()) :: String.t()
+  def mask_string(server, string) do
+    GenServer.call(server, {:mask_string, string})
+  end
+
+  @doc """
+  Registers an additional masking pattern applied (in registration order) after
+  the built-in patterns for every subsequent string scrubbed.
+  """
+  @spec add_pattern(server(), Regex.t(), String.t()) :: :ok
+  def add_pattern(server, regex, replacement) do
+    GenServer.call(server, {:add_pattern, regex, replacement})
+  end
+
+  @doc """
+  Returns cumulative masking statistics since the server started:
+  `%{keys_masked: k, patterns_applied: p}`.
+  """
+  @spec stats(server()) :: stats()
+  def stats(server) do
+    GenServer.call(server, :stats)
+  end
+
+  # ── GenServer callbacks ───────────────────────────────────────────────────
+
+  @impl true
+  def init(opts) do
+    sensitive =
+      opts
+      |> Keyword.get(:sensitive_keys, [])
+      |> Enum.map(&normalize_key/1)
+      |> MapSet.new()
+
+    state = %{sensitive: sensitive, patterns: [], keys_masked: 0, patterns_applied: 0}
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:mask, data}, _from, state) do
+    {result, {ks, pa}} = walk(state, data, {0, 0})
+
+    new_state =
+      state
+      |> Map.update!(:keys_masked, &(&1 + ks))
+      |> Map.update!(:patterns_applied, &(&1 + pa))
+
+    {:reply, result, new_state}
+  end
+
+  def handle_call({:mask_string, string}, _from, state) do
+    {scrubbed, count} = scrub(state, string)
+    new_state = Map.update!(state, :patterns_applied, &(&1 + count))
+    {:reply, scrubbed, new_state}
+  end
+
+  def handle_call({:add_pattern, regex, replacement}, _from, state) do
+    new_state = Map.update!(state, :patterns, &(&1 ++ [{regex, replacement}]))
+    {:reply, :ok, new_state}
+  end
+
+  def handle_call(:stats, _from, state) do
+    stats = %{keys_masked: state.keys_masked, patterns_applied: state.patterns_applied}
+    {:reply, stats, state}
+  end
+
+  # ── Walking terms ─────────────────────────────────────────────────────────
+
+  # Structs are returned unchanged.
+  defp walk(_state, term, acc) when is_struct(term), do: {term, acc}
+
+  defp walk(state, term, acc) when is_map(term) do
+    {pairs, acc2} = walk_pairs(state, Map.to_list(term), acc)
+    {Map.new(pairs), acc2}
+  end
+
+  defp walk(state, term, acc) when is_list(term) do
+    if term != [] and Keyword.keyword?(term) do
+      walk_pairs(state, term, acc)
+    else
+      Enum.map_reduce(term, acc, fn element, ac -> walk(state, element, ac) end)
+    end
+  end
+
+  defp walk(state, term, {ks, pa}) when is_binary(term) do
+    {scrubbed, count} = scrub(state, term)
+    {scrubbed, {ks, pa + count}}
+  end
+
+  defp walk(_state, term, acc), do: {term, acc}
+
+  # Walks a list of `{key, value}` pairs shared by maps and keyword lists.
+  defp walk_pairs(state, pairs, acc) do
+    Enum.map_reduce(pairs, acc, fn {key, value}, {ks, pa} = ac ->
+      if sensitive?(state, key) do
+        {{key, @masked}, {ks + 1, pa}}
+      else
+        {masked_value, ac2} = walk(state, value, ac)
+        {{key, masked_value}, ac2}
+      end
+    end)
+  end
+
+  defp sensitive?(state, key) do
+    MapSet.member?(state.sensitive, normalize_key(key))
+  end
+
+  defp normalize_key(key) when is_atom(key), do: key |> Atom.to_string() |> String.downcase()
+  defp normalize_key(key) when is_binary(key), do: String.downcase(key)
+  defp normalize_key(key), do: key
+
+  # ── String scrubbing ──────────────────────────────────────────────────────
+
+  # Applies built-in patterns (credit cards, then SSNs, then emails) followed by
+  # every registered custom pattern, counting each match replaced.
+  defp scrub(state, string) do
+    builtins = [
+      {@cc_regex, &mask_cc/1},
+      {@ssn_regex, @ssn_replacement},
+      {@email_regex, &mask_email/1}
+    ]
+
+    Enum.reduce(builtins ++ state.patterns, {string, 0}, fn {regex, rep}, {str, count} ->
+      matches = length(Regex.scan(regex, str))
+      {Regex.replace(regex, str, rep), count + matches}
+    end)
+  end
+
+  # Masks every digit except the last four, keeping separators intact.
+  defp mask_cc(match) do
+    chars = String.graphemes(match)
+    keep = Enum.count(chars, &digit?/1) - 4
+
+    {masked, _seen} =
+      Enum.map_reduce(chars, 0, fn ch, seen ->
+        cond do
+          digit?(ch) and seen < keep -> {"*", seen + 1}
+          digit?(ch) -> {ch, seen + 1}
+          true -> {ch, seen}
+        end
+      end)
+
+    Enum.join(masked)
+  end
+
+  # Keeps only the first character of the local part.
+  defp mask_email(match) do
+    [local, domain] = String.split(match, "@", parts: 2)
+    String.first(local) <> "***@" <> domain
+  end
+
+  defp digit?(<<c>>) when c in ?0..?9, do: true
+  defp digit?(_char), do: false
+end
+</file>
+08:09:35.568 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1976, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1976, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 1976, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 1976, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 16188, "type" => "message"}], "output_tokens" => 16188, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:09:35.591 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01 solution.ex
+08:09:36.251 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":213,"lines_over_98":0,"max_line_length":93,"mode":"full","pipe_chain_count":7,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01/solution.ex","task":"099_004_concurrent_masking_server_with_runtime_patterns_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-10T06:09:36.227309Z"}
+08:09:36.257 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut solution.ex
+08:09:36.934 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":170,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":7,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 15/15 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex","task":"099_004_concurrent_masking_server_with_runtime_patterns_01_mut","test_failures":[{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:14: MaskingServer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test masks sensitive keys in a flat map"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:14: MaskingServer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test masks sensitive keys regardless of value type"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:14: MaskingServer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test recursively masks nested maps"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:14: MaskingServer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test masks sensitive keys in a keyword list"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:14: MaskingServer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test leaves non-sensitive keys untouched"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:14: MaskingServer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test pattern-masks string values under non-sensitive keys"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:14: MaskingServer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test masks a dashed credit card"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:14: MaskingServer.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test masks an SSN"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n    (truncated)
+08:09:36.938 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut solution.ex
+08:09:37.644 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":170,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":7,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 9/15 failed"],"tests":0.4},"shape":"single","solution_file":".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex","task":"099_004_concurrent_masking_server_with_runtime_patterns_01_mut","test_failures":[{"message":"MUTATION","module":"MaskingServerTest","test":"test masks sensitive keys in a flat map"},{"message":"MUTATION","module":"MaskingServerTest","test":"test masks sensitive keys regardless of value type"},{"message":"MUTATION","module":"MaskingServerTest","test":"test recursively masks nested maps"},{"message":"MUTATION","module":"MaskingServerTest","test":"test masks sensitive keys in a keyword list"},{"message":"MUTATION","module":"MaskingServerTest","test":"test leaves non-sensitive keys untouched"},{"message":"MUTATION","module":"MaskingServerTest","test":"test pattern-masks string values under non-sensitive keys"},{"message":"MUTATION","module":"MaskingServerTest","test":"test custom patterns also apply to string values in mask/2"},{"message":"MUTATION","module":"MaskingServerTest","test":"test stats counts keys_masked across mask calls"},{"message":"{:EXIT, #PID<0.249.0>}: {%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :mask, 2, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 20, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"MaskingServerTest","test":"test keys_masked stays exact under concurrent callers"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-10T06:09:37.615591Z"}
+08:09:37.649 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut solution.ex
+08:09:38.337 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":170,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":7,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 5/15 failed"],"tests":0.67},"shape":"single","solution_file":".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex","task":"099_004_concurrent_masking_server_with_runtime_patterns_01_mut","test_failures":[{"message":"MUTATION","module":"MaskingServerTest","test":"test masks a dashed credit card"},{"message":"MUTATION","module":"MaskingServerTest","test":"test masks an SSN"},{"message":"MUTATION","module":"MaskingServerTest","test":"test a registered custom pattern is applied during mask_string"},{"message":"MUTATION","module":"MaskingServerTest","test":"test built-in patterns still work after a custom pattern is added"},{"message":"MUTATION","module":"MaskingServerTest","test":"test stats counts patterns_applied across string scrubs"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-10T06:09:38.313240Z"}
+08:09:38.340 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut solution.ex
+08:09:39.018 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":170,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":7,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 3/15 failed"],"tests":0.8},"shape":"single","solution_file":".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex","task":"099_004_concurrent_masking_server_with_runtime_patterns_01_mut","test_failures":[{"message":"MUTATION","module":"MaskingServerTest","test":"test a registered custom pattern is applied during mask_string"},{"message":"MUTATION","module":"MaskingServerTest","test":"test custom patterns also apply to string values in mask/2"},{"message":"MUTATION","module":"MaskingServerTest","test":"test built-in patterns still work after a custom pattern is added"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-10T06:09:38.994224Z"}
+08:09:39.022 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut solution.ex
+08:09:39.714 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":170,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":7,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 4/15 failed"],"tests":0.73},"shape":"single","solution_file":".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex","task":"099_004_concurrent_masking_server_with_runtime_patterns_01_mut","test_failures":[{"message":"MUTATION","module":"MaskingServerTest","test":"test stats counts keys_masked across mask calls"},{"message":"MUTATION","module":"MaskingServerTest","test":"test stats counts patterns_applied across string scrubs"},{"message":"MUTATION","module":"MaskingServerTest","test":"test fresh server reports zero stats"},{"message":"MUTATION","module":"MaskingServerTest","test":"test keys_masked stays exact under concurrent callers"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-10T06:09:39.692744Z"}
+08:09:39.718 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut solution.ex
+08:09:40.394 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":166,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":4,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 15/15 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex","task":"099_004_concurrent_masking_server_with_runtime_patterns_01_mut","test_failures":[{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test masks sensitive keys in a flat map"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test masks sensitive keys regardless of value type"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test recursively masks nested maps"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test masks sensitive keys in a keyword list"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test leaves non-sensitive keys untouched"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test pattern-masks string values under non-sensitive keys"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test masks a dashed credit card"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test masks an SSN"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test a registered custom pattern is applied during mask_string"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test custom patterns also apply to string values in mask/2"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test built-in patterns still work after a custom pattern is added"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"MaskingServerTest","test":"test stats counts keys_masked across mask calls"},{"message":"failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex:43: MaskingServer.init/1\n      (truncated)
+08:09:40.398 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut solution.ex
+08:09:41.094 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":161,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":5,"public_fn_count":10,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":15,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 15 warning(s) → hard fail (overall 0.0)","tests: 15/15 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex","task":"099_004_concurrent_masking_server_with_runtime_patterns_01_mut","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :handle_call, 3, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 52, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.209.0>, {:mask, %{user: \"alice\", password: \"hunter2\"}}, 5000]}}","module":"MaskingServerTest","test":"test masks sensitive keys in a flat map"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :handle_call, 3, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 52, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.213.0>, {:mask, %{token: nil, password: 12345}}, 5000]}}","module":"MaskingServerTest","test":"test masks sensitive keys regardless of value type"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :handle_call, 3, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 52, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.217.0>, {:mask, %{user: %{name: \"carol\", password: \"deep\"}}}, 5000]}}","module":"MaskingServerTest","test":"test recursively masks nested maps"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :handle_call, 3, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 52, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.221.0>, {:mask, [username: \"dave\", password: \"secret!\"]}, 5000]}}","module":"MaskingServerTest","test":"test masks sensitive keys in a keyword list"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :handle_call, 3, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 52, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.225.0>, {:mask, %{count: 7, role: \"admin\"}}, 5000]}}","module":"MaskingServerTest","test":"test leaves non-sensitive keys untouched"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :handle_call, 3, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 52, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.229.0>, {:mask, %{note: \"email john.doe@example.com\"}}, 5000]}}","module":"MaskingServerTest","test":"test pattern-masks string values under non-sensitive keys"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :handle_call, 3, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.233.0>, {:mask_string, \"4111-1111-1111-1234\"}, 5000]}}","module":"MaskingServerTest","test":"test masks a dashed credit card"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :handle_call, 3, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.237.0>, {:mask_string, \"SSN: 123-45-6789\"}, 5000]}}","module":"MaskingServerTest","test":"test masks an SSN"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :handle_call, 3, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.241.0>, {:add_pattern, ~r/\\d{3}-\\d{4}/, \"[PHONE]\"}, 5000]}}","module":"MaskingServerTest","test":"test a registered custom pattern is applied during mask_string"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :handle_call, 3, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.245.0>, {:add_pattern, ~r/\\bSECRET\\b/, \"[X]\"}, 5000]}}","module":"MaskingServerTest","test":"test custom patterns also apply to string values in mask/2"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :handle_call, 3, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.249.0>, {:add_pattern, ~r/\\d{3}-\\d{4}/, \"[PHONE]\"}, 5000]}}","module":"MaskingServerTest","test":"test built-in patterns still work after a custom pattern is added"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{MaskingServer, :handle_call, 3, [file: ~c\".gen_staging/099_004_concurrent_masking_server_with_runtime_patterns_01_mut/solution.ex\", line: 52, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_s (truncated)
+08:09:41.096 [info] cycle 099_004_concurrent_masking_server_with_runtime_patterns_01: ACCEPTED on attempt 0
+08:09:41.096 [info] promoted 099_004_concurrent_masking_server_with_runtime_patterns_01 -> tasks/099_004_concurrent_masking_server_with_runtime_patterns_01

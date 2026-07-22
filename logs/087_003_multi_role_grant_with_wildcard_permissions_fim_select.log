@@ -1,0 +1,145 @@
+[22m06:33:47.727 [info] FIM candidate-select for 087_003_multi_role_grant_with_wildcard_permissions_01 (up to 3)[0m
+[36m06:33:47.727 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+[0m
+[36m06:33:47.727 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Rbac` that resolves permissions for a **principal that can hold multiple roles at once**, using **`"resource:action"` permission strings with wildcard patterns**.
+
+Roles are defined as a map from a role atom to a list of permission-pattern strings:
+
+```elixir
+%{
+  viewer: ["posts:read", "comments:read"],
+  editor: ["posts:read", "posts:write", "comments:read", "comments:write"],
+  admin:  ["*:*"]
+}
+```
+
+A permission pattern is a colon-separated string of two segments, `"<resource>:<action>"`, where either segment may be the literal `"*"` wildcard which matches any value in that position. Examples: `"posts:read"`, `"posts:*"`, `"*:read"`, `"*:*"`.
+
+A **principal** is either:
+
+- a plain list of role atoms, e.g. `[:viewer, :editor]`, or
+- a map `%{roles: [atom], grants: [String.t()]}` where `:grants` is a list of extra permission-pattern strings granted directly to that principal (in addition to those from its roles). Missing `:roles` / `:grants` keys default to `[]`.
+
+A principal's effective permissions are the **union** of the patterns from every role it holds plus its direct grants.
+
+I need the following public API:
+
+- `Rbac.effective_permissions(principal, role_defs)` — returns a `MapSet` of the principal's effective permission-pattern strings.
+- `Rbac.permitted?(principal, resource, action, role_defs)` — takes `resource` and `action` as atoms, builds the target `"resource:action"`, and returns `true` if **any** effective pattern matches the target (segment by segment, with `"*"` matching anything), else `false`. Unknown roles contribute no permissions rather than raising.
+
+Give me the complete module in a single file with no external dependencies.
+
+=== MODULE ===
+```elixir
+defmodule Rbac do
+  @moduledoc """
+  Multi-role RBAC with wildcard `"resource:action"` permission patterns.
+
+  A principal may hold several roles simultaneously; its effective permission
+  set is the union of every held role's patterns plus any direct grants.
+  Authorization matches a `"resource:action"` target against each pattern
+  segment-by-segment, where the literal `"*"` matches any value in that
+  position.
+
+  ## Role definitions
+
+      %{role_atom => ["resource:action", "resource:*", "*:action", "*:*"]}
+
+  ## Principal
+
+    * a list of role atoms — `[:viewer, :editor]`, or
+    * a map — `%{roles: [atom], grants: [String.t()]}` (missing keys default
+      to `[]`).
+  """
+
+  @type principal :: [atom()] | %{optional(:roles) => [atom()], optional(:grants) => [String.t()]}
+  @type role_defs :: %{optional(atom()) => [String.t()]}
+
+  @doc """
+  Returns the `MapSet` of effective permission patterns for `principal`.
+
+  Unknown roles contribute no permissions.
+  """
+  @spec effective_permissions(principal(), role_defs()) :: MapSet.t()
+  def effective_permissions(principal, role_defs) do
+    %{roles: roles, grants: grants} = normalize(principal)
+
+    from_roles = Enum.flat_map(roles, fn role -> Map.get(role_defs, role, []) end)
+
+    MapSet.new(from_roles ++ grants)
+  end
+
+  @doc """
+  Returns `true` when any effective pattern matches `"resource:action"`.
+  """
+  @spec permitted?(principal(), atom(), atom(), role_defs()) :: boolean()
+  def permitted?(principal, resource, action, role_defs) do
+    target = "#{resource}:#{action}"
+    target_segments = String.split(target, ":")
+
+    principal
+    |> effective_permissions(role_defs)
+    |> Enum.any?(fn pattern -> pattern_match?(pattern, target_segments) end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp normalize(principal) when is_list(principal), do: %{roles: principal, grants: []}
+
+  defp normalize(principal) when is_map(principal) do
+    %{roles: Map.get(principal, :roles, []), grants: Map.get(principal, :grants, [])}
+  end
+
+  defp pattern_match?(pattern, target_segments) do
+    segments_match?(String.split(pattern, ":"), target_segments)
+  end
+
+  defp segments_match?([p | ps], [t | ts]) do
+    (p == "*" or p == t) and segments_match?(ps, ts)
+  end
+
+  defp segments_match?([], []), do: true
+  defp segments_match?(_, _), do: false
+end
+```
+
+Return ONE file `candidates.md` containing at most 3 lines, each a single
+function target written as `name/arity` (e.g. `refill_and_expire/2`), most valuable
+first, and NOTHING else.
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - candidates.md — one function target (name/arity) per line
+
+[0m
+[36m06:33:55.065 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+segments_match?/2
+permitted?/4
+effective_permissions/2
+</file>[0m
+[36m06:33:55.065 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2220, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2220, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2220, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2220, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 245, "type" => "message"}], "output_tokens" => 245, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m

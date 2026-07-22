@@ -1,0 +1,450 @@
+[22m03:20:32.161 [info] VARIATION 080_004_concurrent_dag_registry_genserver_01: Concurrent DAG Registry GenServer[0m
+[36m03:20:32.162 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_004_concurrent_dag_registry_genserver_01 solution.ex[0m
+[36m03:20:32.801 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":false,"line_count":165,"lines_over_98":0,"max_line_length":90,"mode":"full","pipe_chain_count":11,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.63,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.92,"reasons":["analysis: @doc on public functions → 0/1 pts","analysis: @spec annotations present → 0/2 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/080_004_concurrent_dag_registry_genserver_01/solution.ex","task":"080_004_concurrent_dag_registry_genserver_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:20:32.780626Z"}[0m
+[22m03:20:32.802 [info] cycle 080_004_concurrent_dag_registry_genserver_01: repairing — The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m03:20:32.802 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m03:20:32.803 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @spec on any public function; no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `DAGServer` that implements a Directed Acyclic Graph as a **GenServer** — a concurrent, process-based registry that holds the graph in its state and serializes all mutations so many client processes can safely add vertices and edges at once.
+
+I need this client-facing API (all functions take the server pid or name as the first argument):
+- `DAGServer.start_link(opts \\ [])` — starts the server (empty graph). `opts` are passed through to `GenServer.start_link/3` (e.g. `:name`). Returns `{:ok, pid}`.
+- `DAGServer.add_vertex(server, vertex)` — adds a vertex; if it already exists, no change. Returns `:ok`. Vertices can be any term.
+- `DAGServer.add_edge(server, from, to)` — adds a directed edge. Returns `:ok` on success, `{:error, :cycle}` if the edge would create a cycle (detected eagerly via DFS, before committing), or `{:error, :vertex_not_found}` if either endpoint is missing.
+- `DAGServer.topological_sort(server)` — returns `{:ok, ordering}`, all vertices in a valid topological order (Kahn's algorithm). `{:ok, []}` when empty.
+- `DAGServer.predecessors(server, vertex)` — direct incoming neighbours (list).
+- `DAGServer.successors(server, vertex)` — direct outgoing neighbours (list).
+- `DAGServer.vertices(server)` — the list of all vertices currently in the graph.
+
+Because writes go through the single GenServer process, concurrent `add_vertex`/`add_edge` calls from many processes must be applied consistently and the graph must remain acyclic at all times. Use Kahn's algorithm for the sort and DFS-based cycle detection for edges.
+
+Give me the complete module in a single file. Use only the Elixir/Erlang standard library, no external dependencies.
+
+----- solution.ex -----
+defmodule DAGServer do
+  @moduledoc """
+  A Directed Acyclic Graph implemented as a GenServer.
+
+  The graph lives in the process state; all mutations are serialized through
+  the single server process, so any number of client processes may add
+  vertices and edges concurrently while the graph remains consistent and
+  acyclic at all times.
+
+  State fields:
+    * `vertices`  – a `MapSet` of all vertices (any term).
+    * `out_edges` – `%{vertex => MapSet of successors}` (forward adjacency).
+    * `in_edges`  – `%{vertex => MapSet of predecessors}` (reverse adjacency).
+  """
+
+  use GenServer
+
+  defstruct vertices: MapSet.new(), out_edges: %{}, in_edges: %{}
+
+  # ---------------------------------------------------------------------------
+  # Client API
+  # ---------------------------------------------------------------------------
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  def add_vertex(server, vertex), do: GenServer.call(server, {:add_vertex, vertex})
+
+  def add_edge(server, from, to), do: GenServer.call(server, {:add_edge, from, to})
+
+  def topological_sort(server), do: GenServer.call(server, :topological_sort)
+
+  def predecessors(server, vertex), do: GenServer.call(server, {:predecessors, vertex})
+
+  def successors(server, vertex), do: GenServer.call(server, {:successors, vertex})
+
+  def vertices(server), do: GenServer.call(server, :vertices)
+
+  # ---------------------------------------------------------------------------
+  # Server callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(:ok), do: {:ok, %__MODULE__{}}
+
+  @impl true
+  def handle_call({:add_vertex, vertex}, _from, state) do
+    {:reply, :ok, do_add_vertex(state, vertex)}
+  end
+
+  def handle_call({:add_edge, from, to}, _from, state) do
+    case do_add_edge(state, from, to) do
+      {:ok, new_state} -> {:reply, :ok, new_state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:topological_sort, _from, state) do
+    {:reply, {:ok, topo_order(state)}, state}
+  end
+
+  def handle_call({:predecessors, vertex}, _from, state) do
+    {:reply, state.in_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list(), state}
+  end
+
+  def handle_call({:successors, vertex}, _from, state) do
+    {:reply, state.out_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list(), state}
+  end
+
+  def handle_call(:vertices, _from, state) do
+    {:reply, MapSet.to_list(state.vertices), state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Pure graph logic
+  # ---------------------------------------------------------------------------
+
+  defp do_add_vertex(state, vertex) do
+    if MapSet.member?(state.vertices, vertex) do
+      state
+    else
+      %{
+        state
+        | vertices: MapSet.put(state.vertices, vertex),
+          out_edges: Map.put_new(state.out_edges, vertex, MapSet.new()),
+          in_edges: Map.put_new(state.in_edges, vertex, MapSet.new())
+      }
+    end
+  end
+
+  defp do_add_edge(state, from, to) do
+    with :ok <- require_vertex(state, from),
+         :ok <- require_vertex(state, to),
+         :ok <- check_no_cycle(state, from, to) do
+      new_state = %{
+        state
+        | out_edges: Map.update!(state.out_edges, from, &MapSet.put(&1, to)),
+          in_edges: Map.update!(state.in_edges, to, &MapSet.put(&1, from))
+      }
+
+      {:ok, new_state}
+    end
+  end
+
+  defp require_vertex(state, vertex) do
+    if MapSet.member?(state.vertices, vertex), do: :ok, else: {:error, :vertex_not_found}
+  end
+
+  defp check_no_cycle(_state, from, from), do: {:error, :cycle}
+
+  defp check_no_cycle(state, from, to) do
+    if dfs_reaches?(state.out_edges, to, from), do: {:error, :cycle}, else: :ok
+  end
+
+  defp dfs_reaches?(out_edges, start, target) do
+    do_dfs([start], MapSet.new(), out_edges, target)
+  end
+
+  defp do_dfs([], _visited, _out_edges, _target), do: false
+
+  defp do_dfs([node | stack], visited, out_edges, target) do
+    cond do
+      node == target ->
+        true
+
+      MapSet.member?(visited, node) ->
+        do_dfs(stack, visited, out_edges, target)
+
+      true ->
+        neighbors = out_edges |> Map.get(node, MapSet.new()) |> MapSet.to_list()
+        do_dfs(neighbors ++ stack, MapSet.put(visited, node), out_edges, target)
+    end
+  end
+
+  # Kahn's algorithm, sorted for determinism.
+  defp topo_order(state) do
+    in_degree =
+      Map.new(state.vertices, fn v -> {v, MapSet.size(Map.fetch!(state.in_edges, v))} end)
+
+    initial =
+      in_degree
+      |> Enum.filter(fn {_v, d} -> d == 0 end)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.sort()
+
+    kahn(initial, in_degree, state.out_edges, [])
+  end
+
+  defp kahn([], _in_degree, _out_edges, acc), do: Enum.reverse(acc)
+
+  defp kahn([v | rest], in_degree, out_edges, acc) do
+    {new_in_degree, newly_zero} =
+      out_edges
+      |> Map.fetch!(v)
+      |> Enum.reduce({in_degree, []}, fn succ, {deg_map, zeros} ->
+        new_deg = Map.fetch!(deg_map, succ) - 1
+        updated = Map.put(deg_map, succ, new_deg)
+
+        if new_deg == 0, do: {updated, [succ | zeros]}, else: {updated, zeros}
+      end)
+
+    kahn(rest ++ Enum.sort(newly_zero), new_in_degree, out_edges, [v | acc])
+  end
+end
+
+----- test_harness.exs -----
+defmodule DAGServerTest do
+  use ExUnit (truncated)[0m
+[36m03:21:45.668 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule DAGServer do
+  @moduledoc """
+  A Directed Acyclic Graph implemented as a GenServer.
+
+  The graph lives in the process state; all mutations are serialized through
+  the single server process, so any number of client processes may add
+  vertices and edges concurrently while the graph remains consistent and
+  acyclic at all times.
+
+  State fields:
+    * `vertices`  – a `MapSet` of all vertices (any term).
+    * `out_edges` – `%{vertex => MapSet of successors}` (forward adjacency).
+    * `in_edges`  – `%{vertex => MapSet of predecessors}` (reverse adjacency).
+  """
+
+  use GenServer
+
+  defstruct vertices: MapSet.new(), out_edges: %{}, in_edges: %{}
+
+  @typedoc "The internal graph state held by the server process."
+  @type t :: %__MODULE__{
+          vertices: MapSet.t(),
+          out_edges: %{optional(term()) => MapSet.t()},
+          in_edges: %{optional(term()) => MapSet.t()}
+        }
+
+  # ---------------------------------------------------------------------------
+  # Client API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the server with an empty graph.
+
+  `opts` are forwarded to `GenServer.start_link/3` (e.g. `:name`).
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc """
+  Adds `vertex` to the graph. If it already exists, the graph is unchanged.
+
+  Vertices may be any term. Returns `:ok`.
+  """
+  @spec add_vertex(GenServer.server(), term()) :: :ok
+  def add_vertex(server, vertex), do: GenServer.call(server, {:add_vertex, vertex})
+
+  @doc """
+  Adds a directed edge from `from` to `to`.
+
+  Returns `:ok` on success, `{:error, :cycle}` if the edge would create a
+  cycle (detected eagerly via DFS before committing), or
+  `{:error, :vertex_not_found}` if either endpoint is missing.
+  """
+  @spec add_edge(GenServer.server(), term(), term()) ::
+          :ok | {:error, :cycle | :vertex_not_found}
+  def add_edge(server, from, to), do: GenServer.call(server, {:add_edge, from, to})
+
+  @doc """
+  Returns `{:ok, ordering}` with all vertices in a valid topological order
+  (Kahn's algorithm). Returns `{:ok, []}` when the graph is empty.
+  """
+  @spec topological_sort(GenServer.server()) :: {:ok, [term()]}
+  def topological_sort(server), do: GenServer.call(server, :topological_sort)
+
+  @doc """
+  Returns the list of direct incoming neighbours (predecessors) of `vertex`.
+  """
+  @spec predecessors(GenServer.server(), term()) :: [term()]
+  def predecessors(server, vertex), do: GenServer.call(server, {:predecessors, vertex})
+
+  @doc """
+  Returns the list of direct outgoing neighbours (successors) of `vertex`.
+  """
+  @spec successors(GenServer.server(), term()) :: [term()]
+  def successors(server, vertex), do: GenServer.call(server, {:successors, vertex})
+
+  @doc """
+  Returns the list of all vertices currently in the graph.
+  """
+  @spec vertices(GenServer.server()) :: [term()]
+  def vertices(server), do: GenServer.call(server, :vertices)
+
+  # ---------------------------------------------------------------------------
+  # Server callbacks
+  # ---------------------------------------------------------------------------
+
+  @doc false
+  @impl true
+  @spec init(:ok) :: {:ok, t()}
+  def init(:ok), do: {:ok, %__MODULE__{}}
+
+  @doc false
+  @impl true
+  @spec handle_call(term(), GenServer.from(), t()) :: {:reply, term(), t()}
+  def handle_call({:add_vertex, vertex}, _from, state) do
+    {:reply, :ok, do_add_vertex(state, vertex)}
+  end
+
+  def handle_call({:add_edge, from, to}, _from, state) do
+    case do_add_edge(state, from, to) do
+      {:ok, new_state} -> {:reply, :ok, new_state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:topological_sort, _from, state) do
+    {:reply, {:ok, topo_order(state)}, state}
+  end
+
+  def handle_call({:predecessors, vertex}, _from, state) do
+    {:reply, state.in_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list(), state}
+  end
+
+  def handle_call({:successors, vertex}, _from, state) do
+    {:reply, state.out_edges |> Map.get(vertex, MapSet.new()) |> MapSet.to_list(), state}
+  end
+
+  def handle_call(:vertices, _from, state) do
+    {:reply, MapSet.to_list(state.vertices), state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Pure graph logic
+  # ---------------------------------------------------------------------------
+
+  defp do_add_vertex(state, vertex) do
+    if MapSet.member?(state.vertices, vertex) do
+      state
+    else
+      %{
+        state
+        | vertices: MapSet.put(state.vertices, vertex),
+          out_edges: Map.put_new(state.out_edges, vertex, MapSet.new()),
+          in_edges: Map.put_new(state.in_edges, vertex, MapSet.new())
+      }
+    end
+  end
+
+  defp do_add_edge(state, from, to) do
+    with :ok <- require_vertex(state, from),
+         :ok <- require_vertex(state, to),
+         :ok <- check_no_cycle(state, from, to) do
+      new_state = %{
+        state
+        | out_edges: Map.update!(state.out_edges, from, &MapSet.put(&1, to)),
+          in_edges: Map.update!(state.in_edges, to, &MapSet.put(&1, from))
+      }
+
+      {:ok, new_state}
+    end
+  end
+
+  defp require_vertex(state, vertex) do
+    if MapSet.member?(state.vertices, vertex), do: :ok, else: {:error, :vertex_not_found}
+  end
+
+  defp check_no_cycle(_state, from, from), do: {:error, :cycle}
+
+  defp check_no_cycle(state, from, to) do
+    if dfs_reaches?(state.out_edges, to, from), do: {:error, :cycle}, else: :ok
+  end
+
+  defp dfs_reaches?(out_edges, start, target) do
+    do_dfs([start], MapSet.new(), out_edges, target)
+  end
+
+  defp do_dfs([], _visited, _out_edges, _target), do: false
+
+  defp do_dfs([node | stack], visited, out_edges, target) do
+    cond do
+      node == target ->
+        true
+
+      MapSet.member?(visited, node) ->
+        do_dfs(stack, visited, out_edges, target)
+
+      true ->
+        neighbors = out_edges |> Map.get(node, MapSet.new()) |> MapSet.to_list()
+        do_dfs(neighbors ++ stack, MapSet.put(visited, node), out_edges, target)
+    end
+  end
+
+  # Kahn's algorithm, sorted for determinism.
+  defp topo_order(state) do
+    in_degree =
+      Map.new(state.vertices, fn v -> {v, MapSet.size(Map.fetch!(state.in_edges, v))} end)
+
+    initial =
+      in_degree
+      |> Enum.filter(fn {_v, d} -> d == 0 end)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.sort()
+
+    kahn(initial, in_degree, state.out_edges, [])
+  end
+
+  defp kahn([], _in_degree, _out_edges, acc), do: Enum.reverse(acc)
+
+  defp kahn([v | rest], in_degree, out_edges, acc) do
+    {new_in_degree, newly_zero} =
+      out_edges
+      |> Map.fetch!(v)
+      |> Enum.reduce({in_degree, []}, fn succ, {deg_map, zeros} ->
+        new_deg = Map.fetch!(deg_map, succ) - 1
+        updated = Map.put(deg_map, succ, new_deg)
+
+        if new_deg == 0, do: {updated, [succ | zeros]}, else: {updated, zeros}
+      end)
+
+    kahn(rest ++ Enum.sort(newly_zero), new_in_degree, out_edges, [v | acc])
+  end
+end
+</file>[0m
+[36m03:21:45.668 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5609, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5609, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5609, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5609, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 5962, "type" => "message"}], "output_tokens" => 5962, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m03:21:45.687 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_004_concurrent_dag_registry_genserver_01 solution.ex[0m
+[36m03:21:46.354 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":214,"lines_over_98":0,"max_line_length":90,"mode":"full","pipe_chain_count":11,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/080_004_concurrent_dag_registry_genserver_01/solution.ex","task":"080_004_concurrent_dag_registry_genserver_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:21:46.332991Z"}[0m
+[36m03:21:46.360 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_004_concurrent_dag_registry_genserver_01_mut solution.ex[0m
+[36m03:21:47.040 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":190,"lines_over_98":5,"max_line_length":541,"mode":"full","pipe_chain_count":11,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 10/10 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex","task":"080_004_concurrent_dag_registry_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"DAGServerTest","test":"test empty graph sorts to []"},{"message":"MUTATION","module":"DAGServerTest","test":"test add_vertex is idempotent"},{"message":"MUTATION","module":"DAGServerTest","test":"test add_edge success and linear sort"},{"message":"MUTATION","module":"DAGServerTest","test":"test missing vertex is rejected"},{"message":"MUTATION","module":"DAGServerTest","test":"test self-loop and direct cycle rejected"},{"message":"MUTATION","module":"DAGServerTest","test":"test indirect cycle rejected"},{"message":"MUTATION","module":"DAGServerTest","test":"test predecessors and successors"},{"message":"MUTATION","module":"DAGServerTest","test":"test concurrent add_vertex from many processes lands consistently"},{"message":"MUTATION","module":"DAGServerTest","test":"test concurrent chain edges stay acyclic and consistent"},{"message":"MUTATION","module":"DAGServerTest","test":"test concurrent conflicting edges never form a cycle"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:21:47.015166Z"}[0m
+[36m03:21:47.045 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_004_concurrent_dag_registry_genserver_01_mut solution.ex[0m
+[36m03:21:47.736 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":190,"lines_over_98":5,"max_line_length":541,"mode":"full","pipe_chain_count":11,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.33,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 9/10 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.1},"shape":"single","solution_file":".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex","task":"080_004_concurrent_dag_registry_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"DAGServerTest","test":"test add_vertex is idempotent"},{"message":"MUTATION","module":"DAGServerTest","test":"test add_edge success and linear sort"},{"message":"MUTATION","module":"DAGServerTest","test":"test missing vertex is rejected"},{"message":"MUTATION","module":"DAGServerTest","test":"test self-loop and direct cycle rejected"},{"message":"MUTATION","module":"DAGServerTest","test":"test indirect cycle rejected"},{"message":"MUTATION","module":"DAGServerTest","test":"test predecessors and successors"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :add_vertex, 2, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 20, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"DAGServerTest","test":"test concurrent add_vertex from many processes lands consistently"},{"message":"MUTATION","module":"DAGServerTest","test":"test concurrent chain edges stay acyclic and consistent"},{"message":"MUTATION","module":"DAGServerTest","test":"test concurrent conflicting edges never form a cycle"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:21:47.713890Z"}[0m
+[36m03:21:47.740 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_004_concurrent_dag_registry_genserver_01_mut solution.ex[0m
+[36m03:21:48.423 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":190,"lines_over_98":5,"max_line_length":541,"mode":"full","pipe_chain_count":11,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.46,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 7/10 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.3},"shape":"single","solution_file":".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex","task":"080_004_concurrent_dag_registry_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"DAGServerTest","test":"test add_edge success and linear sort"},{"message":"MUTATION","module":"DAGServerTest","test":"test missing vertex is rejected"},{"message":"MUTATION","module":"DAGServerTest","test":"test self-loop and direct cycle rejected"},{"message":"MUTATION","module":"DAGServerTest","test":"test indirect cycle rejected"},{"message":"MUTATION","module":"DAGServerTest","test":"test predecessors and successors"},{"message":"{:EXIT, #PID<0.323.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :add_edge, 3, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 26, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"DAGServerTest","test":"test concurrent chain edges stay acyclic and consistent"},{"message":"{:EXIT, #PID<0.374.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :add_edge, 3, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 26, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"DAGServerTest","test":"test concurrent conflicting edges never form a cycle"}],"tests_errors":0,"tests_excluded":0,"tests_failed":7,"tests_passed":3,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:21:48.402829Z"}[0m
+[36m03:21:48.427 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_004_concurrent_dag_registry_genserver_01_mut solution.ex[0m
+[36m03:21:49.077 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":190,"lines_over_98":5,"max_line_length":541,"mode":"full","pipe_chain_count":11,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.68,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 4/10 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.6},"shape":"single","solution_file":".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex","task":"080_004_concurrent_dag_registry_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"DAGServerTest","test":"test empty graph sorts to []"},{"message":"MUTATION","module":"DAGServerTest","test":"test add_edge success and linear sort"},{"message":"MUTATION","module":"DAGServerTest","test":"test concurrent chain edges stay acyclic and consistent"},{"message":"MUTATION","module":"DAGServerTest","test":"test concurrent conflicting edges never form a cycle"}],"tests_errors":0,"tests_excluded":0,"tests_failed":4,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:21:49.055578Z"}[0m
+[36m03:21:49.081 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_004_concurrent_dag_registry_genserver_01_mut solution.ex[0m
+[36m03:21:49.736 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":190,"lines_over_98":5,"max_line_length":541,"mode":"full","pipe_chain_count":11,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.89,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 1/10 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.9},"shape":"single","solution_file":".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex","task":"080_004_concurrent_dag_registry_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"DAGServerTest","test":"test predecessors and successors"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:21:49.715987Z"}[0m
+[36m03:21:49.740 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_004_concurrent_dag_registry_genserver_01_mut solution.ex[0m
+[36m03:21:50.393 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":190,"lines_over_98":5,"max_line_length":541,"mode":"full","pipe_chain_count":11,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.89,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 1/10 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.9},"shape":"single","solution_file":".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex","task":"080_004_concurrent_dag_registry_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"DAGServerTest","test":"test predecessors and successors"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:21:50.371315Z"}[0m
+[36m03:21:50.397 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_004_concurrent_dag_registry_genserver_01_mut solution.ex[0m
+[36m03:21:51.056 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":190,"lines_over_98":5,"max_line_length":541,"mode":"full","pipe_chain_count":11,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.75,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 3/10 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.7},"shape":"single","solution_file":".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex","task":"080_004_concurrent_dag_registry_genserver_01_mut","test_failures":[{"message":"MUTATION","module":"DAGServerTest","test":"test empty graph sorts to []"},{"message":"MUTATION","module":"DAGServerTest","test":"test add_vertex is idempotent"},{"message":"MUTATION","module":"DAGServerTest","test":"test concurrent add_vertex from many processes lands consistently"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":7,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:21:51.036485Z"}[0m
+[36m03:21:51.061 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_004_concurrent_dag_registry_genserver_01_mut solution.ex[0m
+[36m03:21:51.695 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":190,"lines_over_98":5,"max_line_length":541,"mode":"full","pipe_chain_count":11,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.28,"reasons":["tests: 10/10 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex","task":"080_004_concurrent_dag_registry_genserver_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :init, 1, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 57, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test empty graph sorts to []"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :init, 1, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 57, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test add_vertex is idempotent"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :init, 1, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 57, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test add_edge success and linear sort"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :init, 1, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 57, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test missing vertex is rejected"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :init, 1, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 57, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test self-loop and direct cycle rejected"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :init, 1, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 57, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test indirect cycle rejected"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :init, 1, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 57, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test predecessors and successors"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :init, 1, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 57, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test concurrent add_vertex from many processes lands consistently"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :init, 1, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 57, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test concurrent chain edges stay acyclic and consistent"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :init, 1, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 57, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test concurrent conflicting edges never form a cycle"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:21:51.677378Z"}[0m
+[36m03:21:51.699 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/080_004_concurrent_dag_registry_genserver_01_mut solution.ex[0m
+[36m03:21:52.369 [debug] grade JSON: {"analysis":{"defp_count":11,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":187,"lines_over_98":5,"max_line_length":541,"mode":"full","pipe_chain_count":7,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":19,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.18,"reasons":["compilation: 19 warning(s) → -1.9 pts","tests: 10/10 failed","analysis: no lines over 98 chars (found 5) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex","task":"080_004_concurrent_dag_registry_genserver_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :handle_call, 3, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 72, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test empty graph sorts to []"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :handle_call, 3, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test add_vertex is idempotent"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :handle_call, 3, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test add_edge success and linear sort"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :handle_call, 3, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test missing vertex is rejected"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :handle_call, 3, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test self-loop and direct cycle rejected"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :handle_call, 3, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test indirect cycle rejected"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :handle_call, 3, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test predecessors and successors"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :handle_call, 3, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test concurrent add_vertex from many processes lands consistently"},{"message":"{:EXIT, #PID<0.323.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :handle_call, 3, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test concurrent chain edges stay acyclic and consistent"},{"message":"{:EXIT, #PID<0.325.0>}: {%RuntimeError{message: \"MUTATION\"}, [{DAGServer, :handle_call, 3, [file: ~c\".gen_staging/080_004_concurrent_dag_registry_genserver_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"DAGServerTest","test":"test concurrent conflicting edges never form a cycle"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-07T01:21:52.345087Z"}[0m
+[22m03:21:52.370 [info] cycle 080_004_concurrent_dag_registry_genserver_01: ACCEPTED on attempt 1[0m
+[22m03:21:52.371 [info] promoted 080_004_concurrent_dag_registry_genserver_01 -> tasks/080_004_concurrent_dag_registry_genserver_01[0m

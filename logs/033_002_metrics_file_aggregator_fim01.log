@@ -1,0 +1,497 @@
+03:36:05.120 [info] FIM 033_002_metrics_file_aggregator_fim01 → 033_002_metrics_file_aggregator_02: target update_metric_stats/3
+03:36:05.120 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+03:36:05.120 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `update_metric_stats/3`.
+
+Generate a prompt describing how to implement `update_metric_stats/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `update_metric_stats/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `update_metric_stats/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `update_metric_stats/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `MetricAggregator` that parses a structured
+metrics file and produces a statistical summary report.
+
+Each line of the input file is an independent JSON object with these fields:
+- `"timestamp"` — an ISO 8601 datetime string (e.g. `"2024-01-15T14:03:22Z"`)
+- `"name"`      — a non-empty string identifying the metric (e.g. `"cpu_usage"`)
+- `"value"`     — a number (integer or float)
+- `"tags"`      — a JSON object of string key/value pairs (arbitrary)
+
+I need one public function:
+
+    MetricAggregator.summarize(path :: String.t()) :: {:ok, report} | {:error, reason}
+
+Where `report` is a plain map with exactly these keys:
+
+- `:per_metric`       — a map from metric name string to a stats map containing:
+                          `:count`  — integer number of samples
+                          `:min`    — number (smallest value seen)
+                          `:max`    — number (largest value seen)
+                          `:sum`    — number (sum of all values)
+                          `:mean`   — float (sum / count)
+                         Only metrics actually seen in the file appear.
+- `:total_samples`    — integer count of all valid lines processed
+- `:time_range`       — a `{first_dt, last_dt}` tuple of `DateTime` structs
+                         (the earliest and latest timestamps across all valid
+                         lines); `nil` if no valid lines
+- `:samples_per_hour` — a map from a `{date_tuple, hour}` tuple
+                         (e.g. `{{2024,1,15}, 14}`) to integer count of
+                         valid samples in that UTC hour bucket; only hours
+                         with at least one sample appear
+- `:unique_tags`      — a map from tag key string to a `MapSet` of all
+                         distinct tag values seen for that key across
+                         all valid lines
+- `:malformed_count`  — integer count of lines that could not be parsed as
+                         valid JSON or were missing/invalid required fields
+
+Lines that are blank or contain only whitespace should be skipped silently
+(they don't count as malformed).
+
+Error handling rules:
+- If the file does not exist or cannot be opened, return `{:error, reason}`.
+- Every other failure (bad JSON, missing fields, wrong types) is counted in
+  `:malformed_count`; the line is skipped and processing continues.
+- A line is considered malformed if ANY of these is true:
+  - It is not valid JSON
+  - The top-level JSON value is not an object
+  - Any of `"timestamp"`, `"name"`, `"value"`, or `"tags"` is absent
+  - `"timestamp"` cannot be parsed as an ISO 8601 datetime
+  - `"name"` is not a non-empty string
+  - `"value"` is not a number (integer or float)
+  - `"tags"` is not a JSON object
+
+Use `Jason` for JSON parsing and the standard `DateTime` module for timestamp
+parsing. No other external dependencies.
+
+Stream the file line-by-line so the module can handle files larger than memory.
+
+Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule MetricAggregator do
+  @moduledoc """
+  Parses a structured, newline-delimited JSON metrics file and produces a
+  statistical summary report.
+
+  Each line must be a JSON object with the fields:
+    "timestamp" – ISO 8601 datetime string
+    "name"      – non-empty string identifying the metric
+    "value"     – number (integer or float)
+    "tags"      – JSON object of string key/value pairs
+
+  Blank / whitespace-only lines are silently skipped.
+  Lines that cannot be parsed (bad JSON, missing fields, wrong types)
+  increment :malformed_count and are otherwise ignored.
+
+  Requires the `jason` dependency in mix.exs:
+      {:jason, "~> 1.4"}
+  """
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Summarize the metrics file at `path`.
+
+  Returns `{:ok, report}` on success, where `report` is a map with keys:
+
+    :per_metric       – %{name_string => %{count, min, max, sum, mean}}
+    :total_samples    – integer
+    :time_range       – {first_dt, last_dt} | nil
+    :samples_per_hour – %{{date_tuple, hour} => integer}
+    :unique_tags      – %{tag_key => MapSet.t(tag_values)}
+    :malformed_count  – integer
+
+  Returns `{:error, reason}` if the file cannot be opened.
+  """
+  @spec summarize(String.t()) :: {:ok, map()} | {:error, term()}
+  def summarize(path) do
+    case File.stat(path) do
+      {:error, reason} ->
+        {:error, reason}
+
+      {:ok, _} ->
+        report =
+          path
+          |> File.stream!([], :line)
+          |> Stream.map(&String.trim_trailing(&1, "\n"))
+          |> Stream.map(&String.trim_trailing(&1, "\r"))
+          |> Enum.reduce(initial_acc(), &process_line/2)
+          |> build_report()
+
+        {:ok, report}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Accumulator helpers
+  # ---------------------------------------------------------------------------
+
+  defp initial_acc do
+    %{
+      per_metric: %{},
+      timestamps: nil,
+      samples_per_hour: %{},
+      unique_tags: %{},
+      total: 0,
+      malformed: 0
+    }
+  end
+
+  # ---------------------------------------------------------------------------
+  # Per-line processing
+  # ---------------------------------------------------------------------------
+
+  defp process_line(raw_line, acc) do
+    trimmed = String.trim(raw_line)
+
+    if trimmed == "" do
+      acc
+    else
+      case parse_line(trimmed) do
+        {:ok, entry} ->
+          accumulate(acc, entry)
+
+        :error ->
+          %{acc | malformed: acc.malformed + 1}
+      end
+    end
+  end
+
+  defp parse_line(trimmed) do
+    with {:ok, obj} when is_map(obj) <- Jason.decode(trimmed),
+         {:ok, ts_string} <- fetch_string(obj, "timestamp"),
+         {:ok, name} <- fetch_nonempty_string(obj, "name"),
+         {:ok, value} <- fetch_number(obj, "value"),
+         {:ok, tags} <- fetch_tags(obj, "tags"),
+         {:ok, dt} <- parse_timestamp(ts_string) do
+      {:ok, %{timestamp: dt, name: name, value: value, tags: tags}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp fetch_string(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} when is_binary(value) -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  defp fetch_nonempty_string(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} when is_binary(value) and value != "" -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  defp fetch_number(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} when is_number(value) -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  defp fetch_tags(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} when is_map(value) -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  defp parse_timestamp(ts_string) do
+    case DateTime.from_iso8601(ts_string) do
+ (truncated)
+03:36:43.143 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `update_metric_stats/3`
+
+You are completing the `MetricAggregator` module below. All functions are already
+implemented **except the body of the private helper `update_metric_stats/3`**, which
+has been replaced with `# TODO`. Implement that one function.
+
+## What `update_metric_stats/3` must do
+
+`update_metric_stats(acc, name, value)` folds a single sample's `value` into the
+running per-metric statistics carried in the accumulator `acc`. The stats live under
+`acc[:per_metric]`, a map from a metric **name string** to a stats map.
+
+It must return the accumulator with an updated `:per_metric` map, where:
+
+- If `name` has **not been seen before**, insert a fresh stats map:
+  `%{count: 1, min: value, max: value, sum: value}`.
+- If `name` **already exists**, update its stats map by:
+  - incrementing `:count` by 1,
+  - setting `:min` to the smaller of the existing `:min` and `value`,
+  - setting `:max` to the larger of the existing `:max` and `value`,
+  - adding `value` to `:sum`.
+
+Notes:
+
+- Do **not** compute `:mean` here — it is derived later in `finalize_metrics/1` from
+  `:sum` and `:count`. The stats map produced here has exactly the keys
+  `:count`, `:min`, `:max`, and `:sum`.
+- Only the `:per_metric` entry of `acc` should change; every other key must be left
+  untouched. Prefer `Map.update!/3` on `:per_metric` together with `Map.update/4`
+  on the inner metrics map.
+
+```elixir
+defmodule MetricAggregator do
+  @moduledoc """
+  Parses a structured, newline-delimited JSON metrics file and produces a
+  statistical summary report.
+
+  Each line must be a JSON object with the fields:
+    "timestamp" – ISO 8601 datetime string
+    "name"      – non-empty string identifying the metric
+    "value"     – number (integer or float)
+    "tags"      – JSON object of string key/value pairs
+
+  Blank / whitespace-only lines are silently skipped.
+  Lines that cannot be parsed (bad JSON, missing fields, wrong types)
+  increment :malformed_count and are otherwise ignored.
+
+  Requires the `jason` dependency in mix.exs:
+      {:jason, "~> 1.4"}
+  """
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Summarize the metrics file at `path`.
+
+  Returns `{:ok, report}` on success, where `report` is a map with keys:
+
+    :per_metric       – %{name_string => %{count, min, max, sum, mean}}
+    :total_samples    – integer
+    :time_range       – {first_dt, last_dt} | nil
+    :samples_per_hour – %{{date_tuple, hour} => integer}
+    :unique_tags      – %{tag_key => MapSet.t(tag_values)}
+    :malformed_count  – integer
+
+  Returns `{:error, reason}` if the file cannot be opened.
+  """
+  @spec summarize(String.t()) :: {:ok, map()} | {:error, term()}
+  def summarize(path) do
+    case File.stat(path) do
+      {:error, reason} ->
+        {:error, reason}
+
+      {:ok, _} ->
+        report =
+          path
+          |> File.stream!([], :line)
+          |> Stream.map(&String.trim_trailing(&1, "\n"))
+          |> Stream.map(&String.trim_trailing(&1, "\r"))
+          |> Enum.reduce(initial_acc(), &process_line/2)
+          |> build_report()
+
+        {:ok, report}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Accumulator helpers
+  # ---------------------------------------------------------------------------
+
+  defp initial_acc do
+    %{
+      per_metric: %{},
+      timestamps: nil,
+      samples_per_hour: %{},
+      unique_tags: %{},
+      total: 0,
+      malformed: 0
+    }
+  end
+
+  # ---------------------------------------------------------------------------
+  # Per-line processing
+  # ---------------------------------------------------------------------------
+
+  defp process_line(raw_line, acc) do
+    trimmed = String.trim(raw_line)
+
+    if trimmed == "" do
+      acc
+    else
+      case parse_line(trimmed) do
+        {:ok, entry} ->
+          accumulate(acc, entry)
+
+        :error ->
+          %{acc | malformed: acc.malformed + 1}
+      end
+    end
+  end
+
+  defp parse_line(trimmed) do
+    with {:ok, obj} when is_map(obj) <- Jason.decode(trimmed),
+         {:ok, ts_string} <- fetch_string(obj, "timestamp"),
+         {:ok, name} <- fetch_nonempty_string(obj, "name"),
+         {:ok, value} <- fetch_number(obj, "value"),
+         {:ok, tags} <- fetch_tags(obj, "tags"),
+         {:ok, dt} <- parse_timestamp(ts_string) do
+      {:ok, %{timestamp: dt, name: name, value: value, tags: tags}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp fetch_string(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} when is_binary(value) -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  defp fetch_nonempty_string(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} when is_binary(value) and value != "" -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  defp fetch_number(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} when is_number(value) -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  defp fetch_tags(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, value} when is_map(value) -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  defp parse_timestamp(ts_string) do
+    case DateTime.from_iso8601(ts_string) do
+      {:ok, dt, _offset} ->
+        {:ok, DateTime.shift_zone!(dt, "Etc/UTC")}
+
+      {:error, _} ->
+        :error
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Accumulation
+  # ---------------------------------------------------------------------------
+
+  defp accumulate(acc, %{timestamp: dt, name: name, value: value, tags: tags}) do
+    acc
+    |> update_metric_stats(name, value)
+    |> update_timestamps(dt)
+    |> update_samples_per_hour(dt)
+    |> update_unique_tags(tags)
+    |> Map.update!(:total, &(&1 + 1))
+  end
+
+  defp update_metric_stats(acc, name, value) do
+    # TODO
+  end
+
+  defp update_timestamps(acc, dt) do
+    Map.update!(acc, :timestamps, fn
+      nil ->
+        {dt, dt}
+
+      {min_dt, max_dt} ->
+        new_min = if DateTime.compare(dt, min_dt) == :lt, do: dt, else: min_dt
+        new_max = if DateTime.compare(dt, max_dt) == :gt, do: dt, else: max_dt
+        {new_min, new_max}
+    end)
+  end
+
+  defp update_samples_per_hour(acc, dt) do
+    bucket = hour_bucket(dt)
+
+    Map.update!(acc, :samples_per_hour, fn sph ->
+      Map.update(sph, bucket, 1, &(&1 + 1))
+    end)
+  end
+
+  defp update_unique_tags(acc, tags) do
+    Map.update!(acc, :unique_tags, fn ut ->
+      Enum.reduce(tags, ut, fn {k, v}, tag_acc ->
+        Map.update(tag_acc, k, MapSet.new([v]), &MapSet.put(&1, v))
+      end)
+    end)
+  end
+
+  defp hour_bucket(%DateTime{year: y, month: m, day: d, hour: h}) do
+    {{y, m, d}, h}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Report construction
+  # ---------------------------------------------------------------------------
+
+  defp build_report(acc) do
+    %{
+      per_metric: finalize_metrics(acc.per_metric),
+      total_samples: acc.total,
+      time_range: acc.timestamps,
+      samples_per_hour: acc.samples_per_hour,
+      unique_tags: acc.unique_tags,
+      malformed_count: acc.malformed
+    }
+  end
+
+  defp finalize_metrics(per_metric) do
+    Map.new(per_metric, fn {name, stats} ->
+      {name, Map.put(stats, :mean, stats.sum / stats.count)}
+    end)
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp update_metric_stats(acc, name, value) do
+    Map.update!(acc, :per_metric, fn metrics ->
+      Map.update(metrics, name, %{count: 1, min: value, max: value, sum: value}, fn stats ->
+        %{
+          stats
+          | count: stats.count + 1,
+            min: min(stats.min, value),
+            max: max(stats.max, value),
+            sum: stats.sum + value
+        }
+      end)
+    end)
+  end
+</file>
+03:36:43.143 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4495, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4495, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4495, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4495, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3454, "type" => "message"}], "output_tokens" => 3454, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+03:36:43.163 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_033_002_metrics_file_aggregator_02/033_002_metrics_file_aggregator_02 solution.ex
+03:36:43.960 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":13,"lines_over_98":0,"max_line_length":92,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"033_002_metrics_file_aggregator_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_033_002_metrics_file_aggregator_02/033_002_metrics_file_aggregator_02/solution.ex","task":"033_002_metrics_file_aggregator_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":18,"timestamp":"2026-07-04T01:36:43.938480Z"}
+03:36:43.961 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_033_002_metrics_file_aggregator_02/033_002_metrics_file_aggregator_02 .gen_staging/fim_033_002_metrics_file_aggregator_02/mutant.ex
+03:36:44.731 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":45,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"parent":"033_002_metrics_file_aggregator_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.6,"mode":"fim","overall":0.26,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 18/18 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_033_002_metrics_file_aggregator_02/mutant.ex","task":"033_002_metrics_file_aggregator_02","test_failures":[{"message":"MUTATION","module":"MetricAggregatorTest","test":"test per_metric stats for cpu_usage are correct"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test per_metric stats for mem_usage are correct"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test per_metric stats for disk_io are correct"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test total_samples is correct"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test malformed count is correct"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test time range covers first and last valid timestamps"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test samples_per_hour buckets are correct"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test unique_tags collects distinct values per key"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test unique_tags only contains keys actually present"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test empty file returns zero counts"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test file with only blank lines returns zero counts"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test file with only malformed lines"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test nonexistent file returns an error tuple"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test single valid line produces consistent report"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test line with empty name string is malformed"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test line with string value is malformed"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test samples_per_hour spans multiple calendar days"},{"message":"MUTATION","module":"MetricAggregatorTest","test":"test integer and float values are both accepted"}],"tests_errors":0,"tests_excluded":0,"tests_failed":18,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":18,"timestamp":"2026-07-04T01:36:44.710210Z"}
+03:36:44.731 [debug] fim mutation gate: killed
+03:36:44.732 [info] promoted 033_002_metrics_file_aggregator_02 -> tasks/033_002_metrics_file_aggregator_02

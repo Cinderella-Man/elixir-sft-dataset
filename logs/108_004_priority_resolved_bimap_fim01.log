@@ -1,0 +1,356 @@
+08:01:35.852 [info] FIM 108_004_priority_resolved_bimap_fim01 → 108_004_priority_resolved_bimap_02: target handle_call/3
+08:01:35.852 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+08:01:35.852 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `handle_call/3`.
+
+Generate a prompt describing how to implement `handle_call/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `handle_call/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `handle_call/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `handle_call/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Priority-Resolved BiMap
+
+Write me an Elixir GenServer module called `PriorityBiMap` that maintains a **bidirectional mapping** (a bijection between keys and values) where every pair carries a **priority**, and conflicts are resolved by priority rather than by last-write-wins. Unlike a classic BiMap — where a new `put` always evicts whatever collides with it — here a lower-priority write is **rejected** and leaves the existing mappings untouched.
+
+## Public API
+
+- `PriorityBiMap.start_link(opts)` — starts the process. It must accept a `:name` option used to register the process (all other functions take that name — or any valid GenServer server reference — as their first argument). Return the usual `{:ok, pid}`.
+
+- `PriorityBiMap.put(name, key, value, priority)` — attempts to install the association `{key, value}` with the given integer `priority`. A `put` can conflict with **up to two** existing pairs: the pair currently at `key` (if `key` maps to a *different* value) and the pair currently at `value` (if `value` maps to a *different* key). Resolution:
+  - **Same pair already present** (`key` already maps to exactly `value`): accept and update the stored priority to `priority`. Returns `{:ok, []}` (nothing displaced).
+  - **No conflict** (both `key` and `value` are free): install the pair. Returns `{:ok, []}`.
+  - **Conflict(s) exist**: the new pair is accepted **only if `priority` is strictly greater than every conflicting pair's priority**. On acceptance, all conflicting pairs are evicted and the new pair installed; returns `{:ok, evicted}` where `evicted` is the list of displaced `{key, value}` pairs. If `priority` is **not** strictly greater than some conflicting pair (including ties), the put is **rejected**: nothing changes and it returns `{:error, :rejected}`.
+
+- `PriorityBiMap.get_by_key(name, key)` — returns `{:ok, value}` if `key` is present, otherwise `:error`.
+
+- `PriorityBiMap.get_by_value(name, value)` — returns `{:ok, key}` if `value` is present, otherwise `:error`.
+
+- `PriorityBiMap.priority(name, key)` — returns `{:ok, priority}` for the pair at `key`, otherwise `:error`.
+
+- `PriorityBiMap.delete(name, key)` — removes `key` and its associated value (both directions), including its priority. Returns `:ok`. Deleting an absent key is a harmless no-op.
+
+## The invariant
+
+- The structure is always a true bijection: every `get_by_key(name, k)` returning `{:ok, v}` implies `get_by_value(name, v)` returns `{:ok, k}`, and vice versa; each key/value is associated with at most one partner.
+- A rejected `put` is a complete no-op: no mapping, no priority, no partial change.
+- An accepted conflicting `put` evicts every conflicting pair (both the key-side and the value-side pair when they differ) so the bijection is preserved, and reports exactly those displaced pairs.
+
+Keys and values can be any term (priorities are integers). Use only the OTP standard library — no external dependencies. Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule PriorityBiMap do
+  @moduledoc """
+  A GenServer maintaining a bijective bidirectional mapping where each pair
+  carries an integer priority and conflicts are resolved by priority.
+
+  A `put/4` may conflict with the pair currently at `key` and/or the pair
+  currently at `value`. It succeeds only when its priority is strictly greater
+  than every conflicting pair's priority, in which case the conflicting pairs are
+  evicted and reported; otherwise (including ties) it is rejected and nothing
+  changes. Re-putting the exact same pair simply updates its stored priority.
+
+  Keys and values may be any term; priorities are integers.
+  """
+
+  use GenServer
+
+  ## Client API
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    GenServer.start_link(__MODULE__, :ok, [name: name] ++ opts)
+  end
+
+  @doc "Stores the `key`<->`value` pair at `priority`, resolving conflicts by priority."
+  @spec put(GenServer.server(), term(), term(), integer()) ::
+          {:ok, [{term(), term()}]} | {:error, :rejected}
+  def put(name, key, value, priority) do
+    GenServer.call(name, {:put, key, value, priority})
+  end
+
+  @spec get_by_key(GenServer.server(), term()) :: {:ok, term()} | :error
+  def get_by_key(name, key), do: GenServer.call(name, {:get_by_key, key})
+
+  @spec get_by_value(GenServer.server(), term()) :: {:ok, term()} | :error
+  def get_by_value(name, value), do: GenServer.call(name, {:get_by_value, value})
+
+  @spec priority(GenServer.server(), term()) :: {:ok, integer()} | :error
+  def priority(name, key), do: GenServer.call(name, {:priority, key})
+
+  @spec delete(GenServer.server(), term()) :: :ok
+  def delete(name, key), do: GenServer.call(name, {:delete, key})
+
+  ## Server callbacks
+
+  @impl true
+  def init(:ok) do
+    # forward: key => value, reverse: value => key, prio: key => priority
+    {:ok, %{forward: %{}, reverse: %{}, prio: %{}}}
+  end
+
+  @impl true
+  def handle_call({:put, key, value, priority}, _from, state) do
+    %{forward: f, reverse: r, prio: p} = state
+
+    # The pair currently sitting at `key`, if it binds a *different* value.
+    key_conflict =
+      case Map.fetch(f, key) do
+        {:ok, ^value} -> nil
+        {:ok, oldv} -> {key, oldv, Map.fetch!(p, key)}
+        :error -> nil
+      end
+
+    # The pair currently sitting at `value`, if it binds a *different* key.
+    value_conflict =
+      case Map.fetch(r, value) do
+        {:ok, ^key} -> nil
+        {:ok, oldk} -> {oldk, value, Map.fetch!(p, oldk)}
+        :error -> nil
+      end
+
+    conflicts = Enum.reject([key_conflict, value_conflict], &is_nil/1)
+
+    cond do
+      conflicts == [] ->
+        # Same pair (priority update) or a fully free slot: install.
+        {:reply, {:ok, []}, install(state, key, value, priority)}
+
+      priority > Enum.max(Enum.map(conflicts, fn {_k, _v, cp} -> cp end)) ->
+        state = Enum.reduce(conflicts, state, fn {ck, cv, _cp}, acc -> evict(acc, ck, cv) end)
+        evicted = Enum.map(conflicts, fn {ck, cv, _cp} -> {ck, cv} end)
+        {:reply, {:ok, evicted}, install(state, key, value, priority)}
+
+      true ->
+        {:reply, {:error, :rejected}, state}
+    end
+  end
+
+  def handle_call({:get_by_key, key}, _from, state) do
+    {:reply, Map.fetch(state.forward, key), state}
+  end
+
+  def handle_call({:get_by_value, value}, _from, state) do
+    {:reply, Map.fetch(state.reverse, value), state}
+  end
+
+  def handle_call({:priority, key}, _from, state) do
+    {:reply, Map.fetch(state.prio, key), state}
+  end
+
+  def handle_call({:delete, key}, _from, state) do
+    case Map.fetch(state.forward, key) do
+      {:ok, value} -> {:reply, :ok, evict(state, key, value)}
+      :error -> {:reply, :ok, state}
+    end
+  end
+
+  ## Helpers
+
+  defp install(state, key, value, priority) do
+    %{
+      state
+      | forward: Map.put(state.forward, key, value),
+        reverse: Map.put(state.reverse, value, key),
+        p (truncated)
+08:02:06.153 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the middle: `PriorityBiMap.handle_call/3` (the `:put` clause)
+
+Implement the `handle_call/3` clause that handles the `{:put, key, value, priority}`
+message. It must resolve conflicts by priority and keep the structure a true
+bijection.
+
+The state is a map `%{forward: %{}, reverse: %{}, prio: %{}}` where `forward` maps
+`key => value`, `reverse` maps `value => key`, and `prio` maps `key => priority`.
+
+The clause must:
+
+- Determine the **key-side conflict**: the pair currently sitting at `key`. Look up
+  `key` in `forward`. If it maps to the exact same `value`, there is no key-side
+  conflict; if it maps to a *different* value `oldv`, the conflicting pair is
+  `{key, oldv}` with its stored priority (from `prio`); if `key` is absent, there is
+  no key-side conflict.
+- Determine the **value-side conflict**: the pair currently sitting at `value`. Look
+  up `value` in `reverse`. If it maps to the exact same `key`, there is no value-side
+  conflict; if it maps to a *different* key `oldk`, the conflicting pair is
+  `{oldk, value}` with its stored priority (from `prio` at `oldk`); if `value` is
+  absent, there is no value-side conflict.
+- Collect the non-nil conflicts. Then:
+  - **No conflicts** (the same pair is already present, so only its priority changes,
+    or both slots are free): install the pair and reply `{:ok, []}`.
+  - **Conflicts exist and `priority` is strictly greater than every conflicting
+    pair's priority**: evict each conflicting pair (using `evict/3`), install the new
+    pair (using `install/4`), and reply `{:ok, evicted}` where `evicted` is the list
+    of displaced `{key, value}` pairs.
+  - **Otherwise** (some conflict's priority is greater than or equal to `priority`,
+    including ties): reject the put as a complete no-op and reply
+    `{:error, :rejected}` with the state unchanged.
+
+Use the existing private helpers `install/4` and `evict/3`. The other `handle_call/3`
+clauses are already implemented and must not change.
+
+```elixir
+defmodule PriorityBiMap do
+  @moduledoc """
+  A GenServer maintaining a bijective bidirectional mapping where each pair
+  carries an integer priority and conflicts are resolved by priority.
+
+  A `put/4` may conflict with the pair currently at `key` and/or the pair
+  currently at `value`. It succeeds only when its priority is strictly greater
+  than every conflicting pair's priority, in which case the conflicting pairs are
+  evicted and reported; otherwise (including ties) it is rejected and nothing
+  changes. Re-putting the exact same pair simply updates its stored priority.
+
+  Keys and values may be any term; priorities are integers.
+  """
+
+  use GenServer
+
+  ## Client API
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    GenServer.start_link(__MODULE__, :ok, [name: name] ++ opts)
+  end
+
+  @doc "Stores the `key`<->`value` pair at `priority`, resolving conflicts by priority."
+  @spec put(GenServer.server(), term(), term(), integer()) ::
+          {:ok, [{term(), term()}]} | {:error, :rejected}
+  def put(name, key, value, priority) do
+    GenServer.call(name, {:put, key, value, priority})
+  end
+
+  @spec get_by_key(GenServer.server(), term()) :: {:ok, term()} | :error
+  def get_by_key(name, key), do: GenServer.call(name, {:get_by_key, key})
+
+  @spec get_by_value(GenServer.server(), term()) :: {:ok, term()} | :error
+  def get_by_value(name, value), do: GenServer.call(name, {:get_by_value, value})
+
+  @spec priority(GenServer.server(), term()) :: {:ok, integer()} | :error
+  def priority(name, key), do: GenServer.call(name, {:priority, key})
+
+  @spec delete(GenServer.server(), term()) :: :ok
+  def delete(name, key), do: GenServer.call(name, {:delete, key})
+
+  ## Server callbacks
+
+  @impl true
+  def init(:ok) do
+    # forward: key => value, reverse: value => key, prio: key => priority
+    {:ok, %{forward: %{}, reverse: %{}, prio: %{}}}
+  end
+
+  @impl true
+  def handle_call({:put, key, value, priority}, _from, state) do
+    # TODO
+  end
+
+  def handle_call({:get_by_key, key}, _from, state) do
+    {:reply, Map.fetch(state.forward, key), state}
+  end
+
+  def handle_call({:get_by_value, value}, _from, state) do
+    {:reply, Map.fetch(state.reverse, value), state}
+  end
+
+  def handle_call({:priority, key}, _from, state) do
+    {:reply, Map.fetch(state.prio, key), state}
+  end
+
+  def handle_call({:delete, key}, _from, state) do
+    case Map.fetch(state.forward, key) do
+      {:ok, value} -> {:reply, :ok, evict(state, key, value)}
+      :error -> {:reply, :ok, state}
+    end
+  end
+
+  ## Helpers
+
+  defp install(state, key, value, priority) do
+    %{
+      state
+      | forward: Map.put(state.forward, key, value),
+        reverse: Map.put(state.reverse, value, key),
+        prio: Map.put(state.prio, key, priority)
+    }
+  end
+
+  defp evict(state, key, value) do
+    %{
+      state
+      | forward: Map.delete(state.forward, key),
+        reverse: Map.delete(state.reverse, value),
+        prio: Map.delete(state.prio, key)
+    }
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  def handle_call({:put, key, value, priority}, _from, state) do
+    %{forward: f, reverse: r, prio: p} = state
+
+    # The pair currently sitting at `key`, if it binds a *different* value.
+    key_conflict =
+      case Map.fetch(f, key) do
+        {:ok, ^value} -> nil
+        {:ok, oldv} -> {key, oldv, Map.fetch!(p, key)}
+        :error -> nil
+      end
+
+    # The pair currently sitting at `value`, if it binds a *different* key.
+    value_conflict =
+      case Map.fetch(r, value) do
+        {:ok, ^key} -> nil
+        {:ok, oldk} -> {oldk, value, Map.fetch!(p, oldk)}
+        :error -> nil
+      end
+
+    conflicts = Enum.reject([key_conflict, value_conflict], &is_nil/1)
+
+    cond do
+      conflicts == [] ->
+        # Same pair (priority update) or a fully free slot: install.
+        {:reply, {:ok, []}, install(state, key, value, priority)}
+
+      priority > Enum.max(Enum.map(conflicts, fn {_k, _v, cp} -> cp end)) ->
+        state = Enum.reduce(conflicts, state, fn {ck, cv, _cp}, acc -> evict(acc, ck, cv) end)
+        evicted = Enum.map(conflicts, fn {ck, cv, _cp} -> {ck, cv} end)
+        {:reply, {:ok, evicted}, install(state, key, value, priority)}
+
+      true ->
+        {:reply, {:error, :rejected}, state}
+    end
+  end
+</file>
+08:02:06.153 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7057, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7057, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7057, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7057, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 2812, "type" => "message"}], "output_tokens" => 2812, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+08:02:06.173 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_108_004_priority_resolved_bimap_02/108_004_priority_resolved_bimap_02 solution.ex
+08:02:06.873 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":35,"lines_over_98":0,"max_line_length":94,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"108_004_priority_resolved_bimap_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_108_004_priority_resolved_bimap_02/108_004_priority_resolved_bimap_02/solution.ex","task":"108_004_priority_resolved_bimap_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-11T06:02:06.849510Z"}
+08:02:06.874 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_108_004_priority_resolved_bimap_02/108_004_priority_resolved_bimap_02 .gen_staging/fim_108_004_priority_resolved_bimap_02/mutant.ex
+08:02:07.612 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":62,"mode":"fim","pipe_chain_count":0,"public_fn_count":1,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"parent":"108_004_priority_resolved_bimap_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.5,"mode":"fim","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 11/12 failed"],"tests":0.08},"shape":"fim","solution_file":".gen_staging/fim_108_004_priority_resolved_bimap_02/mutant.ex","task":"108_004_priority_resolved_bimap_02","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{PriorityBiMap, :handle_call, 3, [file: ~c\"/tmp/evalfim_1593696_2626.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:pbm_1223, {:put, :a, 1, 10}, 5000]}}","module":"PriorityBiMapTest","test":"test put then look up in both directions"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{PriorityBiMap, :handle_call, 3, [file: ~c\"/tmp/evalfim_1593696_2626.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:pbm_1351, {:put, :a, 1, 5}, 5000]}}","module":"PriorityBiMapTest","test":"test non-conflicting pairs install cleanly"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{PriorityBiMap, :handle_call, 3, [file: ~c\"/tmp/evalfim_1593696_2626.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:pbm_1415, {:put, :x, 9, 3}, 5000]}}","module":"PriorityBiMapTest","test":"test re-putting the same pair updates its priority and displaces nothing"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{PriorityBiMap, :handle_call, 3, [file: ~c\"/tmp/evalfim_1593696_2626.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:pbm_6, {:put, :a, 1, 10}, 5000]}}","module":"PriorityBiMapTest","test":"test lower-priority put across two existing pairs is rejected and changes nothing"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{PriorityBiMap, :handle_call, 3, [file: ~c\"/tmp/evalfim_1593696_2626.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:pbm_1479, {:put, :m, 1, 5}, 5000]}}","module":"PriorityBiMapTest","test":"test equal priority is a tie and is rejected"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{PriorityBiMap, :handle_call, 3, [file: ~c\"/tmp/evalfim_1593696_2626.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:pbm_1543, {:put, :p, 1, 10}, 5000]}}","module":"PriorityBiMapTest","test":"test single value-side conflict is displaced when priority wins"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{PriorityBiMap, :handle_call, 3, [file: ~c\"/tmp/evalfim_1593696_2626.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:pbm_1607, {:put, :a, 1, 10}, 5000]}}","module":"PriorityBiMapTest","test":"test double conflict displaces both pairs when priority wins"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{PriorityBiMap, :handle_call, 3, [file: ~c\"/tmp/evalfim_1593696_2626.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:pbm_70, {:put, :a, 1, 5}, 5000]}}","module":"PriorityBiMapTest","test":"test delete removes both directions and the priority"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{PriorityBiMap, :handle_call, 3, [file: ~c\"/tmp/evalfim_1593696_2626.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:pbm_134, {:put, :a, 1, 5}, 5000]}}","module":"PriorityBiMapTest","test":"test delete of an absent key is a harmless no-op"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{PriorityBiMap, :handle_call, 3, [file: ~c\"/tmp/evalfim_1593696_2626.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:pbm_198, {:put, :a, 1, 10}, 5000]}}","module":"PriorityBiMapTest","test":"test a freed key/value can be re-used at any priority"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{PriorityBiMap, :handle_call, 3, [file: ~c\"/tmp/evalfim_1593696_2626.ex\", line: 54, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:pbm_1671, {:put, :a, 1, 10}, 5000]}}","module":"PriorityBiMapTest","test":"test bijection holds across a mixed accept/reject sequence"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-11T06:02:07.587122Z"}
+08:02:07.612 [debug] fim mutation gate: killed
+08:02:07.613 [info] promoted 108_004_priority_resolved_bimap_02 -> tasks/108_004_priority_resolved_bimap_02

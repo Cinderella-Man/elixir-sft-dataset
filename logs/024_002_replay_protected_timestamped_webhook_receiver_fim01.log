@@ -1,0 +1,464 @@
+02:39:20.469 [info] FIM 024_002_replay_protected_timestamped_webhook_receiver_fim01 → 024_002_replay_protected_timestamped_webhook_receiver_02: target verify_signed/5
+02:39:20.469 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+02:39:20.469 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `verify_signed/5`.
+
+Generate a prompt describing how to implement `verify_signed/5` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `verify_signed/5` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `verify_signed/5` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `verify_signed/5` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `WebhookReceiver` that implements a Plug-based HTTP endpoint for receiving webhook payloads using **replay-protected, timestamped HMAC-SHA256 signatures** (the Stripe `t=...,v1=...` scheme).
+
+I need these modules:
+
+1. `WebhookReceiver.Signature` — a module with:
+   - `sign(timestamp, payload, secret)` — compute HMAC-SHA256 of the string `"<timestamp>.<payload>"` using `secret` and return it hex-encoded (lowercase).
+   - `parse(header)` — parse a signature header of the form `"t=1700000000,v1=abcdef..."` into a map like `%{"t" => "1700000000", "v1" => "abcdef..."}`. Return `%{}` for anything that is not a binary.
+
+2. `WebhookReceiver.Store` — a behaviour with callbacks:
+   - `store_event(store, event_id, payload)` — persist with status `:pending`; `{:ok, :duplicate}` if the id already exists, `{:ok, :created}` if new.
+   - `get_event(store, event_id)` — `{:ok, event}` or `:error`.
+   - `all_events(store)` — all stored events as a list.
+
+3. `WebhookReceiver.MemoryStore` — a GenServer implementing the behaviour with an in-memory map. Each event is a map with at least `:event_id`, `:payload` (decoded map), and `:status` (`:pending` on creation).
+
+4. `WebhookReceiver.Router` — a `Plug.Router` exposing `POST /api/webhooks/stripe`. Options:
+   - `:secret` — the HMAC signing key (required).
+   - `:store` — the store process (required).
+   - `:tolerance` — max allowed clock skew in seconds (default `300`).
+   - `:now` — either an integer Unix-second timestamp or a 0-arity function returning one, used as "current time" (default `System.system_time(:second)`).
+
+Router behaviour:
+- Read the raw body once and the `stripe-signature` header.
+- If the header is missing/empty, unparseable, or the signature does not match, return **401** with `{"error": "invalid_signature"}`.
+- If the header's timestamp is outside the tolerance window (`abs(now - t) > tolerance`), return **401** with `{"error": "timestamp_expired"}` (check this before rejecting on signature mismatch).
+- On a valid, in-window signature, decode the JSON, extract the `"id"` field:
+  - already stored → **200** `{"status": "duplicate"}`
+  - new → store and **200** `{"status": "received"}`
+- Malformed JSON or missing `"id"` → **400** `{"error": "bad_payload"}`.
+
+The raw body must be available for both signature verification and JSON decoding. Use only Plug and Jason (plus `:crypto` from OTP). No Phoenix, no Ecto. Give me all modules in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule WebhookReceiver.Signature do
+  @moduledoc """
+  Replay-protected timestamped HMAC-SHA256 signatures (Stripe `t=,v1=` scheme).
+  """
+
+  @doc """
+  Computes the lowercase hex HMAC-SHA256 of `"<timestamp>.<payload>"`.
+  """
+  @spec sign(integer() | binary(), binary(), binary()) :: String.t()
+  def sign(timestamp, payload, secret) when is_binary(payload) and is_binary(secret) do
+    :crypto.mac(:hmac, :sha256, secret, "#{timestamp}.#{payload}")
+    |> Base.encode16(case: :lower)
+  end
+
+  @doc """
+  Parses a header like `"t=123,v1=abc"` into a map of string keys/values.
+
+  Returns `%{}` for any non-binary input.
+  """
+  @spec parse(term()) :: %{optional(String.t()) => String.t()}
+  def parse(header) when is_binary(header) do
+    header
+    |> String.split(",", trim: true)
+    |> Enum.reduce(%{}, fn part, acc ->
+      case String.split(part, "=", parts: 2) do
+        [k, v] -> Map.put(acc, String.trim(k), String.trim(v))
+        _ -> acc
+      end
+    end)
+  end
+
+  def parse(_), do: %{}
+end
+
+defmodule WebhookReceiver.Store do
+  @moduledoc """
+  Behaviour describing a webhook event store plus client functions.
+  """
+
+  @callback store_event(store :: pid() | atom(), event_id :: String.t(), payload :: map()) ::
+              {:ok, :created | :duplicate}
+  @callback get_event(store :: pid() | atom(), event_id :: String.t()) ::
+              {:ok, map()} | :error
+  @callback all_events(store :: pid() | atom()) :: [map()]
+
+  @doc """
+  Persists `payload` under `event_id`; returns `{:ok, :created}` or `{:ok, :duplicate}`.
+  """
+  @spec store_event(pid() | atom(), String.t(), map()) :: {:ok, :created | :duplicate}
+  def store_event(store, event_id, payload) do
+    GenServer.call(store, {:store_event, event_id, payload})
+  end
+
+  @doc """
+  Fetches a stored event; returns `{:ok, event}` or `:error`.
+  """
+  @spec get_event(pid() | atom(), String.t()) :: {:ok, map()} | :error
+  def get_event(store, event_id) do
+    GenServer.call(store, {:get_event, event_id})
+  end
+
+  @doc """
+  Returns all stored events as a list.
+  """
+  @spec all_events(pid() | atom()) :: [map()]
+  def all_events(store) do
+    GenServer.call(store, :all_events)
+  end
+end
+
+defmodule WebhookReceiver.MemoryStore do
+  @moduledoc """
+  In-memory `GenServer` implementation of `WebhookReceiver.Store`.
+  """
+
+  @behaviour WebhookReceiver.Store
+  use GenServer
+
+  @doc """
+  Starts the in-memory store; accepts an optional `:name` in `opts`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc """
+  Persists `payload` under `event_id`; returns `{:ok, :created}` or `{:ok, :duplicate}`.
+  """
+  @spec store_event(pid() | atom(), String.t(), map()) :: {:ok, :created | :duplicate}
+  @impl WebhookReceiver.Store
+  def store_event(store, event_id, payload) do
+    GenServer.call(store, {:store_event, event_id, payload})
+  end
+
+  @doc """
+  Fetches a stored event; returns `{:ok, event}` or `:error`.
+  """
+  @spec get_event(pid() | atom(), String.t()) :: {:ok, map()} | :error
+  @impl WebhookReceiver.Store
+  def get_event(store, event_id) do
+    GenServer.call(store, {:get_event, event_id})
+  end
+
+  @doc """
+  Returns all stored events as a list.
+  """
+  @spec all_events(pid() | atom()) :: [map()]
+  @impl WebhookReceiver.Store
+  def all_events(store) do
+    GenServer.call(store, :all_events)
+  end
+
+  @doc """
+  Initializes the store state with an empty event map.
+  """
+  @spec init(keyword()) :: {:ok, %{events: map()}}
+  @impl GenServer
+  def init(_opts), do: {:ok, %{events: %{}}}
+
+  @doc """
+  Handles store, fetch and list calls against the in-memory event map.
+  """
+  @spec handle_call(term(), GenServer.from(), %{events: map()}) ::
+          {:reply, term(), %{events: map()}}
+  @impl GenServer
+  def handle_call({:store_event, event_id, payload}, _from, %{events: events} = state) do
+    if Map.has_key?(events, event_id) do
+      {:reply, {:ok, :duplicate}, state}
+    else
+      event = %{event_id: event_id, payload: payload, status: :pending}
+      {:reply, {:ok, :created}, %{state | events: Map.put(events, event_id, event)}}
+    end
+  end
+
+  @impl GenServer
+  def handle_call({:get_event, event_id}, _from, %{events: events} = state) do
+    case Map.fetch(events, event_id) do
+      {:ok, event} -> {:reply, {:ok, event}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  @impl GenServer (truncated)
+02:39:59.687 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `verify_signed/5` function. It takes `header` (the raw
+`stripe-signature` header value, which may be `nil` or a non-binary), `body` (the
+raw request body binary), `secret` (the HMAC signing key), `now` (the current time
+as an integer Unix-second timestamp), and `tolerance` (the maximum allowed clock
+skew in seconds).
+
+It must parse the signature header into its components and validate them, returning
+one of three results:
+
+- `:ok` — the header is present, well-formed, its timestamp is within the tolerance
+  window, and the signature matches.
+- `{:error, :expired}` — the header parses to a valid integer timestamp `t` and a
+  `v1` value, but the timestamp is outside the tolerance window
+  (`abs(now - t) > tolerance`). This must be checked **before** rejecting on a
+  signature mismatch.
+- `{:error, :invalid}` — anything else: the header is `nil`/empty/non-binary,
+  unparseable, missing the `"t"` or `"v1"` keys, the timestamp is not a clean
+  integer, or the signature does not match.
+
+Only treat the header as parseable when it is a non-empty binary; otherwise parse to
+an empty map. Extract `"t"` and `"v1"` from the parsed map, parse `"t"` into an
+integer (rejecting any trailing characters), and compare the recomputed signature
+(`Signature.sign(ts, body, secret)`) against `v1` using a constant-time comparison
+(`Plug.Crypto.secure_compare/2`).
+
+```elixir
+defmodule WebhookReceiver.Signature do
+  @moduledoc """
+  Replay-protected timestamped HMAC-SHA256 signatures (Stripe `t=,v1=` scheme).
+  """
+
+  @doc """
+  Computes the lowercase hex HMAC-SHA256 of `"<timestamp>.<payload>"`.
+  """
+  @spec sign(integer() | binary(), binary(), binary()) :: String.t()
+  def sign(timestamp, payload, secret) when is_binary(payload) and is_binary(secret) do
+    :crypto.mac(:hmac, :sha256, secret, "#{timestamp}.#{payload}")
+    |> Base.encode16(case: :lower)
+  end
+
+  @doc """
+  Parses a header like `"t=123,v1=abc"` into a map of string keys/values.
+
+  Returns `%{}` for any non-binary input.
+  """
+  @spec parse(term()) :: %{optional(String.t()) => String.t()}
+  def parse(header) when is_binary(header) do
+    header
+    |> String.split(",", trim: true)
+    |> Enum.reduce(%{}, fn part, acc ->
+      case String.split(part, "=", parts: 2) do
+        [k, v] -> Map.put(acc, String.trim(k), String.trim(v))
+        _ -> acc
+      end
+    end)
+  end
+
+  def parse(_), do: %{}
+end
+
+defmodule WebhookReceiver.Store do
+  @moduledoc """
+  Behaviour describing a webhook event store plus client functions.
+  """
+
+  @callback store_event(store :: pid() | atom(), event_id :: String.t(), payload :: map()) ::
+              {:ok, :created | :duplicate}
+  @callback get_event(store :: pid() | atom(), event_id :: String.t()) ::
+              {:ok, map()} | :error
+  @callback all_events(store :: pid() | atom()) :: [map()]
+
+  @doc """
+  Persists `payload` under `event_id`; returns `{:ok, :created}` or `{:ok, :duplicate}`.
+  """
+  @spec store_event(pid() | atom(), String.t(), map()) :: {:ok, :created | :duplicate}
+  def store_event(store, event_id, payload) do
+    GenServer.call(store, {:store_event, event_id, payload})
+  end
+
+  @doc """
+  Fetches a stored event; returns `{:ok, event}` or `:error`.
+  """
+  @spec get_event(pid() | atom(), String.t()) :: {:ok, map()} | :error
+  def get_event(store, event_id) do
+    GenServer.call(store, {:get_event, event_id})
+  end
+
+  @doc """
+  Returns all stored events as a list.
+  """
+  @spec all_events(pid() | atom()) :: [map()]
+  def all_events(store) do
+    GenServer.call(store, :all_events)
+  end
+end
+
+defmodule WebhookReceiver.MemoryStore do
+  @moduledoc """
+  In-memory `GenServer` implementation of `WebhookReceiver.Store`.
+  """
+
+  @behaviour WebhookReceiver.Store
+  use GenServer
+
+  @doc """
+  Starts the in-memory store; accepts an optional `:name` in `opts`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+  end
+
+  @doc """
+  Persists `payload` under `event_id`; returns `{:ok, :created}` or `{:ok, :duplicate}`.
+  """
+  @spec store_event(pid() | atom(), String.t(), map()) :: {:ok, :created | :duplicate}
+  @impl WebhookReceiver.Store
+  def store_event(store, event_id, payload) do
+    GenServer.call(store, {:store_event, event_id, payload})
+  end
+
+  @doc """
+  Fetches a stored event; returns `{:ok, event}` or `:error`.
+  """
+  @spec get_event(pid() | atom(), String.t()) :: {:ok, map()} | :error
+  @impl WebhookReceiver.Store
+  def get_event(store, event_id) do
+    GenServer.call(store, {:get_event, event_id})
+  end
+
+  @doc """
+  Returns all stored events as a list.
+  """
+  @spec all_events(pid() | atom()) :: [map()]
+  @impl WebhookReceiver.Store
+  def all_events(store) do
+    GenServer.call(store, :all_events)
+  end
+
+  @doc """
+  Initializes the store state with an empty event map.
+  """
+  @spec init(keyword()) :: {:ok, %{events: map()}}
+  @impl GenServer
+  def init(_opts), do: {:ok, %{events: %{}}}
+
+  @doc """
+  Handles store, fetch and list calls against the in-memory event map.
+  """
+  @spec handle_call(term(), GenServer.from(), %{events: map()}) ::
+          {:reply, term(), %{events: map()}}
+  @impl GenServer
+  def handle_call({:store_event, event_id, payload}, _from, %{events: events} = state) do
+    if Map.has_key?(events, event_id) do
+      {:reply, {:ok, :duplicate}, state}
+    else
+      event = %{event_id: event_id, payload: payload, status: :pending}
+      {:reply, {:ok, :created}, %{state | events: Map.put(events, event_id, event)}}
+    end
+  end
+
+  @impl GenServer
+  def handle_call({:get_event, event_id}, _from, %{events: events} = state) do
+    case Map.fetch(events, event_id) do
+      {:ok, event} -> {:reply, {:ok, event}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  @impl GenServer
+  def handle_call(:all_events, _from, %{events: events} = state) do
+    {:reply, Map.values(events), state}
+  end
+end
+
+defmodule WebhookReceiver.Router do
+  @moduledoc """
+  `Plug.Router` receiving replay-protected Stripe-style webhooks.
+  """
+
+  use Plug.Router, copy_opts_to_assign: :webhook_opts
+
+  alias WebhookReceiver.{Signature, Store}
+
+  plug :match
+  plug :dispatch
+
+  post "/api/webhooks/stripe" do
+    opts = conn.assigns.webhook_opts
+    secret = Keyword.fetch!(opts, :secret)
+    store = Keyword.fetch!(opts, :store)
+    tolerance = Keyword.get(opts, :tolerance, 300)
+    now = current_time(opts)
+
+    {:ok, body, conn} = read_body(conn)
+    header = conn |> get_req_header("stripe-signature") |> List.first()
+
+    case verify_signed(header, body, secret, now, tolerance) do
+      :ok -> handle_verified(conn, body, store)
+      {:error, :expired} -> send_json(conn, 401, %{error: "timestamp_expired"})
+      {:error, _} -> send_json(conn, 401, %{error: "invalid_signature"})
+    end
+  end
+
+  match _ do
+    send_resp(conn, 404, "not found")
+  end
+
+  defp verify_signed(header, body, secret, now, tolerance) do
+    # TODO
+  end
+
+  defp handle_verified(conn, body, store) do
+    case Jason.decode(body) do
+      {:ok, %{"id" => event_id} = payload} when is_binary(event_id) ->
+        case Store.store_event(store, event_id, payload) do
+          {:ok, :created} -> send_json(conn, 200, %{status: "received"})
+          {:ok, :duplicate} -> send_json(conn, 200, %{status: "duplicate"})
+        end
+
+      {:ok, _decoded} ->
+        send_json(conn, 400, %{error: "bad_payload"})
+
+      {:error, _reason} ->
+        send_json(conn, 400, %{error: "bad_payload"})
+    end
+  end
+
+  defp current_time(opts) do
+    case Keyword.get(opts, :now) do
+      nil -> System.system_time(:second)
+      fun when is_function(fun, 0) -> fun.()
+      int when is_integer(int) -> int
+    end
+  end
+
+  defp send_json(conn, status, data) do
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(status, Jason.encode!(data))
+  end
+end
+```
+</file>
+<file path="solution.ex">
+defp verify_signed(header, body, secret, now, tolerance) do
+  parsed = if is_binary(header) and header != "" (truncated)
+02:39:59.687 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4865, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4865, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4865, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4865, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3822, "type" => "message"}], "output_tokens" => 3822, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:39:59.706 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_024_002_replay_protected_timestamped_webhook_receiver_02/024_002_replay_protected_timestamped_webhook_receiver_02 solution.ex
+02:40:00.456 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":19,"lines_over_98":0,"max_line_length":88,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"024_002_replay_protected_timestamped_webhook_receiver_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_024_002_replay_protected_timestamped_webhook_receiver_02/024_002_replay_protected_timestamped_webhook_receiver_02/solution.ex","task":"024_002_replay_protected_timestamped_webhook_receiver_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":18,"tests_ran":true,"tests_skipped":0,"tests_total":18,"timestamp":"2026-07-04T00:40:00.433131Z"}
+02:40:00.457 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_024_002_replay_protected_timestamped_webhook_receiver_02/024_002_replay_protected_timestamped_webhook_receiver_02 .gen_staging/fim_024_002_replay_protected_timestamped_webhook_receiver_02/mutant.ex
+02:40:01.191 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":59,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":9,"compiled":true,"parent":"024_002_replay_protected_timestamped_webhook_receiver_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.1,"mode":"fim","overall":0.37,"reasons":["compilation: 9 warning(s) → -0.9 pts","tests: 14/18 failed"],"tests":0.22},"shape":"fim","solution_file":".gen_staging/fim_024_002_replay_protected_timestamped_webhook_receiver_02/mutant.ex","task":"024_002_replay_protected_timestamped_webhook_receiver_02","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test valid, in-window signature stores event"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test signature just inside the tolerance window is accepted"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test expired (too old) timestamp returns timestamp_expired"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test far-future timestamp returns timestamp_expired"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test wrong secret returns invalid_signature"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test tampered body with valid in-window timestamp returns invalid_signature"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test missing header returns invalid_signature"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test empty header returns invalid_signature"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test malformed header (no v1 element) returns invalid_signature"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test non-integer timestamp returns invalid_signature"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test duplicate delivery returns duplicate"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test malformed JSON returns bad_payload"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test missing id returns bad_payload"},{"message":"** (RuntimeError) MUTATION","module":"WebhookReceiverReplayTest","test":"test now option accepts a 0-arity function"}],"tests_errors":0,"tests_excluded":0,"tests_failed":14,"tests_passed":4,"tests_ran":true,"tests_skipped":0,"tests_total":18,"timestamp":"2026-07-04T00:40:01.167344Z"}
+02:40:01.191 [debug] fim mutation gate: killed
+02:40:01.192 [info] promoted 024_002_replay_protected_timestamped_webhook_receiver_02 -> tasks/024_002_replay_protected_timestamped_webhook_receiver_02

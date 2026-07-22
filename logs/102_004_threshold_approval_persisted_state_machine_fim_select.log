@@ -1,0 +1,211 @@
+07:39:26.556 [info] FIM candidate-select for 102_004_threshold_approval_persisted_state_machine_01 (up to 3)
+07:39:26.556 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+07:39:26.557 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer module called `StateMachine` that manages the lifecycle of
+stateful entities, persists every state transition to a database, and drives a **multi-approval
+workflow** in which the `:approve` event carries a persisted approval counter and only advances
+the entity to `:approved` once a configured number of approvals has been reached.
+
+## State Machine Definition
+
+Use the following change-request review lifecycle:
+
+States: `:draft`, `:in_review`, `:approved`, `:rejected`, `:withdrawn`
+
+Each entity also carries a non-negative integer **approval count**.
+
+Transitions (current_state + event → next_state), with their effect on the approval count:
+
+  - :draft      + :submit   → :in_review   (approval count reset to 0)
+  - :in_review  + :approve  → depends on the count (see below)
+  - :in_review  + :reject   → :rejected    (approval count unchanged)
+  - :draft      + :withdraw → :withdrawn   (approval count unchanged)
+  - :in_review  + :withdraw → :withdrawn   (approval count unchanged)
+
+Any other (state, event) combination is invalid.
+
+### The `:approve` event
+
+`:approve` is only valid from `:in_review`. Applying it **increments the approval count by 1**,
+then:
+
+  - If the new count is **less than** the configured required number of approvals, the entity
+    **stays in** `:in_review` (a transition row is still recorded, with `from_state` and
+    `to_state` both `:in_review` and the new count).
+  - If the new count is **greater than or equal to** the required number of approvals, the entity
+    transitions to `:approved` with that count.
+
+The required number of approvals is configured on the server (see `start_link/1`).
+
+## Public API
+
+- `StateMachine.start_link(opts)` — starts the GenServer. Accepts a `:repo` option (an Ecto repo
+  module), an optional `:required_approvals` option (a positive integer; **defaults to 2** when
+  not supplied), and an optional `:name` option for process registration.
+
+- `StateMachine.start(server, entity_id)` — loads the latest persisted state **and approval
+  count** for the given entity from the database. If no record exists, the entity starts in the
+  `:draft` state with an approval count of 0. Returns `{:ok, current_state, approval_count}`.
+
+- `StateMachine.get_state(server, entity_id)` — returns `{:ok, current_state, approval_count}`
+  for a previously started entity, or `{:error, :not_found}` if the entity has never been started
+  in this session.
+
+- `StateMachine.transition(server, entity_id, event)` — attempts to apply `event`.
+  - If valid: persists a transition row (new state + event + resulting approval count), updates
+    in-memory state, and returns `{:ok, new_state, new_approval_count}`.
+  - If the (state, event) pair is not valid: returns `{:error, :invalid_transition}` and writes
+    nothing.
+  - If the entity has not been started yet: returns `{:error, :not_found}`.
+
+- `StateMachine.history(server, entity_id)` — returns `{:ok, list}` where list is every recorded
+  transition for that entity in chronological (insertion) order. Each entry is a map with keys
+  `:event`, `:from_state`, `:to_state`, `:approvals`, and `:inserted_at`.
+
+## Persistence
+
+Use Ecto. Assume the caller supplies a configured Ecto repo. The relevant table is
+`entity_transitions` with these columns:
+
+  - `id` — bigint primary key (auto-increment)
+  - `entity_id` — string, non-null, indexed
+  - `event` — string (the atom serialised as a string), non-null
+  - `from_state` — string, non-null
+  - `to_state` — string, non-null
+  - `approvals` — integer, non-null (the approval count *after* this transition)
+  - `inserted_at` — utc_datetime_usec, non-null
+
+Provide:
+  1. The `EntityTransition` Ecto schema module.
+  2. An Ecto migration file that creates the table.
+  3. The `StateMachine` GenServer module.
+
+The GenServer keeps an in-memory map of `%{entity_id => {current_state, approval_count}}`. On
+`start/2`, it queries the DB for the most recent row for that entity and derives both the current
+`to_state` and the current `approvals` value. On restart, the in-memory map is empty, so the next
+`start/2` re-hydrates from the DB — including a partially-approved entity's mid-review count.
+
+## Concurrency
+
+`transition/3` must be implemented as a `call` (not a cast) so that concurrent callers serialize
+through the GenServer. Because the increment-and-check happens inside `handle_call`, a burst of
+concurrent `:approve` calls is applied one at a time: the count climbs deterministically and the
+entity flips to `:approved` on exactly the call that reaches the required threshold; any further
+`:approve` calls after that (from the terminal `:approved` state) are `:invalid_transition`.
+
+## Error Handling
+
+- DB write failures in `transition/3` should return `{:error, {:db_error, reason}}` and must NOT
+  update the in-memory state.
+
+## Deliverables
+
+Give me all three modules/files in clearly separated blocks. Use only Ecto (plus its adapters) as
+the external dependency — no additional libraries.
+
+## Additional interface contract
+
+- The test environment provides a real, already-configured SQLite Ecto repo and injects it into
+  your GenServer via the `repo:` option — do NOT define a repo module or any repo configuration.
+  Your migration file must be at a `priv/repo/migrations/<name>.exs` path: it is executed against
+  that repo before the tests run, so the schema/migration must be valid for SQLite (plain
+  `Ecto.Migration`, no database-specific SQL).
+
+=== MODULE ===
+```elixir
+defmodule EntityTransition do
+  @moduledoc """
+  Ecto schema for a single persisted state-machine transition.
+
+  Every successful `StateMachine.transition/3` (and every intermediate
+  approval step) writes exactly one row into the `entity_transitions`
+  table. A row captures the event that was applied, the state the entity
+  moved from and to, and the approval counter *after* the transition.
+  """
+
+  use Ecto.Schema
+
+  @type t :: %__MODULE__{}
+
+  schema "entity_transitions" do
+    field(:entity_id, :string)
+    field(:event, :string)
+    field(:from_state, :string)
+    field(:to_state, :string)
+    field(:approvals, :integer)
+    field(:inserted_at, :utc_datetime_usec)
+  end
+end
+
+defmodule Repo.Migrations.CreateEntityTransitions do
+  @moduledoc """
+  Migration that creates the `entity_transitions` table used to persist
+  every state-machine transition, together with an index on `entity_id`
+  so per-entity look-ups stay fast.
+
+  Written with plain `Ecto.Migration` primitives so it is valid across
+  adapters (including SQLite) with no database-specific SQL.
+  """
+
+  use Ecto.Migration
+
+  @doc """
+  Create the `entity_transitions` table and its `entity_id` index.
+  """
+  @spec change() :: :ok
+  def change do
+    create table(:entity_transitions) do
+      add(:entity_id, :string, null: false)
+      add(:event, :string, null: false)
+      add(:from_state, :string, null: false)
+      add(:to_state, :string, null: false)
+      add(:approvals, :integer, null: false)
+      add(:inserted_at, :utc_datetime_usec, null: false)
+    end
+
+    create(index(:entity_transitions, [:entity_id]))
+
+    :ok
+  end
+end
+
+defmodule StateMachine do
+  @moduledoc """
+  GenServer that manages the lifecycle of stateful entities following a
+  change-request review workflow, persisting every transition to a
+  database via an injected Ecto repo.
+
+  ## States
+
+    * `:draft`
+    * `:in_review`
+    * `:approved`
+    * `:rejected`
+    * `:withdrawn`
+
+  Each entity also carries a non-negative integer approval count.
+
+  ## Transitions
+
+    * `:draft`     + `:s (truncated)
+07:39:36.177 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+next_state/4
+persist/6
+load_latest/2
+</file>
+07:39:36.177 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10078, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10078, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10078, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10078, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 218, "type" => "message"}], "output_tokens" => 218, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

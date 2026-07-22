@@ -1,0 +1,1239 @@
+[22m08:19:33.222 [info] VARIATION 098_004_audience_scoped_token_with_not_before_and_scope_claims_01: Audience-Scoped Token with Not-Before and Scope Claims[0m
+[36m08:19:33.223 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_004_audience_scoped_token_with_not_before_and_scope_claims_01 solution.ex[0m
+[36m08:19:33.940 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":true,"line_count":183,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":4,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.94,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 1/28 failed","analysis: @doc on public functions → 0/1 pts"],"tests":0.96},"shape":"single","solution_file":".gen_staging/098_004_audience_scoped_token_with_not_before_and_scope_claims_01/solution.ex","task":"098_004_audience_scoped_token_with_not_before_and_scope_claims_01","test_failures":[{"message":"\n\nmatch (=) failed\ncode:  assert {:error, :invalid_signature} = ver(tampered, \"secret\")\nleft:  {:error, :invalid_signature}\nright: {:error, :malformed}\n","module":"ScopedTokenTest","test":"test tampered token returns :invalid_signature"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":27,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-07T06:19:33.917905Z"}[0m
+[22m08:19:33.941 [info] cycle 098_004_audience_scoped_token_with_not_before_and_scope_claims_01: repairing — Tests failed (1 failed, 0 errors):
+  - test tampered token returns :invalid_signature (ScopedTokenTest): 
+
+match (=) failed
+code:  assert {:error, :invalid_signature} = ver(tampered, "secret")
+left:  {:error, :invalid_signature}
+right: {:error, :malformed}
+[0m
+[36m08:19:33.941 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m08:19:33.941 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Tests failed (1 failed, 0 errors):
+  - test tampered token returns :invalid_signature (ScopedTokenTest): 
+
+match (=) failed
+code:  assert {:error, :invalid_signature} = ver(tampered, "secret")
+left:  {:error, :invalid_signature}
+right: {:error, :malformed}
+
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ScopedToken` that generates and validates
+signed, expiring HMAC-SHA256 tokens carrying **richer claims**: an optional
+audience binding, a not-before activation time, and a set of granted scopes.
+Verification can require an expected audience and a set of required scopes, and
+respects a not-before window — all in addition to signature and expiry checks.
+
+Public API:
+
+- `ScopedToken.generate(payload, secret, ttl_seconds, opts \\ [])` where
+  `payload` is any Elixir term, `secret` is a binary key, and `ttl_seconds` is a
+  positive integer. Recognized `opts`:
+    * `:audience` — a binary audience the token is bound to (default `nil`).
+    * `:scopes` — a list of binary scopes granted by the token (default `[]`).
+    * `:not_before` — a non-negative integer number of seconds after the issue
+      time before which the token is not yet valid (default `0`).
+    * `:clock` — a zero-arity function returning a Unix epoch second (test seam).
+  It returns a URL-safe binary token (via `Base.url_encode64/2` with
+  `padding: false`) encoding the payload, issue time, not-before time, expiry
+  time, and the claims (audience + scopes), with an HMAC-SHA256 signature over all
+  of that data.
+
+- `ScopedToken.verify(token, secret, opts \\ [])`. Recognized `opts`:
+    * `:audience` — the expected audience. When given (non-nil), the token's bound
+      audience must equal it. When omitted, audience is not checked.
+    * `:scopes` — a list of required scopes; every one must be present in the
+      token's granted scopes. Defaults to `[]` (no scope requirement).
+    * `:clock` — as above.
+  Return `{:ok, payload}` if all checks pass. Otherwise:
+    * `{:error, :invalid_signature}` — structure parses but the HMAC mismatches.
+    * `{:error, :not_yet_valid}` — signature valid but current time is before the
+      not-before time.
+    * `{:error, :expired}` — signature valid, past the not-before time, but at or
+      past expiration.
+    * `{:error, :audience_mismatch}` — signature valid and within the time window
+      but the expected audience does not match the token's audience.
+    * `{:error, :insufficient_scope}` — signature valid, in window, audience OK,
+      but a required scope is missing.
+    * `{:error, :malformed}` — bad base64, too short for the HMAC, a header that
+      doesn't match the remaining bytes, non-binary input, or a post-HMAC
+      deserialization failure of the claims/payload.
+
+The exact check order inside `verify` is: base64 decode → split off the trailing
+32-byte MAC → structural parse → HMAC verification → not-before check → expiry
+check → claims deserialization → audience check → scope check → payload
+deserialization. Anything failing before the HMAC yields `:malformed`; the HMAC
+governs `:invalid_signature`; then the ordered claim checks apply. A token whose
+`not_before` equals the current time is already active (use `>=` on the
+activation check); a token whose `expires_at` equals the current time is already
+expired (strict `<` on the validity check).
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- The signed region must cover the payload, all three timestamps, and the claims
+  (audience + scopes), plus any length prefixes used for framing.
+- Compare MACs in constant time (no early exit on first differing byte).
+- Deserialize the claims and payload with `:erlang.binary_to_term/2` using
+  `[:safe]`.
+- No external dependencies — only the Elixir standard library and OTP.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule ScopedToken do
+  @moduledoc """
+  Signed, expiring HMAC-SHA256 tokens with audience binding, a not-before
+  activation window, and granted scopes.
+
+  Beyond signature and expiry, verification can require an expected
+  audience and a set of scopes, and honours a not-before time before which
+  the token is not yet valid.
+
+  ## Wire format
+
+  The decoded binary (before base64) is:
+
+      <<issued_at::signed-64, not_before::signed-64, expires_at::signed-64,
+        meta_size::unsigned-32, meta::binary,
+        payload_size::unsigned-32, payload::binary, mac::binary-32>>
+
+  where `meta` is `:erlang.term_to_binary(%{aud: audience, scopes: scopes})`.
+  Everything except the trailing MAC is covered by the MAC.
+
+  ## Clock injection
+
+  `generate/4` and `verify/3` accept an optional `:clock` keyword whose
+  value is a zero-arity function returning a Unix epoch second. When
+  omitted, `System.os_time(:second)` is used — a test seam only.
+  """
+
+  import Bitwise
+
+  @hmac_size 32
+
+  @type reason ::
+          :invalid_signature
+          | :not_yet_valid
+          | :expired
+          | :audience_mismatch
+          | :insufficient_scope
+          | :malformed
+
+  @spec generate(term(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, secret, ttl_seconds, opts \\ [])
+      when is_binary(secret) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    issued_at = now(opts)
+    nb_offset = Keyword.get(opts, :not_before, 0)
+    not_before = issued_at + nb_offset
+    expires_at = issued_at + ttl_seconds
+    audience = Keyword.get(opts, :audience)
+    scopes = Keyword.get(opts, :scopes, [])
+
+    meta = :erlang.term_to_binary(%{aud: audience, scopes: scopes})
+    meta_size = byte_size(meta)
+    payload_bytes = :erlang.term_to_binary(payload)
+    payload_size = byte_size(payload_bytes)
+
+    data =
+      <<issued_at::signed-64, not_before::signed-64, expires_at::signed-64,
+        meta_size::unsigned-32, meta::binary, payload_size::unsigned-32,
+        payload_bytes::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, data)
+    Base.url_encode64(<<data::binary, mac::binary>>, padding: false)
+  end
+
+  @spec verify(binary(), binary(), keyword()) :: {:ok, term()} | {:error, reason()}
+  def verify(token, secret, opts \\ [])
+
+  def verify(token, secret, opts) when is_binary(token) and is_binary(secret) do
+    with {:ok, decoded} <- decode_base64(token),
+         {:ok, data, mac} <- split_mac(decoded),
+         {:ok, _issued_at, not_before, expires_at, meta_bytes, payload_bytes} <-
+           parse_data(data),
+         :ok <- verify_mac(secret, data, mac),
+         :ok <- check_not_before(not_before, opts),
+         :ok <- check_expiry(expires_at, opts),
+         {:ok, meta} <- decode_meta(meta_bytes),
+         :ok <- check_audience(meta, opts),
+         :ok <- check_scopes(meta, opts),
+         {:ok, payload} <- decode_payload(payload_bytes) do
+      {:ok, payload}
+    end
+  end
+
+  def verify(_token, _secret, _opts), do: {:error, :malformed}
+
+  # --- Internal helpers --------------------------------------------------
+
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      nil -> System.os_time(:second)
+      fun when is_function(fun, 0) -> fun.()
+    end
+  end
+
+  defp decode_base64(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, binary} -> {:ok, binary}
+      :error -> {:error, :malformed}
+    end
+  end
+
+  defp split_mac(binary) when byte_size(binary) < @hmac_size, do: {:error, :malformed}
+
+  defp split_mac(binary) do
+    data_size = b (truncated)[0m
+[36m08:20:40.260 [debug] claude -p RESULT (stop="end_turn"):
+The failing test tampers a base64 character at the token's midpoint. Depending on the encoded field sizes, that midpoint can land on a length-prefix field (`meta_size`/`payload_size`), which corrupts the structural framing and yields `:malformed` *before* the HMAC check ever runs — exactly as the spec's check order mandates. So the solution is correct per spec; the test is flaky.
+
+The fix: tamper a byte that is guaranteed to be inside the MAC-covered region but *not* a length prefix. The first base64 character decodes into the `issued_at` timestamp (a `signed-64` int, so any bit pattern still parses structurally), so flipping it always passes structural parsing and reliably fails the HMAC → `:invalid_signature`.
+
+<file path="test_harness.exs">
+defmodule ScopedTokenTest do
+  use ExUnit.Case, async: false
+
+  defmodule Clock do
+    use Agent
+
+    def start_link(initial \\ 0) do
+      Agent.start_link(fn -> initial end, name: __MODULE__)
+    end
+
+    def now, do: Agent.get(__MODULE__, & &1)
+    def advance(seconds), do: Agent.update(__MODULE__, &(&1 + seconds))
+    def set(seconds), do: Agent.update(__MODULE__, fn _ -> seconds end)
+  end
+
+  defp gen(payload, secret, ttl, opts \\ []) do
+    ScopedToken.generate(payload, secret, ttl, Keyword.put(opts, :clock, &Clock.now/0))
+  end
+
+  defp ver(token, secret, opts \\ []) do
+    ScopedToken.verify(token, secret, Keyword.put(opts, :clock, &Clock.now/0))
+  end
+
+  setup do
+    start_supervised!({Clock, 1_000_000})
+    :ok
+  end
+
+  # --- Round-trip -------------------------------------------------------
+
+  test "plain token verifies successfully" do
+    token = gen(%{user_id: 42}, "secret", 300)
+    assert {:ok, %{user_id: 42}} = ver(token, "secret")
+  end
+
+  test "payload preserved exactly" do
+    payload = %{role: "admin", meta: [1, 2, 3]}
+    token = gen(payload, "s", 60)
+    assert {:ok, ^payload} = ver(token, "s")
+  end
+
+  test "token is URL-safe" do
+    token = gen("hi", "s", 60, audience: "api", scopes: ["read"])
+    refute String.contains?(token, "+")
+    refute String.contains?(token, "/")
+    refute String.contains?(token, "=")
+  end
+
+  # --- Expiry -----------------------------------------------------------
+
+  test "valid just before expiry" do
+    token = gen("data", "s", 100)
+    Clock.advance(99)
+    assert {:ok, "data"} = ver(token, "s")
+  end
+
+  test "expired token returns :expired" do
+    token = gen("data", "s", 100)
+    Clock.advance(101)
+    assert {:error, :expired} = ver(token, "s")
+  end
+
+  test "expires exactly at ttl boundary" do
+    token = gen("data", "s", 50)
+    Clock.advance(50)
+    assert {:error, :expired} = ver(token, "s")
+  end
+
+  # --- Not-before -------------------------------------------------------
+
+  test "token not yet valid before not_before" do
+    token = gen("data", "s", 300, not_before: 100)
+    assert {:error, :not_yet_valid} = ver(token, "s")
+  end
+
+  test "token becomes valid exactly at not_before" do
+    token = gen("data", "s", 300, not_before: 100)
+    Clock.advance(100)
+    assert {:ok, "data"} = ver(token, "s")
+  end
+
+  test "not_before precedence over expiry-independent path" do
+    token = gen("data", "s", 300, not_before: 50)
+    Clock.advance(10)
+    assert {:error, :not_yet_valid} = ver(token, "s")
+  end
+
+  # --- Signature --------------------------------------------------------
+
+  test "wrong secret returns :invalid_signature" do
+    token = gen("payload", "correct", 300)
+    assert {:error, :invalid_signature} = ver(token, "wrong")
+  end
+
+  test "signature precedence over not_yet_valid" do
+    token = gen("data", "correct", 300, not_before: 100)
+    assert {:error, :invalid_signature} = ver(token, "wrong")
+  end
+
+  test "signature precedence over audience" do
+    token = gen("data", "correct", 300, audience: "api")
+    assert {:error, :invalid_signature} = ver(token, "wrong", audience: "other")
+  end
+
+  test "tampered token returns :invalid_signature" do
+    token = gen(%{role: "user"}, "secret", 300)
+
+    # Flip the first base64 character: it decodes into the leading bytes of the
+    # `issued_at` timestamp, a signed-64 field that parses for any bit pattern.
+    # This guarantees the structure still parses (no length-prefix corruption)
+    # so the check reaches HMAC verification and fails there.
+    tampered =
+      token
+      |> String.graphemes()
+      |> List.update_at(0, fn
+        "A" -> "B"
+        _ -> "A"
+      end)
+      |> Enum.join()
+
+    assert {:error, :invalid_signature} = ver(tampered, "secret")
+  end
+
+  # --- Audience ---------------------------------------------------------
+
+  test "matching audience passes" do
+    token = gen("data", "s", 300, audience: "api")
+    assert {:ok, "data"} = ver(token, "s", audience: "api")
+  end
+
+  test "mismatched audience returns :audience_mismatch" do
+    token = gen("data", "s", 300, audience: "api")
+    assert {:error, :audience_mismatch} = ver(token, "s", audience: "other")
+  end
+
+  test "expected audience but token has none returns :audience_mismatch" do
+    token = gen("data", "s", 300)
+    assert {:error, :audience_mismatch} = ver(token, "s", audience: "api")
+  end
+
+  test "no expected audience skips the check" do
+    token = gen("data", "s", 300, audience: "api")
+    assert {:ok, "data"} = ver(token, "s")
+  end
+
+  test "audience checked after expiry" do
+    token = gen("data", "s", 10, audience: "api")
+    Clock.advance(20)
+    assert {:error, :expired} = ver(token, "s", audience: "other")
+  end
+
+  # --- Scopes -----------------------------------------------------------
+
+  test "sufficient scopes pass" do
+    token = gen("data", "s", 300, scopes: ["read", "write"])
+    assert {:ok, "data"} = ver(token, "s", scopes: ["read"])
+  end
+
+  test "all required scopes must be present" do
+    token = gen("data", "s", 300, scopes: ["read", "write"])
+    assert {:ok, "data"} = ver(token, "s", scopes: ["read", "write"])
+  end
+
+  test "missing required scope returns :insufficient_scope" do
+    token = gen("data", "s", 300, scopes: ["read"])
+    assert {:error, :insufficient_scope} = ver(token, "s", scopes: ["admin"])
+  end
+
+  test "no required scopes passes regardless" do
+    token = gen("data", "s", 300, scopes: [])
+    assert {:ok, "data"} = ver(token, "s")
+  end
+
+  test "audience checked before scope" do
+    token = gen("data", "s", 300, audience: "api", scopes: ["read"])
+    assert {:error, :audience_mismatch} = ver(token, "s", audience: "other", scopes: ["admin"])
+  end
+
+  # --- Malformed --------------------------------------------------------
+
+  test "empty string returns :malformed" do
+    assert {:error, :malformed} = ver("", "s")
+  end
+
+  test "random binary returns :malformed" do
+    assert {:error, :malformed} = ver("notavalidtoken!!!", "s")
+  end
+
+  test "truncated token returns :malformed" do
+    token = gen("hello", "s", 60)
+    truncated = binary_part(token, 0, div(byte_size(token), 2))
+    assert {:error, :malformed} = ver(truncated, "s")
+  end
+
+  test "valid base64 but garbage content returns :malformed" do
+    garbage = Base.url_encode64("nope not a token", padding: false)
+    assert {:error, :malformed} = ver(garbage, "s")
+  end
+
+  # --- Payload types ----------------------------------------------------
+
+  test "supports atom, integer, list, nested map payloads" do
+    assert {:ok, :hi} = ver(gen(:hi, "s", 60), "s")
+    assert {:ok, 123} = ver(gen(123, "s", 60), "s")
+    assert {:ok, [1, "b", :c]} = ver(gen([1, "b", :c], "s", 60), "s")
+    nested = %{a: %{b: %{c: "deep"}}}
+    assert {:ok, ^nested} = ver(gen(nested, "s", 60), "s")
+  end
+end
+</file>[0m
+[36m08:20:40.260 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7247, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7247, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7247, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7247, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 5643, "type" => "message"}], "output_tokens" => 5643, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m08:20:40.279 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_004_audience_scoped_token_with_not_before_and_scope_claims_01 solution.ex[0m
+[36m08:20:40.953 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":false,"has_moduledoc":true,"has_typespecs":true,"line_count":183,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":4,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.96,"reasons":["compilation: 1 warning(s) → -0.1 pts","analysis: @doc on public functions → 0/1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_004_audience_scoped_token_with_not_before_and_scope_claims_01/solution.ex","task":"098_004_audience_scoped_token_with_not_before_and_scope_claims_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":28,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-07T06:20:40.932954Z"}[0m
+[22m08:20:40.954 [info] cycle 098_004_audience_scoped_token_with_not_before_and_scope_claims_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them; no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m08:20:40.954 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m08:20:40.954 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them; no @doc on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ScopedToken` that generates and validates
+signed, expiring HMAC-SHA256 tokens carrying **richer claims**: an optional
+audience binding, a not-before activation time, and a set of granted scopes.
+Verification can require an expected audience and a set of required scopes, and
+respects a not-before window — all in addition to signature and expiry checks.
+
+Public API:
+
+- `ScopedToken.generate(payload, secret, ttl_seconds, opts \\ [])` where
+  `payload` is any Elixir term, `secret` is a binary key, and `ttl_seconds` is a
+  positive integer. Recognized `opts`:
+    * `:audience` — a binary audience the token is bound to (default `nil`).
+    * `:scopes` — a list of binary scopes granted by the token (default `[]`).
+    * `:not_before` — a non-negative integer number of seconds after the issue
+      time before which the token is not yet valid (default `0`).
+    * `:clock` — a zero-arity function returning a Unix epoch second (test seam).
+  It returns a URL-safe binary token (via `Base.url_encode64/2` with
+  `padding: false`) encoding the payload, issue time, not-before time, expiry
+  time, and the claims (audience + scopes), with an HMAC-SHA256 signature over all
+  of that data.
+
+- `ScopedToken.verify(token, secret, opts \\ [])`. Recognized `opts`:
+    * `:audience` — the expected audience. When given (non-nil), the token's bound
+      audience must equal it. When omitted, audience is not checked.
+    * `:scopes` — a list of required scopes; every one must be present in the
+      token's granted scopes. Defaults to `[]` (no scope requirement).
+    * `:clock` — as above.
+  Return `{:ok, payload}` if all checks pass. Otherwise:
+    * `{:error, :invalid_signature}` — structure parses but the HMAC mismatches.
+    * `{:error, :not_yet_valid}` — signature valid but current time is before the
+      not-before time.
+    * `{:error, :expired}` — signature valid, past the not-before time, but at or
+      past expiration.
+    * `{:error, :audience_mismatch}` — signature valid and within the time window
+      but the expected audience does not match the token's audience.
+    * `{:error, :insufficient_scope}` — signature valid, in window, audience OK,
+      but a required scope is missing.
+    * `{:error, :malformed}` — bad base64, too short for the HMAC, a header that
+      doesn't match the remaining bytes, non-binary input, or a post-HMAC
+      deserialization failure of the claims/payload.
+
+The exact check order inside `verify` is: base64 decode → split off the trailing
+32-byte MAC → structural parse → HMAC verification → not-before check → expiry
+check → claims deserialization → audience check → scope check → payload
+deserialization. Anything failing before the HMAC yields `:malformed`; the HMAC
+governs `:invalid_signature`; then the ordered claim checks apply. A token whose
+`not_before` equals the current time is already active (use `>=` on the
+activation check); a token whose `expires_at` equals the current time is already
+expired (strict `<` on the validity check).
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- The signed region must cover the payload, all three timestamps, and the claims
+  (audience + scopes), plus any length prefixes used for framing.
+- Compare MACs in constant time (no early exit on first differing byte).
+- Deserialize the claims and payload with `:erlang.binary_to_term/2` using
+  `[:safe]`.
+- No external dependencies — only the Elixir standard library and OTP.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule ScopedToken do
+  @moduledoc """
+  Signed, expiring HMAC-SHA256 tokens with audience binding, a not-before
+  activation window, and granted scopes.
+
+  Beyond signature and expiry, verification can require an expected
+  audience and a set of scopes, and honours a not-before time before which
+  the token is not yet valid.
+
+  ## Wire format
+
+  The decoded binary (before base64) is:
+
+      <<issued_at::signed-64, not_before::signed-64, expires_at::signed-64,
+        meta_size::unsigned-32, meta::binary,
+        payload_size::unsigned-32, payload::binary, mac::binary-32>>
+
+  where `meta` is `:erlang.term_to_binary(%{aud: audience, scopes: scopes})`.
+  Everything except the trailing MAC is covered by the MAC.
+
+  ## Clock injection
+
+  `generate/4` and `verify/3` accept an optional `:clock` keyword whose
+  value is a zero-arity function returning a Unix epoch second. When
+  omitted, `System.os_time(:second)` is used — a test seam only.
+  """
+
+  import Bitwise
+
+  @hmac_size 32
+
+  @type reason ::
+          :invalid_signature
+          | :not_yet_valid
+          | :expired
+          | :audience_mismatch
+          | :insufficient_scope
+          | :malformed
+
+  @spec generate(term(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, secret, ttl_seconds, opts \\ [])
+      when is_binary(secret) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    issued_at = now(opts)
+    nb_offset = Keyword.get(opts, :not_before, 0)
+    not_before = issued_at + nb_offset
+    expires_at = issued_at + ttl_seconds
+    audience = Keyword.get(opts, :audience)
+    scopes = Keyword.get(opts, :scopes, [])
+
+    meta = :erlang.term_to_binary(%{aud: audience, scopes: scopes})
+    meta_size = byte_size(meta)
+    payload_bytes = :erlang.term_to_binary(payload)
+    payload_size = byte_size(payload_bytes)
+
+    data =
+      <<issued_at::signed-64, not_before::signed-64, expires_at::signed-64,
+        meta_size::unsigned-32, meta::binary, payload_size::unsigned-32,
+        payload_bytes::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, data)
+    Base.url_encode64(<<data::binary, mac::binary>>, padding: false)
+  end
+
+  @spec verify(binary(), binary(), keyword()) :: {:ok, term()} | {:error, reason()}
+  def verify(token, secret, opts \\ [])
+
+  def verify(token, secret, opts) when is_binary(token) and is_binary(secret) do
+    with {:ok, decoded} <- decode_base64(token),
+         {:ok, data, mac} <- split_mac(decoded),
+         {:ok, _issued_at, not_before, expires_at, meta_bytes, payload_bytes} <-
+           parse_data(data),
+         :ok <- verify_mac(secret, data, mac),
+         :ok <- check_not_before(not_before, opts),
+         :ok <- check_expiry(expires_at, opts),
+         {:ok, meta} <- decode_meta(meta_bytes),
+         :ok <- check_audience(meta, opts),
+         :ok <- check_scopes(meta, opts),
+         {:ok, payload} <- decode_payload(payload_bytes) do
+      {:ok, payload}
+    end
+  end
+
+  def verify(_token, _secret, _opts), do: {:error, :malformed}
+
+  # --- Internal helpers --------------------------------------------------
+
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      nil -> System.os_time(:second)
+      fun when is_function(fun, 0) -> fun.()
+    end
+  end
+
+  defp decode_base64(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, binary} -> {:ok, binary}
+      :error -> {:error, :malformed}
+    end
+  end
+
+  defp split_mac(binary) when byte_size(binary) < @hmac_size,  (truncated)[0m
+[36m08:25:28.872 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the current code has `@spec` on public functions but no `@doc`, and I need to eliminate the compile warning while keeping behavior identical. The most likely warning source is the `|> Kernel.==(0)` pipe into an operator; I'll de-pipe that and add the required docs.
+
+<file path="solution.ex">
+defmodule ScopedToken do
+  @moduledoc """
+  Signed, expiring HMAC-SHA256 tokens with audience binding, a not-before
+  activation window, and granted scopes.
+
+  Beyond signature and expiry, verification can require an expected
+  audience and a set of scopes, and honours a not-before time before which
+  the token is not yet valid.
+
+  ## Wire format
+
+  The decoded binary (before base64) is:
+
+      <<issued_at::signed-64, not_before::signed-64, expires_at::signed-64,
+        meta_size::unsigned-32, meta::binary,
+        payload_size::unsigned-32, payload::binary, mac::binary-32>>
+
+  where `meta` is `:erlang.term_to_binary(%{aud: audience, scopes: scopes})`.
+  Everything except the trailing MAC is covered by the MAC.
+
+  ## Clock injection
+
+  `generate/4` and `verify/3` accept an optional `:clock` keyword whose
+  value is a zero-arity function returning a Unix epoch second. When
+  omitted, `System.os_time(:second)` is used — a test seam only.
+  """
+
+  import Bitwise
+
+  @hmac_size 32
+
+  @type reason ::
+          :invalid_signature
+          | :not_yet_valid
+          | :expired
+          | :audience_mismatch
+          | :insufficient_scope
+          | :malformed
+
+  @doc """
+  Generate a URL-safe, signed, expiring token carrying `payload`.
+
+  `secret` is the HMAC key, `ttl_seconds` is a positive integer number of
+  seconds until expiry. Recognized `opts`:
+
+    * `:audience` — a binary audience the token is bound to (default `nil`);
+    * `:scopes` — a list of binary scopes granted (default `[]`);
+    * `:not_before` — non-negative seconds after issue time before which the
+      token is not yet valid (default `0`);
+    * `:clock` — a zero-arity function returning a Unix epoch second.
+
+  Returns the token as a URL-safe binary produced by
+  `Base.url_encode64/2` with `padding: false`.
+  """
+  @spec generate(term(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, secret, ttl_seconds, opts \\ [])
+      when is_binary(secret) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    issued_at = now(opts)
+    nb_offset = Keyword.get(opts, :not_before, 0)
+    not_before = issued_at + nb_offset
+    expires_at = issued_at + ttl_seconds
+    audience = Keyword.get(opts, :audience)
+    scopes = Keyword.get(opts, :scopes, [])
+
+    meta = :erlang.term_to_binary(%{aud: audience, scopes: scopes})
+    meta_size = byte_size(meta)
+    payload_bytes = :erlang.term_to_binary(payload)
+    payload_size = byte_size(payload_bytes)
+
+    data =
+      <<issued_at::signed-64, not_before::signed-64, expires_at::signed-64,
+        meta_size::unsigned-32, meta::binary, payload_size::unsigned-32,
+        payload_bytes::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, data)
+    Base.url_encode64(<<data::binary, mac::binary>>, padding: false)
+  end
+
+  @doc """
+  Verify `token` against `secret`, returning `{:ok, payload}` when valid.
+
+  Recognized `opts`:
+
+    * `:audience` — expected audience; when non-nil, must equal the token's
+      bound audience; when omitted, audience is not checked;
+    * `:scopes` — a list of required scopes, all of which must be present in
+      the token's granted scopes (default `[]`);
+    * `:clock` — a zero-arity function returning a Unix epoch second.
+
+  Checks run in order: base64 decode → split MAC → structural parse → HMAC →
+  not-before → expiry → claims decode → audience → scope → payload decode.
+  On failure returns `{:error, reason}` where `reason` is one of
+  `:malformed`, `:invalid_signature`, `:not_yet_valid`, `:expired`,
+  `:audience_mismatch`, or `:insufficient_scope`.
+  """
+  @spec verify(binary(), binary(), keyword()) :: {:ok, term()} | {:error, reason()}
+  def verify(token, secret, opts \\ [])
+
+  def verify(token, secret, opts) when is_binary(token) and is_binary(secret) do
+    with {:ok, decoded} <- decode_base64(token),
+         {:ok, data, mac} <- split_mac(decoded),
+         {:ok, _issued_at, not_before, expires_at, meta_bytes, payload_bytes} <-
+           parse_data(data),
+         :ok <- verify_mac(secret, data, mac),
+         :ok <- check_not_before(not_before, opts),
+         :ok <- check_expiry(expires_at, opts),
+         {:ok, meta} <- decode_meta(meta_bytes),
+         :ok <- check_audience(meta, opts),
+         :ok <- check_scopes(meta, opts),
+         {:ok, payload} <- decode_payload(payload_bytes) do
+      {:ok, payload}
+    end
+  end
+
+  def verify(_token, _secret, _opts), do: {:error, :malformed}
+
+  # --- Internal helpers --------------------------------------------------
+
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      nil -> System.os_time(:second)
+      fun when is_function(fun, 0) -> fun.()
+    end
+  end
+
+  defp decode_base64(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, binary} -> {:ok, binary}
+      :error -> {:error, :malformed}
+    end
+  end
+
+  defp split_mac(binary) when byte_size(binary) < @hmac_size, do: {:error, :malformed}
+
+  defp split_mac(binary) do
+    data_size = byte_size(binary) - @hmac_size
+    <<data::binary-size(data_size), mac::binary-size(@hmac_size)>> = binary
+    {:ok, data, mac}
+  end
+
+  defp parse_data(
+         <<issued_at::signed-64, not_before::signed-64, expires_at::signed-64,
+           meta_size::unsigned-32, meta::binary-size(meta_size), payload_size::unsigned-32,
+           rest::binary>>
+       )
+       when byte_size(rest) == payload_size do
+    {:ok, issued_at, not_before, expires_at, meta, rest}
+  end
+
+  defp parse_data(_), do: {:error, :malformed}
+
+  defp verify_mac(secret, data, mac) do
+    expected = :crypto.mac(:hmac, :sha256, secret, data)
+
+    if constant_time_equal?(expected, mac) do
+      :ok
+    else
+      {:error, :invalid_signature}
+    end
+  end
+
+  defp check_not_before(not_before, opts) do
+    if now(opts) >= not_before, do: :ok, else: {:error, :not_yet_valid}
+  end
+
+  defp check_expiry(expires_at, opts) do
+    if now(opts) < expires_at, do: :ok, else: {:error, :expired}
+  end
+
+  defp check_audience(meta, opts) do
+    case Keyword.get(opts, :audience) do
+      nil ->
+        :ok
+
+      expected ->
+        if Map.get(meta, :aud) == expected, do: :ok, else: {:error, :audience_mismatch}
+    end
+  end
+
+  defp check_scopes(meta, opts) do
+    required = Keyword.get(opts, :scopes, [])
+    granted = Map.get(meta, :scopes, [])
+
+    if Enum.all?(required, &(&1 in granted)) do
+      :ok
+    else
+      {:error, :insufficient_scope}
+    end
+  end
+
+  defp decode_meta(bytes) do
+    case :erlang.binary_to_term(bytes, [:safe]) do
+      %{} = meta -> {:ok, meta}
+      _ -> {:error, :malformed}
+    end
+  rescue
+    ArgumentError -> {:error, :malformed}
+  end
+
+  defp decode_payload(bytes) do
+    {:ok, :erlang.binary_to_term(bytes, [:safe])}
+  rescue
+    ArgumentError -> {:error, :malformed}
+  end
+
+  defp constant_time_equal?(a, b) when byte_size(a) == byte_size(b) do
+    diff =
+      a
+      |> :binary.bin_to_list()
+      |> Enum.zip(:binary.bin_to_list(b))
+      |> Enum.reduce(0, fn {x, y}, acc -> bor(acc, bxor(x, y)) end)
+
+    diff === 0
+  end
+
+  defp constant_time_equal?(_, _), do: false
+end
+</file>[0m
+[36m08:25:28.872 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7350, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7350, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7350, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7350, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 21811, "type" => "message"}], "output_tokens" => 21811, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m08:25:28.891 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_004_audience_scoped_token_with_not_before_and_scope_claims_01 solution.ex[0m
+[36m08:25:29.576 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":217,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":3,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_004_audience_scoped_token_with_not_before_and_scope_claims_01/solution.ex","task":"098_004_audience_scoped_token_with_not_before_and_scope_claims_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":28,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-07T06:25:29.553974Z"}[0m
+[22m08:25:29.577 [info] cycle 098_004_audience_scoped_token_with_not_before_and_scope_claims_01: repairing — The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.[0m
+[36m08:25:29.577 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+[0m
+[36m08:25:29.577 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: 1 compile warning(s) — silence them. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `ScopedToken` that generates and validates
+signed, expiring HMAC-SHA256 tokens carrying **richer claims**: an optional
+audience binding, a not-before activation time, and a set of granted scopes.
+Verification can require an expected audience and a set of required scopes, and
+respects a not-before window — all in addition to signature and expiry checks.
+
+Public API:
+
+- `ScopedToken.generate(payload, secret, ttl_seconds, opts \\ [])` where
+  `payload` is any Elixir term, `secret` is a binary key, and `ttl_seconds` is a
+  positive integer. Recognized `opts`:
+    * `:audience` — a binary audience the token is bound to (default `nil`).
+    * `:scopes` — a list of binary scopes granted by the token (default `[]`).
+    * `:not_before` — a non-negative integer number of seconds after the issue
+      time before which the token is not yet valid (default `0`).
+    * `:clock` — a zero-arity function returning a Unix epoch second (test seam).
+  It returns a URL-safe binary token (via `Base.url_encode64/2` with
+  `padding: false`) encoding the payload, issue time, not-before time, expiry
+  time, and the claims (audience + scopes), with an HMAC-SHA256 signature over all
+  of that data.
+
+- `ScopedToken.verify(token, secret, opts \\ [])`. Recognized `opts`:
+    * `:audience` — the expected audience. When given (non-nil), the token's bound
+      audience must equal it. When omitted, audience is not checked.
+    * `:scopes` — a list of required scopes; every one must be present in the
+      token's granted scopes. Defaults to `[]` (no scope requirement).
+    * `:clock` — as above.
+  Return `{:ok, payload}` if all checks pass. Otherwise:
+    * `{:error, :invalid_signature}` — structure parses but the HMAC mismatches.
+    * `{:error, :not_yet_valid}` — signature valid but current time is before the
+      not-before time.
+    * `{:error, :expired}` — signature valid, past the not-before time, but at or
+      past expiration.
+    * `{:error, :audience_mismatch}` — signature valid and within the time window
+      but the expected audience does not match the token's audience.
+    * `{:error, :insufficient_scope}` — signature valid, in window, audience OK,
+      but a required scope is missing.
+    * `{:error, :malformed}` — bad base64, too short for the HMAC, a header that
+      doesn't match the remaining bytes, non-binary input, or a post-HMAC
+      deserialization failure of the claims/payload.
+
+The exact check order inside `verify` is: base64 decode → split off the trailing
+32-byte MAC → structural parse → HMAC verification → not-before check → expiry
+check → claims deserialization → audience check → scope check → payload
+deserialization. Anything failing before the HMAC yields `:malformed`; the HMAC
+governs `:invalid_signature`; then the ordered claim checks apply. A token whose
+`not_before` equals the current time is already active (use `>=` on the
+activation check); a token whose `expires_at` equals the current time is already
+expired (strict `<` on the validity check).
+
+Implementation requirements:
+
+- Use `:crypto.mac/4` with SHA-256 for signing.
+- The signed region must cover the payload, all three timestamps, and the claims
+  (audience + scopes), plus any length prefixes used for framing.
+- Compare MACs in constant time (no early exit on first differing byte).
+- Deserialize the claims and payload with `:erlang.binary_to_term/2` using
+  `[:safe]`.
+- No external dependencies — only the Elixir standard library and OTP.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule ScopedToken do
+  @moduledoc """
+  Signed, expiring HMAC-SHA256 tokens with audience binding, a not-before
+  activation window, and granted scopes.
+
+  Beyond signature and expiry, verification can require an expected
+  audience and a set of scopes, and honours a not-before time before which
+  the token is not yet valid.
+
+  ## Wire format
+
+  The decoded binary (before base64) is:
+
+      <<issued_at::signed-64, not_before::signed-64, expires_at::signed-64,
+        meta_size::unsigned-32, meta::binary,
+        payload_size::unsigned-32, payload::binary, mac::binary-32>>
+
+  where `meta` is `:erlang.term_to_binary(%{aud: audience, scopes: scopes})`.
+  Everything except the trailing MAC is covered by the MAC.
+
+  ## Clock injection
+
+  `generate/4` and `verify/3` accept an optional `:clock` keyword whose
+  value is a zero-arity function returning a Unix epoch second. When
+  omitted, `System.os_time(:second)` is used — a test seam only.
+  """
+
+  import Bitwise
+
+  @hmac_size 32
+
+  @type reason ::
+          :invalid_signature
+          | :not_yet_valid
+          | :expired
+          | :audience_mismatch
+          | :insufficient_scope
+          | :malformed
+
+  @doc """
+  Generate a URL-safe, signed, expiring token carrying `payload`.
+
+  `secret` is the HMAC key, `ttl_seconds` is a positive integer number of
+  seconds until expiry. Recognized `opts`:
+
+    * `:audience` — a binary audience the token is bound to (default `nil`);
+    * `:scopes` — a list of binary scopes granted (default `[]`);
+    * `:not_before` — non-negative seconds after issue time before which the
+      token is not yet valid (default `0`);
+    * `:clock` — a zero-arity function returning a Unix epoch second.
+
+  Returns the token as a URL-safe binary produced by
+  `Base.url_encode64/2` with `padding: false`.
+  """
+  @spec generate(term(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, secret, ttl_seconds, opts \\ [])
+      when is_binary(secret) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    issued_at = now(opts)
+    nb_offset = Keyword.get(opts, :not_before, 0)
+    not_before = issued_at + nb_offset
+    expires_at = issued_at + ttl_seconds
+    audience = Keyword.get(opts, :audience)
+    scopes = Keyword.get(opts, :scopes, [])
+
+    meta = :erlang.term_to_binary(%{aud: audience, scopes: scopes})
+    meta_size = byte_size(meta)
+    payload_bytes = :erlang.term_to_binary(payload)
+    payload_size = byte_size(payload_bytes)
+
+    data =
+      <<issued_at::signed-64, not_before::signed-64, expires_at::signed-64,
+        meta_size::unsigned-32, meta::binary, payload_size::unsigned-32,
+        payload_bytes::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, data)
+    Base.url_encode64(<<data::binary, mac::binary>>, padding: false)
+  end
+
+  @doc """
+  Verify `token` against `secret`, returning `{:ok, payload}` when valid.
+
+  Recognized `opts`:
+
+    * `:audience` — expected audience; when non-nil, must equal the token's
+      bound audience; when omitted, audience is not checked;
+    * `:scopes` — a list of required scopes, all of which must be present in
+      the token's granted scopes (default `[]`);
+    * `:clock` — a zero-arity function returning a Unix epoch second.
+
+  Checks run in order: base64 decode → split MAC → structural parse → HMAC →
+  not-before → expiry → claims decode → audience → scope → payload decode.
+  On failure returns `{:error, reason}` where `reason` is one of
+  `:malformed`, `:invalid_s (truncated)[0m
+[36m08:37:55.099 [debug] claude -p RESULT (stop="end_turn"):
+I analyzed both files carefully. The solution is functionally correct and green, so I focused on the compile-cleanliness the check demands. I rewrote `solution.ex` to remove anything that could trip a warning on OTP 27+/recent Elixir while keeping behavior byte-for-byte identical: I qualify the `Bitwise` calls (dropping the `import`, which avoids any import-scope warning), evaluate the clock once per `verify` and thread it explicitly (so the discarded `issued_at` binding disappears — `parse_data` no longer returns it), and keep all house-style requirements (`@moduledoc`, `@spec` + `@doc` on every public function, ≤98 cols, no TODO, no bare `0.0`).
+
+<file path="solution.ex">
+defmodule ScopedToken do
+  @moduledoc """
+  Signed, expiring HMAC-SHA256 tokens with audience binding, a not-before
+  activation window, and granted scopes.
+
+  Beyond signature and expiry, verification can require an expected
+  audience and a set of scopes, and honours a not-before time before which
+  the token is not yet valid.
+
+  ## Wire format
+
+  The decoded binary (before base64) is:
+
+      <<issued_at::signed-64, not_before::signed-64, expires_at::signed-64,
+        meta_size::unsigned-32, meta::binary,
+        payload_size::unsigned-32, payload::binary, mac::binary-32>>
+
+  where `meta` is `:erlang.term_to_binary(%{aud: audience, scopes: scopes})`.
+  Everything except the trailing MAC is covered by the MAC.
+
+  ## Clock injection
+
+  `generate/4` and `verify/3` accept an optional `:clock` keyword whose
+  value is a zero-arity function returning a Unix epoch second. When
+  omitted, `System.os_time(:second)` is used — a test seam only.
+  """
+
+  @hmac_size 32
+
+  @type reason ::
+          :invalid_signature
+          | :not_yet_valid
+          | :expired
+          | :audience_mismatch
+          | :insufficient_scope
+          | :malformed
+
+  @doc """
+  Generate a URL-safe, signed, expiring token carrying `payload`.
+
+  `secret` is the HMAC key, `ttl_seconds` is a positive integer number of
+  seconds until expiry. Recognized `opts`:
+
+    * `:audience` — a binary audience the token is bound to (default `nil`);
+    * `:scopes` — a list of binary scopes granted (default `[]`);
+    * `:not_before` — non-negative seconds after issue time before which the
+      token is not yet valid (default `0`);
+    * `:clock` — a zero-arity function returning a Unix epoch second.
+
+  Returns the token as a URL-safe binary produced by
+  `Base.url_encode64/2` with `padding: false`.
+  """
+  @spec generate(term(), binary(), pos_integer(), keyword()) :: binary()
+  def generate(payload, secret, ttl_seconds, opts \\ [])
+      when is_binary(secret) and is_integer(ttl_seconds) and ttl_seconds > 0 do
+    issued_at = now(opts)
+    nb_offset = Keyword.get(opts, :not_before, 0)
+    not_before = issued_at + nb_offset
+    expires_at = issued_at + ttl_seconds
+    audience = Keyword.get(opts, :audience)
+    scopes = Keyword.get(opts, :scopes, [])
+
+    meta = :erlang.term_to_binary(%{aud: audience, scopes: scopes})
+    meta_size = byte_size(meta)
+    payload_bytes = :erlang.term_to_binary(payload)
+    payload_size = byte_size(payload_bytes)
+
+    data =
+      <<issued_at::signed-64, not_before::signed-64, expires_at::signed-64,
+        meta_size::unsigned-32, meta::binary, payload_size::unsigned-32,
+        payload_bytes::binary>>
+
+    mac = :crypto.mac(:hmac, :sha256, secret, data)
+    Base.url_encode64(<<data::binary, mac::binary>>, padding: false)
+  end
+
+  @doc """
+  Verify `token` against `secret`, returning `{:ok, payload}` when valid.
+
+  Recognized `opts`:
+
+    * `:audience` — expected audience; when non-nil, must equal the token's
+      bound audience; when omitted, audience is not checked;
+    * `:scopes` — a list of required scopes, all of which must be present in
+      the token's granted scopes (default `[]`);
+    * `:clock` — a zero-arity function returning a Unix epoch second.
+
+  Checks run in order: base64 decode → split MAC → structural parse → HMAC →
+  not-before → expiry → claims decode → audience → scope → payload decode.
+  On failure returns `{:error, reason}` where `reason` is one of
+  `:malformed`, `:invalid_signature`, `:not_yet_valid`, `:expired`,
+  `:audience_mismatch`, or `:insufficient_scope`.
+  """
+  @spec verify(binary(), binary(), keyword()) :: {:ok, term()} | {:error, reason()}
+  def verify(token, secret, opts \\ [])
+
+  def verify(token, secret, opts) when is_binary(token) and is_binary(secret) do
+    now_ts = now(opts)
+
+    with {:ok, decoded} <- decode_base64(token),
+         {:ok, data, mac} <- split_mac(decoded),
+         {:ok, not_before, expires_at, meta_bytes, payload_bytes} <- parse_data(data),
+         :ok <- verify_mac(secret, data, mac),
+         :ok <- check_not_before(not_before, now_ts),
+         :ok <- check_expiry(expires_at, now_ts),
+         {:ok, meta} <- decode_meta(meta_bytes),
+         :ok <- check_audience(meta, opts),
+         :ok <- check_scopes(meta, opts),
+         {:ok, payload} <- decode_payload(payload_bytes) do
+      {:ok, payload}
+    end
+  end
+
+  def verify(_token, _secret, _opts), do: {:error, :malformed}
+
+  # --- Internal helpers --------------------------------------------------
+
+  defp now(opts) do
+    case Keyword.get(opts, :clock) do
+      nil -> System.os_time(:second)
+      fun when is_function(fun, 0) -> fun.()
+    end
+  end
+
+  defp decode_base64(token) do
+    case Base.url_decode64(token, padding: false) do
+      {:ok, binary} -> {:ok, binary}
+      :error -> {:error, :malformed}
+    end
+  end
+
+  defp split_mac(binary) when byte_size(binary) < @hmac_size, do: {:error, :malformed}
+
+  defp split_mac(binary) do
+    data_size = byte_size(binary) - @hmac_size
+    <<data::binary-size(data_size), mac::binary-size(@hmac_size)>> = binary
+    {:ok, data, mac}
+  end
+
+  defp parse_data(
+         <<_issued_at::signed-64, not_before::signed-64, expires_at::signed-64,
+           meta_size::unsigned-32, meta::binary-size(meta_size), payload_size::unsigned-32,
+           rest::binary>>
+       )
+       when byte_size(rest) == payload_size do
+    {:ok, not_before, expires_at, meta, rest}
+  end
+
+  defp parse_data(_), do: {:error, :malformed}
+
+  defp verify_mac(secret, data, mac) do
+    expected = :crypto.mac(:hmac, :sha256, secret, data)
+
+    if constant_time_equal?(expected, mac) do
+      :ok
+    else
+      {:error, :invalid_signature}
+    end
+  end
+
+  defp check_not_before(not_before, now_ts) do
+    if now_ts >= not_before, do: :ok, else: {:error, :not_yet_valid}
+  end
+
+  defp check_expiry(expires_at, now_ts) do
+    if now_ts < expires_at, do: :ok, else: {:error, :expired}
+  end
+
+  defp check_audience(meta, opts) do
+    case Keyword.get(opts, :audience) do
+      nil ->
+        :ok
+
+      expected ->
+        if Map.get(meta, :aud) == expected, do: :ok, else: {:error, :audience_mismatch}
+    end
+  end
+
+  defp check_scopes(meta, opts) do
+    required = Keyword.get(opts, :scopes, [])
+    granted = Map.get(meta, :scopes, [])
+
+    if Enum.all?(required, &(&1 in granted)) do
+      :ok
+    else
+      {:error, :insufficient_scope}
+    end
+  end
+
+  defp decode_meta(bytes) do
+    case :erlang.binary_to_term(bytes, [:safe]) do
+      %{} = meta -> {:ok, meta}
+      _ -> {:error, :malformed}
+    end
+  rescue
+    ArgumentError -> {:error, :malformed}
+  end
+
+  defp decode_payload(bytes) do
+    {:ok, :erlang.binary_to_term(bytes, [:safe])}
+  rescue
+    ArgumentError -> {:error, :malformed}
+  end
+
+  defp constant_time_equal?(a, b) when byte_size(a) == byte_size(b) do
+    diff =
+      a
+      |> :binary.bin_to_list()
+      |> Enum.zip(:binary.bin_to_list(b))
+      |> Enum.reduce(0, fn {x, y}, acc -> Bitwise.bor(acc, Bitwise.bxor(x, y)) end)
+
+    diff === 0
+  end
+
+  defp constant_time_equal?(_, _), do: false
+end
+</file>[0m
+[36m08:37:55.099 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7892, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7892, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7892, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7892, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 56686, "type" => "message"}], "output_tokens" => 56686, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}[0m
+[36m08:37:55.118 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/098_004_audience_scoped_token_with_not_before_and_scope_claims_01 solution.ex[0m
+[36m08:37:55.787 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":216,"lines_over_98":0,"max_line_length":91,"mode":"full","pipe_chain_count":3,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/098_004_audience_scoped_token_with_not_before_and_scope_claims_01/solution.ex","task":"098_004_audience_scoped_token_with_not_before_and_scope_claims_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":28,"tests_ran":true,"tests_skipped":0,"tests_total":28,"timestamp":"2026-07-07T06:37:55.766174Z"}[0m
+[22m08:37:55.788 [info] cycle 098_004_audience_scoped_token_with_not_before_and_scope_claims_01: REJECTED after 4 attempt(s)[0m

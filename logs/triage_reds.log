@@ -1,0 +1,86 @@
+Screen triage: 42 untriaged RED task(s) — model=opus
+[1/42] 015_002_rolling_window_failure_rate_monitor_01 ... ENTAILED (solver-weak — keep)
+[2/42] 015_003_async_check_monitor_with_timeouts_01 ... ENTAILED (solver-weak — keep)
+[3/42] 015_004_monitor_with_maintenance_windows_and_pause_resume_01 ... ENTAILED (solver-weak — keep)
+[4/42] 019_003_bulk_upsert_with_conflict_resolution_policies_01 ... PROMPT GAP: The `errors_map` is keyed by the offending field's **string** name exactly as it appears in the input attrs (e.g. `%{"name" => "is required"}`), with a human-readable message string as the value.
+[5/42] 019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01 ... PROMPT GAP: `ConcurrentCatalog.get/1` returns the stored item map directly, or `nil` when no item with that id exists.
+[6/42] 022_002_role_scoped_nested_membership_endpoint_01 ... ENTAILED (solver-weak — keep)
+[7/42] 022_003_etag_versioned_nested_membership_with_optimistic_concurrency_01 ... ENTAILED (solver-weak — keep)
+[8/42] 024_001_webhook_receiver_with_signature_verification_01 ... ENTAILED (solver-weak — keep)
+[9/42] 025_001_long_polling_endpoint_01 ... PROMPT GAP: `subscribe/2` must return `:ok`.
+[10/42] 025_004_multi_channel_fan_in_long_poll_01 ... PROMPT GAP: `Notifications.subscribe/3` must return `:ok`.
+[11/42] 031_001_csv_importer_with_validation_and_error_report_01 ... PROMPT GAP: 
+[12/42] 031_004_logfmt_record_validator_with_hand_written_parser_01 ... ENTAILED (solver-weak — keep)
+[13/42] 037_002_path_addressed_nested_record_anonymizer_01 ... PROMPT GAP: For `{:fake, seed}`, compute `digest = :crypto.hash(:sha256, seed <> value)` and build the output as `<first>.<last><n>@<domain>` where `first`, `last`, and `domain` are chosen by indexing the exact word lists below with `rem(:binary.at(digest, 0|1|2), length(list))` and `n = :binary.at(digest, 3)` — with the full first-name, last-name, and domain lists given verbatim.
+[14/42] 037_003_reversible_tokenization_vault_anonymizer_01 ... PROMPT GAP: The vault must record which field each token belongs to, and `detokenize/2` must only replace a token-valued field that was actually tokenized for that field — token-shaped values in any other field are left untouched, so the round trip stays lossless even when an unlisted field already holds a string like `"TOK_EMAIL_1"`.
+[15/42] 041_002_lfu_cache_backed_by_ets_01 ... PROMPT GAP: Each row of the data table must be stored literally as the two-element tuple `{key, {value, frequency, seq}}` (the value, frequency and seq packed in a single nested tuple, not flattened into the row), since callers may read rows directly from the table.
+[16/42] 042_002_failure_aware_write_through_cache_with_negative_caching_01 ... PROMPT GAP: Maintain the table-name → ETS table registry used by the read fast path in `:persistent_term` (keyed per server), and erase those persistent_term entries in `terminate/2` so no stale keys remain after shutdown.
+[17/42] 043_001_ets_based_leaderboard_01 ... ENTAILED (solver-weak — keep)
+[18/42] 043_004_ordered_set_leaderboard_with_deterministic_tie_breaking_01 ... ENTAILED (solver-weak — keep)
+[19/42] 061_003_timeout_and_retry_parallel_map_01 ... ENTAILED (solver-weak — keep)
+[20/42] 063_003_fallback_chain_concurrent_fetcher_01 ... ENTAILED (solver-weak — keep)
+[21/42] 063_004_bounded_concurrency_concurrent_fetcher_01 ... ENTAILED (solver-weak — keep)
+[22/42] 071_001_factory_module_for_test_data_generation_01 ... ENTAILED (solver-weak — keep)
+[23/42] 071_002_trait_composable_factory_01 ... ENTAILED (solver-weak — keep)
+[24/42] 073_004_fk_dependency_ordered_deletion_cleaner_01 ... PROMPT GAP: On success, `clean/0` returns `:ok` (not the ordered table list).
+[25/42] 074_001_custom_exunit_assertion_helpers_01 ... PROMPT GAP: Each of the timeout, elapsed, and interval values must be rendered with an `ms` unit suffix immediately after the number (e.g. `timeout: 1000ms`, `elapsed: 1020ms`, `interval: 50ms`).
+[26/42] 074_004_numeric_tolerance_and_exception_assertion_helpers_01 ... PROMPT GAP: In the `assert_monotonic` failure message, the index of the first violating pair must be rendered 0-based as the literal substring "index N" (e.g. "index 1"), where N is the position of the first element of the pair.
+[27/42] 075_001_property_based_test_generators_01 ... ENTAILED (solver-weak — keep)
+[28/42] 075_002_recursive_json_value_generators_with_bounded_depth_01 ... PROMPT GAP: `array/2` must be sized so that the full length range is reachable — lists of exactly `max_length` elements must appear within a few dozen samples at default generation size (e.g. by resizing/scaling the length generator rather than relying on StreamData's default size growth).
+[29/42] 079_002_counting_bloom_filter_01 ... PROMPT GAP: The struct must be defined as `defstruct [:m, :k, :counters, :size]` where `:counters` is a plain list of `m` integers (each 0..255).
+[30/42] 080_002_weighted_critical_path_dag_scheduler_01 ... PROMPT GAP: `predecessors/2` and `successors/2` return a plain list of task ids (not a result tuple), sorted ascending by term ordering, and `[]` for a task with no such neighbours.
+[31/42] 080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01 ... ENTAILED (solver-weak — keep)
+[32/42] 096_001_input_sanitizer_module_01 ... ENTAILED (solver-weak — keep)
+[33/42] 104_004_usage_recycling_connection_pool_01 ... ENTAILED (solver-weak — keep)
+[34/42] 108_003_capacity_bounded_bimap_with_lru_eviction_01 ... ENTAILED (solver-weak — keep)
+[35/42] 110_002_histogram_based_approximate_rolling_percentile_01 ... ENTAILED (solver-weak — keep)
+[36/42] 110_003_sla_percentile_monitor_with_inverse_queries_01 ... ENTAILED (solver-weak — keep)
+[37/42] 110_004_time_decay_weighted_rolling_percentile_01 ... PROMPT GAP: The first argument to `record/2`, `query/2`, `total_weight/1` and `reset/1` identifies both the registered process to call and the series within it, so a server started with `name: :d` is reached via `record(:d, value)` rather than via the default `DecayPercentile` registration.
+[38/42] 131_002_lazy_streaming_ndjson_parser_01 ... ENTAILED (solver-weak — keep)
+[39/42] 134_003_chunked_merge_based_schema_inference_01 ... ENTAILED (solver-weak — keep)
+[40/42] 623_001_mini_elasticsearch_like_inverted_index_01 ... PROMPT GAP: After stripping a suffix, if the resulting stem ends in a doubled consonant (e.g. "runn" from "running"), collapse it to a single consonant, but leave doubled vowels intact (e.g. "seeing" → "see").
+[41/42] 624_001_mini_git_like_object_store_01 ... ENTAILED (solver-weak — keep)
+[42/42] 626_001_mini_prometheus_like_time_series_db_01 ... ENTAILED (solver-weak — keep)
+
+=== SCREEN TRIAGE SUMMARY (whole ledger) ===
+  triaged: 121   entailed/keep: 83   open prompt gaps: 19   stale/resolved gaps: 19   errors: 0
+
+  PROMPT GAPS (human sign-off + backfill needed — cascade per docs/10 inv. #5):
+    - 623_001_mini_elasticsearch_like_inverted_index_01
+        After stripping a suffix, if the resulting stem ends in a doubled consonant (e.g. "runn" from "running"), collapse it to a single consonant, but leave doubled vowels intact (e.g. "seeing" → "see").
+    - 025_004_multi_channel_fan_in_long_poll_01
+        `Notifications.subscribe/3` must return `:ok`.
+    - 042_002_failure_aware_write_through_cache_with_negative_caching_01
+        Maintain the table-name → ETS table registry used by the read fast path in `:persistent_term` (keyed per server), and erase those persistent_term entries in `terminate/2` so no stale keys remain after shutdown.
+    - 074_004_numeric_tolerance_and_exception_assertion_helpers_01
+        In the `assert_monotonic` failure message, the index of the first violating pair must be rendered 0-based as the literal substring "index N" (e.g. "index 1"), where N is the position of the first element of the pair.
+    - 025_001_long_polling_endpoint_01
+        `subscribe/2` must return `:ok`.
+    - 003_003_lease_based_bucket_01
+        The public API functions must use guard clauses so that non-positive values for `capacity`, `refill_rate`, `tokens`, or `lease_timeout_ms` raise a `FunctionClauseError` rather than being handled at runtime.
+    - 079_002_counting_bloom_filter_01
+        The struct must be defined as `defstruct [:m, :k, :counters, :size]` where `:counters` is a plain list of `m` integers (each 0..255).
+    - 037_003_reversible_tokenization_vault_anonymizer_01
+        The vault must record which field each token belongs to, and `detokenize/2` must only replace a token-valued field that was actually tokenized for that field — token-shaped values in any other field are left untouched, so the round trip stays lossless even when an unlisted field already holds a string like `"TOK_EMAIL_1"`.
+    - 041_002_lfu_cache_backed_by_ets_01
+        Each row of the data table must be stored literally as the two-element tuple `{key, {value, frequency, seq}}` (the value, frequency and seq packed in a single nested tuple, not flattened into the row), since callers may read rows directly from the table.
+    - 031_001_csv_importer_with_validation_and_error_report_01
+        
+    - 019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01
+        `ConcurrentCatalog.get/1` returns the stored item map directly, or `nil` when no item with that id exists.
+    - 075_002_recursive_json_value_generators_with_bounded_depth_01
+        `array/2` must be sized so that the full length range is reachable — lists of exactly `max_length` elements must appear within a few dozen samples at default generation size (e.g. by resizing/scaling the length generator rather than relying on StreamData's default size growth).
+    - 080_002_weighted_critical_path_dag_scheduler_01
+        `predecessors/2` and `successors/2` return a plain list of task ids (not a result tuple), sorted ascending by term ordering, and `[]` for a task with no such neighbours.
+    - 019_003_bulk_upsert_with_conflict_resolution_policies_01
+        The `errors_map` is keyed by the offending field's **string** name exactly as it appears in the input attrs (e.g. `%{"name" => "is required"}`), with a human-readable message string as the value.
+    - 074_001_custom_exunit_assertion_helpers_01
+        Each of the timeout, elapsed, and interval values must be rendered with an `ms` unit suffix immediately after the number (e.g. `timeout: 1000ms`, `elapsed: 1020ms`, `interval: 50ms`).
+    - 073_004_fk_dependency_ordered_deletion_cleaner_01
+        On success, `clean/0` returns `:ok` (not the ordered table list).
+    - 005_004_filteredeventbus_01
+        Each element of the list in `{:any, [...]}` and `{:none, [...]}` is itself a complete filter — i.e. a list of clauses ANDed together — so a nested group is written `{:any, [[{:eq, [:a], 1}], [{:gt, [:b], 2}]]}`, and bare clause tuples as elements are invalid.
+    - 110_004_time_decay_weighted_rolling_percentile_01
+        The first argument to `record/2`, `query/2`, `total_weight/1` and `reset/1` identifies both the registered process to call and the series within it, so a server started with `name: :d` is reached via `record(:d, value)` rather than via the default `DecayPercentile` registration.
+    - 037_002_path_addressed_nested_record_anonymizer_01
+        For `{:fake, seed}`, compute `digest = :crypto.hash(:sha256, seed <> value)` and build the output as `<first>.<last><n>@<domain>` where `first`, `last`, and `domain` are chosen by indexing the exact word lists below with `rem(:binary.at(digest, 0|1|2), length(list))` and `n = :binary.at(digest, 3)` — with the full first-name, last-name, and domain lists given verbatim.

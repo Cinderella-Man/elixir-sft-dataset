@@ -1,0 +1,404 @@
+14:33:58.303 [info] VARIATIONS gen for 063_001_concurrent_data_fetcher_with_timeout_01 (3 slot(s))
+14:33:58.304 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:33:58.304 [debug] claude -p USER prompt:
+I have this SFT task (idea #63 — "Concurrent Data Fetcher with Timeout"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 63 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `ConcurrentFetcher` that fetches data from multiple sources concurrently and enforces a global timeout across all of them.
+
+I need this function in the public API:
+- `ConcurrentFetcher.fetch_all(sources, timeout_ms)` where `sources` is a list of `{name, fetch_fn}` tuples. `name` can be any term (atom, string, etc.) and `fetch_fn` is a zero-arity function that either returns `{:ok, result}` or raises/returns `{:error, reason}`. The function should return a map of `%{name => result_tuple}` where each value is one of:
+  - `{:ok, value}` — the fetch completed successfully within the timeout
+  - `{:error, :timeout}` — the global timeout expired before this fetch finished
+  - `{:error, reason}` — the fetch function crashed or returned an error
+
+The global timeout is shared across all sources, not per-source. Meaning if `timeout_ms` is 500 and one fetch takes 400ms and another takes 600ms, the first gets `{:ok, …}` and the second gets `{:error, :timeout}`. All fetches run concurrently from the moment `fetch_all` is called, not sequentially.
+
+When the global timeout fires, any still-running fetch processes must be killed immediately — no zombies left behind. The function should return only after all spawned processes are either done or confirmed dead.
+
+If `sources` is an empty list, return an empty map immediately.
+
+Do not use any external dependencies — only Elixir's standard library and OTP primitives (`Task`, `Process`, etc.).
+
+Give me the complete implementation in a single file with a single module.
+
+=== BASE solution.ex ===
+defmodule ConcurrentFetcher do
+  @moduledoc """
+  Fetches data from multiple sources concurrently under a single global timeout.
+
+  All fetches begin at the same instant. The timeout budget is shared — it is
+  not reset or re-applied per source. Any source that has not completed by the
+  time the deadline fires is killed immediately and reported as
+  `{:error, :timeout}`.
+  """
+
+  @doc """
+  Fetch from all sources concurrently, returning results within `timeout_ms`.
+
+  ## Parameters
+  - `sources`    – list of `{name, fetch_fn}` tuples.
+                   `name` is any term; `fetch_fn` is a zero-arity function
+                   returning `{:ok, value}` or `{:error, reason}` (raising is
+                   also handled gracefully).
+  - `timeout_ms` – global wall-clock budget in milliseconds, shared by every
+                   concurrent fetch.
+
+  ## Return value
+  A map of `%{name => result_tuple}` where each value is one of:
+
+  - `{:ok, value}`          – fetch completed successfully within the timeout
+  - `{:error, :timeout}`    – global timeout expired before this fetch finished
+  - `{:error, reason}`      – fetch function raised or returned `{:error, reason}`
+
+  Returns `%{}` immediately when `sources` is empty.
+  """
+  @spec fetch_all([{term(), (-> {:ok, term()} | {:error, term()})}, ...], non_neg_integer()) ::
+          %{term() => {:ok, term()} | {:error, term()}}
+  def fetch_all([], _timeout_ms), do: %{}
+
+  def fetch_all(sources, timeout_ms) when is_list(sources) and is_integer(timeout_ms) and timeout_ms >= 0 do
+    # ── 1. Spawn every fetch concurrently ──────────────────────────────────
+    # Task.async/1 links the task to the caller, which lets us kill it later
+    # via Task.shutdown/2. We pair each Task struct with its source name so we
+    # can reconstruct the result map afterwards.
+    tagged_tasks =
+      Enum.map(sources, fn {name, fetch_fn} ->
+        task = Task.async(fn -> safe_call(fetch_fn) end)
+        {name, task}
+      end)
+
+    tasks = Enum.map(tagged_tasks, fn {_name, task} -> task end)
+
+    # ── 2. Wait for all tasks under the global timeout ─────────────────────
+    # Task.yield_many/2 blocks for at most `timeout_ms` milliseconds and then
+    # returns a list of {task, result_or_nil} pairs in the same order as the
+    # input list.  A nil result means the task did not finish in time.
+    yield_results = Task.yield_many(tasks, timeout_ms)
+
+    # ── 3. Reconcile each task's outcome ──────────────────────────────────
+    # Build a map from task reference → final result_tuple first, then
+    # re-attach names.
+    ref_to_result =
+      Enum.reduce(yield_results, %{}, fn {task, yield_outcome}, acc ->
+        result =
+          case yield_outcome do
+            # Task completed within the timeout window.
+            {:ok, {:ok, value}} ->
+              {:ok, value}
+
+            # Task completed but returned an application-level error.
+            {:ok, {:error, reason}} ->
+              {:error, reason}
+
+            # Task exited/raised before the timeout fired.
+            {:exit, reason} ->
+              {:error, reason}
+
+            # Timeout: the task is still running — shut it down immediately.
+            # Task.shutdown/2 sends an exit signal and waits for the process
+            # to terminate, so no zombie processes are left behind.
+            nil ->
+              Task.shutdown(task, :brutal_kill)
+              {:error, :timeout}
+          end
+
+        Map.put(acc, task.ref, result)
+      end)
+
+    # ── 4. Rebuild the caller-facing map keyed by source name ─────────────
+    Map.new(tagged_tasks, fn {name, task} ->
+      {name, Map.fetch!(ref_to_result, task.ref)}
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Wraps the user-supplied fetch function so that any exception or unexpected
+  # return value is normalised into {:ok, _} | {:error, _} without leaking raw
+  # EXIT signals to the caller.
+  defp safe_call(fetch_fn) do
+    case fetch_fn.() do
+      {:ok, _} = ok -> ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_return, other}}
+    end
+  rescue
+    exception -> {:error, exception}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+end
+
+
+=== BASE test_harness.exs ===
+defmodule ConcurrentFetcherTest do
+  use ExUnit.Case, async: true
+
+  # -------------------------------------------------------
+  # Helpers
+  # -------------------------------------------------------
+
+  # Returns a fetch_fn that completes after `delay_ms` with {:ok, value}
+  defp slow_ok(value, delay_ms) do
+    fn ->
+      Process.sleep(delay_ms)
+      {:ok, value}
+    end
+  end
+
+  # Returns a fetch_fn that completes after `delay_ms` then raises
+  defp slow_raise(msg, delay_ms) do
+    fn ->
+      Process.sleep(delay_ms)
+      raise RuntimeError, msg
+    end
+  end
+
+  # Returns a fetch_fn that completes after `delay_ms` with {:error, reason}
+  defp slow_error(reason, delay_ms) do
+    fn ->
+      Process.sleep(delay_ms)
+      {:error, reason}
+    end
+  end
+
+  # -------------------------------------------------------
+  # Basic functionality
+  # -------------------------------------------------------
+
+  test "returns ok for al (truncated)
+14:41:09.087 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+# Quorum First-N Concurrent Fetcher
+
+Write me an Elixir module called `QuorumFetcher` that races data fetches from multiple sources concurrently and returns **as soon as a quorum of successes is reached**, cancelling everything still in flight.
+
+I need this function in the public API:
+
+- `QuorumFetcher.fetch_first(sources, count, timeout_ms)` where:
+  - `sources` is a list of `{name, fetch_fn}` tuples. `name` can be any term (atom, string, tuple, etc.) and `fetch_fn` is a zero-arity function that either returns `{:ok, result}` or returns `{:error, reason}` / raises.
+  - `count` is the number of **successful** fetches required (the quorum).
+  - `timeout_ms` is a single global wall-clock budget shared across every fetch.
+
+All fetches begin concurrently the moment `fetch_first` is called. The function returns a map of `%{name => result_tuple}` covering **every** source, where each value is one of:
+
+- `{:ok, value}` — this fetch completed successfully (winners plus any source that had already succeeded).
+- `{:error, reason}` — this fetch returned `{:error, reason}` or raised (crashes are captured, never counted as a success).
+- `{:error, :cancelled}` — the quorum was reached and this source was still running, so it was cancelled.
+- `{:error, :timeout}` — the global timeout expired before the quorum could be reached and this source had not finished.
+
+Semantics:
+
+- The function returns the instant the `count`-th success arrives; it must not wait for slower sources.
+- When the quorum is reached, any still-running fetch processes must be killed immediately — no zombies. Still-running sources are reported as `{:error, :cancelled}`.
+- If the quorum can never be met before the timeout, sources that finished are reported with their real outcome (`{:ok, …}` or `{:error, reason}`) and unfinished sources become `{:error, :timeout}`.
+- If `sources` is empty, return `%{}` immediately.
+- If `count <= 0`, the quorum is trivially satisfied: nothing is run and every source is reported as `{:error, :cancelled}`.
+- The function returns only after every spawned process is done or confirmed dead.
+
+Do not use any external dependencies — only Elixir's standard library and OTP primitives (`Task`, `Process`, etc.).
+
+Give me the complete implementation in a single file with a single module.
+</file>
+
+<file path="v1/solution.ex">
+defmodule QuorumFetcher do
+  @moduledoc """
+  Races concurrent fetches under a single global timeout and returns as soon as
+  a quorum of successful results is reached.
+
+  All fetches start at the same instant. The moment the `count`-th success
+  arrives, any source still running is killed and reported as
+  `{:error, :cancelled}`. If the quorum cannot be met before the shared deadline
+  fires, unfinished sources are reported as `{:error, :timeout}`.
+  """
+
+  @doc """
+  Fetch concurrently, returning once `count` sources have succeeded.
+
+  Returns a map of `%{name => result_tuple}` covering every source, where each
+  value is `{:ok, value}`, `{:error, reason}`, `{:error, :cancelled}`, or
+  `{:error, :timeout}`.
+  """
+  @spec fetch_first([{term(), (-> {:ok, term()} | {:error, term()})}], integer(), non_neg_integer()) ::
+          %{term() => {:ok, term()} | {:error, term()}}
+  def fetch_first([], _count, _timeout_ms), do: %{}
+
+  def fetch_first(sources, count, _timeout_ms)
+      when is_list(sources) and is_integer(count) and count <= 0 do
+    Map.new(sources, fn {name, _fetch_fn} -> {name, {:error, :cancelled}} end)
+  end
+
+  def fetch_first(sources, count, timeout_ms)
+      when is_list(sources) and is_integer(count) and is_integer(timeout_ms) and timeout_ms >= 0 do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    tagged =
+      Enum.map(sources, fn {name, fetch_fn} ->
+        task = Task.async(fn -> safe_call(fetch_fn) end)
+        {task.ref, name, task}
+      end)
+
+    ref_to_name = Map.new(tagged, fn {ref, name, _task} -> {ref, name} end)
+    ref_to_task = Map.new(tagged, fn {ref, _name, task} -> {ref, task} end)
+    all_refs = MapSet.new(Map.keys(ref_to_name))
+
+    {results, reached?} = collect(%{}, 0, count, all_refs, deadline)
+
+    fill_result = if reached?, do: {:error, :cancelled}, else: {:error, :timeout}
+
+    final =
+      Enum.reduce(all_refs, results, fn ref, acc ->
+        if Map.has_key?(acc, ref) do
+          acc
+        else
+          Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill)
+          Map.put(acc, ref, fill_result)
+        end
+      end)
+
+    Map.new(final, fn {ref, result} -> {Map.fetch!(ref_to_name, ref), result} end)
+  end
+
+  # Blocks until the quorum is met, every task has reported, or the deadline
+  # elapses. Returns `{results_by_ref, reached_quorum?}`.
+  defp collect(results, success_count, quorum, all_refs, deadline) do
+    cond do
+      success_count >= quorum ->
+        {results, true}
+
+      map_size(results) == MapSet.size(all_refs) ->
+        {results, false}
+
+      true ->
+        remaining = deadline - System.monotonic_time(:millisecond)
+
+        if remaining <= 0 do
+          {results, false}
+        else
+          receive do
+            {ref, reply} when is_reference(ref) ->
+              if MapSet.member?(all_refs, ref) and not Map.has_key?(results, ref) do
+                Process.demonitor(ref, [:flush])
+
+                new_success =
+                  case reply do
+                    {:ok, _} -> success_count + 1
+                    _ -> success_count
+                  end
+
+                collect(Map.put(results, ref, reply), new_success, quorum, all_refs, deadline)
+              else
+                collect(results, success_count, quorum, all_refs, deadline)
+              end
+
+            {:DOWN, ref, :process, _pid, reason} ->
+              if MapSet.member?(all_refs, ref) and not Map.has_key?(results, ref) do
+                collect(
+                  Map.put(results, ref, {:error, reason}),
+                  success_count,
+                  quorum,
+                  all_refs,
+                  deadline
+                )
+              else
+                collect(results, success_count, quorum, all_refs, deadline)
+              end
+          after
+            remaining ->
+              {results, false}
+          end
+        end
+    end
+  end
+
+  # Normalises any exception, throw, exit, or unexpected return into a tagged
+  # `{:ok, _} | {:error, _}` tuple so a fetch can never crash the caller.
+  defp safe_call(fetch_fn) do
+    case fetch_fn.() do
+      {:ok, _} = ok -> ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_return, other}}
+    end
+  rescue
+    exception -> {:error, exception}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+end
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule QuorumFetcherTest do
+  use ExUnit.Case, async: false
+
+  # -------------------------------------------------------
+  # Helpers
+  # -------------------------------------------------------
+
+  defp slow_ok(value, delay_ms) do
+    fn ->
+      Process.sleep(delay_ms)
+      {:ok, value}
+    end
+  end
+
+  defp slow_error(reason, delay_ms) do
+    fn ->
+      Process.sleep(delay_ms)
+      {:error, reason}
+    end
+  end
+
+  defp slow_raise(msg, delay_ms) do
+    fn ->
+      Process.sleep(delay_ms)
+      raise RuntimeError, msg
+    end
+  end
+
+  # -------------------------------------------------------
+  # Quorum behaviour
+  # -------------------------------------------------------
+
+  test "returns as soon as the quorum of successes is reached and cancels the rest" do
+    sources = [
+      {:a, slow_ok(:ra, 20)},
+      {:b, slow_ok(:rb, 20)},
+      {:c, slow_ok(:rc, 20)},
+      {:d, slow_ok(:rd, 3_000)},
+      {:e, slow_ok(:re, 3_000)}
+    ]
+
+    start = System.monotonic_time(:millisecond)
+    result = QuorumFetcher.fetch_first(sources, 3, 1_000)
+    elapsed = System.monotonic_time(:millisecond) - start
+
+    assert result[:a] == {:ok, :ra}
+    assert result[:b] == {:ok, :rb}
+    assert result[:c] == {:ok, :rc}
+    assert result[:d] == {:error, :cancelled}
+    assert result[:e] == {:error, :cancelled}
+ (truncated)
+14:41:09.087 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 24396, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 24396, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 24396, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 24396, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 39245, "type" => "message"}], "output_tokens" => 39245, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

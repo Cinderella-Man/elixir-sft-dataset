@@ -1,0 +1,58 @@
+  resynced tasks/wt_077_004_max_overlap_interval_tree: prompt.md,solution.ex
+resync_embeds over 331 dirs: %{unchanged: 330, resynced: 1} — APPLIED
+tfim embeds: %{unchanged: 3269, resynced: 10} — APPLIED
+  resynced adapt_077_004_max_overlap_interval_tree: solution.ex
+adapt embeds: %{unchanged: 248, resynced: 1}
+    note: gold located by whitespace-normalized match (child gold wrapping differs from parent — reflow-stale gold)
+    note: gold located by whitespace-normalized match (child gold wrapping differs from parent — reflow-stale gold)
+DRIFT tasks/077_004_max_overlap_interval_tree_02 (module-FIM; parent tasks/077_004_max_overlap_interval_tree_01)
+    - missing from embed  tasks/077_004_max_overlap_interval_tree_01/solution.ex:91:   @spec depth_at(t(), integer()) :: number()
+    - extra in embed      tasks/077_004_max_overlap_interval_tree_02/prompt.md:131:   @spec depth_at(t(), integer()) :: non_neg_integer()
+DRIFT tasks/077_004_max_overlap_interval_tree_03 (module-FIM; parent tasks/077_004_max_overlap_interval_tree_01)
+    - missing from embed  tasks/077_004_max_overlap_interval_tree_01/solution.ex:91:   @spec depth_at(t(), integer()) :: number()
+    - extra in embed      tasks/077_004_max_overlap_interval_tree_03/prompt.md:118:   @spec depth_at(t(), integer()) :: non_neg_integer()
+DRIFT tasks/077_004_max_overlap_interval_tree_04 (module-FIM; parent tasks/077_004_max_overlap_interval_tree_01)
+    - missing from embed  tasks/077_004_max_overlap_interval_tree_01/solution.ex:91:   @spec depth_at(t(), integer()) :: number()
+    - extra in embed      tasks/077_004_max_overlap_interval_tree_04/prompt.md:122:   @spec depth_at(t(), integer()) :: non_neg_integer()
+module-FIM: 988 clean, 0 reflow, 3 drift, 0 skipped
+wt_: 331 clean, 0 reflow, 0 drift, 0 skipped
+embed check: 1319 clean, 0 reflow, 3 drift, 0 skipped
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 1 needing top-up → next: 077_004_max_overlap_interval_tree_01
+  2. new bases:      skipped (GEN_ONLY=backfill)
+=============================================
+
+
+Backfill: 1 seed(s) needing derivatives.
+[1/1] 077_004_max_overlap_interval_tree_01 (backfill) ...
+      mutant [1/5] new/0 gutted to raise ... killed
+      mutant [2/5] insert/2 gutted to raise ... killed
+      mutant [3/5] depth_at/2 gutted to raise ... killed
+      mutant [4/5] max_overlap/1 gutted to raise ... killed
+      mutant [5/5] busiest_point/1 gutted to raise ... killed
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L216 s583: true -> false killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_077_004_max_overlap_interval_tree_01
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L84 s99: 1 -> 2 killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_077_004_max_overlap_interval_tree_02
+    gate [1/4] seeded semantic mutant is killed by the parent harness (real failing report) ... PASS — mutant L117 s216: > -> >= killed by tests
+    gate [2/4] gold reference green vs its own staged harness ... PASS — gold green vs its own harness
+    gate [3/4] buggy module differs from the gold by exactly one line ... PASS — buggy module differs from the gold by exactly one line
+    gate [4/4] promotion safety (refuse if the target dir exists; path containment) ... PASS — promoted to tasks/bugfix_077_004_max_overlap_interval_tree_03
+      bugfix_077_004_max_overlap_interval_tree_01 (bugfix) ... ACCEPTED (29 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_077_004_max_overlap_interval_tree_02 (bugfix) ... ACCEPTED (29 passed, mutant killed (semantic_killed), 1 attempt(s))
+      bugfix_077_004_max_overlap_interval_tree_03 (bugfix) ... ACCEPTED (29 passed, mutant killed (semantic_killed), 1 attempt(s))
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 1098 | mintable (rejected → accepted) pairs: 219 | minted: %{exists: 86, unverified: 133}
+
+Done.
+dialyzer golds: 332 root(s) — 1 to analyze, 325 already analyzed at this content+gate, 6 bundle-skipped (kit-tier staging is v2 — same scope as the retro audit) (PLT dialyxir_erlang-29.0.3_elixir-1.20.2_deps-dev.plt)
+  [1/1] 077_004_max_overlap_interval_tree_01 ... clean
+
+done: 1 clean, 0 with warnings, 0 waived (see scripts/dialyzer_waivers.jsonl), 0 errors

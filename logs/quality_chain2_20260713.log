@@ -1,0 +1,107 @@
+=== [chain2] stage 1: re-screen 013_001 against the strengthened harness — 2026-07-13T15:40:07+02:00
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 013_001_exponential_backoff_retry_worker_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+=== [chain2] stage 1 exit=0 — 2026-07-13T15:40:44+02:00
+=== [chain2] stage 2: screen the 4 prompt-gap fixes — 2026-07-13T15:40:44+02:00
+Blind-solve screen: 4 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/4] 102_002_optimistic_concurrency_persisted_state_machine_01 ... GREEN
+[2/4] 102_003_auto_expiring_persisted_state_machine_01 ... RED (test start/2 returns :pending for a brand-new entity: {:invalid, %ExUnit.TestModule{file: "/home/kamil/projects/elixir-sft-dataset/tasks/102_003_auto_expiring_persisted_state_machine_01/test_harness.exs", name: StateMachineTest, setup_all?: true, state: )
+[3/4] 102_004_threshold_approval_persisted_state_machine_01 ... GREEN
+[4/4] 626_004_sharded_concurrent_time_series_db_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 4   green: 3   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 102_003_auto_expiring_persisted_state_machine_01: test start/2 returns :pending for a brand-new entity: {:invalid, %ExUnit.TestModule{file: "/home/kamil/projects/elixir-sft-dataset/tasks/102_003_auto_expiring_persisted_state_machine_01/test_harness.exs", name: StateMachineTest, setup_all?: true, state: 
+=== [chain2] stage 2 exit=0 — 2026-07-13T15:44:29+02:00
+=== [chain2] stage 3: entailment triage of the 6 remaining REDs — 2026-07-13T15:44:29+02:00
+Screen triage: 6 untriaged RED task(s) — model=opus
+[1/6] 022_004_invitation_accept_decline_nested_membership_workflow_01 ... ENTAILED (solver-weak — keep)
+[2/6] 100_002_provisioning_uri_driven_multi_algorithm_totp_verifier_01 ... ENTAILED (solver-weak — keep)
+[3/6] 100_003_counter_based_hotp_with_resynchronization_window_01 ... ENTAILED (solver-weak — keep)
+[4/6] 100_004_stateful_totp_vault_genserver_with_replay_protection_01 ... ENTAILED (solver-weak — keep)
+[5/6] 101_003_weighted_sliding_sum_counter_01 ... PROMPT GAP: The window boundary is exclusive at the bucket start: include bucket `b` iff `b * bucket_ms > now - window_ms`, so a bucket whose start time is exactly `now - window_ms` is treated as outside the window and its amounts are not counted.
+[6/6] 624_002_merge_commit_dag_with_topological_log_and_merge_base_01 ... ENTAILED (solver-weak — keep)
+
+=== SCREEN TRIAGE SUMMARY (whole ledger) ===
+  triaged: 85   entailed/keep: 55   open prompt gaps: 1   stale/resolved gaps: 29   errors: 0
+
+  PROMPT GAPS (human sign-off + backfill needed — cascade per docs/10 inv. #5):
+    - 101_003_weighted_sliding_sum_counter_01
+        The window boundary is exclusive at the bucket start: include bucket `b` iff `b * bucket_ms > now - window_ms`, so a bucket whose start time is exactly `now - window_ms` is treated as outside the window and its amounts are not counted.
+=== [chain2] stage 3 exit=0 — 2026-07-13T15:46:30+02:00
+=== [chain2] stage 4: strengthen retry for 101_001 — 2026-07-13T15:46:30+02:00
+strengthening 1 family(ies), sequential, ledger logs/strengthen_harnesses.jsonl
+
+[1/1] 101_001_sliding_window_counter_01 (ledgered 0.47) ... rejected — house/harness lint: test_harness.exs reaches into internal state via `:sys.get_state`/`:sys.replace_state` (9 call(s)) — assert observable behavior through the public API instead
+
+=== STRENGTHEN LEDGER (61 row(s)) === %{"already_ok" => 10, "applied" => 17, "rejected" => 34}
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  105_001_genserver_based_debouncer_01: 0.4 → 0.8 (+3 test(s))
+  013_002_timeout_guarded_retry_worker_01: 0.4 → 0.84 (+6 test(s))
+  107_002_keyed_event_aggregator_with_per_key_batching_01: 0.43 → 0.79 (+3 test(s))
+  001_001_rate_limiter_01: 0.47 → 0.87 (+4 test(s))
+  002_002_rolling_window_error_rate_cb_01: 0.47 → 0.75 (+5 test(s))
+  104_004_usage_recycling_connection_pool_01: 0.47 → 0.82 (+9 test(s))
+  041_002_lfu_cache_backed_by_ets_01: 0.48 → 0.78 (+4 test(s))
+  079_001_bloom_filter_01: 0.48 → 1.0 (+6 test(s))
+  075_001_property_based_test_generators_01: 0.49 → 1.0 (+7 test(s))
+  074_001_custom_exunit_assertion_helpers_01: 0.41 → 1.0 (+8 test(s))
+  063_004_bounded_concurrency_concurrent_fetcher_01: 0.47 → 0.94 (+5 test(s))
+=== [chain2] stage 4 exit=0 — 2026-07-13T15:50:51+02:00
+=== [chain2] stage 5: free backfill (re-opened + new-carvable units) — 2026-07-13T15:50:51+02:00
+=============================================
+  GenTask — task generation loop
+  model=opus  max_retries=3  max_turns=2  fim_max=3  tfim_max=10
+  1. backfill seeds: 2 needing top-up → next: 063_004_bounded_concurrency_concurrent_fetcher_01, 102_001_genserver_based_state_machine_with_persistence_01
+  2. new bases:      skipped (GEN_ONLY=backfill)
+=============================================
+
+
+Backfill: 2 seed(s) needing derivatives.
+[1/2] 063_004_bounded_concurrency_concurrent_fetcher_01 (backfill) ...
+      tfim_063_004_bounded_concurrency_concurrent_fetcher_10 (tfim) ... ACCEPTED (13 passed, mutant killed (isolation), 1 attempt(s))
+      tfim_063_004_bounded_concurrency_concurrent_fetcher_11 (tfim) ... ACCEPTED (13 passed, mutant killed (isolation), 1 attempt(s))
+[2/2] 102_001_genserver_based_state_machine_with_persistence_01 (backfill) ...
+      tfim_102_001_genserver_based_state_machine_with_persistence_05 (tfim) ... ACCEPTED (18 passed, static assertion check, 1 attempt(s))
+      tfim_102_001_genserver_based_state_machine_with_persistence_06 (tfim) ... ACCEPTED (18 passed, static assertion check, 1 attempt(s))
+      tfim_102_001_genserver_based_state_machine_with_persistence_07 (tfim) ... ACCEPTED (18 passed, static assertion check, 1 attempt(s))
+      tfim_102_001_genserver_based_state_machine_with_persistence_08 (tfim) ... ACCEPTED (18 passed, static assertion check, 1 attempt(s))
+      tfim_102_001_genserver_based_state_machine_with_persistence_09 (tfim) ... ACCEPTED (18 passed, static assertion check, 1 attempt(s))
+      tfim_102_001_genserver_based_state_machine_with_persistence_10 (tfim) ... ACCEPTED (18 passed, static assertion check, 1 attempt(s))
+      tfim_102_001_genserver_based_state_machine_with_persistence_11 (tfim) ... ACCEPTED (18 passed, static assertion check, 1 attempt(s))
+
+Minting repair tasks from captured attempt chains ...
+  attempt chains found: 745 | mintable (rejected → accepted) pairs: 100 | minted: %{exists: 17, unverified: 83}
+
+Done.
+=== [chain2] stage 5 exit=0 — 2026-07-13T15:53:43+02:00
+=== [chain2] stage 6: report-only verification — 2026-07-13T15:53:43+02:00
+bases_todo=490 seeds=332 variations=0/83(+0) fim=0/331(+0) write_test=0/331(+0) test_fim=0/331(+0) bugfix=0/331(+0)
+tfim embeds: %{unchanged: 3246} (report only)
+bugfix embeds: %{unchanged: 957, would_resync: 3} (report only)
+resync_embeds over 331 dirs: %{unchanged: 330, would_resync: 1} (report only)
+embed check: 1322 clean, 0 reflow, 0 drift, 0 skipped
+total: 0 deviating, 0 errors — GATE (--check: exits 1 when anything deviates; --apply to rewrite)
+Repaired-accept population: 74 task(s) (written to logs/rescreen_repaired_population.txt)
+
+=== RETRO BLIND SCREEN (repaired accepts, 74 suspects) ===
+  PASS (prompt-sufficient):            58
+  FAIL, triaged entailed (kept as-is): 14
+  FAIL, OPEN (needs triage):           0
+  transport errors:                    0
+  not yet screened:                    2
+
+  todo 101_003_weighted_sliding_sum_counter_01
+  todo 102_003_auto_expiring_persisted_state_machine_01
+=== [chain2] CHAIN2 DONE — 2026-07-13T15:54:26+02:00

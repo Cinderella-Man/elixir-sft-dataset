@@ -1,0 +1,1463 @@
+23:37:13.721 [info] VARIATION 100_003_configurable_multi_algorithm_totp_with_uri_parsing_01: Configurable Multi-Algorithm TOTP with URI Parsing
+23:37:13.721 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+23:37:13.721 [debug] claude -p USER prompt:
+Write me an Elixir module called `TOTP` that implements a **configurable, multi-algorithm** RFC 6238 Time-Based One-Time Password generator using only the OTP standard library (no external dependencies). Unlike a fixed SHA1/6-digit/30-second implementation, every parameter — hash algorithm, digit count, and period — is caller-configurable through options, and the module can both emit and parse `otpauth://totp/` provisioning URIs.
+
+I need these functions in the public API:
+
+- `TOTP.generate_secret(opts \\ [])` returns a cryptographically random, base32-encoded secret string (RFC 4648 uppercase alphabet A–Z, 2–7, no padding). Option `:bytes` sets the entropy in bytes (default `20`, i.e. 160 bits → a 32-character secret). Must use `:crypto.strong_rand_bytes/1`.
+
+- `TOTP.generate_code(secret, opts \\ [])` returns a zero-padded numeric string. Options:
+  - `:time` — UNIX seconds (default: current time).
+  - `:algorithm` — one of `:sha1`, `:sha256`, `:sha512` (default `:sha1`).
+  - `:digits` — number of digits in the code (default `6`).
+  - `:period` — step length in seconds (default `30`).
+
+  It derives the time step as `div(time, period)`, HMACs that step (as a big-endian 8-byte unsigned integer) using the chosen algorithm with the base32-decoded secret, applies the RFC 4226 dynamic truncation, takes the result modulo `10^digits`, and left-pads with zeros to exactly `digits` characters. Because the algorithm is fully specified, SHA1 codes match the standard RFC 6238 test vectors for the secret `"12345678901234567890"` (base32 `GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ`): at `t = 59` the 8-digit code is `94287082` (and the 6-digit code is `287082`).
+
+- `TOTP.valid?(secret, code, opts \\ [])` validates a code (string or integer; integers are zero-padded to `:digits` characters) against the current time, tolerating clock drift. It accepts `:time`, `:window` (integer number of steps checked in each direction, default `1`), plus the same `:algorithm`, `:digits`, and `:period` options as `generate_code/2` (with the same defaults). It returns `true` if the code matches the code computed at any step in `-window..window` (using the configured algorithm, digits, and period), `false` otherwise.
+
+- `TOTP.provisioning_uri(secret, issuer, account_name, opts \\ [])` returns an `otpauth://totp/` URI with the label `issuer:account_name` (URI-encoded) and query parameters `secret`, `issuer`, `algorithm`, `digits`, and `period`. The `:algorithm`, `:digits`, and `:period` options (same defaults as above) are reflected in the query: `algorithm` is the uppercase name (`SHA1`, `SHA256`, or `SHA512`), `digits` and `period` are their decimal integers.
+
+- `TOTP.parse_uri(uri)` parses an `otpauth://totp/` provisioning URI and returns `{:ok, config}` where `config` is a map with keys `:secret` (string), `:issuer` (string or `nil`), `:algorithm` (`:sha1`/`:sha256`/`:sha512`), `:digits` (integer), and `:period` (integer). A missing `algorithm` defaults to `:sha1`, a missing `digits` to `6`, and a missing `period` to `30`. It returns `:error` if the scheme is not `otpauth`, the host is not `totp`, or there is no query string.
+
+Requirements and constraints:
+- Base32 encoding/decoding must follow RFC 4648 and be implemented yourself, not via a library.
+- HMAC must be done via Erlang's `:crypto.mac/4` with the algorithm selected by the `:algorithm` option (`:sha1` maps to Erlang's `:sha`).
+- Dynamic truncation (RFC 4226 §5.3): take the last byte of the HMAC, mask with `0x0F` to get the offset, read 4 bytes from that offset, mask the top bit of the first byte with `0x7F`, combine as a 31-bit big-endian integer, then take modulo `10^digits`.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+23:38:39.394 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TOTP do
+  @moduledoc """
+  A configurable, multi-algorithm RFC 6238 Time-Based One-Time Password (TOTP)
+  generator built exclusively on the Erlang/OTP standard library.
+
+  Every parameter — hash algorithm (`:sha1`, `:sha256`, `:sha512`), digit count,
+  and time step (period) — is caller-configurable via options. The module can
+  generate cryptographically random base32 secrets, emit numeric codes, validate
+  codes with clock-drift tolerance, and both build and parse
+  `otpauth://totp/` provisioning URIs.
+
+  Base32 encoding/decoding follows RFC 4648 (uppercase alphabet `A–Z`, `2–7`,
+  no padding) and is implemented locally rather than through any library.
+  HMAC is computed with `:crypto.mac/4` and dynamic truncation follows
+  RFC 4226 §5.3.
+  """
+
+  import Bitwise
+
+  @alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @decode_map (for {ch, idx} <- Enum.with_index(String.graphemes(@alphabet)),
+                   into: %{},
+                   do: {ch, idx})
+
+  @doc """
+  Generates a cryptographically random, base32-encoded secret.
+
+  The `:bytes` option sets the amount of entropy in bytes (default `20`, i.e.
+  160 bits, which yields a 32-character secret). Uses
+  `:crypto.strong_rand_bytes/1`.
+  """
+  @spec generate_secret(keyword()) :: String.t()
+  def generate_secret(opts \\ []) do
+    bytes = Keyword.get(opts, :bytes, 20)
+
+    bytes
+    |> :crypto.strong_rand_bytes()
+    |> encode_base32()
+  end
+
+  @doc """
+  Generates a zero-padded numeric TOTP code for `secret`.
+
+  Options:
+
+    * `:time` — UNIX seconds (default: current time)
+    * `:algorithm` — `:sha1`, `:sha256`, or `:sha512` (default `:sha1`)
+    * `:digits` — number of digits in the code (default `6`)
+    * `:period` — step length in seconds (default `30`)
+  """
+  @spec generate_code(String.t(), keyword()) :: String.t()
+  def generate_code(secret, opts \\ []) do
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    algorithm = Keyword.get(opts, :algorithm, :sha1)
+    digits = Keyword.get(opts, :digits, 6)
+    period = Keyword.get(opts, :period, 30)
+
+    key = decode_base32(secret)
+    step = div(time, period)
+    message = <<step::unsigned-big-integer-size(64)>>
+    hmac = :crypto.mac(:hmac, crypto_hash(algorithm), key, message)
+
+    hmac
+    |> truncate(digits)
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  @doc """
+  Validates `code` against `secret`, tolerating clock drift.
+
+  `code` may be a string or an integer (integers are zero-padded to `:digits`
+  characters). In addition to `:time`, `:algorithm`, `:digits`, and `:period`
+  (same defaults as `generate_code/2`), the `:window` option (default `1`) sets
+  the number of steps checked in each direction.
+
+  Returns `true` when `code` matches the code computed at any step in
+  `-window..window`, and `false` otherwise.
+  """
+  @spec valid?(String.t(), String.t() | integer(), keyword()) :: boolean()
+  def valid?(secret, code, opts \\ []) do
+    digits = Keyword.get(opts, :digits, 6)
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+    period = Keyword.get(opts, :period, 30)
+    expected = normalize_code(code, digits)
+
+    Enum.any?(-window..window, fn offset ->
+      shifted = time + offset * period
+      generate_code(secret, Keyword.put(opts, :time, shifted)) == expected
+    end)
+  end
+
+  @doc """
+  Builds an `otpauth://totp/` provisioning URI.
+
+  The label is `issuer:account_name` (URI-encoded). The query parameters are
+  `secret`, `issuer`, `algorithm` (uppercase name), `digits`, and `period`.
+  The `:algorithm`, `:digits`, and `:period` options share the same defaults as
+  `generate_code/2`.
+  """
+  @spec provisioning_uri(String.t(), String.t(), String.t(), keyword()) :: String.t()
+  def provisioning_uri(secret, issuer, account_name, opts \\ []) do
+    algorithm = Keyword.get(opts, :algorithm, :sha1)
+    digits = Keyword.get(opts, :digits, 6)
+    period = Keyword.get(opts, :period, 30)
+
+    label = URI.encode(issuer <> ":" <> account_name)
+
+    query =
+      URI.encode_query([
+        {"secret", secret},
+        {"issuer", issuer},
+        {"algorithm", algorithm_name(algorithm)},
+        {"digits", Integer.to_string(digits)},
+        {"period", Integer.to_string(period)}
+      ])
+
+    "otpauth://totp/" <> label <> "?" <> query
+  end
+
+  @doc """
+  Parses an `otpauth://totp/` provisioning URI.
+
+  Returns `{:ok, config}` with a map holding `:secret`, `:issuer` (string or
+  `nil`), `:algorithm`, `:digits`, and `:period`. Missing `algorithm`, `digits`,
+  and `period` default to `:sha1`, `6`, and `30` respectively.
+
+  Returns `:error` when the scheme is not `otpauth`, the host is not `totp`, or
+  there is no query string.
+  """
+  @spec parse_uri(String.t()) :: {:ok, map()} | :error
+  def parse_uri(uri) do
+    parsed = URI.parse(uri)
+
+    with "otpauth" <- parsed.scheme,
+         "totp" <- parsed.host,
+         query when is_binary(query) <- parsed.query do
+      params = URI.decode_query(query)
+
+      config = %{
+        secret: Map.get(params, "secret"),
+        issuer: Map.get(params, "issuer"),
+        algorithm: parse_algorithm(Map.get(params, "algorithm")),
+        digits: parse_int(Map.get(params, "digits"), 6),
+        period: parse_int(Map.get(params, "period"), 30)
+      }
+
+      {:ok, config}
+    else
+      _ -> :error
+    end
+  end
+
+  # --- Internal helpers ----------------------------------------------------
+
+  @spec normalize_code(String.t() | integer(), pos_integer()) :: String.t()
+  defp normalize_code(code, digits) when is_integer(code) do
+    code
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  defp normalize_code(code, _digits) when is_binary(code), do: code
+
+  @spec truncate(binary(), pos_integer()) :: non_neg_integer()
+  defp truncate(hmac, digits) do
+    offset = :binary.last(hmac) &&& 0x0F
+    <<_::binary-size(offset), b0, b1, b2, b3, _::binary>> = hmac
+
+    value =
+      ((b0 &&& 0x7F) <<< 24) |||
+        (b1 <<< 16) |||
+        (b2 <<< 8) |||
+        b3
+
+    rem(value, Integer.pow(10, digits))
+  end
+
+  @spec crypto_hash(:sha1 | :sha256 | :sha512) :: :sha | :sha256 | :sha512
+  defp crypto_hash(:sha1), do: :sha
+  defp crypto_hash(:sha256), do: :sha256
+  defp crypto_hash(:sha512), do: :sha512
+
+  @spec algorithm_name(:sha1 | :sha256 | :sha512) :: String.t()
+  defp algorithm_name(:sha1), do: "SHA1"
+  defp algorithm_name(:sha256), do: "SHA256"
+  defp algorithm_name(:sha512), do: "SHA512"
+
+  @spec parse_algorithm(String.t() | nil) :: :sha1 | :sha256 | :sha512
+  defp parse_algorithm(nil), do: :sha1
+
+  defp parse_algorithm(name) do
+    case String.upcase(name) do
+      "SHA256" -> :sha256
+      "SHA512" -> :sha512
+      _ -> :sha1
+    end
+  end
+
+  @spec parse_int(String.t() | nil, integer()) :: integer()
+  defp parse_int(nil, default), do: default
+  defp parse_int(value, _default), do: String.to_integer(value)
+
+  @spec encode_base32(binary()) :: String.t()
+  defp encode_base32(bin) do
+    bits = for <<b::1 <- bin>>, do: b
+
+    bits
+    |> Enum.chunk_every(5, 5, [])
+    |> Enum.map_join("", fn chunk ->
+      padded = chunk ++ List.duplicate(0, 5 - length(chunk))
+      idx = Enum.reduce(padded, 0, fn bit, acc -> acc * 2 + bit end)
+      String.at(@alphabet, idx)
+    end)
+  end
+
+  @spec decode_base32(String.t()) :: binary()
+  defp decode_base32(str) do
+    bits =
+      str
+      |> String.upcase()
+      |> String.graphemes()
+      |> Enum.flat_map(fn ch ->
+        idx = Map.fetch!(@decode_map, ch)
+        for <<b::1 <- <<idx::5>>>, do: b
+      end)
+
+    bytes =
+      bits
+      |> Enum.chunk_every(8, 8, :discard)
+      |> Enum.map(fn chunk ->
+        Enum.reduce(chunk, 0, fn bit, acc -> acc * 2 + bit end)
+      end)
+
+    :binary.list_to_bin(bytes)
+  end
+end
+</file>
+23:38:39.394 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5509, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5509, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5509, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5509, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 7879, "type" => "message"}], "output_tokens" => 7879, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+23:38:39.418 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01 solution.ex
+23:38:39.788 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":239,"lines_over_98":0,"max_line_length":85,"mode":"full","pipe_chain_count":14,"public_fn_count":5,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"mismatched delimiter found on .gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01/solution.ex:228:7:\n     error: unexpected reserved word: end\n     │\n 227 │         for <<b::1 <- <<idx::5>>>, do: b\n     │                       └ unclosed delimiter\n 228 │       end)\n     │       └ mismatched closing delimiter (expected \">>\")\n     │\n     └─ .gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01/solution.ex:228:7","type":"MismatchedDelimiterError"}],"compile_warnings":0,"compiled":false,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: failed to compile (0.0)"],"tests":0.0},"shape":"single","solution_file":".gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01/solution.ex","task":"100_003_configurable_multi_algorithm_totp_with_uri_parsing_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-11T21:38:39.767698Z"}
+23:38:39.789 [info] cycle 100_003_configurable_multi_algorithm_totp_with_uri_parsing_01: repairing — Compilation failed:
+  - MismatchedDelimiterError: mismatched delimiter found on .gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01/solution.ex:228:7:
+     error: unexpected reserved word: end
+     │
+ 227 │         for <<b::1 <- <<idx::5>>>, do: b
+     │                       └ unclosed delimiter
+ 228 │       end)
+     │       └ mismatched closing delimiter (expected ">>")
+     │
+     └─ .gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01/solution.ex:228:7
+23:38:39.789 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+23:38:39.789 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Compilation failed:
+  - MismatchedDelimiterError: mismatched delimiter found on .gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01/solution.ex:228:7:
+     error: unexpected reserved word: end
+     │
+ 227 │         for <<b::1 <- <<idx::5>>>, do: b
+     │                       └ unclosed delimiter
+ 228 │       end)
+     │       └ mismatched closing delimiter (expected ">>")
+     │
+     └─ .gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01/solution.ex:228:7
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `TOTP` that implements a **configurable, multi-algorithm** RFC 6238 Time-Based One-Time Password generator using only the OTP standard library (no external dependencies). Unlike a fixed SHA1/6-digit/30-second implementation, every parameter — hash algorithm, digit count, and period — is caller-configurable through options, and the module can both emit and parse `otpauth://totp/` provisioning URIs.
+
+I need these functions in the public API:
+
+- `TOTP.generate_secret(opts \\ [])` returns a cryptographically random, base32-encoded secret string (RFC 4648 uppercase alphabet A–Z, 2–7, no padding). Option `:bytes` sets the entropy in bytes (default `20`, i.e. 160 bits → a 32-character secret). Must use `:crypto.strong_rand_bytes/1`.
+
+- `TOTP.generate_code(secret, opts \\ [])` returns a zero-padded numeric string. Options:
+  - `:time` — UNIX seconds (default: current time).
+  - `:algorithm` — one of `:sha1`, `:sha256`, `:sha512` (default `:sha1`).
+  - `:digits` — number of digits in the code (default `6`).
+  - `:period` — step length in seconds (default `30`).
+
+  It derives the time step as `div(time, period)`, HMACs that step (as a big-endian 8-byte unsigned integer) using the chosen algorithm with the base32-decoded secret, applies the RFC 4226 dynamic truncation, takes the result modulo `10^digits`, and left-pads with zeros to exactly `digits` characters. Because the algorithm is fully specified, SHA1 codes match the standard RFC 6238 test vectors for the secret `"12345678901234567890"` (base32 `GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ`): at `t = 59` the 8-digit code is `94287082` (and the 6-digit code is `287082`).
+
+- `TOTP.valid?(secret, code, opts \\ [])` validates a code (string or integer; integers are zero-padded to `:digits` characters) against the current time, tolerating clock drift. It accepts `:time`, `:window` (integer number of steps checked in each direction, default `1`), plus the same `:algorithm`, `:digits`, and `:period` options as `generate_code/2` (with the same defaults). It returns `true` if the code matches the code computed at any step in `-window..window` (using the configured algorithm, digits, and period), `false` otherwise.
+
+- `TOTP.provisioning_uri(secret, issuer, account_name, opts \\ [])` returns an `otpauth://totp/` URI with the label `issuer:account_name` (URI-encoded) and query parameters `secret`, `issuer`, `algorithm`, `digits`, and `period`. The `:algorithm`, `:digits`, and `:period` options (same defaults as above) are reflected in the query: `algorithm` is the uppercase name (`SHA1`, `SHA256`, or `SHA512`), `digits` and `period` are their decimal integers.
+
+- `TOTP.parse_uri(uri)` parses an `otpauth://totp/` provisioning URI and returns `{:ok, config}` where `config` is a map with keys `:secret` (string), `:issuer` (string or `nil`), `:algorithm` (`:sha1`/`:sha256`/`:sha512`), `:digits` (integer), and `:period` (integer). A missing `algorithm` defaults to `:sha1`, a missing `digits` to `6`, and a missing `period` to `30`. It returns `:error` if the scheme is not `otpauth`, the host is not `totp`, or there is no query string.
+
+Requirements and constraints:
+- Base32 encoding/decoding must follow RFC 4648 and be implemented yourself, not via a library.
+- HMAC must be done via Erlang's `:crypto.mac/4` with the algorithm selected by the `:algorithm` option (`:sha1` maps to Erlang's `:sha`).
+- Dynamic truncation (RFC 4226 §5.3): take the last byte of the HMAC, mask with `0x0F` to get the offset, read 4 bytes from that offset, mask the top bit of the first byte with `0x7F`, combine as a 31-bit big-endian integer, then take modulo `10^digits`.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule TOTP do
+  @moduledoc """
+  A configurable, multi-algorithm RFC 6238 Time-Based One-Time Password (TOTP)
+  generator built exclusively on the Erlang/OTP standard library.
+
+  Every parameter — hash algorithm (`:sha1`, `:sha256`, `:sha512`), digit count,
+  and time step (period) — is caller-configurable via options. The module can
+  generate cryptographically random base32 secrets, emit numeric codes, validate
+  codes with clock-drift tolerance, and both build and parse
+  `otpauth://totp/` provisioning URIs.
+
+  Base32 encoding/decoding follows RFC 4648 (uppercase alphabet `A–Z`, `2–7`,
+  no padding) and is implemented locally rather than through any library.
+  HMAC is computed with `:crypto.mac/4` and dynamic truncation follows
+  RFC 4226 §5.3.
+  """
+
+  import Bitwise
+
+  @alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @decode_map (for {ch, idx} <- Enum.with_index(String.graphemes(@alphabet)),
+                   into: %{},
+                   do: {ch, idx})
+
+  @doc """
+  Generates a cryptographically random, base32-encoded secret.
+
+  The `:bytes` option sets the amount of entropy in bytes (default `20`, i.e.
+  160 bits, which yields a 32-character secret). Uses
+  `:crypto.strong_rand_bytes/1`.
+  """
+  @spec generate_secret(keyword()) :: String.t()
+  def generate_secret(opts \\ []) do
+    bytes = Keyword.get(opts, :bytes, 20)
+
+    bytes
+    |> :crypto.strong_rand_bytes()
+    |> encode_base32()
+  end
+
+  @doc """
+  Generates a zero-padded numeric TOTP code for `secret`.
+
+  Options:
+
+    * `:time` — UNIX seconds (default: current time)
+    * `:algorithm` — `:sha1`, `:sha256`, or `:sha512` (default `:sha1`)
+    * `:digits` — number of digits in the code (default `6`)
+    * `:period` — step length in seconds (default `30`)
+  """
+  @spec generate_code(String.t(), keyword()) :: String.t()
+  def generate_code(secret, opts \\ []) do
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    algorithm = Keyword.get(opts, :algorithm, :sha1)
+    digits = Keyword.get(opts, :digits, 6)
+    period = Keyword.get(opts, :period, 30)
+
+    key = decode_base32(secret)
+    step = div(time, period)
+    message = <<step::unsigned-big-integer-size(64)>>
+    hmac = :crypto.mac(:hmac, crypto_hash(algorithm), key, message)
+
+    hmac
+    |> truncate(digits)
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  @doc """
+  Validates `code` against `secret`, tolerating clock drift.
+
+  `code` may be a string or an integer (integers are zero-padded to `:digits`
+  characters). In addition to `:time`, `:algorithm`, `:digits`, and `:period`
+  (same defaults as `generate_code/2`), the `:window` option (default `1`) sets
+  the number of steps checked in each direction.
+
+  Returns `true` when `code` matches the code computed at any step in
+  `-window..window`, and `false` otherwise.
+  """
+  @spec valid?(String.t(), String.t() | integer(), keyword()) :: boolean()
+  def valid?(secret, code, opts \\ []) do
+    digits = Keyword.get(opts, : (truncated)
+23:39:23.615 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TOTP do
+  @moduledoc """
+  A configurable, multi-algorithm RFC 6238 Time-Based One-Time Password (TOTP)
+  generator built exclusively on the Erlang/OTP standard library.
+
+  Every parameter — hash algorithm (`:sha1`, `:sha256`, `:sha512`), digit count,
+  and time step (period) — is caller-configurable via options. The module can
+  generate cryptographically random base32 secrets, emit numeric codes, validate
+  codes with clock-drift tolerance, and both build and parse
+  `otpauth://totp/` provisioning URIs.
+
+  Base32 encoding/decoding follows RFC 4648 (uppercase alphabet `A–Z`, `2–7`,
+  no padding) and is implemented locally rather than through any library.
+  HMAC is computed with `:crypto.mac/4` and dynamic truncation follows
+  RFC 4226 §5.3.
+  """
+
+  import Bitwise
+
+  @alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @decode_map (for {ch, idx} <- Enum.with_index(String.graphemes(@alphabet)),
+                   into: %{},
+                   do: {ch, idx})
+
+  @doc """
+  Generates a cryptographically random, base32-encoded secret.
+
+  The `:bytes` option sets the amount of entropy in bytes (default `20`, i.e.
+  160 bits, which yields a 32-character secret). Uses
+  `:crypto.strong_rand_bytes/1`.
+  """
+  @spec generate_secret(keyword()) :: String.t()
+  def generate_secret(opts \\ []) do
+    bytes = Keyword.get(opts, :bytes, 20)
+
+    bytes
+    |> :crypto.strong_rand_bytes()
+    |> encode_base32()
+  end
+
+  @doc """
+  Generates a zero-padded numeric TOTP code for `secret`.
+
+  Options:
+
+    * `:time` — UNIX seconds (default: current time)
+    * `:algorithm` — `:sha1`, `:sha256`, or `:sha512` (default `:sha1`)
+    * `:digits` — number of digits in the code (default `6`)
+    * `:period` — step length in seconds (default `30`)
+  """
+  @spec generate_code(String.t(), keyword()) :: String.t()
+  def generate_code(secret, opts \\ []) do
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    algorithm = Keyword.get(opts, :algorithm, :sha1)
+    digits = Keyword.get(opts, :digits, 6)
+    period = Keyword.get(opts, :period, 30)
+
+    key = decode_base32(secret)
+    step = div(time, period)
+    message = <<step::unsigned-big-integer-size(64)>>
+    hmac = :crypto.mac(:hmac, crypto_hash(algorithm), key, message)
+
+    hmac
+    |> truncate(digits)
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  @doc """
+  Validates `code` against `secret`, tolerating clock drift.
+
+  `code` may be a string or an integer (integers are zero-padded to `:digits`
+  characters). In addition to `:time`, `:algorithm`, `:digits`, and `:period`
+  (same defaults as `generate_code/2`), the `:window` option (default `1`) sets
+  the number of steps checked in each direction.
+
+  Returns `true` when `code` matches the code computed at any step in
+  `-window..window`, and `false` otherwise.
+  """
+  @spec valid?(String.t(), String.t() | integer(), keyword()) :: boolean()
+  def valid?(secret, code, opts \\ []) do
+    digits = Keyword.get(opts, :digits, 6)
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+    period = Keyword.get(opts, :period, 30)
+    expected = normalize_code(code, digits)
+
+    Enum.any?(-window..window, fn offset ->
+      shifted = time + offset * period
+      generate_code(secret, Keyword.put(opts, :time, shifted)) == expected
+    end)
+  end
+
+  @doc """
+  Builds an `otpauth://totp/` provisioning URI.
+
+  The label is `issuer:account_name` (URI-encoded). The query parameters are
+  `secret`, `issuer`, `algorithm` (uppercase name), `digits`, and `period`.
+  The `:algorithm`, `:digits`, and `:period` options share the same defaults as
+  `generate_code/2`.
+  """
+  @spec provisioning_uri(String.t(), String.t(), String.t(), keyword()) :: String.t()
+  def provisioning_uri(secret, issuer, account_name, opts \\ []) do
+    algorithm = Keyword.get(opts, :algorithm, :sha1)
+    digits = Keyword.get(opts, :digits, 6)
+    period = Keyword.get(opts, :period, 30)
+
+    label = URI.encode(issuer <> ":" <> account_name)
+
+    query =
+      URI.encode_query([
+        {"secret", secret},
+        {"issuer", issuer},
+        {"algorithm", algorithm_name(algorithm)},
+        {"digits", Integer.to_string(digits)},
+        {"period", Integer.to_string(period)}
+      ])
+
+    "otpauth://totp/" <> label <> "?" <> query
+  end
+
+  @doc """
+  Parses an `otpauth://totp/` provisioning URI.
+
+  Returns `{:ok, config}` with a map holding `:secret`, `:issuer` (string or
+  `nil`), `:algorithm`, `:digits`, and `:period`. Missing `algorithm`, `digits`,
+  and `period` default to `:sha1`, `6`, and `30` respectively.
+
+  Returns `:error` when the scheme is not `otpauth`, the host is not `totp`, or
+  there is no query string.
+  """
+  @spec parse_uri(String.t()) :: {:ok, map()} | :error
+  def parse_uri(uri) do
+    parsed = URI.parse(uri)
+
+    with "otpauth" <- parsed.scheme,
+         "totp" <- parsed.host,
+         query when is_binary(query) <- parsed.query do
+      params = URI.decode_query(query)
+
+      config = %{
+        secret: Map.get(params, "secret"),
+        issuer: Map.get(params, "issuer"),
+        algorithm: parse_algorithm(Map.get(params, "algorithm")),
+        digits: parse_int(Map.get(params, "digits"), 6),
+        period: parse_int(Map.get(params, "period"), 30)
+      }
+
+      {:ok, config}
+    else
+      _ -> :error
+    end
+  end
+
+  # --- Internal helpers ----------------------------------------------------
+
+  @spec normalize_code(String.t() | integer(), pos_integer()) :: String.t()
+  defp normalize_code(code, digits) when is_integer(code) do
+    code
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  defp normalize_code(code, _digits) when is_binary(code), do: code
+
+  @spec truncate(binary(), pos_integer()) :: non_neg_integer()
+  defp truncate(hmac, digits) do
+    offset = :binary.last(hmac) &&& 0x0F
+    <<_::binary-size(offset), b0, b1, b2, b3, _::binary>> = hmac
+
+    value =
+      ((b0 &&& 0x7F) <<< 24) |||
+        (b1 <<< 16) |||
+        (b2 <<< 8) |||
+        b3
+
+    rem(value, Integer.pow(10, digits))
+  end
+
+  @spec crypto_hash(:sha1 | :sha256 | :sha512) :: :sha | :sha256 | :sha512
+  defp crypto_hash(:sha1), do: :sha
+  defp crypto_hash(:sha256), do: :sha256
+  defp crypto_hash(:sha512), do: :sha512
+
+  @spec algorithm_name(:sha1 | :sha256 | :sha512) :: String.t()
+  defp algorithm_name(:sha1), do: "SHA1"
+  defp algorithm_name(:sha256), do: "SHA256"
+  defp algorithm_name(:sha512), do: "SHA512"
+
+  @spec parse_algorithm(String.t() | nil) :: :sha1 | :sha256 | :sha512
+  defp parse_algorithm(nil), do: :sha1
+
+  defp parse_algorithm(name) do
+    case String.upcase(name) do
+      "SHA256" -> :sha256
+      "SHA512" -> :sha512
+      _ -> :sha1
+    end
+  end
+
+  @spec parse_int(String.t() | nil, integer()) :: integer()
+  defp parse_int(nil, default), do: default
+  defp parse_int(value, _default), do: String.to_integer(value)
+
+  @spec encode_base32(binary()) :: String.t()
+  defp encode_base32(bin) do
+    bits = for <<b::1 <- bin>>, do: b
+
+    bits
+    |> Enum.chunk_every(5, 5, [])
+    |> Enum.map_join("", fn chunk ->
+      padded = chunk ++ List.duplicate(0, 5 - length(chunk))
+      idx = Enum.reduce(padded, 0, fn bit, acc -> acc * 2 + bit end)
+      String.at(@alphabet, idx)
+    end)
+  end
+
+  @spec decode_base32(String.t()) :: binary()
+  defp decode_base32(str) do
+    bits =
+      str
+      |> String.upcase()
+      |> String.graphemes()
+      |> Enum.flat_map(fn ch ->
+        idx = Map.fetch!(@decode_map, ch)
+        for <<b::1 <- <<idx::5>> >>, do: b
+      end)
+
+    bytes =
+      bits
+      |> Enum.chunk_every(8, 8, :discard)
+      |> Enum.map(fn chunk ->
+        Enum.reduce(chunk, 0, fn bit, acc -> acc * 2 + bit end)
+      end)
+
+    :binary.list_to_bin(bytes)
+  end
+end
+</file>
+23:39:23.615 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12682, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12682, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12682, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12682, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 4170, "type" => "message"}], "output_tokens" => 4170, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+23:39:23.641 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01 solution.ex
+23:39:24.359 [debug] grade JSON: {"analysis":{"defp_count":15,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":240,"lines_over_98":0,"max_line_length":85,"mode":"full","pipe_chain_count":14,"public_fn_count":5,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 1/27 failed"],"tests":0.96},"shape":"single","solution_file":".gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01/solution.ex","task":"100_003_configurable_multi_algorithm_totp_with_uri_parsing_01","test_failures":[{"message":"\n\nAssertion with =~ failed\ncode:  assert uri =~ \"Acme:alice%40example.com\"\nleft:  \"otpauth://totp/Acme:alice@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Acme&algorithm=SHA256&digits=8&period=60\"\nright: \"Acme:alice%40example.com\"\n","module":"TOTPTest","test":"test provisioning_uri reflects configured parameters"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":26,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-11T21:39:24.336470Z"}
+23:39:24.360 [info] cycle 100_003_configurable_multi_algorithm_totp_with_uri_parsing_01: repairing — Tests failed (1 failed, 0 errors):
+  - test provisioning_uri reflects configured parameters (TOTPTest): 
+
+Assertion with =~ failed
+code:  assert uri =~ "Acme:alice%40example.com"
+left:  "otpauth://totp/Acme:alice@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Acme&algorithm=SHA256&digits=8&period=60"
+right: "Acme:alice%40example.com"
+
+23:39:24.360 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+23:39:24.360 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Tests failed (1 failed, 0 errors):
+  - test provisioning_uri reflects configured parameters (TOTPTest): 
+
+Assertion with =~ failed
+code:  assert uri =~ "Acme:alice%40example.com"
+left:  "otpauth://totp/Acme:alice@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Acme&algorithm=SHA256&digits=8&period=60"
+right: "Acme:alice%40example.com"
+
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `TOTP` that implements a **configurable, multi-algorithm** RFC 6238 Time-Based One-Time Password generator using only the OTP standard library (no external dependencies). Unlike a fixed SHA1/6-digit/30-second implementation, every parameter — hash algorithm, digit count, and period — is caller-configurable through options, and the module can both emit and parse `otpauth://totp/` provisioning URIs.
+
+I need these functions in the public API:
+
+- `TOTP.generate_secret(opts \\ [])` returns a cryptographically random, base32-encoded secret string (RFC 4648 uppercase alphabet A–Z, 2–7, no padding). Option `:bytes` sets the entropy in bytes (default `20`, i.e. 160 bits → a 32-character secret). Must use `:crypto.strong_rand_bytes/1`.
+
+- `TOTP.generate_code(secret, opts \\ [])` returns a zero-padded numeric string. Options:
+  - `:time` — UNIX seconds (default: current time).
+  - `:algorithm` — one of `:sha1`, `:sha256`, `:sha512` (default `:sha1`).
+  - `:digits` — number of digits in the code (default `6`).
+  - `:period` — step length in seconds (default `30`).
+
+  It derives the time step as `div(time, period)`, HMACs that step (as a big-endian 8-byte unsigned integer) using the chosen algorithm with the base32-decoded secret, applies the RFC 4226 dynamic truncation, takes the result modulo `10^digits`, and left-pads with zeros to exactly `digits` characters. Because the algorithm is fully specified, SHA1 codes match the standard RFC 6238 test vectors for the secret `"12345678901234567890"` (base32 `GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ`): at `t = 59` the 8-digit code is `94287082` (and the 6-digit code is `287082`).
+
+- `TOTP.valid?(secret, code, opts \\ [])` validates a code (string or integer; integers are zero-padded to `:digits` characters) against the current time, tolerating clock drift. It accepts `:time`, `:window` (integer number of steps checked in each direction, default `1`), plus the same `:algorithm`, `:digits`, and `:period` options as `generate_code/2` (with the same defaults). It returns `true` if the code matches the code computed at any step in `-window..window` (using the configured algorithm, digits, and period), `false` otherwise.
+
+- `TOTP.provisioning_uri(secret, issuer, account_name, opts \\ [])` returns an `otpauth://totp/` URI with the label `issuer:account_name` (URI-encoded) and query parameters `secret`, `issuer`, `algorithm`, `digits`, and `period`. The `:algorithm`, `:digits`, and `:period` options (same defaults as above) are reflected in the query: `algorithm` is the uppercase name (`SHA1`, `SHA256`, or `SHA512`), `digits` and `period` are their decimal integers.
+
+- `TOTP.parse_uri(uri)` parses an `otpauth://totp/` provisioning URI and returns `{:ok, config}` where `config` is a map with keys `:secret` (string), `:issuer` (string or `nil`), `:algorithm` (`:sha1`/`:sha256`/`:sha512`), `:digits` (integer), and `:period` (integer). A missing `algorithm` defaults to `:sha1`, a missing `digits` to `6`, and a missing `period` to `30`. It returns `:error` if the scheme is not `otpauth`, the host is not `totp`, or there is no query string.
+
+Requirements and constraints:
+- Base32 encoding/decoding must follow RFC 4648 and be implemented yourself, not via a library.
+- HMAC must be done via Erlang's `:crypto.mac/4` with the algorithm selected by the `:algorithm` option (`:sha1` maps to Erlang's `:sha`).
+- Dynamic truncation (RFC 4226 §5.3): take the last byte of the HMAC, mask with `0x0F` to get the offset, read 4 bytes from that offset, mask the top bit of the first byte with `0x7F`, combine as a 31-bit big-endian integer, then take modulo `10^digits`.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule TOTP do
+  @moduledoc """
+  A configurable, multi-algorithm RFC 6238 Time-Based One-Time Password (TOTP)
+  generator built exclusively on the Erlang/OTP standard library.
+
+  Every parameter — hash algorithm (`:sha1`, `:sha256`, `:sha512`), digit count,
+  and time step (period) — is caller-configurable via options. The module can
+  generate cryptographically random base32 secrets, emit numeric codes, validate
+  codes with clock-drift tolerance, and both build and parse
+  `otpauth://totp/` provisioning URIs.
+
+  Base32 encoding/decoding follows RFC 4648 (uppercase alphabet `A–Z`, `2–7`,
+  no padding) and is implemented locally rather than through any library.
+  HMAC is computed with `:crypto.mac/4` and dynamic truncation follows
+  RFC 4226 §5.3.
+  """
+
+  import Bitwise
+
+  @alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @decode_map for {ch, idx} <- Enum.with_index(String.graphemes(@alphabet)),
+                  into: %{},
+                  do: {ch, idx}
+
+  @doc """
+  Generates a cryptographically random, base32-encoded secret.
+
+  The `:bytes` option sets the amount of entropy in bytes (default `20`, i.e.
+  160 bits, which yields a 32-character secret). Uses
+  `:crypto.strong_rand_bytes/1`.
+  """
+  @spec generate_secret(keyword()) :: String.t()
+  def generate_secret(opts \\ []) do
+    bytes = Keyword.get(opts, :bytes, 20)
+
+    bytes
+    |> :crypto.strong_rand_bytes()
+    |> encode_base32()
+  end
+
+  @doc """
+  Generates a zero-padded numeric TOTP code for `secret`.
+
+  Options:
+
+    * `:time` — UNIX seconds (default: current time)
+    * `:algorithm` — `:sha1`, `:sha256`, or `:sha512` (default `:sha1`)
+    * `:digits` — number of digits in the code (default `6`)
+    * `:period` — step length in seconds (default `30`)
+  """
+  @spec generate_code(String.t(), keyword()) :: String.t()
+  def generate_code(secret, opts \\ []) do
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    algorithm = Keyword.get(opts, :algorithm, :sha1)
+    digits = Keyword.get(opts, :digits, 6)
+    period = Keyword.get(opts, :period, 30)
+
+    key = decode_base32(secret)
+    step = div(time, period)
+    message = <<step::unsigned-big-integer-size(64)>>
+    hmac = :crypto.mac(:hmac, crypto_hash(algorithm), key, message)
+
+    hmac
+    |> truncate(digits)
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  @doc """
+  Validates `code` against `secret`, tolerating clock drift.
+
+  `code` may be a string or an integer (integers are zero-padded to `:digits`
+  characters). In addition to `:time`, `:algorithm`, `:digits`, and `:period`
+  (same defaults as `generate_code/2`), the `:window` option (default `1`) sets
+  the number of steps checked in each direction.
+
+  Returns `true` when `code` matches the code computed at any step in
+  `-window..window`, and `false` otherwise.
+  """
+  @spec valid?(String.t(), String.t() | integer(), keyword()) :: boolean()
+  def valid?(secret, code, opts \\ []) do
+    digits = Keyword.get(opts, :digits, 6)
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+    period = Keyword.get(opts, :period, 30)
+    expected = norm (truncated)
+23:40:13.924 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TOTP do
+  @moduledoc """
+  A configurable, multi-algorithm RFC 6238 Time-Based One-Time Password (TOTP)
+  generator built exclusively on the Erlang/OTP standard library.
+
+  Every parameter — hash algorithm (`:sha1`, `:sha256`, `:sha512`), digit count,
+  and time step (period) — is caller-configurable via options. The module can
+  generate cryptographically random base32 secrets, emit numeric codes, validate
+  codes with clock-drift tolerance, and both build and parse
+  `otpauth://totp/` provisioning URIs.
+
+  Base32 encoding/decoding follows RFC 4648 (uppercase alphabet `A–Z`, `2–7`,
+  no padding) and is implemented locally rather than through any library.
+  HMAC is computed with `:crypto.mac/4` and dynamic truncation follows
+  RFC 4226 §5.3.
+  """
+
+  import Bitwise
+
+  @alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @decode_map for {ch, idx} <- Enum.with_index(String.graphemes(@alphabet)),
+                  into: %{},
+                  do: {ch, idx}
+
+  @doc """
+  Generates a cryptographically random, base32-encoded secret.
+
+  The `:bytes` option sets the amount of entropy in bytes (default `20`, i.e.
+  160 bits, which yields a 32-character secret). Uses
+  `:crypto.strong_rand_bytes/1`.
+  """
+  @spec generate_secret(keyword()) :: String.t()
+  def generate_secret(opts \\ []) do
+    bytes = Keyword.get(opts, :bytes, 20)
+
+    bytes
+    |> :crypto.strong_rand_bytes()
+    |> encode_base32()
+  end
+
+  @doc """
+  Generates a zero-padded numeric TOTP code for `secret`.
+
+  Options:
+
+    * `:time` — UNIX seconds (default: current time)
+    * `:algorithm` — `:sha1`, `:sha256`, or `:sha512` (default `:sha1`)
+    * `:digits` — number of digits in the code (default `6`)
+    * `:period` — step length in seconds (default `30`)
+  """
+  @spec generate_code(String.t(), keyword()) :: String.t()
+  def generate_code(secret, opts \\ []) do
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    algorithm = Keyword.get(opts, :algorithm, :sha1)
+    digits = Keyword.get(opts, :digits, 6)
+    period = Keyword.get(opts, :period, 30)
+
+    key = decode_base32(secret)
+    step = div(time, period)
+    message = <<step::unsigned-big-integer-size(64)>>
+    hmac = :crypto.mac(:hmac, crypto_hash(algorithm), key, message)
+
+    hmac
+    |> truncate(digits)
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  @doc """
+  Validates `code` against `secret`, tolerating clock drift.
+
+  `code` may be a string or an integer (integers are zero-padded to `:digits`
+  characters). In addition to `:time`, `:algorithm`, `:digits`, and `:period`
+  (same defaults as `generate_code/2`), the `:window` option (default `1`) sets
+  the number of steps checked in each direction.
+
+  Returns `true` when `code` matches the code computed at any step in
+  `-window..window`, and `false` otherwise.
+  """
+  @spec valid?(String.t(), String.t() | integer(), keyword()) :: boolean()
+  def valid?(secret, code, opts \\ []) do
+    digits = Keyword.get(opts, :digits, 6)
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+    period = Keyword.get(opts, :period, 30)
+    expected = normalize_code(code, digits)
+
+    Enum.any?(-window..window, fn offset ->
+      shifted = time + offset * period
+      generate_code(secret, Keyword.put(opts, :time, shifted)) == expected
+    end)
+  end
+
+  @doc """
+  Builds an `otpauth://totp/` provisioning URI.
+
+  The label is `issuer:account_name` (URI-encoded). The query parameters are
+  `secret`, `issuer`, `algorithm` (uppercase name), `digits`, and `period`.
+  The `:algorithm`, `:digits`, and `:period` options share the same defaults as
+  `generate_code/2`.
+  """
+  @spec provisioning_uri(String.t(), String.t(), String.t(), keyword()) :: String.t()
+  def provisioning_uri(secret, issuer, account_name, opts \\ []) do
+    algorithm = Keyword.get(opts, :algorithm, :sha1)
+    digits = Keyword.get(opts, :digits, 6)
+    period = Keyword.get(opts, :period, 30)
+
+    label = encode_label(issuer) <> ":" <> encode_label(account_name)
+
+    query =
+      URI.encode_query([
+        {"secret", secret},
+        {"issuer", issuer},
+        {"algorithm", algorithm_name(algorithm)},
+        {"digits", Integer.to_string(digits)},
+        {"period", Integer.to_string(period)}
+      ])
+
+    "otpauth://totp/" <> label <> "?" <> query
+  end
+
+  @doc """
+  Parses an `otpauth://totp/` provisioning URI.
+
+  Returns `{:ok, config}` with a map holding `:secret`, `:issuer` (string or
+  `nil`), `:algorithm`, `:digits`, and `:period`. Missing `algorithm`, `digits`,
+  and `period` default to `:sha1`, `6`, and `30` respectively.
+
+  Returns `:error` when the scheme is not `otpauth`, the host is not `totp`, or
+  there is no query string.
+  """
+  @spec parse_uri(String.t()) :: {:ok, map()} | :error
+  def parse_uri(uri) do
+    parsed = URI.parse(uri)
+
+    with "otpauth" <- parsed.scheme,
+         "totp" <- parsed.host,
+         query when is_binary(query) <- parsed.query do
+      params = URI.decode_query(query)
+
+      config = %{
+        secret: Map.get(params, "secret"),
+        issuer: Map.get(params, "issuer"),
+        algorithm: parse_algorithm(Map.get(params, "algorithm")),
+        digits: parse_int(Map.get(params, "digits"), 6),
+        period: parse_int(Map.get(params, "period"), 30)
+      }
+
+      {:ok, config}
+    else
+      _ -> :error
+    end
+  end
+
+  # --- Internal helpers ----------------------------------------------------
+
+  @spec encode_label(String.t()) :: String.t()
+  defp encode_label(part), do: URI.encode(part, &URI.char_unreserved?/1)
+
+  @spec normalize_code(String.t() | integer(), pos_integer()) :: String.t()
+  defp normalize_code(code, digits) when is_integer(code) do
+    code
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  defp normalize_code(code, _digits) when is_binary(code), do: code
+
+  @spec truncate(binary(), pos_integer()) :: non_neg_integer()
+  defp truncate(hmac, digits) do
+    offset = :binary.last(hmac) &&& 0x0F
+    <<_::binary-size(offset), b0, b1, b2, b3, _::binary>> = hmac
+
+    value =
+      (b0 &&& 0x7F) <<< 24 |||
+        b1 <<< 16 |||
+        b2 <<< 8 |||
+        b3
+
+    rem(value, Integer.pow(10, digits))
+  end
+
+  @spec crypto_hash(:sha1 | :sha256 | :sha512) :: :sha | :sha256 | :sha512
+  defp crypto_hash(:sha1), do: :sha
+  defp crypto_hash(:sha256), do: :sha256
+  defp crypto_hash(:sha512), do: :sha512
+
+  @spec algorithm_name(:sha1 | :sha256 | :sha512) :: String.t()
+  defp algorithm_name(:sha1), do: "SHA1"
+  defp algorithm_name(:sha256), do: "SHA256"
+  defp algorithm_name(:sha512), do: "SHA512"
+
+  @spec parse_algorithm(String.t() | nil) :: :sha1 | :sha256 | :sha512
+  defp parse_algorithm(nil), do: :sha1
+
+  defp parse_algorithm(name) do
+    case String.upcase(name) do
+      "SHA256" -> :sha256
+      "SHA512" -> :sha512
+      _ -> :sha1
+    end
+  end
+
+  @spec parse_int(String.t() | nil, integer()) :: integer()
+  defp parse_int(nil, default), do: default
+  defp parse_int(value, _default), do: String.to_integer(value)
+
+  @spec encode_base32(binary()) :: String.t()
+  defp encode_base32(bin) do
+    bits = for <<b::1 <- bin>>, do: b
+
+    bits
+    |> Enum.chunk_every(5, 5, [])
+    |> Enum.map_join("", fn chunk ->
+      padded = chunk ++ List.duplicate(0, 5 - length(chunk))
+      idx = Enum.reduce(padded, 0, fn bit, acc -> acc * 2 + bit end)
+      String.at(@alphabet, idx)
+    end)
+  end
+
+  @spec decode_base32(String.t()) :: binary()
+  defp decode_base32(str) do
+    bits =
+      str
+      |> String.upcase()
+      |> String.graphemes()
+      |> Enum.flat_map(fn ch ->
+        idx = Map.fetch!(@decode_map, ch)
+        for <<(b::1 <- <<idx::5>>)>>, do: b
+      end)
+
+    bytes =
+      bits
+      |> Enum.chunk_every(8, 8, :discard)
+      |> Enum.map(fn chunk ->
+        Enum.reduce(chunk, 0, fn bit, acc -> acc * 2 + bit end)
+      end)
+
+    :binary.list_to_bin(bytes)
+  end
+end
+</file>
+23:40:13.924 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12641, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12641, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12641, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12641, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 4406, "type" => "message"}], "output_tokens" => 4406, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+23:40:13.942 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01 solution.ex
+23:40:14.630 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":243,"lines_over_98":0,"max_line_length":85,"mode":"full","pipe_chain_count":14,"public_fn_count":5,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01/solution.ex","task":"100_003_configurable_multi_algorithm_totp_with_uri_parsing_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":27,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-11T21:40:14.607992Z"}
+23:40:14.632 [info] cycle 100_003_configurable_multi_algorithm_totp_with_uri_parsing_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+23:40:14.632 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+23:40:14.632 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them. Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `TOTP` that implements a **configurable, multi-algorithm** RFC 6238 Time-Based One-Time Password generator using only the OTP standard library (no external dependencies). Unlike a fixed SHA1/6-digit/30-second implementation, every parameter — hash algorithm, digit count, and period — is caller-configurable through options, and the module can both emit and parse `otpauth://totp/` provisioning URIs.
+
+I need these functions in the public API:
+
+- `TOTP.generate_secret(opts \\ [])` returns a cryptographically random, base32-encoded secret string (RFC 4648 uppercase alphabet A–Z, 2–7, no padding). Option `:bytes` sets the entropy in bytes (default `20`, i.e. 160 bits → a 32-character secret). Must use `:crypto.strong_rand_bytes/1`.
+
+- `TOTP.generate_code(secret, opts \\ [])` returns a zero-padded numeric string. Options:
+  - `:time` — UNIX seconds (default: current time).
+  - `:algorithm` — one of `:sha1`, `:sha256`, `:sha512` (default `:sha1`).
+  - `:digits` — number of digits in the code (default `6`).
+  - `:period` — step length in seconds (default `30`).
+
+  It derives the time step as `div(time, period)`, HMACs that step (as a big-endian 8-byte unsigned integer) using the chosen algorithm with the base32-decoded secret, applies the RFC 4226 dynamic truncation, takes the result modulo `10^digits`, and left-pads with zeros to exactly `digits` characters. Because the algorithm is fully specified, SHA1 codes match the standard RFC 6238 test vectors for the secret `"12345678901234567890"` (base32 `GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ`): at `t = 59` the 8-digit code is `94287082` (and the 6-digit code is `287082`).
+
+- `TOTP.valid?(secret, code, opts \\ [])` validates a code (string or integer; integers are zero-padded to `:digits` characters) against the current time, tolerating clock drift. It accepts `:time`, `:window` (integer number of steps checked in each direction, default `1`), plus the same `:algorithm`, `:digits`, and `:period` options as `generate_code/2` (with the same defaults). It returns `true` if the code matches the code computed at any step in `-window..window` (using the configured algorithm, digits, and period), `false` otherwise.
+
+- `TOTP.provisioning_uri(secret, issuer, account_name, opts \\ [])` returns an `otpauth://totp/` URI with the label `issuer:account_name` (URI-encoded) and query parameters `secret`, `issuer`, `algorithm`, `digits`, and `period`. The `:algorithm`, `:digits`, and `:period` options (same defaults as above) are reflected in the query: `algorithm` is the uppercase name (`SHA1`, `SHA256`, or `SHA512`), `digits` and `period` are their decimal integers.
+
+- `TOTP.parse_uri(uri)` parses an `otpauth://totp/` provisioning URI and returns `{:ok, config}` where `config` is a map with keys `:secret` (string), `:issuer` (string or `nil`), `:algorithm` (`:sha1`/`:sha256`/`:sha512`), `:digits` (integer), and `:period` (integer). A missing `algorithm` defaults to `:sha1`, a missing `digits` to `6`, and a missing `period` to `30`. It returns `:error` if the scheme is not `otpauth`, the host is not `totp`, or there is no query string.
+
+Requirements and constraints:
+- Base32 encoding/decoding must follow RFC 4648 and be implemented yourself, not via a library.
+- HMAC must be done via Erlang's `:crypto.mac/4` with the algorithm selected by the `:algorithm` option (`:sha1` maps to Erlang's `:sha`).
+- Dynamic truncation (RFC 4226 §5.3): take the last byte of the HMAC, mask with `0x0F` to get the offset, read 4 bytes from that offset, mask the top bit of the first byte with `0x7F`, combine as a 31-bit big-endian integer, then take modulo `10^digits`.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule TOTP do
+  @moduledoc """
+  A configurable, multi-algorithm RFC 6238 Time-Based One-Time Password (TOTP)
+  generator built exclusively on the Erlang/OTP standard library.
+
+  Every parameter — hash algorithm (`:sha1`, `:sha256`, `:sha512`), digit count,
+  and time step (period) — is caller-configurable via options. The module can
+  generate cryptographically random base32 secrets, emit numeric codes, validate
+  codes with clock-drift tolerance, and both build and parse
+  `otpauth://totp/` provisioning URIs.
+
+  Base32 encoding/decoding follows RFC 4648 (uppercase alphabet `A–Z`, `2–7`,
+  no padding) and is implemented locally rather than through any library.
+  HMAC is computed with `:crypto.mac/4` and dynamic truncation follows
+  RFC 4226 §5.3.
+  """
+
+  import Bitwise
+
+  @alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @decode_map for {ch, idx} <- Enum.with_index(String.graphemes(@alphabet)),
+                  into: %{},
+                  do: {ch, idx}
+
+  @doc """
+  Generates a cryptographically random, base32-encoded secret.
+
+  The `:bytes` option sets the amount of entropy in bytes (default `20`, i.e.
+  160 bits, which yields a 32-character secret). Uses
+  `:crypto.strong_rand_bytes/1`.
+  """
+  @spec generate_secret(keyword()) :: String.t()
+  def generate_secret(opts \\ []) do
+    bytes = Keyword.get(opts, :bytes, 20)
+
+    bytes
+    |> :crypto.strong_rand_bytes()
+    |> encode_base32()
+  end
+
+  @doc """
+  Generates a zero-padded numeric TOTP code for `secret`.
+
+  Options:
+
+    * `:time` — UNIX seconds (default: current time)
+    * `:algorithm` — `:sha1`, `:sha256`, or `:sha512` (default `:sha1`)
+    * `:digits` — number of digits in the code (default `6`)
+    * `:period` — step length in seconds (default `30`)
+  """
+  @spec generate_code(String.t(), keyword()) :: String.t()
+  def generate_code(secret, opts \\ []) do
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    algorithm = Keyword.get(opts, :algorithm, :sha1)
+    digits = Keyword.get(opts, :digits, 6)
+    period = Keyword.get(opts, :period, 30)
+
+    key = decode_base32(secret)
+    step = div(time, period)
+    message = <<step::unsigned-big-integer-size(64)>>
+    hmac = :crypto.mac(:hmac, crypto_hash(algorithm), key, message)
+
+    hmac
+    |> truncate(digits)
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  @doc """
+  Validates `code` against `secret`, tolerating clock drift.
+
+  `code` may be a string or an integer (integers are zero-padded to `:digits`
+  characters). In addition to `:time`, `:algorithm`, `:digits`, and `:period`
+  (same defaults as `generate_code/2`), the `:window` option (default `1`) sets
+  the number of steps checked in each direction.
+
+  Returns `true` when `code` matches the code computed at any step in
+  `-window..window`, and `false` otherwise.
+  """
+  @spec valid?(String.t(), String.t() | integer(), keyword()) :: boolean()
+  def valid?(secret, code, opts \\ []) do
+    digits = Keyword.get(opts, :digits, 6)
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+     (truncated)
+23:49:39.829 [debug] claude -p RESULT (stop="end_turn"):
+Looking at this, the solution has zero classic warnings (no unused vars/functions/imports, all specs/docs present, lines within limits). The single compile warning comes from Elixir's type checker on OTP 27+: `:binary.list_to_bin(bytes)` receives a concretely-typed `[integer()]`, which is not a subtype of the `iolist()` (`[byte()]`) the spec demands, and `String.at/2` returns `binary() | nil`. I'll replace both with constructs that produce definite, correctly-typed results without changing behavior.
+
+<file path="solution.ex">
+defmodule TOTP do
+  @moduledoc """
+  A configurable, multi-algorithm RFC 6238 Time-Based One-Time Password (TOTP)
+  generator built exclusively on the Erlang/OTP standard library.
+
+  Every parameter — hash algorithm (`:sha1`, `:sha256`, `:sha512`), digit count,
+  and time step (period) — is caller-configurable via options. The module can
+  generate cryptographically random base32 secrets, emit numeric codes, validate
+  codes with clock-drift tolerance, and both build and parse
+  `otpauth://totp/` provisioning URIs.
+
+  Base32 encoding/decoding follows RFC 4648 (uppercase alphabet `A–Z`, `2–7`,
+  no padding) and is implemented locally rather than through any library.
+  HMAC is computed with `:crypto.mac/4` and dynamic truncation follows
+  RFC 4226 §5.3.
+  """
+
+  import Bitwise
+
+  @alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+  @decode_map for {ch, idx} <- Enum.with_index(String.graphemes(@alphabet)),
+                  into: %{},
+                  do: {ch, idx}
+
+  @encode_map for {ch, idx} <- Enum.with_index(String.graphemes(@alphabet)),
+                  into: %{},
+                  do: {idx, ch}
+
+  @doc """
+  Generates a cryptographically random, base32-encoded secret.
+
+  The `:bytes` option sets the amount of entropy in bytes (default `20`, i.e.
+  160 bits, which yields a 32-character secret). Uses
+  `:crypto.strong_rand_bytes/1`.
+  """
+  @spec generate_secret(keyword()) :: String.t()
+  def generate_secret(opts \\ []) do
+    bytes = Keyword.get(opts, :bytes, 20)
+
+    bytes
+    |> :crypto.strong_rand_bytes()
+    |> encode_base32()
+  end
+
+  @doc """
+  Generates a zero-padded numeric TOTP code for `secret`.
+
+  Options:
+
+    * `:time` — UNIX seconds (default: current time)
+    * `:algorithm` — `:sha1`, `:sha256`, or `:sha512` (default `:sha1`)
+    * `:digits` — number of digits in the code (default `6`)
+    * `:period` — step length in seconds (default `30`)
+  """
+  @spec generate_code(String.t(), keyword()) :: String.t()
+  def generate_code(secret, opts \\ []) do
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    algorithm = Keyword.get(opts, :algorithm, :sha1)
+    digits = Keyword.get(opts, :digits, 6)
+    period = Keyword.get(opts, :period, 30)
+
+    key = decode_base32(secret)
+    step = div(time, period)
+    message = <<step::unsigned-big-integer-size(64)>>
+    hmac = :crypto.mac(:hmac, crypto_hash(algorithm), key, message)
+
+    hmac
+    |> truncate(digits)
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  @doc """
+  Validates `code` against `secret`, tolerating clock drift.
+
+  `code` may be a string or an integer (integers are zero-padded to `:digits`
+  characters). In addition to `:time`, `:algorithm`, `:digits`, and `:period`
+  (same defaults as `generate_code/2`), the `:window` option (default `1`) sets
+  the number of steps checked in each direction.
+
+  Returns `true` when `code` matches the code computed at any step in
+  `-window..window`, and `false` otherwise.
+  """
+  @spec valid?(String.t(), String.t() | integer(), keyword()) :: boolean()
+  def valid?(secret, code, opts \\ []) do
+    digits = Keyword.get(opts, :digits, 6)
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+    period = Keyword.get(opts, :period, 30)
+    expected = normalize_code(code, digits)
+
+    Enum.any?(-window..window, fn offset ->
+      shifted = time + offset * period
+      generate_code(secret, Keyword.put(opts, :time, shifted)) == expected
+    end)
+  end
+
+  @doc """
+  Builds an `otpauth://totp/` provisioning URI.
+
+  The label is `issuer:account_name` (URI-encoded). The query parameters are
+  `secret`, `issuer`, `algorithm` (uppercase name), `digits`, and `period`.
+  The `:algorithm`, `:digits`, and `:period` options share the same defaults as
+  `generate_code/2`.
+  """
+  @spec provisioning_uri(String.t(), String.t(), String.t(), keyword()) :: String.t()
+  def provisioning_uri(secret, issuer, account_name, opts \\ []) do
+    algorithm = Keyword.get(opts, :algorithm, :sha1)
+    digits = Keyword.get(opts, :digits, 6)
+    period = Keyword.get(opts, :period, 30)
+
+    label = encode_label(issuer) <> ":" <> encode_label(account_name)
+
+    query =
+      URI.encode_query([
+        {"secret", secret},
+        {"issuer", issuer},
+        {"algorithm", algorithm_name(algorithm)},
+        {"digits", Integer.to_string(digits)},
+        {"period", Integer.to_string(period)}
+      ])
+
+    "otpauth://totp/" <> label <> "?" <> query
+  end
+
+  @doc """
+  Parses an `otpauth://totp/` provisioning URI.
+
+  Returns `{:ok, config}` with a map holding `:secret`, `:issuer` (string or
+  `nil`), `:algorithm`, `:digits`, and `:period`. Missing `algorithm`, `digits`,
+  and `period` default to `:sha1`, `6`, and `30` respectively.
+
+  Returns `:error` when the scheme is not `otpauth`, the host is not `totp`, or
+  there is no query string.
+  """
+  @spec parse_uri(String.t()) :: {:ok, map()} | :error
+  def parse_uri(uri) do
+    parsed = URI.parse(uri)
+
+    with "otpauth" <- parsed.scheme,
+         "totp" <- parsed.host,
+         query when is_binary(query) <- parsed.query do
+      params = URI.decode_query(query)
+
+      config = %{
+        secret: Map.get(params, "secret"),
+        issuer: Map.get(params, "issuer"),
+        algorithm: parse_algorithm(Map.get(params, "algorithm")),
+        digits: parse_int(Map.get(params, "digits"), 6),
+        period: parse_int(Map.get(params, "period"), 30)
+      }
+
+      {:ok, config}
+    else
+      _ -> :error
+    end
+  end
+
+  # --- Internal helpers ----------------------------------------------------
+
+  @spec encode_label(String.t()) :: String.t()
+  defp encode_label(part), do: URI.encode(part, &URI.char_unreserved?/1)
+
+  @spec normalize_code(String.t() | integer(), pos_integer()) :: String.t()
+  defp normalize_code(code, digits) when is_integer(code) do
+    code
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
+  end
+
+  defp normalize_code(code, _digits) when is_binary(code), do: code
+
+  @spec truncate(binary(), pos_integer()) :: non_neg_integer()
+  defp truncate(hmac, digits) do
+    offset = :binary.last(hmac) &&& 0x0F
+    <<_::binary-size(offset), b0, b1, b2, b3, _::binary>> = hmac
+
+    value =
+      (b0 &&& 0x7F) <<< 24 |||
+        b1 <<< 16 |||
+        b2 <<< 8 |||
+        b3
+
+    rem(value, Integer.pow(10, digits))
+  end
+
+  @spec crypto_hash(:sha1 | :sha256 | :sha512) :: :sha | :sha256 | :sha512
+  defp crypto_hash(:sha1), do: :sha
+  defp crypto_hash(:sha256), do: :sha256
+  defp crypto_hash(:sha512), do: :sha512
+
+  @spec algorithm_name(:sha1 | :sha256 | :sha512) :: String.t()
+  defp algorithm_name(:sha1), do: "SHA1"
+  defp algorithm_name(:sha256), do: "SHA256"
+  defp algorithm_name(:sha512), do: "SHA512"
+
+  @spec parse_algorithm(String.t() | nil) :: :sha1 | :sha256 | :sha512
+  defp parse_algorithm(nil), do: :sha1
+
+  defp parse_algorithm(name) do
+    case String.upcase(name) do
+      "SHA256" -> :sha256
+      "SHA512" -> :sha512
+      _ -> :sha1
+    end
+  end
+
+  @spec parse_int(String.t() | nil, integer()) :: integer()
+  defp parse_int(nil, default), do: default
+  defp parse_int(value, _default), do: String.to_integer(value)
+
+  @spec encode_base32(binary()) :: String.t()
+  defp encode_base32(bin) do
+    bits = for <<b::1 <- bin>>, do: b
+
+    bits
+    |> Enum.chunk_every(5, 5, [])
+    |> Enum.map_join("", fn chunk ->
+      padded = chunk ++ List.duplicate(0, 5 - length(chunk))
+      idx = Enum.reduce(padded, 0, fn bit, acc -> acc * 2 + bit end)
+      Map.fetch!(@enco (truncated)
+23:49:39.829 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12649, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12649, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 12649, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 12649, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 43111, "type" => "message"}], "output_tokens" => 43111, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+23:49:39.857 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01 solution.ex
+23:49:40.545 [debug] grade JSON: {"analysis":{"defp_count":16,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":247,"lines_over_98":0,"max_line_length":85,"mode":"full","pipe_chain_count":14,"public_fn_count":5,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/100_003_configurable_multi_algorithm_totp_with_uri_parsing_01/solution.ex","task":"100_003_configurable_multi_algorithm_totp_with_uri_parsing_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":27,"tests_ran":true,"tests_skipped":0,"tests_total":27,"timestamp":"2026-07-11T21:49:40.523826Z"}
+23:49:40.547 [info] cycle 100_003_configurable_multi_algorithm_totp_with_uri_parsing_01: REJECTED after 4 attempt(s)

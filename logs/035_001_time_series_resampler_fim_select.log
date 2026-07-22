@@ -1,0 +1,221 @@
+06:44:06.963 [info] FIM candidate-select for 035_001_time_series_resampler_01 (up to 1)
+06:44:06.963 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+06:44:06.963 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 1 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+Do NOT pick any of these — they are already covered or known to be untested by the harness:
+  - fetch_opt!/4
+  - resample/3
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `TimeSeriesResampler` that takes a list of `{timestamp, value}` tuples at irregular intervals and resamples them into fixed-interval buckets.
+
+I need these functions in the public API:
+
+- `TimeSeriesResampler.resample(data, interval_ms, opts)` — the main entry point. `data` is a list of `{timestamp_ms, value}` tuples (integers and numbers). `interval_ms` is the bucket width in milliseconds. `opts` is a keyword list. Returns a list of `{bucket_start_ms, aggregated_value}` tuples sorted ascending by bucket start.
+
+The options are:
+- `:agg` — the aggregation mode, one of `:last`, `:first`, `:mean`, `:sum`, `:count`, `:max`, `:min`. Defaults to `:last`.
+- `:fill` — how to handle buckets with no data points. Either `:nil` (emit `{bucket_start, nil}`) or `:forward` (carry the last known aggregated value forward). Defaults to `:nil`.
+
+Bucketing rules:
+- The first bucket starts at the timestamp of the earliest data point, floored to the nearest `interval_ms` boundary (i.e. `floor(min_ts / interval_ms) * interval_ms`).
+- The last bucket is the one that contains the latest data point.
+- Every bucket between first and last must appear in the output, even if empty.
+- A data point at timestamp `t` belongs to the bucket with start `floor(t / interval_ms) * interval_ms`.
+
+Aggregation rules per mode:
+- `:last` — the value of the latest timestamp in the bucket.
+- `:first` — the value of the earliest timestamp in the bucket.
+- `:mean` — arithmetic mean of all values in the bucket (float).
+- `:sum` — sum of all values.
+- `:count` — number of data points in the bucket (integer).
+- `:max` — maximum value.
+- `:min` — minimum value.
+
+Gap filling:
+- `:nil` — empty buckets get `nil` as their value.
+- `:forward` — empty buckets get the aggregated value of the most recent non-empty bucket to their left. If there is no such bucket (gap at the very start), use `nil`.
+
+Edge cases to handle:
+- Empty input list → return `[]`.
+- Single data point → return a single bucket.
+- All points in the same bucket → return one bucket.
+- Input may be given in any order; sort internally before processing.
+
+Give me the complete module in a single file. Use only the Elixir standard library, no external dependencies.
+
+=== MODULE ===
+```elixir
+defmodule TimeSeriesResampler do
+  @moduledoc """
+  Resamples a list of `{timestamp_ms, value}` tuples at irregular intervals
+  into fixed-width time buckets with configurable aggregation and gap-filling.
+
+  ## Bucketing
+
+  Given an `interval_ms` width, every timestamp `t` is assigned to the bucket
+  whose start is `floor(t / interval_ms) * interval_ms`.  The output covers
+  every bucket from the one containing the earliest point to the one containing
+  the latest point, inclusive, with no gaps.
+
+  ## Options
+
+  - `:agg`  – aggregation function: `:last` (default), `:first`, `:mean`,
+               `:sum`, `:count`, `:max`, `:min`.
+  - `:fill` – gap-filling strategy: `:nil` (default) or `:forward`.
+
+  ## Example
+
+      iex> data = [{100, 1.0}, {250, 2.0}, {600, 3.0}]
+      iex> TimeSeriesResampler.resample(data, 200, agg: :mean, fill: :nil)
+      [{0, 1.5}, {200, nil}, {400, nil}, {600, 3.0}]
+  """
+
+  @type timestamp_ms :: integer()
+  @type value :: number()
+  @type datapoint :: {timestamp_ms(), value()}
+  @type bucket :: {timestamp_ms(), value() | nil}
+  @type agg_mode :: :last | :first | :mean | :sum | :count | :max | :min
+  @type fill_mode :: nil | :forward
+
+  @valid_agg [:last, :first, :mean, :sum, :count, :max, :min]
+  @valid_fill [nil, :forward]
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Resample `data` into fixed `interval_ms` buckets.
+
+  Returns a list of `{bucket_start_ms, aggregated_value}` tuples sorted
+  ascending by bucket start.  Returns `[]` when `data` is empty.
+
+  ## Parameters
+
+  - `data`        – list of `{timestamp_ms, value}` tuples (any order).
+  - `interval_ms` – positive integer bucket width in milliseconds.
+  - `opts`        – keyword list; see module docs for supported keys.
+
+  ## Raises
+
+  - `ArgumentError` when `interval_ms` is not a positive integer, or when
+    `:agg` / `:fill` receive an unsupported value.
+  """
+  @spec resample([datapoint()], pos_integer(), keyword()) :: [bucket()]
+  def resample(data, interval_ms, opts \\ [])
+
+  def resample([], _interval_ms, _opts), do: []
+
+  def resample(data, interval_ms, opts)
+      when is_list(data) and is_integer(interval_ms) and interval_ms > 0 do
+    agg = fetch_opt!(opts, :agg, :last, @valid_agg)
+    fill = fetch_opt!(opts, :fill, nil, @valid_fill)
+
+    # 1. Sort ascending by timestamp so :first/:last are well-defined.
+    sorted = Enum.sort_by(data, &elem(&1, 0))
+
+    # 2. Determine the bucket grid.
+    {min_ts, _} = hd(sorted)
+    {max_ts, _} = List.last(sorted)
+
+    first_bucket = floor_bucket(min_ts, interval_ms)
+    last_bucket = floor_bucket(max_ts, interval_ms)
+
+    # 3. Group data points into their buckets.
+    grouped =
+      Enum.group_by(sorted, fn {ts, _v} -> floor_bucket(ts, interval_ms) end)
+
+    # 4. Walk every bucket in order, aggregate, then fill gaps.
+    first_bucket
+    |> Stream.iterate(&(&1 + interval_ms))
+    |> Stream.take_while(&(&1 <= last_bucket))
+    |> Enum.map_reduce(nil, fn bucket_start, last_value ->
+      agg_value =
+        case Map.fetch(grouped, bucket_start) do
+          {:ok, points} -> aggregate(points, agg)
+          :error -> nil
+        end
+
+      filled_value =
+        case {agg_value, fill} do
+          # carry forward (may still be nil)
+          {nil, :forward} -> last_value
+          {nil, nil} -> nil
+          {v, _} -> v
+        end
+
+      next_last = if agg_value != nil, do: agg_value, else: last_value
+
+      {{bucket_start, filled_value}, next_last}
+    end)
+    |> elem(0)
+  end
+
+  def resample(_data, interval_ms, _opts) when not is_integer(interval_ms) do
+    raise ArgumentError, "interval_ms must be a positive integer, got: #{inspect(interval_ms)}"
+  end
+
+  def resample(_data, interval_ms, _opts) when interval_ms <= 0 do
+    raise ArgumentError, "interval_ms must be positive, got: #{interval_ms}"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Floor a timestamp to the nearest interval boundary.
+  @spec floor_bucket(integer(), pos_integer()) :: integer()
+  defp floor_bucket(ts, interval_ms) do
+    div(ts, interval_ms) * interval_ms
+  end
+
+  # Aggregate a non-empty list of sorted `{ts, value}` pairs.
+  @spec aggregate([datapoint()], agg_mode()) :: value()
+  defp aggregate(points, :last) do
+    # Points are already sorted ascending; last element has the latest ts.
+    points |> List.last() |> elem(1)
+  end
+
+  defp aggregate(points, :first) do
+    points |> hd() |> elem(1)
+  end
+
+  defp aggregate(points, :count) do
+    length(points)
+  end
+
+  defp aggregate(points, :sum) do
+    Enum.reduce(points, 0, fn {_ts, v}, acc -> acc + v end)
+  end
+
+  defp aggregate(points, :mean) do
+    {sum, count} =
+      Enum.reduce(points, {0, 0}, fn {_ts, v}, {s, c} -> {s + v, c + 1} end)
+
+    sum / count
+  end
+
+  defp aggregate(points, :max) do
+    points |> Enum.map(&elem(&1, 1)) |> Enum.max()
+  end
+
+  defp aggregate(points, :min) do
+    points |> Enum.map(&elem( (truncated)
+06:44:09.790 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+aggregate/2
+</file>
+06:44:09.790 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4286, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4286, "cache_read_input_tokens" => 14812, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4286, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4286, "cache_read_input_tokens" => 14812, "input_tokens" => 2972, "output_tokens" => 23, "type" => "message"}], "output_tokens" => 23, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

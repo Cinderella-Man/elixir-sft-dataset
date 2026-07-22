@@ -1,0 +1,49 @@
+retro audit: 1 root(s) — 1 to audit, 0 already audited at this content+gate, 0 bundle-skipped, 0 postgres-skipped
+
+=== 110_002_histogram_based_approximate_rolling_percentile_01 (variation)
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) — applying (one auditor call, then per-test machine vetting (anchor → gold → bite)) ...
+      promise test "an aged-out slice is excluded while a newer slice of the same series stays live" ... dropped — no # PROMISE anchor comment
+      promise test "too-short and non-list edges raise ArgumentError synchronously in the caller" ... dropped — no # PROMISE anchor comment
+      promise test "a bucket whose cumulative count exactly equals target is selected" ... KEPT (coverage)
+      promise test "a value on a bucket edge lands in the upper bucket and ek lands in the last bucket" ... dropped — no # PROMISE anchor comment
+      promise test "percentile 0.0 returns the low edge even when bucket zero holds no counts" ... KEPT (coverage)
+      promise test "counts written to a reused slot replace the previous cycle's counts" ... KEPT (coverage)
+      merging 3 vetted test(s) (3 coverage, 0 defect-proving; dropped 3: 3× no # PROMISE anchor comment) — re-running the full cycle on the grown harness
+    gate [3/11] canonical formatting (graded bytes are exactly the promoted bytes) ... PASS — already formatter-canonical
+    gate [4/11] compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored) ... PASS — compiled, 11/11 tests passed, 0 failed, 0 errored
+      check [ 1/17] zero compile warnings ... ok
+      check [ 2/17] @moduledoc present ... ok
+      check [ 3/17] @spec on at least one public function ... ok
+      check [ 4/17] @doc on at least one public function ... ok
+      check [ 5/17] no TODO/FIXME markers ... ok
+      check [ 6/17] no lines over 98 columns ... ok
+      check [ 7/17] no string interpolation inside SQL ... ok
+      check [ 8/17] test-count floor: max(3, public function count) ... ok
+      check [ 9/17] S9: no :sys.get_state/:sys.replace_state reach-ins ... ok
+      check [10/17] S9: no assert inspect(...) ... ok
+      check [11/17] S9: no exact assert_raise message pins ... ok
+      check [12/17] S9: shared temp paths carry System.pid() ... ok
+      check [13/17] S9: :infinity interval options are documented in the prompt ... ok
+      check [14/17] S9: trigger messages sent to the server are documented in the prompt ... ok
+      check [15/17] no no-op identity helpers (dead-code laundering) ... ok
+      check [16/17] no generation-process chatter in comments ... ok
+      check [17/17] prompt documents every API function the harness calls ... ok
+    gate [5/11] house style + harness standard ... PASS — 17/17 checks ran, all ok
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) — applying (per-function raise-mutants: 6 public function(s) must each be killed) ...
+      mutant [1/6] start_link/1 gutted to raise ... killed
+      mutant [2/6] record/2 gutted to raise ... killed
+      mutant [3/6] query/2 gutted to raise ... killed
+      mutant [4/6] reset/1 gutted to raise ... killed
+      mutant [5/6] init/1 gutted to raise ... killed
+      mutant [6/6] handle_call/3 gutted to raise ... killed
+    gate [6/11] raise-mutant coverage (each public function; whole-module for bundles) ... PASS — per-function raise-mutants: 6 public function(s) must each be killed
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) — applying (re-grading the accepted files at ExUnit seed 338948487) ...
+    gate [7/11] stability re-grade at a derived nonzero ExUnit seed (flake filter) ... PASS — still green at ExUnit seed 338948487
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) — applying (floor 0.6, up to 40 seeded behavior mutants) ...
+    gate [8/11] semantic-mutant kill floor (GEN_SEMANTIC_FLOOR) ... PASS — kill rate 0.61 (23/38) >= floor 0.6
+    · attempt 0: green (11/11) — all gates passed
+
+14:51:39.536 [info] cycle 110_002_histogram_based_approximate_rolling_percentile_01_audit: ACCEPTED on attempt 0
+    gate [9/11] promise audit — bite-proven tests for uncovered prompt promises; failing tests machine-prove defects (GEN_PROMISE_AUDIT) ... PASS — kept 3 test(s) (3 coverage, 0 proven-defect); harness 8→11 tests; grown cycle green
+
+retro audit summary: %{needs_triage: 1}

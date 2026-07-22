@@ -1,0 +1,411 @@
+14:14:24.573 [info] FIM 626_001_mini_prometheus_like_time_series_db_fim03 → 626_001_mini_prometheus_like_time_series_db_04: target insert_sorted/2
+14:14:24.573 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+14:14:24.573 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `insert_sorted/2`.
+
+Generate a prompt describing how to implement `insert_sorted/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `insert_sorted/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `insert_sorted/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `insert_sorted/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer module called `TSDB` that implements a time-series storage engine optimized for metrics, using a chunked in-memory storage format.
+
+## Public API
+
+- `TSDB.start_link(opts)` to start the process. It should accept:
+  - `:chunk_duration_ms` — the duration of each storage chunk in milliseconds (default `60_000`, i.e. one minute). Every unique series (metric name + exact label set) gets one chunk per time window.
+  - `:clock` — a zero-arity function returning the current time in milliseconds. Default to `fn -> System.monotonic_time(:millisecond) end`.
+  - `:name` — optional process registration name.
+  - `:retention_ms` — how long to keep chunks before they are eligible for cleanup (default `3_600_000`, i.e. one hour).
+  - `:cleanup_interval_ms` — how often to run automatic cleanup of expired chunks via `Process.send_after` (default `60_000`). Accept `:infinity` to disable.
+
+- `TSDB.insert(server, metric_name, labels, timestamp, value)` where:
+  - `metric_name` is a string like `"http_requests_total"`.
+  - `labels` is a map like `%{"method" => "GET", "status" => "200"}`.
+  - `timestamp` is an integer in milliseconds.
+  - `value` is a number (integer or float).
+  - The function should return `:ok`.
+  - Internally, the data point must be placed into the correct chunk based on `timestamp` and `chunk_duration_ms`. A chunk is identified by the tuple `{metric_name, sorted_labels, chunk_start}` where `chunk_start = div(timestamp, chunk_duration_ms) * chunk_duration_ms`. Within each chunk, data points must be stored sorted by timestamp.
+
+- `TSDB.query(server, metric_name, label_matchers, {start_ts, end_ts})` where:
+  - `label_matchers` is a map of label key-value pairs. A series matches if it contains **all** of the specified key-value pairs (it may have additional labels). An empty map `%{}` matches all series with that metric name.
+  - The return value is a list of `{labels, points}` tuples, where `labels` is the full label map for that series and `points` is a list of `{timestamp, value}` tuples, sorted by timestamp, filtered to `start_ts <= timestamp <= end_ts`.
+
+- `TSDB.query_agg(server, metric_name, label_matchers, {start_ts, end_ts}, aggregation, step_ms)` where:
+  - `aggregation` is one of `:avg`, `:sum`, `:max`, `:rate`.
+  - `step_ms` is the width of each aggregation window.
+  - The function divides the time range `[start_ts, end_ts)` into non-overlapping windows of `step_ms` milliseconds: `[start_ts, start_ts + step_ms)`, `[start_ts + step_ms, start_ts + 2*step_ms)`, etc.
+  - For each matched series and each window, compute the aggregation over data points whose timestamps fall within that window:
+    - `:avg` — arithmetic mean of values. If the window has no points, the window is omitted from the output.
+    - `:sum` — sum of values. If the window has no points, the window is omitted.
+    - `:max` — maximum value. If the window has no points, the window is omitted.
+    - `:rate` — per-second rate of change. Computed as `(last_value - first_value) / ((last_timestamp - first_timestamp) / 1000)`. If a window has fewer than 2 points, the window is omitted.
+  - The return value has the same shape as `query/4`: a list of `{labels, agg_points}` tuples, where `agg_points` is a list of `{window_start_timestamp, aggregated_value}` tuples sorted by time.
+
+## Storage Design
+
+Internally, use a nested map structure keyed by `{metric_name, sorted_labels}` (the "series key"), where each series key maps to a map of `chunk_start => [sorted data points]`. The sorted labels should be produced by converting the labels map to a sorted keyword-style list (e.g. `Enum.sort(Map.to_list(labels))`) so that label ordering doesn't create duplicate series.
+
+## Cleanup
+
+Handle a `:cleanup` info message that removes any chunks whose `chunk_start + chunk_duration_ms` is older than `now - retention_ms`. Also schedule this periodically using `Process.send_after` based on `:cleanup_interval_ms`.
+
+## Constraints
+
+- Use only OTP standard library — no external dependencies.
+- Give me the complete module in a single file.
+- All operations go through the GenServer (`call`/`cast`) — no ETS, no separate processes.
+
+## Additional interface contract
+
+- In `query/4`, a series whose labels match but which has NO data points inside `[start_ts, end_ts]` must be omitted from the result entirely — never returned as a `{labels, []}` tuple with an empty points list. When no matched series has any point in range, the result is `[]`.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule TSDB do
+  @moduledoc """
+  A time-series storage engine implemented as a GenServer.
+
+  Data is stored in chunked, in-memory format. Each unique series
+  (metric_name + sorted label set) owns one chunk per time window.
+  Within each chunk, data points are kept sorted by timestamp.
+
+  ## Storage layout
+
+      %{
+        series: %{
+          {metric_name, sorted_labels} => %{
+            chunk_start => [{timestamp, value}, ...]
+          }
+        }
+      }
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Types
+  # ---------------------------------------------------------------------------
+
+  @type metric_name :: String.t()
+  @type labels :: %{String.t() => String.t()}
+  @type timestamp :: integer()
+  @type value :: number()
+  @type series_key :: {metric_name(), list()}
+  @type chunk_key :: non_neg_integer()
+  @type point :: {timestamp(), value()}
+
+  @type state :: %{
+          series: %{series_key() => %{chunk_key() => [point()]}},
+          chunk_duration_ms: pos_integer(),
+          retention_ms: pos_integer(),
+          cleanup_interval_ms: pos_integer() | :infinity,
+          clock: (-> integer())
+        }
+
+  # ---------------------------------------------------------------------------
+  # Default options
+  # ---------------------------------------------------------------------------
+
+  @default_chunk_duration_ms 60_000
+  @default_retention_ms 3_600_000
+  @default_cleanup_interval_ms 60_000
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name_opts, init_opts} =
+      case Keyword.pop(opts, :name) do
+        {nil, rest} -> {[], rest}
+        {name, rest} -> {[name: name], rest}
+      end
+
+    GenServer.start_link(__MODULE__, init_opts, name_opts)
+  end
+
+  @doc """
+  Insert a single data point into the store.
+  """
+  @spec insert(GenServer.server(), metric_name(), labels(), timestamp(), value()) :: :ok
+  def insert(server, metric_name, labels, timestamp, value) do
+    GenServer.cast(server, {:insert, metric_name, labels, timestamp, value})
+  end
+
+  @doc """
+  Query raw data points for a metric, filtered by label matchers and time range.
+
+  Returns `[{labels, [{timestamp, value}]}]`.
+  """
+  @spec query(GenS (truncated)
+14:15:10.964 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `insert_sorted/2` function. It takes a list of data points
+(each a `{timestamp, value}` tuple) already sorted in ascending timestamp order,
+and a new `{timestamp, value}` point to insert. It must return a new list with the
+point inserted so the list remains sorted by timestamp in ascending order. Inserting
+into an empty list yields a single-element list. When the new point's timestamp is
+strictly less than the head's timestamp, it goes in front; otherwise recurse into the
+tail so that a point with a timestamp equal to existing ones is placed **after** those
+already present (duplicate timestamps keep insertion order). Implement it recursively
+using pattern matching, without sorting the whole list.
+
+```elixir
+defmodule TSDB do
+  @moduledoc """
+  A time-series storage engine implemented as a GenServer.
+
+  Data is stored in chunked, in-memory format. Each unique series
+  (metric_name + sorted label set) owns one chunk per time window.
+  Within each chunk, data points are kept sorted by timestamp.
+
+  ## Storage layout
+
+      %{
+        series: %{
+          {metric_name, sorted_labels} => %{
+            chunk_start => [{timestamp, value}, ...]
+          }
+        }
+      }
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Types
+  # ---------------------------------------------------------------------------
+
+  @type metric_name :: String.t()
+  @type labels :: %{String.t() => String.t()}
+  @type timestamp :: integer()
+  @type value :: number()
+  @type series_key :: {metric_name(), list()}
+  @type chunk_key :: non_neg_integer()
+  @type point :: {timestamp(), value()}
+
+  @type state :: %{
+          series: %{series_key() => %{chunk_key() => [point()]}},
+          chunk_duration_ms: pos_integer(),
+          retention_ms: pos_integer(),
+          cleanup_interval_ms: pos_integer() | :infinity,
+          clock: (-> integer())
+        }
+
+  # ---------------------------------------------------------------------------
+  # Default options
+  # ---------------------------------------------------------------------------
+
+  @default_chunk_duration_ms 60_000
+  @default_retention_ms 3_600_000
+  @default_cleanup_interval_ms 60_000
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name_opts, init_opts} =
+      case Keyword.pop(opts, :name) do
+        {nil, rest} -> {[], rest}
+        {name, rest} -> {[name: name], rest}
+      end
+
+    GenServer.start_link(__MODULE__, init_opts, name_opts)
+  end
+
+  @doc """
+  Insert a single data point into the store.
+  """
+  @spec insert(GenServer.server(), metric_name(), labels(), timestamp(), value()) :: :ok
+  def insert(server, metric_name, labels, timestamp, value) do
+    GenServer.cast(server, {:insert, metric_name, labels, timestamp, value})
+  end
+
+  @doc """
+  Query raw data points for a metric, filtered by label matchers and time range.
+
+  Returns `[{labels, [{timestamp, value}]}]`.
+  """
+  @spec query(GenServer.server(), metric_name(), labels(), {timestamp(), timestamp()}) ::
+          [{labels(), [point()]}]
+  def query(server, metric_name, label_matchers, {start_ts, end_ts}) do
+    GenServer.call(server, {:query, metric_name, label_matchers, start_ts, end_ts})
+  end
+
+  @doc """
+  Query aggregated data points over fixed-width windows.
+
+  `aggregation` is one of `:avg`, `:sum`, `:max`, `:rate`.
+  `step_ms` is the window width in milliseconds.
+
+  Returns `[{labels, [{window_start, aggregated_value}]}]`.
+  """
+  @spec query_agg(
+          GenServer.server(),
+          metric_name(),
+          labels(),
+          {timestamp(), timestamp()},
+          :avg | :sum | :max | :rate,
+          pos_integer()
+        ) :: [{labels(), [point()]}]
+  def query_agg(server, metric_name, label_matchers, {start_ts, end_ts}, aggregation, step_ms) do
+    GenServer.call(
+      server,
+      {:query_agg, metric_name, label_matchers, start_ts, end_ts, aggregation, step_ms}
+    )
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    chunk_duration_ms = Keyword.get(opts, :chunk_duration_ms, @default_chunk_duration_ms)
+    retention_ms = Keyword.get(opts, :retention_ms, @default_retention_ms)
+    cleanup_interval_ms = Keyword.get(opts, :cleanup_interval_ms, @default_cleanup_interval_ms)
+    clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
+
+    state = %{
+      series: %{},
+      chunk_duration_ms: chunk_duration_ms,
+      retention_ms: retention_ms,
+      cleanup_interval_ms: cleanup_interval_ms,
+      clock: clock
+    }
+
+    schedule_cleanup(state)
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_cast({:insert, metric_name, labels, timestamp, value}, state) do
+    sorted_labels = Enum.sort(Map.to_list(labels))
+    series_key = {metric_name, sorted_labels}
+    chunk_start = chunk_start_for(timestamp, state.chunk_duration_ms)
+
+    new_series =
+      Map.update(state.series, series_key, %{chunk_start => [{timestamp, value}]}, fn series ->
+        Map.update(series, chunk_start, [{timestamp, value}], fn points ->
+          insert_sorted(points, {timestamp, value})
+        end)
+      end)
+
+    {:noreply, %{state | series: new_series}}
+  end
+
+  @impl true
+  def handle_call({:query, metric_name, label_matchers, start_ts, end_ts}, _from, state) do
+    result = do_query(state, metric_name, label_matchers, start_ts, end_ts)
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call(
+        {:query_agg, metric_name, label_matchers, start_ts, end_ts, aggregation, step_ms},
+        _from,
+        state
+      ) do
+    raw = do_query(state, metric_name, label_matchers, start_ts, end_ts)
+
+    result =
+      Enum.flat_map(raw, fn {labels, points} ->
+        agg_points = aggregate(points, start_ts, end_ts, aggregation, step_ms)
+
+        if agg_points == [] do
+          []
+        else
+          [{labels, agg_points}]
+        end
+      end)
+
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_info(:cleanup, state) do
+    new_state = do_cleanup(state)
+    schedule_cleanup(new_state)
+    {:noreply, new_state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  # --- Chunk helpers ---
+
+  defp chunk_start_for(timestamp, chunk_duration_ms) do
+    div(timestamp, chunk_duration_ms) * chunk_duration_ms
+  end
+
+  # --- Sorted insertion ---
+  # Inserts a point into a sorted list, maintaining ascending timestamp order.
+  # For duplicate timestamps the new value is appended after existing ones.
+
+  defp insert_sorted(points, point) do
+    # TODO
+  end
+
+  # --- Query ---
+
+  defp do_query(state, metric_name, label_matchers, start_ts, end_ts) do
+    chunk_duration_ms = state.chunk_duration_ms
+
+    # Find the chunk windows that overlap [start_ts, end_ts]
+    first_chunk = chunk_start_for(start_ts, chunk_duration_ms)
+    last_chunk = chunk_start_for(end_ts, chunk_duration_ms)
+
+    Enum.flat_map(state.series, fn {{m, sorted_labels}, series} ->
+      if m != metric_name do
+        []
+      else
+        labels_map = Map.new(sorted_labels)
+
+        if labels_match?(labels_map, label_matchers) do
+          # Collect points from all relevant chunks
+          points =
+            series
+            |> Enum.filter(fn {chunk_start, _} ->
+              chunk_start >= first_chunk and chunk_start <= last_chunk
+            end)
+            |> Enum.flat_map(fn {_chunk_start, pts} -> pts end)
+            |> Enum.filter(fn {ts, _} -> ts >= start_ts and ts <= end_ts end)
+            |> Enum.sort_by(fn {ts, _} -> ts end)
+
+          if points == [] do
+            []
+          else
+            [{l (truncated)
+14:15:10.964 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9992, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9992, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9992, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9992, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 4745, "type" => "message"}], "output_tokens" => 4745, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+14:15:10.984 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_626_001_mini_prometheus_like_time_series_db_04/626_001_mini_prometheus_like_time_series_db_04 solution.ex
+14:15:11.714 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":9,"lines_over_98":0,"max_line_length":76,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"626_001_mini_prometheus_like_time_series_db_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_626_001_mini_prometheus_like_time_series_db_04/626_001_mini_prometheus_like_time_series_db_04/solution.ex","task":"626_001_mini_prometheus_like_time_series_db_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":23,"tests_ran":true,"tests_skipped":0,"tests_total":23,"timestamp":"2026-07-11T12:15:11.691183Z"}
+14:15:11.715 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_626_001_mini_prometheus_like_time_series_db_04/626_001_mini_prometheus_like_time_series_db_04 .gen_staging/fim_626_001_mini_prometheus_like_time_series_db_04/mutant.ex
+14:15:12.459 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":7,"lines_over_98":0,"max_line_length":74,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"parent":"626_001_mini_prometheus_like_time_series_db_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.3,"mode":"fim","overall":0.0,"reasons":["compilation: 7 warning(s) → hard fail (overall 0.0)","tests: 13/23 failed"],"tests":0.43},"shape":"fim","solution_file":".gen_staging/fim_626_001_mini_prometheus_like_time_series_db_04/mutant.ex","task":"626_001_mini_prometheus_like_time_series_db_04","test_failures":[{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TSDB, :insert_sorted, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 201, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {TSDB, :handle_cast, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 138]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TSDBTest","test":"test multiple points in the same series are sorted by timestamp"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TSDB, :insert_sorted, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 201, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {TSDB, :handle_cast, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 138]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TSDBTest","test":"test query filters by time range (inclusive bounds)"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TSDB, :insert_sorted, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 201, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {TSDB, :handle_cast, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 138]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TSDBTest","test":"test label order does not create duplicate series"},{"message":"{:EXIT, #PID<0.247.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TSDB, :insert_sorted, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 201, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {TSDB, :handle_cast, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 138]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TSDBTest","test":"test query_agg :sum computes the sum per window"},{"message":"{:EXIT, #PID<0.251.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TSDB, :insert_sorted, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 201, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {TSDB, :handle_cast, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 138]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TSDBTest","test":"test query_agg :avg computes the mean per window"},{"message":"{:EXIT, #PID<0.255.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TSDB, :insert_sorted, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 201, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {TSDB, :handle_cast, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 138]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TSDBTest","test":"test query_agg :max returns the maximum value per window"},{"message":"{:EXIT, #PID<0.259.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TSDB, :insert_sorted, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 201, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {TSDB, :handle_cast, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 138]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TSDBTest","test":"test query_agg :rate computes per-second rate of change"},{"message":"{:EXIT, #PID<0.263.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TSDB, :insert_sorted, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 201, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {TSDB, :handle_cast, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 138]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TSDBTest","test":"test query_agg :rate omits windows with fewer than 2 points"},{"message":"{:EXIT, #PID<0.267.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TSDB, :insert_sorted, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 201, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {TSDB, :handle_cast, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 138]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TSDBTest","test":"test query_agg omits windows with no data points"},{"message":"{:EXIT, #PID<0.271.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TSDB, :insert_sorted, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 201, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {TSDB, :handle_cast, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 138]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TSDBTest","test":"test query_agg returns separate aggregations per matched series"},{"message":"{:EXIT, #PID<0.275.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TSDB, :insert_sorted, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 201, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {TSDB, :handle_cast, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 138]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"TSDBTest","test":"test query_agg correctly buckets across multiple step windows"},{"message":"{:EXIT, #PID<0.295.0>}: {%RuntimeError{message: \"MUTATION\"}, [{TSDB, :insert_sorted, 2, [file: ~c\"/tmp/evalfim_1910400_2626.ex\", line: 201, error_info: %{module: Exception}]}, {Map, :update, 4, [file: ~c\"lib/map.ex\", line: 733]}, {TSDB, :handle_cast, 2, [file: ~c\"/tmp/evalfim_1910400_2 (truncated)
+14:15:12.460 [debug] fim mutation gate: killed
+14:15:12.461 [info] promoted 626_001_mini_prometheus_like_time_series_db_04 -> tasks/626_001_mini_prometheus_like_time_series_db_04

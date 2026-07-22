@@ -1,0 +1,149 @@
+Blind-solve screen: 31 task(s) to screen (268 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/31] 003_003_lease_based_bucket_01 ... GREEN
+[2/31] 006_002_lrucache_01 ... GREEN
+[3/31] 006_003_refreshaheadcache_01 ... GREEN
+[4/31] 007_004_cusumanomaly_01 ... RED (test invalid options raise at start_link: 
+
+Expected exception ArgumentError but nothing was raised
+)
+[5/31] 009_003_retry_aware_request_deduplicator_01 ... GREEN
+[6/31] 010_004_rolling_window_quota_tracker_01 ... GREEN
+[7/31] 014_001_priority_queue_processor_01 ... RED (test processes a single enqueued task: {:EXIT, #PID<0.207.0>}: {{:badkey, :current}, [{PriorityQueue, :handle_info, 2, [file: ~c"/tmp/screen_1339250_1284.ex", line: 159]}, {:gen_server, :try_handle_info, 3, [file: ~c"gen_server.erl", line:)
+[8/31] 018_001_crud_with_soft_delete_01 ... warning: use SoftCrudWeb.FallbackController must receive the :formats option with the formats you intend to render. To keep compatibility within your app, you can list it as:
+
+    formats: [html: "View", json: "View", ...]
+
+Listing all formats your application renders.
+
+
+GREEN
+[9/31] 019_002_dependency_ordered_bulk_create_with_cascade_skip_01 ... GREEN
+[10/31] 024_001_webhook_receiver_with_signature_verification_01 ... GREEN
+[11/31] 031_001_csv_importer_with_validation_and_error_report_01 ... GREEN
+[12/31] 032_004_multi_table_json_ingestion_with_type_discriminator_routing_01 ... GREEN
+[13/31] 035_002_multi_series_aligned_resampler_01 ... GREEN
+[14/31] 035_004_counter_rate_resampler_01 ... GREEN
+[15/31] 044_001_ets_based_metrics_collector_01 ... GREEN
+[16/31] 061_004_weight_budget_parallel_map_01 ... GREEN
+[17/31] 070_003_nested_sub_saga_composition_01 ... GREEN
+[18/31] 070_004_resumable_journaled_saga_01 ... GREEN
+[19/31] 071_001_factory_module_for_test_data_generation_01 ... RED (test build(:post) populates user_id via an inserted user: 
+
+Expected truthy, got false
+code: assert is_integer(post.user_id) and post.user_id > 0
+)
+[20/31] 073_001_database_cleaner_for_integration_tests_01 ... 
+00:06:05.374 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+
+00:21:07.036 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 2, ~15 min waited so far)
+
+00:36:08.698 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 3, ~30 min waited so far)
+
+00:51:10.405 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 4, ~45 min waited so far)
+
+01:06:12.108 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 5, ~60 min waited so far)
+
+01:21:13.739 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 6, ~75 min waited so far)
+
+01:36:15.685 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 7, ~90 min waited so far)
+
+01:51:17.402 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 8, ~105 min waited so far)
+
+02:06:19.270 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 9, ~120 min waited so far)
+
+02:21:20.999 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 10, ~135 min waited so far)
+
+02:36:22.803 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 11, ~150 min waited so far)
+
+02:51:24.509 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 12, ~165 min waited so far)
+
+03:06:26.254 [warning] usage limit / out of credits on screen_blind (073_001_database_cleaner_for_integration_tests_01) — waiting 900000ms (attempt 13, ~180 min waited so far)
+RED (test truncation: clean/0 truncates all listed tables: errors were found at the given arguments:
+
+  * 2nd argument: not a key that exists in the table
+)
+[21/31] 074_001_custom_exunit_assertion_helpers_01 ... RED (test assert_eventually/3 failure message includes last returned value: 
+
+Assertion with =~ failed
+code:  assert message =~ "still_pending"
+left:  ""
+right: "still_pending"
+)
+[22/31] 074_002_collection_and_structural_assertion_helpers_01 ... RED (compile: /tmp/screen_1339250_1922.ex: cannot compile module AssertHelpers (errors have been logged))
+[23/31] 074_004_numeric_tolerance_and_exception_assertion_helpers_01 ... GREEN
+[24/31] 075_001_property_based_test_generators_01 ... RED (property Generators.non_empty_list/1 produces diverse lengths across many samples: 
+
+Assertion with > failed, both sides are exactly equal
+code: assert Enum.max(lengths) > 1
+left: 1
+)
+[25/31] 080_003_mutable_dag_with_cycle_diagnostics_and_parallel_layers_01 ... GREEN
+[26/31] 086_001_shopping_cart_with_price_calculations_01 ... RED (test add_item adds a new product: no match of right hand side value:
+
+    %Cart{
+      tax_rate: 0.0,
+      items: %{"prod:1" => %{product_id: "prod:1", quantity: 2, unit_price: 5.0}}
+    }
+)
+[27/31] 086_002_tiered_bracket_cart_with_shipping_thresholds_01 ... GREEN
+[28/31] 096_001_input_sanitizer_module_01 ... GREEN
+[29/31] 096_002_schema_driven_nested_params_sanitizer_01 ... GREEN
+[30/31] 102_001_genserver_based_state_machine_with_persistence_01 ... GREEN
+[31/31] 626_001_mini_prometheus_like_time_series_db_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 31   green: 23   RED: 8   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 007_004_cusumanomaly_01: test invalid options raise at start_link: 
+
+Expected exception ArgumentError but nothing was raised
+
+    - 014_001_priority_queue_processor_01: test processes a single enqueued task: {:EXIT, #PID<0.207.0>}: {{:badkey, :current}, [{PriorityQueue, :handle_info, 2, [file: ~c"/tmp/screen_1339250_1284.ex", line: 159]}, {:gen_server, :try_handle_info, 3, [file: ~c"gen_server.erl", line:
+    - 071_001_factory_module_for_test_data_generation_01: test build(:post) populates user_id via an inserted user: 
+
+Expected truthy, got false
+code: assert is_integer(post.user_id) and post.user_id > 0
+
+    - 073_001_database_cleaner_for_integration_tests_01: test truncation: clean/0 truncates all listed tables: errors were found at the given arguments:
+
+  * 2nd argument: not a key that exists in the table
+
+    - 074_001_custom_exunit_assertion_helpers_01: test assert_eventually/3 failure message includes last returned value: 
+
+Assertion with =~ failed
+code:  assert message =~ "still_pending"
+left:  ""
+right: "still_pending"
+
+    - 074_002_collection_and_structural_assertion_helpers_01: compile: /tmp/screen_1339250_1922.ex: cannot compile module AssertHelpers (errors have been logged)
+    - 075_001_property_based_test_generators_01: property Generators.non_empty_list/1 produces diverse lengths across many samples: 
+
+Assertion with > failed, both sides are exactly equal
+code: assert Enum.max(lengths) > 1
+left: 1
+
+    - 086_001_shopping_cart_with_price_calculations_01: test add_item adds a new product: no match of right hand side value:
+
+    %Cart{
+      tax_rate: 0.0,
+      items: %{"prod:1" => %{product_id: "prod:1", quantity: 2, unit_price: 5.0}}
+    }
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 005_003_replayeventbus_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Concurrency: 16 (EVAL_CONCURRENCY to override)
+  corpus-integrity: all pass ✓
+Perfect-score: 3745 tasks (overall must be 1.0) ...
+.............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................s...................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+Re-checking 1 test-failure suspects (flake filter, stability=3) ...
+r
+=== VALIDATION SUMMARY ===
+  perfect-score: all pass ✓
+
+ALL PERFECT ✓ (every task scores 1.0)
+OVERNIGHT-PIPELINE-DONE

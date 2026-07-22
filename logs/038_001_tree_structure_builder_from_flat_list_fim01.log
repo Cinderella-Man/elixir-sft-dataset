@@ -1,0 +1,738 @@
+09:05:13.044 [info] FIM 038_001_tree_structure_builder_from_flat_list_fim01 → 038_001_tree_structure_builder_from_flat_list_02: target build/2
+09:05:13.044 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+09:05:13.044 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `build/2`.
+
+Generate a prompt describing how to implement `build/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `build/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `build/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `build/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `TreeBuilder` that converts a flat list of maps into a
+nested tree structure.
+
+Each input item is a map with at least these two fields:
+- `:id` — a unique identifier (any term: integer, string, atom)
+- `:parent_id` — the id of the parent node, or `nil` if this node is a root
+
+I need these functions in the public API:
+
+- `TreeBuilder.build(items, opts \\ [])` — takes the flat list and returns
+  `{:ok, forest}` where `forest` is a list of root-level nodes, each being the
+  original map with a `:children` key added (a list of child nodes, recursively
+  structured the same way). Leaf nodes have `children: []`. If the input is
+  empty, return `{:ok, []}`.
+  Returns `{:error, {:cycle_detected, ids}}` if a cycle is found, where `ids` is
+  the list of node ids involved in the cycle.
+
+The function must support these options:
+- `:orphan_strategy` — what to do when a node's `parent_id` points to an id that
+  doesn't exist in the list. Accepted values:
+  - `:discard` (default) — silently drop orphan nodes from the output
+  - `:raise_to_root` — treat orphans as root nodes
+
+Nodes in the output should preserve all original fields from the input map and
+simply gain the extra `:children` key. The order of children under each parent
+should follow the original order those items appeared in the input list. Root
+nodes should also appear in their original input order.
+
+Cycle detection must work for direct cycles (A → B → A) as well as indirect
+ones (A → B → C → A). It must not false-positive on valid deep trees or on
+diamond shapes that aren't true cycles.
+
+Do not use any external dependencies — only the Elixir / Erlang standard library.
+Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule TreeBuilder do
+  @moduledoc """
+  Converts a flat list of maps into a nested tree (forest) structure.
+
+  Each input map must have at least:
+    - `:id`        — a unique identifier (any term)
+    - `:parent_id` — the id of the parent node, or `nil` for root nodes
+
+  ## Example
+
+      iex> items = [
+      ...>   %{id: 1, parent_id: nil,  name: "root"},
+      ...>   %{id: 2, parent_id: 1,    name: "child"},
+      ...>   %{id: 3, parent_id: 2,    name: "grandchild"},
+      ...> ]
+      iex> {:ok, [root]} = TreeBuilder.build(items)
+      iex> root.name
+      "root"
+      iex> [child] = root.children
+      iex> child.name
+      "child"
+      iex> [grandchild] = child.children
+      iex> grandchild.name
+      "grandchild"
+  """
+
+  @type id :: term()
+  @type node_map :: %{required(:id) => id(), required(:parent_id) => id() | nil, optional(atom()) => term()}
+  @type tree_node :: %{required(:id) => id(), required(:parent_id) => id() | nil, required(:children) => [tree_node()], optional(atom()) => term()}
+  @type forest :: [tree_node()]
+  @type orphan_strategy :: :discard | :raise_to_root
+  @type build_opt :: {:orphan_strategy, orphan_strategy()}
+  @type build_result :: {:ok, forest()} | {:error, {:cycle_detected, [id()]}}
+
+  @doc """
+  Builds a forest (list of root trees) from a flat list of node maps.
+
+  ## Options
+
+    - `:orphan_strategy` — behaviour for nodes whose `parent_id` references a
+      non-existent id.
+      - `:discard` (default) — orphan nodes are silently dropped.
+      - `:raise_to_root` — orphan nodes are treated as additional root nodes.
+
+  ## Return values
+
+    - `{:ok, forest}` on success (empty list when `items` is empty).
+    - `{:error, {:cycle_detected, ids}}` when a cycle is detected; `ids` is the
+      list of node ids that form the cycle.
+  """
+  @spec build([node_map()], [build_opt()]) :: build_result()
+  def build(items, opts \\ [])
+
+  def build([], _opts), do: {:ok, []}
+
+  def build(items, opts) when is_list(items) do
+    orphan_strategy = Keyword.get(opts, :orphan_strategy, :discard)
+
+    # Index nodes by id, preserving insertion order via a list of ids.
+    {id_to_node, ordered_ids} = index_items(items)
+
+    # Validate: duplicate ids are detected early.
+    case detect_duplicate_ids(items) do
+      {:error, _} = err -> err
+      :ok ->
+        # Build a parent_id → [child_id] map (children in original order).
+        children_map = build_children_map(items)
+
+        # Determine which nodes are "known" ids.
+        known_ids = MapSet.new(ordered_ids)
+
+        # Detect cycles using DFS on the children graph before we build anything.
+        case detect_cycle(ordered_ids, children_map) do
+          {:error, _} = err ->
+            err
+
+          :ok ->
+            # Identify root nodes: parent_id is nil, OR parent_id is unknown
+            # (orphan handling) — depending on strategy.
+            root_ids =
+              ordered_ids
+              |> Enum.filter(fn id ->
+                node = Map.fetch!(id_to_node, id)
+                pid = node.parent_id
+
+                cond do
+                  is_nil(pid) -> true
+                  not MapSet.member?(known_ids, pid) ->
+                    orphan_strategy == :raise_to_root
+                  true -> false
+                end
+              end)
+
+            forest =
+              Enum.map(root_ids, fn id ->
+                build_subtree(id, id_to_node, children_map)
+              end)
+
+            {:ok, forest}
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Index items into a map of id → node and a list of ids in original order.
+  @spec index_items([node_map()]) :: {%{id() => node_map()}, [id()]}
+  defp index_items(items) do
+    Enum.reduce(items, {%{}, []}, fn item, {map, ids} ->
+      id = Map.fetch!(item, :id)
+      {Map.put(map, id, item), [id | ids]}
+    end)
+    |> then(fn {map, ids} -> {map, Enum.reverse(ids)} end)
+  end
+
+  @spec detect_duplicate_ids([node_map()]) :: :ok | {:error, {:duplicate_ids, [id()]}}
+  defp detect_duplicate_ids(items) do
+    ids = Enum.map(items, & &1.id)
+    unique = Enum.uniq(ids)
+
+    if length(ids) == length(unique) do
+      :ok
+    else
+      dupes =
+        ids
+        |> Enum.frequencies()
+        |> Enum.filter(fn {_id, count} -> count > 1 end)
+        |> Enum.map(fn {id, _} -> id end)
+
+      {:error, {:duplicate_ids, dupes}}
+    end
+  end
+
+  # Build a map of parent_id → [child_id, ...] in original order.
+  @spec build_children_map([node_map()]) :: %{id() => [id()]}
+  defp build_children_map(items) do
+    # We want children in the same order as the original list, so we walk
+    # forward and append (via reversal at the end).
+    items
+    |> Enum.reduce(%{}, fn item, acc ->
+      pid = item.parent_id
+
+      if is_nil(pid) do
+        acc
+      else
+        Map.update(acc, pid, [item.id], fn existing -> existing ++ [item.id] end)
+      end
+    end)
+  end
+
+  # Recursively build a tree node, attaching children.
+  @spec build_subtree(id(), %{id() => node_map()}, %{id() => [id()]}) :: tree_node()
+  defp build_subtree(id, id_to_node, children_map) do
+ (truncated)
+09:06:13.523 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Task: Implement `TreeBuilder.build/2`
+
+You are given the `TreeBuilder` module below, complete except for the public
+`build/2` function, whose clause bodies have been replaced with `# TODO`.
+Implement `build/2` (and only `build/2`) so that it converts a flat list of node
+maps into a nested forest, using the private helpers already provided.
+
+## What `build/2` must do
+
+`build(items, opts \\ [])` takes a flat list of maps (each having at least `:id`
+and `:parent_id`) and an optional keyword list, and returns one of:
+
+- `{:ok, forest}` — a list of root-level tree nodes on success.
+- `{:error, {:cycle_detected, ids}}` — when the parent/child relationships form
+  a cycle (`ids` being the ids that make up the cycle).
+- It may also surface `{:error, {:duplicate_ids, ids}}` from the duplicate-id
+  check.
+
+Behaviour requirements:
+
+- **Empty input:** if `items` is `[]`, return `{:ok, []}` immediately (handle
+  this with its own function clause).
+- **General case** (`items` is a non-empty list):
+  1. Read the `:orphan_strategy` option from `opts`, defaulting to `:discard`.
+  2. Index the items with `index_items/1`, obtaining an `id → node` map and the
+     list of ids in original insertion order.
+  3. Run `detect_duplicate_ids/1`; if it returns an error, return that error
+     unchanged. Otherwise continue.
+  4. Build the `parent_id → [child_id]` map with `build_children_map/1`, and
+     compute the set of known ids (a `MapSet` of the ordered ids).
+  5. Run `detect_cycle/2` over the ordered ids and the children map; if it
+     returns an error, return that error unchanged. Otherwise continue.
+  6. Determine the root ids: an id is a root when its node's `parent_id` is
+     `nil`; when the `parent_id` is *not* a known id (an orphan reference), it is
+     a root only if `orphan_strategy == :raise_to_root`; otherwise it is not a
+     root. Preserve original input order when selecting roots.
+  7. Build each root's subtree with `build_subtree/3` and return
+     `{:ok, forest}`.
+
+Preserve the original field order/structure conventions shown by the helpers;
+do not add or rename any helper functions — only fill in `build/2`.
+
+```elixir
+defmodule TreeBuilder do
+  @moduledoc """
+  Converts a flat list of maps into a nested tree (forest) structure.
+
+  Each input map must have at least:
+    - `:id`        — a unique identifier (any term)
+    - `:parent_id` — the id of the parent node, or `nil` for root nodes
+
+  ## Example
+
+      iex> items = [
+      ...>   %{id: 1, parent_id: nil,  name: "root"},
+      ...>   %{id: 2, parent_id: 1,    name: "child"},
+      ...>   %{id: 3, parent_id: 2,    name: "grandchild"},
+      ...> ]
+      iex> {:ok, [root]} = TreeBuilder.build(items)
+      iex> root.name
+      "root"
+      iex> [child] = root.children
+      iex> child.name
+      "child"
+      iex> [grandchild] = child.children
+      iex> grandchild.name
+      "grandchild"
+  """
+
+  @type id :: term()
+  @type node_map :: %{required(:id) => id(), required(:parent_id) => id() | nil, optional(atom()) => term()}
+  @type tree_node :: %{required(:id) => id(), required(:parent_id) => id() | nil, required(:children) => [tree_node()], optional(atom()) => term()}
+  @type forest :: [tree_node()]
+  @type orphan_strategy :: :discard | :raise_to_root
+  @type build_opt :: {:orphan_strategy, orphan_strategy()}
+  @type build_result :: {:ok, forest()} | {:error, {:cycle_detected, [id()]}}
+
+  @doc """
+  Builds a forest (list of root trees) from a flat list of node maps.
+
+  ## Options
+
+    - `:orphan_strategy` — behaviour for nodes whose `parent_id` references a
+      non-existent id.
+      - `:discard` (default) — orphan nodes are silently dropped.
+      - `:raise_to_root` — orphan nodes are treated as additional root nodes.
+
+  ## Return values
+
+    - `{:ok, forest}` on success (empty list when `items` is empty).
+    - `{:error, {:cycle_detected, ids}}` when a cycle is detected; `ids` is the
+      list of node ids that form the cycle.
+  """
+  @spec build([node_map()], [build_opt()]) :: build_result()
+  def build(items, opts \\ [])
+
+  def build([], _opts) do
+    # TODO
+  end
+
+  def build(items, opts) when is_list(items) do
+    # TODO
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Index items into a map of id → node and a list of ids in original order.
+  @spec index_items([node_map()]) :: {%{id() => node_map()}, [id()]}
+  defp index_items(items) do
+    Enum.reduce(items, {%{}, []}, fn item, {map, ids} ->
+      id = Map.fetch!(item, :id)
+      {Map.put(map, id, item), [id | ids]}
+    end)
+    |> then(fn {map, ids} -> {map, Enum.reverse(ids)} end)
+  end
+
+  @spec detect_duplicate_ids([node_map()]) :: :ok | {:error, {:duplicate_ids, [id()]}}
+  defp detect_duplicate_ids(items) do
+    ids = Enum.map(items, & &1.id)
+    unique = Enum.uniq(ids)
+
+    if length(ids) == length(unique) do
+      :ok
+    else
+      dupes =
+        ids
+        |> Enum.frequencies()
+        |> Enum.filter(fn {_id, count} -> count > 1 end)
+        |> Enum.map(fn {id, _} -> id end)
+
+      {:error, {:duplicate_ids, dupes}}
+    end
+  end
+
+  # Build a map of parent_id → [child_id, ...] in original order.
+  @spec build_children_map([node_map()]) :: %{id() => [id()]}
+  defp build_children_map(items) do
+    # We want children in the same order as the original list, so we walk
+    # forward and append (via reversal at the end).
+    items
+    |> Enum.reduce(%{}, fn item, acc ->
+      pid = item.parent_id
+
+      if is_nil(pid) do
+        acc
+      else
+        Map.update(acc, pid, [item.id], fn existing -> existing ++ [item.id] end)
+      end
+    end)
+  end
+
+  # Recursively build a tree node, attaching children.
+  @spec build_subtree(id(), %{id() => node_map()}, %{id() => [id()]}) :: tree_node()
+  defp build_subtree(id, id_to_node, children_map) do
+    node = Map.fetch!(id_to_node, id)
+    child_ids = Map.get(children_map, id, [])
+
+    children =
+      Enum.map(child_ids, fn child_id ->
+        build_subtree(child_id, id_to_node, children_map)
+      end)
+
+    Map.put(node, :children, children)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Cycle detection — iterative DFS (white/grey/black colouring)
+  # ---------------------------------------------------------------------------
+  # Colours:
+  #   :white — not yet visited
+  #   :grey  — currently in the DFS stack (ancestor path)
+  #   :black — fully explored, no cycle through this node
+
+  @spec detect_cycle([id()], %{id() => [id()]}) ::
+          :ok | {:error, {:cycle_detected, [id()]}}
+  defp detect_cycle(all_ids, children_map) do
+    initial_colors = Map.new(all_ids, fn id -> {id, :white} end)
+
+    Enum.reduce_while(all_ids, {:ok, initial_colors}, fn id, {:ok, colors} ->
+      if Map.get(colors, id) == :white do
+        case dfs(id, children_map, colors, []) do
+          {:ok, new_colors} -> {:cont, {:ok, new_colors}}
+          {:error, _} = err -> {:halt, err}
+        end
+      else
+        {:cont, {:ok, colors}}
+      end
+    end)
+    |> case do
+      {:ok, _colors} -> :ok
+      {:error, _} = err -> err
+    end
+  end
+
+  # DFS from `id`. `stack` is the list of ancestor ids (for cycle reporting).
+  @spec dfs(id(), %{id() => [id()]}, map(), [id()]) ::
+          {:ok, map()} | {:error, {:cycle_detected, [id()]}}
+  defp dfs(id, children_map, colors, stack) do
+    colors = Map.put(colors, id, :grey)
+    stack = [id | stack]
+
+    child_ids = Map.get(children_map, id, [])
+
+    result =
+      Enum.reduce_while(child_ids, {:ok, colors}, fn child_id, {:ok, acc_colors} ->
+        case Map.get(acc_colors, child_id) do
+          :grey ->
+            # Back-edge → cycle found.
+            # Extract the cycle portion from the stack.
+            cycle = extract_cycle(child_id, [child_id | stack])
+            {:halt, {:error, {:cycle_detected, cycle}}}
+
+          :white ->
+            case dfs(child_id, children_map, acc_colors (truncated)
+09:06:13.523 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4842, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4842, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4842, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4842, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 5566, "type" => "message"}], "output_tokens" => 5566, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+09:06:13.542 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_038_001_tree_structure_builder_from_flat_list_02/038_001_tree_structure_builder_from_flat_list_02 solution.ex
+09:06:13.938 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":52,"lines_over_98":0,"max_line_length":81,"mode":"fim","pipe_chain_count":1,"public_fn_count":3,"sql_injection_risk":false,"todo_count":0},"compile_errors":[{"message":"/tmp/evalfim_477077_2627.ex: cannot compile file (errors have been logged)","type":"CompileError"}],"compile_warnings":0,"compiled":false,"parent":"038_001_tree_structure_builder_from_flat_list_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.0,"reasons":["compilation: failed to compile (0.0)"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_038_001_tree_structure_builder_from_flat_list_02/038_001_tree_structure_builder_from_flat_list_02/solution.ex","task":"038_001_tree_structure_builder_from_flat_list_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":0,"tests_ran":false,"tests_skipped":0,"tests_total":0,"timestamp":"2026-07-04T07:06:13.918102Z"}
+09:06:13.939 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+09:06:13.939 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit prompt.md and/or solution.ex.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+Compilation failed:
+  - CompileError: /tmp/evalfim_477077_2627.ex: cannot compile file (errors have been logged)
+
+=== CURRENT FILES ===
+----- prompt.md -----
+# Task: Implement `TreeBuilder.build/2`
+
+You are given the `TreeBuilder` module below, complete except for the public
+`build/2` function, whose clause bodies have been replaced with `# TODO`.
+Implement `build/2` (and only `build/2`) so that it converts a flat list of node
+maps into a nested forest, using the private helpers already provided.
+
+## What `build/2` must do
+
+`build(items, opts \\ [])` takes a flat list of maps (each having at least `:id`
+and `:parent_id`) and an optional keyword list, and returns one of:
+
+- `{:ok, forest}` — a list of root-level tree nodes on success.
+- `{:error, {:cycle_detected, ids}}` — when the parent/child relationships form
+  a cycle (`ids` being the ids that make up the cycle).
+- It may also surface `{:error, {:duplicate_ids, ids}}` from the duplicate-id
+  check.
+
+Behaviour requirements:
+
+- **Empty input:** if `items` is `[]`, return `{:ok, []}` immediately (handle
+  this with its own function clause).
+- **General case** (`items` is a non-empty list):
+  1. Read the `:orphan_strategy` option from `opts`, defaulting to `:discard`.
+  2. Index the items with `index_items/1`, obtaining an `id → node` map and the
+     list of ids in original insertion order.
+  3. Run `detect_duplicate_ids/1`; if it returns an error, return that error
+     unchanged. Otherwise continue.
+  4. Build the `parent_id → [child_id]` map with `build_children_map/1`, and
+     compute the set of known ids (a `MapSet` of the ordered ids).
+  5. Run `detect_cycle/2` over the ordered ids and the children map; if it
+     returns an error, return that error unchanged. Otherwise continue.
+  6. Determine the root ids: an id is a root when its node's `parent_id` is
+     `nil`; when the `parent_id` is *not* a known id (an orphan reference), it is
+     a root only if `orphan_strategy == :raise_to_root`; otherwise it is not a
+     root. Preserve original input order when selecting roots.
+  7. Build each root's subtree with `build_subtree/3` and return
+     `{:ok, forest}`.
+
+Preserve the original field order/structure conventions shown by the helpers;
+do not add or rename any helper functions — only fill in `build/2`.
+
+```elixir
+defmodule TreeBuilder do
+  @moduledoc """
+  Converts a flat list of maps into a nested tree (forest) structure.
+
+  Each input map must have at least:
+    - `:id`        — a unique identifier (any term)
+    - `:parent_id` — the id of the parent node, or `nil` for root nodes
+
+  ## Example
+
+      iex> items = [
+      ...>   %{id: 1, parent_id: nil,  name: "root"},
+      ...>   %{id: 2, parent_id: 1,    name: "child"},
+      ...>   %{id: 3, parent_id: 2,    name: "grandchild"},
+      ...> ]
+      iex> {:ok, [root]} = TreeBuilder.build(items)
+      iex> root.name
+      "root"
+      iex> [child] = root.children
+      iex> child.name
+      "child"
+      iex> [grandchild] = child.children
+      iex> grandchild.name
+      "grandchild"
+  """
+
+  @type id :: term()
+  @type node_map :: %{required(:id) => id(), required(:parent_id) => id() | nil, optional(atom()) => term()}
+  @type tree_node :: %{required(:id) => id(), required(:parent_id) => id() | nil, required(:children) => [tree_node()], optional(atom()) => term()}
+  @type forest :: [tree_node()]
+  @type orphan_strategy :: :discard | :raise_to_root
+  @type build_opt :: {:orphan_strategy, orphan_strategy()}
+  @type build_result :: {:ok, forest()} | {:error, {:cycle_detected, [id()]}}
+
+  @doc """
+  Builds a forest (list of root trees) from a flat list of node maps.
+
+  ## Options
+
+    - `:orphan_strategy` — behaviour for nodes whose `parent_id` references a
+      non-existent id.
+      - `:discard` (default) — orphan nodes are silently dropped.
+      - `:raise_to_root` — orphan nodes are treated as additional root nodes.
+
+  ## Return values
+
+    - `{:ok, forest}` on success (empty list when `items` is empty).
+    - `{:error, {:cycle_detected, ids}}` when a cycle is detected; `ids` is the
+      list of node ids that form the cycle.
+  """
+  @spec build([node_map()], [build_opt()]) :: build_result()
+  def build(items, opts \\ [])
+
+  def build([], _opts) do
+    # TODO
+  end
+
+  def build(items, opts) when is_list(items) do
+    # TODO
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Index items into a map of id → node and a list of ids in original order.
+  @spec index_items([node_map()]) :: {%{id() => node_map()}, [id()]}
+  defp index_items(items) do
+    Enum.reduce(items, {%{}, []}, fn item, {map, ids} ->
+      id = Map.fetch!(item, :id)
+      {Map.put(map, id, item), [id | ids]}
+    end)
+    |> then(fn {map, ids} -> {map, Enum.reverse(ids)} end)
+  end
+
+  @spec detect_duplicate_ids([node_map()]) :: :ok | {:error, {:duplicate_ids, [id()]}}
+  defp detect_duplicate_ids(items) do
+    ids = Enum.map(items, & &1.id)
+    unique = Enum.uniq(ids)
+
+    if length(ids) == length(unique) do
+      :ok
+    else
+      dupes =
+        ids
+        |> Enum.frequencies()
+        |> Enum.filter(fn {_id, count} -> count > 1 end)
+        |> Enum.map(fn {id, _} -> id end)
+
+      {:error, {:duplicate_ids, dupes}}
+    end
+  end
+
+  # Build a map of parent_id → [child_id, ...] in original order.
+  @spec build_children_map([node_map()]) :: %{id() => [id()]}
+  defp build_children_map(items) do
+    # We want children in the same order as the original list, so we walk
+    # forward and append (via reversal at the end).
+    items
+    |> Enum.reduce(%{}, fn item, acc ->
+      pid = item.parent_id
+
+      if is_nil(pid) do
+        acc
+      else
+        Map.update(acc, pid, [item.id], fn existing -> existing ++ [item.id] end)
+      end
+    end)
+  end
+
+  # Recursively build a tree node, attaching children.
+  @spec build_subtree(id(), %{id() => node_map()}, %{id() => [id()]}) :: tree_node()
+  defp build_subtree(id, id_to_node, children_map) do
+    node = Map.fetch!(id_to_node, id)
+    child_ids = Map.get(children_map, id, [])
+
+    children =
+      Enum.map(child_ids, fn child_id ->
+        build_subtree(child_id, id_to_node, children_map)
+      end)
+
+    Map.put(node, :children, children)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Cycle detection — iterative DFS (white/grey/black colouring)
+  # ---------------------------------------------------------------------------
+  # Colours:
+  #   :white — not yet visited
+  #   :grey  — currently in the DFS stack (ancestor path)
+  #   :black — fully explored, no cycle through this node
+
+  @spec detect_cycle([id()], %{id() => [id()]}) ::
+          :ok | {:error, {:cycle_detected, [id()]}}
+  defp detect_cycle(all_ids, children_map) do
+    initial_colors = Map.new(all_ids, fn id -> {id, :white} end)
+
+    Enum.reduce_while(all_ids, {:ok, initial_colors}, fn id, {:ok, colors} ->
+      if Map.get(colors, id) == :white do
+        case dfs(id, children_map, colors, []) do
+          {:ok, new_colors} -> {:cont, {:ok, new_colors}}
+          {:error, _} = err -> {:halt, err}
+        end
+      else
+        {:cont, {:ok, colors}}
+      end
+    end)
+    |> case do
+      {:ok, _colors} -> :ok
+      {:error, _} = err -> err
+    end
+  end
+
+  # DFS from `id`. `stack` is the list of ancestor ids (for cycle reporting).
+  @spec dfs(id(), %{id() => [id()]}, map(), [id()]) ::
+          {:ok, map()} | {:error, {:cycle_detected, [id()]}}
+  defp dfs(id, children_map, colors, stack) do
+    colors = Map.put(colors, id, :grey)
+    stack = [id | stack]
+
+    child_ids = Map.get(children_map, id, [])
+
+    result =
+      Enum.reduce_while(child_ids, {:ok, colors}, fn child_id, {:ok, acc_colors} ->
+        case Map.get(acc_colors, child_id) do
+          (truncated)
+09:09:36.741 [debug] claude -p RESULT (stop="end_turn"):
+Looking at the failure, the issue is a merge/duplication problem: the prompt skeleton already provides the `@spec` and the default‑args header
+
+```elixir
+  @spec build([node_map()], [build_opt()]) :: build_result()
+  def build(items, opts \\ [])
+```
+
+Since `solution.ex` **also** repeated that `@spec` and the `def build(items, opts \\ [])` header, the assembled file ended up declaring defaults for `build/2` twice, which is a hard `CompileError` ("def build/2 defines defaults multiple times"). (If it were a whole‑group replacement instead, the original file would already have compiled — so the header must be coming from the skeleton.)
+
+The fix is to have `solution.ex` contain only the two clause implementations (no `@spec`, no default header), so it slots in after the skeleton's existing header:
+
+<file path="solution.ex">
+  def build([], _opts), do: {:ok, []}
+
+  def build(items, opts) when is_list(items) do
+    orphan_strategy = Keyword.get(opts, :orphan_strategy, :discard)
+
+    # Index nodes by id, preserving insertion order via a list of ids.
+    {id_to_node, ordered_ids} = index_items(items)
+
+    # Validate: duplicate ids are detected early.
+    case detect_duplicate_ids(items) do
+      {:error, _} = err ->
+        err
+
+      :ok ->
+        # Build a parent_id → [child_id] map (children in original order).
+        children_map = build_children_map(items)
+
+        # Determine which nodes are "known" ids.
+        known_ids = MapSet.new(ordered_ids)
+
+        # Detect cycles using DFS on the children graph before we build anything.
+        case detect_cycle(ordered_ids, children_map) do
+          {:error, _} = err ->
+            err
+
+          :ok ->
+            # Identify root nodes: parent_id is nil, OR parent_id is unknown
+            # (orphan handling) — depending on strategy.
+            root_ids =
+              Enum.filter(ordered_ids, fn id ->
+                node = Map.fetch!(id_to_node, id)
+                pid = node.parent_id
+
+                cond do
+                  is_nil(pid) -> true
+                  not MapSet.member?(known_ids, pid) -> orphan_strategy == :raise_to_root
+                  true -> false
+                end
+              end)
+
+            forest =
+              Enum.map(root_ids, fn id ->
+                build_subtree(id, id_to_node, children_map)
+              end)
+
+            {:ok, forest}
+        end
+    end
+  end
+</file>
+09:09:36.741 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4902, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4902, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4902, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4902, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 15000, "type" => "message"}], "output_tokens" => 15000, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+09:09:36.759 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_038_001_tree_structure_builder_from_flat_list_02/038_001_tree_structure_builder_from_flat_list_02 solution.ex
+09:09:37.539 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":49,"lines_over_98":0,"max_line_length":89,"mode":"fim","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"038_001_tree_structure_builder_from_flat_list_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.98,"reasons":["compilation: 2 warning(s) → -0.2 pts"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_038_001_tree_structure_builder_from_flat_list_02/038_001_tree_structure_builder_from_flat_list_02/solution.ex","task":"038_001_tree_structure_builder_from_flat_list_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":21,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T07:09:37.515377Z"}
+09:09:37.540 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_038_001_tree_structure_builder_from_flat_list_02/038_001_tree_structure_builder_from_flat_list_02 .gen_staging/fim_038_001_tree_structure_builder_from_flat_list_02/mutant.ex
+09:09:38.282 [debug] grade JSON: {"analysis":{"defp_count":0,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":7,"lines_over_98":0,"max_line_length":45,"mode":"fim","pipe_chain_count":0,"public_fn_count":2,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":10,"compiled":true,"parent":"038_001_tree_structure_builder_from_flat_list_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.2,"reasons":["compilation: 10 warning(s) → -1.0 pts","tests: 21/21 failed"],"tests":0.0},"shape":"fim","solution_file":".gen_staging/fim_038_001_tree_structure_builder_from_flat_list_02/mutant.ex","task":"038_001_tree_structure_builder_from_flat_list_02","test_failures":[{"message":"MUTATION","module":"TreeBuilderTest","test":"test returns empty forest for empty input"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test single root node with no children"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test simple parent-child relationship"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test three-level deep tree"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test node with multiple children preserves input order"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test all original fields are preserved on nodes"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test multiple root nodes are returned"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test multiple roots each with their own subtrees"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test roots preserve their input order"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test direct cycle A -> B -> A returns error"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test indirect cycle A -> B -> C -> A returns error"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test no false positive on a valid deep tree"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test no false positive on a wide flat tree (many siblings)"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test orphans are discarded by default"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test orphans are discarded with explicit :discard option"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test :raise_to_root attaches orphans as root nodes"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test :raise_to_root orphan carries its own children"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test multiple orphans all raised to root"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test complex tree: two roots, mixed depths, correct structure"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test input given in child-first order still builds correctly"},{"message":"MUTATION","module":"TreeBuilderTest","test":"test string ids work the same as integer ids"}],"tests_errors":0,"tests_excluded":0,"tests_failed":21,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":21,"timestamp":"2026-07-04T07:09:38.259140Z"}
+09:09:38.282 [debug] fim mutation gate: killed
+09:09:38.284 [info] promoted 038_001_tree_structure_builder_from_flat_list_02 -> tasks/038_001_tree_structure_builder_from_flat_list_02

@@ -1,0 +1,19 @@
+Blind-solve screen: 12 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/12] 001_001_rate_limiter_01 ... GREEN
+[2/12] 002_002_rolling_window_error_rate_cb_01 ... GREEN
+[3/12] 013_002_timeout_guarded_retry_worker_01 ... RED (compile: /tmp/screen_1849607_8325.ex:200: type variable is_struct is used only once. Type variables in typespecs must be referenced at least twice, otherwise it is equivalent to term())
+[4/12] 041_001_lru_cache_backed_by_ets_01 ... GREEN
+[5/12] 041_002_lfu_cache_backed_by_ets_01 ... GREEN
+[6/12] 041_003_sharded_lru_cache_with_consistent_key_routing_01 ... GREEN
+[7/12] 063_004_bounded_concurrency_concurrent_fetcher_01 ... GREEN
+[8/12] 074_001_custom_exunit_assertion_helpers_01 ... GREEN
+[9/12] 075_001_property_based_test_generators_01 ... GREEN
+[10/12] 079_001_bloom_filter_01 ... GREEN
+[11/12] 105_001_genserver_based_debouncer_01 ... GREEN
+[12/12] 107_002_keyed_event_aggregator_with_per_key_batching_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 12   green: 11   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 013_002_timeout_guarded_retry_worker_01: compile: /tmp/screen_1849607_8325.ex:200: type variable is_struct is used only once. Type variables in typespecs must be referenced at least twice, otherwise it is equivalent to term()

@@ -1,0 +1,213 @@
+13:17:51.141 [info] FIM candidate-select for 624_003_on_disk_loose_object_store_with_zlib_compression_and_integrity_checks_01 (up to 3)
+13:17:51.141 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:17:51.141 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer module called `ObjectStore` that implements a content-addressable object store which **persists objects to disk** as compressed "loose object" files (like Git's `.git/objects` directory) and **verifies integrity on read**. The store keeps no in-memory copy of object contents — every read and write goes to the filesystem — so a second process pointed at the same directory sees the same objects, and objects survive process restarts.
+
+I need these functions in the public API:
+
+- `ObjectStore.start_link(opts)` to start the process. It accepts an optional `:name` option for process registration and a **required** `:dir` option giving the directory in which objects are stored. If the directory does not exist it must be created on startup.
+
+- `ObjectStore.store(server, content)` which takes an arbitrary binary/string, computes its SHA-1 hash (lowercase hex), writes the object to disk, and returns `{:ok, hash}`. Storing the same content twice must be idempotent — it returns the same hash and does not rewrite the file if it already exists.
+
+- `ObjectStore.retrieve(server, hash)` which reads the object file for `hash`, decompresses it, and returns `{:ok, content}`. If no file exists for that hash it returns `{:error, :not_found}`. If the file exists but cannot be decompressed, or the SHA-1 of the decompressed bytes does not equal the requested hash, it returns `{:error, :corrupt}`.
+
+- `ObjectStore.has_object?(server, hash)` which returns `true` if an object file exists for `hash`, `false` otherwise.
+
+- `ObjectStore.list_objects(server)` which returns a sorted list of the SHA-1 hex hashes of every object currently present on disk.
+
+On-disk layout (this is a fixed contract):
+- The file path for an object with hash `H` is `<dir>/<first two characters of H>/<remaining 38 characters of H>`. That is, the object is stored in a two-character fan-out subdirectory named by the first two hex characters, in a file named by the remaining 38.
+- The file contents are the **zlib-compressed** raw object bytes. Compress with `:zlib.compress/1` and decompress with `:zlib.uncompress/1`.
+
+Implementation requirements:
+- Use `:crypto.hash(:sha, content)` and `Base.encode16(hash, case: :lower)` for SHA-1 hashing.
+- All object contents live on disk; there is no in-memory content map in the process state.
+
+Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+=== MODULE ===
+```elixir
+defmodule ObjectStore do
+  @moduledoc """
+  A content-addressable object store that persists objects to disk as
+  compressed "loose object" files, in the style of Git's `.git/objects`
+  directory.
+
+  Objects are addressed by the lowercase hex SHA-1 hash of their raw
+  content. Each object is stored zlib-compressed at the path
+  `<dir>/<first 2 hash chars>/<remaining 38 hash chars>`.
+
+  The process keeps **no in-memory copy** of object contents — every read
+  and write goes to the filesystem. Consequently, two processes pointed at
+  the same directory see the same objects, and objects survive process
+  restarts. Integrity is verified on every read: the decompressed bytes
+  must hash back to the requested address.
+  """
+
+  use GenServer
+
+  @typedoc "Lowercase hex-encoded SHA-1 hash."
+  @type hash :: String.t()
+
+  @typedoc "A running `ObjectStore` server reference."
+  @type server :: GenServer.server()
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the object store process.
+
+  Options:
+
+    * `:dir` (required) — the directory in which objects are stored. It is
+      created on startup if it does not already exist.
+    * `:name` (optional) — a name under which to register the process.
+
+  Returns `{:ok, pid}` on success or `{:error, reason}` on failure.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    dir = Keyword.fetch!(opts, :dir)
+
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, dir, name: name)
+      :error -> GenServer.start_link(__MODULE__, dir)
+    end
+  end
+
+  @doc """
+  Stores `content` and returns `{:ok, hash}`.
+
+  The SHA-1 hash of `content` is computed, and the zlib-compressed bytes are
+  written to the object's path on disk. The operation is idempotent: storing
+  the same content twice yields the same hash and does not rewrite an
+  existing file.
+  """
+  @spec store(server(), iodata()) :: {:ok, hash()} | {:error, term()}
+  def store(server, content) do
+    GenServer.call(server, {:store, IO.iodata_to_binary(content)})
+  end
+
+  @doc """
+  Retrieves the content stored under `hash`.
+
+  Returns `{:ok, content}` on success, `{:error, :not_found}` if no object
+  file exists for `hash`, or `{:error, :corrupt}` if the file cannot be
+  decompressed or its contents do not hash back to `hash`.
+  """
+  @spec retrieve(server(), hash()) ::
+          {:ok, binary()} | {:error, :not_found} | {:error, :corrupt}
+  def retrieve(server, hash) do
+    GenServer.call(server, {:retrieve, hash})
+  end
+
+  @doc """
+  Returns `true` if an object file exists for `hash`, `false` otherwise.
+  """
+  @spec has_object?(server(), hash()) :: boolean()
+  def has_object?(server, hash) do
+    GenServer.call(server, {:has_object?, hash})
+  end
+
+  @doc """
+  Returns a sorted list of the hex SHA-1 hashes of every object on disk.
+  """
+  @spec list_objects(server()) :: [hash()]
+  def list_objects(server) do
+    GenServer.call(server, :list_objects)
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  @spec init(String.t()) :: {:ok, %{dir: String.t()}} | {:stop, term()}
+  def init(dir) do
+    case File.mkdir_p(dir) do
+      :ok -> {:ok, %{dir: dir}}
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  @impl true
+  def handle_call({:store, content}, _from, state) do
+    hash = hash_hex(content)
+    path = object_path(state.dir, hash)
+
+    result =
+      if File.exists?(path) do
+        {:ok, hash}
+      else
+        write_object(path, content, hash)
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:retrieve, hash}, _from, state) do
+    path = object_path(state.dir, hash)
+
+    result =
+      case File.read(path) do
+        {:ok, compressed} -> decode_and_verify(compressed, hash)
+        {:error, :enoent} -> {:error, :not_found}
+        {:error, _reason} -> {:error, :corrupt}
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:has_object?, hash}, _from, state) do
+    {:reply, File.exists?(object_path(state.dir, hash)), state}
+  end
+
+  def handle_call(:list_objects, _from, state) do
+    {:reply, scan_objects(state.dir), state}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  @spec hash_hex(binary()) :: hash()
+  defp hash_hex(content) do
+    :sha
+    |> :crypto.hash(content)
+    |> Base.encode16(case: :lower)
+  end
+
+  @spec object_path(String.t(), hash()) :: String.t()
+  defp object_path(dir, hash) do
+    <<prefix::binary-size(2), rest::binary>> = hash
+    Path.join([dir, prefix, rest])
+  end
+
+  @spec write_object(String.t(), binary(), hash()) :: {:ok, hash()} | {:error, term()}
+  defp write_object(path, content, hash) do
+    compressed = :zlib.compress(content)
+
+    with :ok <- File.mkdi (truncated)
+13:17:54.460 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+decode_and_verify/2
+scan_objects/1
+object_path/2
+</file>
+13:17:54.460 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7496, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7496, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 7496, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 7496, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 40, "type" => "message"}], "output_tokens" => 40, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

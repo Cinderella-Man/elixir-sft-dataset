@@ -1,0 +1,183 @@
+13:34:38.735 [info] FIM candidate-select for 015_003_dependency_aware_cascading_heartbeat_monitor_01 (up to 3)
+13:34:38.735 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:34:38.735 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 3 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+=== ORIGINAL PROMPT ===
+# Dependency-Aware Cascading Heartbeat Monitor
+
+Write me an Elixir `GenServer` module called `DepMonitor` that watches a set of
+services arranged in a **dependency graph**. Each service has its own health (based
+on a probe), but a service is also considered unhealthy whenever any service it
+depends on (directly or transitively) is unhealthy. This models cascading outages:
+when a database goes down, everything depending on it is effectively down too.
+
+Use only the OTP standard library — no external dependencies. Give me the complete
+module in a single file.
+
+## Two kinds of status
+
+- **Own status** (`direct_status/2`) — a node's health considering only its own
+  probe results, using a consecutive-failure threshold.
+- **Effective status** (`effective_status/2`) — a node is effectively `:down` when
+  its own status is `:down` **or** any node it depends on is effectively `:down`;
+  otherwise it is effectively `:up`. Dependencies are followed transitively. The
+  dependency graph must be acyclic; behavior on a cycle is undefined.
+
+## Public API
+
+- `DepMonitor.start_link(opts \\ [])` — starts the process, linked to the caller,
+  returning the usual `GenServer.on_start()` result. `opts` defaults to `[]`. A
+  `:name` option, when present, is used for process registration (functions accept
+  the pid or the registered name); otherwise the process is unregistered. A freshly
+  started server has no nodes.
+
+- `DepMonitor.add_node(server, name, probe, opts \\ [])` — adds a node and returns
+  `:ok`.
+  - `name` is any term identifying the node (compared by value).
+  - `probe` is a **zero-arity** function returning `:ok` or `{:error, reason}`.
+    Guard the public function with `is_function(probe, 0)`.
+  - `opts` may contain:
+    - `:depends_on` — a list of node names this node depends on. Defaults to `[]`.
+      Names that are not (yet) added are treated as effectively `:up`.
+    - `:threshold` — a positive integer, the number of **consecutive** own-probe
+      failures required before the node's own status becomes `:down`. Defaults to
+      `3`.
+    - `:on_change` — an arity-2 function called as
+      `on_change.(name, new_effective_status)` whenever this node's **effective**
+      status changes (see below). Defaults to a no-op.
+    - `:interval` — a positive integer number of milliseconds, or `:manual` (the
+      default). A positive integer schedules automatic probes of *this node* on that
+      interval via `Process.send_after/3`, the first firing one interval after the
+      node is added; `:manual` means the node is only probed via `check/2`.
+  - A newly added node starts with own status `:up` and `0` consecutive failures.
+    Adding a node never invokes any `on_change` callback. Adding a `name` that
+    already exists replaces its configuration and resets it to this initial state.
+
+- `DepMonitor.check(server, name)` — runs exactly one probe for **only the named
+  node** (the same work an automatic tick performs), updates that node's own status,
+  and returns `{:ok, effective}` where `effective` is the named node's effective
+  status afterward. Returns `{:error, :not_found}` if `name` was never added.
+
+- `DepMonitor.direct_status(server, name)` — returns `{:ok, :up}` / `{:ok, :down}`
+  for the node's **own** status, or `{:error, :not_found}`.
+
+- `DepMonitor.effective_status(server, name)` — returns `{:ok, :up}` /
+  `{:ok, :down}` for the node's **effective** status, or `{:error, :not_found}`.
+
+- `DepMonitor.snapshot(server)` — returns a map `%{name => effective_status}` for
+  every node. Empty map `%{}` when there are no nodes.
+
+## Updating own status on a probe
+
+A probe invokes the node's `probe` function (**synchronously inside the server
+process**). Let the node have own status `st`, consecutive-failure count `c`, and
+threshold `t`.
+
+- On `:ok`: the count resets to `0`; if `st` was `:down` it becomes `:up`,
+  otherwise it stays `:up`.
+- On `{:error, _reason}`: the count becomes `c + 1`; if the new count is `>= t`
+  **and** `st` was `:up`, own status becomes `:down`; otherwise own status is left
+  unchanged. Because failures must be consecutive, any `:ok` resets the count.
+
+## Effective-status transitions and notifications
+
+After any probe (via `check/2` or an automatic tick), the server recomputes the
+effective status of every node. For **each** node whose effective status changed as
+a result — and only those — its `:on_change` callback is invoked exactly once as
+`on_change.(name, new_effective_status)`.
+
+This means a probe on one node can notify several nodes: if a dependency's own probe
+takes it down, that dependency **and** every node depending on it (transitively)
+change effective status and each fires its own `on_change`. Likewise, when the
+dependency recovers, all of them fire again on the way back up.
+
+## Independence and robustness
+
+- Nodes not connected by a dependency edge never affect one another.
+- Any message the server does not understand must be ignored: it must neither crash
+  the process nor alter any node's state.
+
+=== MODULE ===
+```elixir
+defmodule DepMonitor do
+  @moduledoc """
+  A `GenServer` that monitors a set of services arranged in an acyclic
+  dependency graph, modeling cascading outages.
+
+  Each node has its own probe-based health (its *own* status), tracked with a
+  consecutive-failure threshold. A node's *effective* status is `:down` when its
+  own status is `:down` or when any node it depends on — directly or
+  transitively — is effectively `:down`. This captures the reality that when a
+  dependency (for example a database) goes down, everything relying on it is
+  effectively down too.
+
+  Nodes may be probed manually via `check/2` or automatically on a per-node
+  interval. Each node may register an `:on_change` callback that fires whenever
+  that node's effective status changes.
+
+  The dependency graph must be acyclic; behavior on a cycle is undefined.
+  """
+
+  use GenServer
+
+  @typedoc "A running server: a pid or a registered name."
+  @type server :: GenServer.server()
+
+  @typedoc "A node's health status."
+  @type status :: :up | :down
+
+  @typedoc "A zero-arity probe returning `:ok` or `{:error, reason}`."
+  @type probe :: (-> :ok | {:error, term()})
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  @doc """
+  Starts the monitor, linked to the caller.
+
+  When `opts` contains a `:name`, it is used for process registration;
+  otherwise the process is unregistered. A freshly started server has no nodes.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, opts, name: name)
+      :error -> GenServer.start_link(__MODULE__, opts)
+    end
+  end
+
+  @doc """
+  Adds (or replaces) a node named `name` with the given zero-arity `probe`.
+
+  Supported `opts`:
+
+    * `:depends_on` — node names this node depends on (default `[]`). Names not
+      added are treated as effectively `:up`.
+    * `:threshold` — consecutive own-probe failures required before the node's
+      own status becomes `:down` (default `3`).
+    * `:on_change` — `on_change.(name, new_effective_status)`, called when this
+      node's effective status changes (default no-op).
+    * `:interval` — positive integer milliseconds to schedule automatic probes
+      of this node, or `:manual` (default) for probe-on-demand only.
+
+  A new node starts with own status `:up` and `0` consecutive fa (truncated)
+13:34:49.066 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+eff/3
+apply_result/2
+do_probe/2
+</file>
+13:34:49.066 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9656, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9656, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 9656, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 9656, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 541, "type" => "message"}], "output_tokens" => 541, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

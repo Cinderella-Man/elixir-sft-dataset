@@ -1,0 +1,216 @@
+04:39:33.687 [info] FIM candidate-select for 092_002_reddit_style_logarithmic_hot_ranking_01 (up to 1)
+04:39:33.687 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+04:39:33.687 [debug] claude -p USER prompt:
+Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+asks a model to reimplement it from the surrounding module.
+
+Pick the 1 functions (or clauses) that make the best FIM targets — meaningful,
+self-contained logic that the module's own test harness actually exercises. Prefer
+private helpers and the core public callbacks over trivial one-liners.
+
+Do NOT pick any of these — they are already covered or known to be untested by the harness:
+  - rank/2
+  - score/2
+
+=== ORIGINAL PROMPT ===
+# Ranking — a Reddit-style logarithmic "hot" score
+
+Write me an Elixir module called `Ranking` that scores and ranks content items
+(posts, links, comments) using the classic **Reddit "hot" algorithm**: a
+logarithmic vote term added to a linear time term.
+
+Use only the Elixir/Erlang standard library — no external dependencies. Put
+everything in a single module.
+
+## The item shape
+
+Each item is a plain map with atom keys:
+
+- `:upvotes` — non-negative integer
+- `:downvotes` — non-negative integer
+- `:created_at` — an integer Unix timestamp in **seconds**
+
+Items may carry additional keys (e.g. an `:id`); ignore anything you don't
+need, and `rank/2` must return the item maps **unchanged**.
+
+## Public API
+
+### `Ranking.score(item, opts \\ [])` → float
+
+Computes the hot score of a single item as a float, using exactly this formula:
+
+```
+net_votes = upvotes - downvotes                     # may be negative
+
+order = log10(max(abs(net_votes), 1))               # log10(1) == 0.0
+
+sign  = 1  if net_votes > 0
+        -1 if net_votes < 0
+        0  if net_votes == 0
+
+seconds = created_at - epoch                         # may be negative
+
+score = round(sign * order + seconds / divisor, 7)   # 7 decimal places
+```
+
+Supported options (all optional):
+
+- `:epoch` — integer Unix timestamp (seconds) used as the time origin.
+  Defaults to `1_134_028_003` (Reddit's historical epoch).
+- `:divisor` — a positive number controlling how much a fixed amount of elapsed
+  time is worth relative to an order-of-magnitude of votes. Defaults to `45_000`
+  (so `45_000` seconds ≈ 12.5 hours is worth `+1.0`, the same as a 10× jump in
+  net votes).
+
+Notes:
+
+- The vote contribution grows **logarithmically**: going from 10 → 100 net votes
+  adds the same `1.0` that going from 1 → 10 adds. Vote counts have diminishing
+  returns.
+- `net_votes == 0` contributes `0.0` from the vote term (`sign` is `0`).
+- The result is rounded to 7 decimal places with `Float.round/2`.
+
+### `Ranking.rank(items, opts \\ [])` → list of items
+
+Returns the items sorted by score **descending** (highest score first),
+threading the same `opts` through to the scoring.
+
+Tie-breaking rules, applied in order:
+
+1. Higher score first.
+2. If scores are equal, the more recently created item (larger `:created_at`)
+   comes first.
+3. If both score and `:created_at` are equal, preserve the items' original
+   relative order (stable sort).
+
+`rank/2` must handle the empty list and a single-item list gracefully.
+
+## Behavioral expectations
+
+- Given equal votes, a **newer** item ranks above an **older** one.
+- Given equal age, a **more upvoted** item ranks above one with fewer net votes.
+- Heavily downvoted items (negative net votes) sink toward the bottom.
+- Cranking the `:divisor` down makes time dominate; cranking it up makes votes
+  dominate.
+
+Give me the complete `Ranking` module in a single file.
+
+=== MODULE ===
+```elixir
+defmodule Ranking do
+  @moduledoc """
+  A Reddit-style logarithmic "hot" ranking for content items.
+
+  Each item is a plain map with atom keys:
+
+    * `:upvotes` — non-negative integer
+    * `:downvotes` — non-negative integer
+    * `:created_at` — integer Unix timestamp in seconds
+
+  Items may carry any number of additional keys (such as an `:id`); those are
+  ignored and items are never mutated.
+
+  The hot score blends a logarithmic vote term with a linear time term:
+
+      net_votes = upvotes - downvotes
+      order     = log10(max(abs(net_votes), 1))
+      sign      = 1 | -1 | 0   (per the sign of net_votes)
+      seconds   = created_at - epoch
+      score     = round(sign * order + seconds / divisor, 7)
+  """
+
+  @default_epoch 1_134_028_003
+  @default_divisor 45_000
+
+  @doc """
+  Computes the hot score of a single `item` as a float.
+
+  ## Options
+
+    * `:epoch` — integer Unix timestamp (seconds) used as the time origin.
+      Defaults to `1_134_028_003`.
+    * `:divisor` — a positive number controlling the weight of elapsed time
+      relative to an order-of-magnitude of votes. Defaults to `45_000`.
+  """
+  @spec score(map(), keyword()) :: float()
+  def score(item, opts \\ []) when is_map(item) and is_list(opts) do
+    epoch = Keyword.get(opts, :epoch, @default_epoch)
+    divisor = Keyword.get(opts, :divisor, @default_divisor)
+
+    upvotes = Map.fetch!(item, :upvotes)
+    downvotes = Map.fetch!(item, :downvotes)
+    created_at = Map.fetch!(item, :created_at)
+
+    net_votes = upvotes - downvotes
+    order = :math.log10(max(abs(net_votes), 1))
+
+    sign =
+      cond do
+        net_votes > 0 -> 1
+        net_votes < 0 -> -1
+        true -> 0
+      end
+
+    seconds = created_at - epoch
+
+    Float.round(sign * order + seconds / divisor, 7)
+  end
+
+  @doc """
+  Returns `items` sorted by score, highest first.
+
+  The same `opts` are passed through to `score/2`.
+
+  Ties are broken, in order, by:
+
+    1. Higher score first.
+    2. More recently created item (larger `:created_at`) first.
+    3. Original relative order (stable sort).
+  """
+  @spec rank([map()], keyword()) :: [map()]
+  def rank(items, opts \\ []) when is_list(items) and is_list(opts) do
+    items
+    |> Enum.map(fn item -> {score(item, opts), Map.fetch!(item, :created_at), item} end)
+    |> Enum.sort(fn {score_a, created_a, _a}, {score_b, created_b, _b} ->
+      cond do
+        score_a > score_b -> true
+        score_a < score_b -> false
+        created_a > created_b -> true
+        created_a < created_b -> false
+        true -> true
+      end
+    end)
+    |> Enum.map(fn {_score, _created_at, item} -> item end)
+  end
+end
+
+```
+
+Return ONE file `candidates.md` containing at most 1 lines, each a single
+function target written as `name/arity` (e.g. `refill_and_expire/2`), most valuable
+first, and NOTHING else.
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - candidates.md — one function target (name/arity) per line
+
+
+04:39:36.528 [debug] claude -p RESULT (stop="end_turn"):
+<file path="candidates.md">
+score/2
+</file>
+04:39:36.528 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6329, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6329, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 6329, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 6329, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 20, "type" => "message"}], "output_tokens" => 20, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

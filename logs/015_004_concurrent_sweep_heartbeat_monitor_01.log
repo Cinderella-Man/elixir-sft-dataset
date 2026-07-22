@@ -1,0 +1,752 @@
+13:27:04.100 [info] VARIATION 015_004_concurrent_sweep_heartbeat_monitor_01: Concurrent Sweep Heartbeat Monitor
+13:27:04.100 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:27:04.100 [debug] claude -p USER prompt:
+# Concurrent Sweep Heartbeat Monitor
+
+Write me an Elixir `GenServer` module called `AsyncMonitor` that watches a set of
+enrolled services and probes them **concurrently**. Unlike a monitor that runs each
+probe synchronously inside the server, this one dispatches every service's probe to
+its **own separate process** so that slow probes cannot block one another, and a
+"sweep" gathers the results.
+
+Use only the OTP standard library — no external dependencies. Give me the complete
+module in a single file.
+
+## Public API
+
+- `AsyncMonitor.start_link(opts \\ [])` — starts the process, linked to the caller,
+  returning the usual `GenServer.on_start()` result. `opts` defaults to `[]`. A
+  `:name` option, when present, is used for process registration (functions accept
+  the pid or the registered name); otherwise the process is unregistered. A freshly
+  started server has zero enrolled services.
+
+- `AsyncMonitor.enroll(server, name, probe, opts \\ [])` — enrolls a service and
+  returns `:ok`.
+  - `name` is any term identifying the service (compared by value).
+  - `probe` is a **zero-arity** function returning `:ok` or `{:error, reason}`.
+    Guard the public function with `is_function(probe, 0)`.
+  - `opts` may contain:
+    - `:threshold` — a positive integer, the number of **consecutive** failed
+      probes required before the service is marked `:down`. Defaults to `3`.
+    - `:on_change` — an arity-2 function called as `on_change.(name, new_status)`
+      on each status transition (see below). Defaults to a no-op.
+  - A newly enrolled service starts with status `:up` and `0` consecutive failures.
+    Enrolling a `name` that already exists replaces its configuration and resets it
+    to this initial state.
+
+- `AsyncMonitor.sweep(server)` — runs **one probe for every currently enrolled
+  service**. Each service's probe is invoked in its own separate process, and all
+  the probes of a single sweep run **concurrently** (one probe process per service,
+  all launched before any of them needs to finish). `sweep/1` **blocks** and returns
+  `:ok` only after every probe in the sweep has finished and its result has been
+  applied to that service's status. If no services are enrolled, `sweep/1` returns
+  `:ok` immediately.
+
+- `AsyncMonitor.status(server, name)` — returns `{:ok, :up}` / `{:ok, :down}` for an
+  enrolled service, or `{:error, :not_found}` if it was never enrolled.
+
+- `AsyncMonitor.overview(server)` — returns a map `%{name => :up | :down}` for every
+  enrolled service. Empty map `%{}` when nothing is enrolled.
+
+## Applying a probe result
+
+For each probe run in a sweep, the result updates that service's status. Let the
+service have status `st`, consecutive-failure count `c`, and threshold `t`.
+
+- If the probe returns `:ok`: the count resets to `0`; if `st` was `:down` it
+  becomes `:up`, otherwise it stays `:up`.
+- If the probe returns `{:error, _reason}`: the count becomes `c + 1`; if the new
+  count is `>= t` **and** `st` was `:up`, the status becomes `:down`; otherwise the
+  status is left unchanged. Because failures must be consecutive, any `:ok` result
+  resets the count.
+- If a probe **raises or throws**, it is treated as a failure (equivalent to an
+  `{:error, _}` result) and must not crash the server.
+
+## Status transitions and notifications
+
+A "transition" is any change of the status field (`:up` → `:down` or
+`:down` → `:up`). On each actual change — and only then — the service's `:on_change`
+callback is invoked exactly once as `on_change.(name, new_status)` with the status
+just entered. A probe that leaves the status unchanged calls nothing.
+
+## Concurrency, independence, and robustness
+
+- Within a sweep, every service is probed in a distinct process, and those processes
+  are all started before the sweep waits for any of them; a probe that blocks does
+  not prevent the other services' probes from being invoked.
+- Services are fully independent: one service's result or status never affects
+  another's.
+- Any message the server does not understand must be ignored: it must neither crash
+  the process nor alter any service's state.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+13:28:20.111 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule AsyncMonitor do
+  @moduledoc """
+  A `GenServer` that watches enrolled services and probes them concurrently.
+
+  Each enrolled service has a zero-arity probe function returning `:ok` or
+  `{:error, reason}`. Calling `sweep/1` runs one probe for every enrolled
+  service, dispatching each probe to its **own separate process** so that a
+  slow or blocking probe cannot delay the others. A sweep blocks until every
+  probe has finished and its result has been applied to the owning service.
+
+  A service becomes `:down` only after `:threshold` *consecutive* failed
+  probes while it was `:up`; any successful probe resets the failure count and
+  brings a `:down` service back `:up`. On each actual status transition the
+  service's `:on_change` callback is invoked exactly once as
+  `on_change.(name, new_status)`.
+
+  Services are fully independent: one service's result never affects another's.
+  Unknown messages are ignored and never crash the server.
+  """
+
+  use GenServer
+
+  @default_threshold 3
+
+  @typedoc "Status of an enrolled service."
+  @type status :: :up | :down
+
+  @typedoc "A zero-arity probe function."
+  @type probe :: (-> :ok | {:error, term()})
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the monitor linked to the caller.
+
+  `opts` may contain a `:name` used for process registration; when absent the
+  process is left unregistered. A freshly started server has zero enrolled
+  services.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, rest} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, rest, gen_opts)
+  end
+
+  @doc """
+  Enrolls (or replaces) a service identified by `name`.
+
+  `probe` must be a zero-arity function. `opts` accepts `:threshold` (a
+  positive integer, default `#{@default_threshold}`) and `:on_change` (an
+  arity-2 callback, default a no-op). The service starts `:up` with `0`
+  consecutive failures; re-enrolling an existing `name` resets it to that
+  initial state.
+  """
+  @spec enroll(GenServer.server(), term(), probe(), keyword()) :: :ok
+  def enroll(server, name, probe, opts \\ []) when is_function(probe, 0) do
+    GenServer.call(server, {:enroll, name, probe, opts})
+  end
+
+  @doc """
+  Runs one probe for every currently enrolled service.
+
+  Every service's probe runs in its own process and all probes of the sweep
+  are launched before any of them must finish. Blocks and returns `:ok` only
+  after every probe has finished and been applied. Returns `:ok` immediately
+  when nothing is enrolled.
+  """
+  @spec sweep(GenServer.server()) :: :ok
+  def sweep(server) do
+    GenServer.call(server, :sweep, :infinity)
+  end
+
+  @doc """
+  Returns `{:ok, status}` for an enrolled service, or `{:error, :not_found}`.
+  """
+  @spec status(GenServer.server(), term()) :: {:ok, status()} | {:error, :not_found}
+  def status(server, name) do
+    GenServer.call(server, {:status, name})
+  end
+
+  @doc """
+  Returns a map of `%{name => status}` for every enrolled service.
+  """
+  @spec overview(GenServer.server()) :: %{optional(term()) => status()}
+  def overview(server) do
+    GenServer.call(server, :overview)
+  end
+
+  # ── GenServer callbacks ─────────────────────────────────────────────────────
+
+  @impl true
+  @spec init(keyword()) :: {:ok, %{services: map()}}
+  def init(_opts) do
+    {:ok, %{services: %{}}}
+  end
+
+  @impl true
+  def handle_call({:enroll, name, probe, opts}, _from, state) do
+    threshold = Keyword.get(opts, :threshold, @default_threshold)
+    on_change = Keyword.get(opts, :on_change, &default_on_change/2)
+
+    svc = %{
+      probe: probe,
+      threshold: threshold,
+      on_change: on_change,
+      status: :up,
+      count: 0
+    }
+
+    {:reply, :ok, %{state | services: Map.put(state.services, name, svc)}}
+  end
+
+  def handle_call(:sweep, _from, %{services: services} = state) do
+    if map_size(services) == 0 do
+      {:reply, :ok, state}
+    else
+      results = run_sweep(services)
+      {:reply, :ok, apply_all(state, results)}
+    end
+  end
+
+  def handle_call({:status, name}, _from, %{services: services} = state) do
+    reply =
+      case Map.fetch(services, name) do
+        {:ok, svc} -> {:ok, svc.status}
+        :error -> {:error, :not_found}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call(:overview, _from, %{services: services} = state) do
+    overview = Map.new(services, fn {name, svc} -> {name, svc.status} end)
+    {:reply, overview, state}
+  end
+
+  def handle_call(_other, _from, state) do
+    {:reply, {:error, :unknown_request}, state}
+  end
+
+  @impl true
+  def handle_cast(_msg, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  # ── Internals ───────────────────────────────────────────────────────────────
+
+  # Spawn one probe process per service (all before waiting), then gather.
+  @spec run_sweep(map()) :: %{optional(term()) => :ok | :error}
+  defp run_sweep(services) do
+    server = self()
+
+    refs =
+      Enum.map(services, fn {name, svc} ->
+        ref = make_ref()
+        probe = svc.probe
+        spawn(fn -> send(server, {:probe_result, ref, run_probe(probe)}) end)
+        {ref, name}
+      end)
+
+    gather(refs, %{})
+  end
+
+  @spec gather([{reference(), term()}], map()) :: map()
+  defp gather([], acc), do: acc
+
+  defp gather([{ref, name} | rest], acc) do
+    receive do
+      {:probe_result, ^ref, result} -> gather(rest, Map.put(acc, name, result))
+    end
+  end
+
+  # Run a probe, normalising the outcome and shielding against raises/throws.
+  @spec run_probe(probe()) :: :ok | :error
+  defp run_probe(probe) do
+    case probe.() do
+      :ok -> :ok
+      _other -> :error
+    end
+  rescue
+    _error -> :error
+  catch
+    _kind, _value -> :error
+  end
+
+  # Apply every gathered result, then fire callbacks for actual transitions.
+  @spec apply_all(map(), map()) :: map()
+  defp apply_all(state, results) do
+    {new_services, callbacks} =
+      Enum.reduce(state.services, {%{}, []}, fn {name, svc}, {acc, cbs} ->
+        result = Map.fetch!(results, name)
+        {new_svc, transition?, new_status} = apply_result(svc, result)
+        cbs = if transition?, do: [{svc.on_change, name, new_status} | cbs], else: cbs
+        {Map.put(acc, name, new_svc), cbs}
+      end)
+
+    Enum.each(callbacks, fn {cb, name, status} -> cb.(name, status) end)
+    %{state | services: new_services}
+  end
+
+  # Compute the new service state, plus whether the status changed.
+  @spec apply_result(map(), :ok | :error) :: {map(), boolean(), status()}
+  defp apply_result(%{status: st} = svc, :ok) do
+    {%{svc | status: :up, count: 0}, st == :down, :up}
+  end
+
+  defp apply_result(%{status: st, count: c, threshold: t} = svc, :error) do
+    new_count = c + 1
+
+    if new_count >= t and st == :up do
+      {%{svc | status: :down, count: new_count}, true, :down}
+    else
+      {%{svc | count: new_count}, false, st}
+    end
+  end
+
+  @spec default_on_change(term(), status()) :: :ok
+  defp default_on_change(_name, _status), do: :ok
+end
+</file>
+13:28:20.111 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5491, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5491, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5491, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5491, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 5949, "type" => "message"}], "output_tokens" => 5949, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:28:20.155 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01 solution.ex
+13:28:21.161 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":222,"lines_over_98":0,"max_line_length":86,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-15T11:28:21.132550Z","warning_details":[]}
+13:28:21.200 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:28:22.026 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":169,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 13/13 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"AsyncMonitorTest","test":"test enroll returns :ok, a new service is up, overview starts empty"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test status of an unknown service is {:error, :not_found}"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test sweep with no services returns :ok"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a sweep runs one probe per service and applies results"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test threshold defaults to 3"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a healthy probe resets the consecutive-failure count"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service recovers to up and notifies"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test services are independent within a sweep"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test probes within a sweep run concurrently in separate processes"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a probe that raises counts as a failure and does not crash the server"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test re-enrolling a name resets its state"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service with no :on_change can transition without crashing"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-15T11:28:21.997096Z","warning_details":["solution.ex: line 11: variable \"opts\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:28:22.030 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:28:22.846 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 11/13 failed"],"tests":0.15},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"AsyncMonitorTest","test":"test enroll returns :ok, a new service is up, overview starts empty"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a sweep runs one probe per service and applies results"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test threshold defaults to 3"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a healthy probe resets the consecutive-failure count"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service recovers to up and notifies"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test services are independent within a sweep"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test probes within a sweep run concurrently in separate processes"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a probe that raises counts as a failure and does not crash the server"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test re-enrolling a name resets its state"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service with no :on_change can transition without crashing"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-15T11:28:22.819664Z","warning_details":["solution.ex: line 26: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 26: variable \"opts\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 26: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:28:22.851 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:28:23.675 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 11/13 failed"],"tests":0.15},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"AsyncMonitorTest","test":"test sweep with no services returns :ok"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a sweep runs one probe per service and applies results"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test threshold defaults to 3"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a healthy probe resets the consecutive-failure count"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service recovers to up and notifies"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test services are independent within a sweep"},{"message":"{:EXIT, #PID<0.230.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :sweep, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 33, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"AsyncMonitorTest","test":"test probes within a sweep run concurrently in separate processes"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a probe that raises counts as a failure and does not crash the server"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test re-enrolling a name resets its state"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service with no :on_change can transition without crashing"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":11,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-15T11:28:23.648849Z","warning_details":["solution.ex: line 32: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:28:23.679 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:28:24.512 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 12/13 failed"],"tests":0.08},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"AsyncMonitorTest","test":"test enroll returns :ok, a new service is up, overview starts empty"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test status of an unknown service is {:error, :not_found}"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a sweep runs one probe per service and applies results"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test threshold defaults to 3"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a healthy probe resets the consecutive-failure count"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service recovers to up and notifies"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test services are independent within a sweep"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test probes within a sweep run concurrently in separate processes"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a probe that raises counts as a failure and does not crash the server"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test re-enrolling a name resets its state"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service with no :on_change can transition without crashing"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-15T11:28:24.483172Z","warning_details":["solution.ex: line 38: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 38: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:28:24.517 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:28:25.542 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 2/13 failed"],"tests":0.85},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"AsyncMonitorTest","test":"test enroll returns :ok, a new service is up, overview starts empty"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test services are independent within a sweep"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-15T11:28:25.515163Z","warning_details":["solution.ex: line 44: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:28:25.550 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:28:26.389 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.3,"reasons":["tests: 13/13 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test enroll returns :ok, a new service is up, overview starts empty"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test status of an unknown service is {:error, :not_found}"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test sweep with no services returns :ok"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a sweep runs one probe per service and applies results"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test threshold defaults to 3"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a healthy probe resets the consecutive-failure count"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a service recovers to up and notifies"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test services are independent within a sweep"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test probes within a sweep run concurrently in separate processes"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a probe that raises counts as a failure and does not crash the server"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test re-enrolling a name resets its state"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a service with no :on_change can transition without crashing"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-15T11:28:26.361359Z","warning_details":[]}
+13:28:26.394 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:28:27.212 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":163,"lines_over_98":0,"max_line_length":84,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":19,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 19 warning(s) → hard fail (overall 0.0)","tests: 13/13 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 68, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test enroll returns :ok, a new service is up, overview starts empty"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test status of an unknown service is {:error, :not_found}"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test sweep with no services returns :ok"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a sweep runs one probe per service and applies results"},{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test threshold defaults to 3"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a healthy probe resets the consecutive-failure count"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a service recovers to up and notifies"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test services are independent within a sweep"},{"message":"{:EXIT, #PID<0.228.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test probes within a sweep run concurrently in separate processes"},{"message":"{:EXIT, #PID<0.230.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a probe that raises counts as a failure and does not crash the server"},{"message":"{:EXIT, #PID<0.232.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test re-enrolling a name resets its state"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a service with no :on_change can transition without crashing"},{"message":"{:EXIT, #PID<0.238.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":0,"tests_ran":t (truncated)
+13:28:27.217 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:28:28.236 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":13,"timestamp":"2026-07-15T11:28:28.209893Z","warning_details":["solution.ex: line 91: variable \"state\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:28:28.236 [debug] base mutation gate (per-fn): handle_cast/2 survived
+13:28:28.254 [info] cycle 015_004_concurrent_sweep_heartbeat_monitor_01: repairing — Mutation gate failed: the raise-mutant of `handle_cast/2` still passes the tests — that public function is not exercised by test_harness.exs. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+13:28:28.254 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:28:28.254 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Mutation gate failed: the raise-mutant of `handle_cast/2` still passes the tests — that public function is not exercised by test_harness.exs. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+# Concurrent Sweep Heartbeat Monitor
+
+Write me an Elixir `GenServer` module called `AsyncMonitor` that watches a set of
+enrolled services and probes them **concurrently**. Unlike a monitor that runs each
+probe synchronously inside the server, this one dispatches every service's probe to
+its **own separate process** so that slow probes cannot block one another, and a
+"sweep" gathers the results.
+
+Use only the OTP standard library — no external dependencies. Give me the complete
+module in a single file.
+
+## Public API
+
+- `AsyncMonitor.start_link(opts \\ [])` — starts the process, linked to the caller,
+  returning the usual `GenServer.on_start()` result. `opts` defaults to `[]`. A
+  `:name` option, when present, is used for process registration (functions accept
+  the pid or the registered name); otherwise the process is unregistered. A freshly
+  started server has zero enrolled services.
+
+- `AsyncMonitor.enroll(server, name, probe, opts \\ [])` — enrolls a service and
+  returns `:ok`.
+  - `name` is any term identifying the service (compared by value).
+  - `probe` is a **zero-arity** function returning `:ok` or `{:error, reason}`.
+    Guard the public function with `is_function(probe, 0)`.
+  - `opts` may contain:
+    - `:threshold` — a positive integer, the number of **consecutive** failed
+      probes required before the service is marked `:down`. Defaults to `3`.
+    - `:on_change` — an arity-2 function called as `on_change.(name, new_status)`
+      on each status transition (see below). Defaults to a no-op.
+  - A newly enrolled service starts with status `:up` and `0` consecutive failures.
+    Enrolling a `name` that already exists replaces its configuration and resets it
+    to this initial state.
+
+- `AsyncMonitor.sweep(server)` — runs **one probe for every currently enrolled
+  service**. Each service's probe is invoked in its own separate process, and all
+  the probes of a single sweep run **concurrently** (one probe process per service,
+  all launched before any of them needs to finish). `sweep/1` **blocks** and returns
+  `:ok` only after every probe in the sweep has finished and its result has been
+  applied to that service's status. If no services are enrolled, `sweep/1` returns
+  `:ok` immediately.
+
+- `AsyncMonitor.status(server, name)` — returns `{:ok, :up}` / `{:ok, :down}` for an
+  enrolled service, or `{:error, :not_found}` if it was never enrolled.
+
+- `AsyncMonitor.overview(server)` — returns a map `%{name => :up | :down}` for every
+  enrolled service. Empty map `%{}` when nothing is enrolled.
+
+## Applying a probe result
+
+For each probe run in a sweep, the result updates that service's status. Let the
+service have status `st`, consecutive-failure count `c`, and threshold `t`.
+
+- If the probe returns `:ok`: the count resets to `0`; if `st` was `:down` it
+  becomes `:up`, otherwise it stays `:up`.
+- If the probe returns `{:error, _reason}`: the count becomes `c + 1`; if the new
+  count is `>= t` **and** `st` was `:up`, the status becomes `:down`; otherwise the
+  status is left unchanged. Because failures must be consecutive, any `:ok` result
+  resets the count.
+- If a probe **raises or throws**, it is treated as a failure (equivalent to an
+  `{:error, _}` result) and must not crash the server.
+
+## Status transitions and notifications
+
+A "transition" is any change of the status field (`:up` → `:down` or
+`:down` → `:up`). On each actual change — and only then — the service's `:on_change`
+callback is invoked exactly once as `on_change.(name, new_status)` with the status
+just entered. A probe that leaves the status unchanged calls nothing.
+
+## Concurrency, independence, and robustness
+
+- Within a sweep, every service is probed in a distinct process, and those processes
+  are all started before the sweep waits for any of them; a probe that blocks does
+  not prevent the other services' probes from being invoked.
+- Services are fully independent: one service's result or status never affects
+  another's.
+- Any message the server does not understand must be ignored: it must neither crash
+  the process nor alter any service's state.
+
+----- solution.ex -----
+defmodule AsyncMonitor do
+  @moduledoc """
+  A `GenServer` that watches enrolled services and probes them concurrently.
+
+  Each enrolled service has a zero-arity probe function returning `:ok` or
+  `{:error, reason}`. Calling `sweep/1` runs one probe for every enrolled
+  service, dispatching each probe to its **own separate process** so that a
+  slow or blocking probe cannot delay the others. A sweep blocks until every
+  probe has finished and its result has been applied to the owning service.
+
+  A service becomes `:down` only after `:threshold` *consecutive* failed
+  probes while it was `:up`; any successful probe resets the failure count and
+  brings a `:down` service back `:up`. On each actual status transition the
+  service's `:on_change` callback is invoked exactly once as
+  `on_change.(name, new_status)`.
+
+  Services are fully independent: one service's result never affects another's.
+  Unknown messages are ignored and never crash the server.
+  """
+
+  use GenServer
+
+  @default_threshold 3
+
+  @typedoc "Status of an enrolled service."
+  @type status :: :up | :down
+
+  @typedoc "A zero-arity probe function."
+  @type probe :: (-> :ok | {:error, term()})
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the monitor linked to the caller.
+
+  `opts` may contain a `:name` used for process registration; when absent the
+  process is left unregistered. A freshly started server has zero enrolled
+  services.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, rest} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, rest, gen_opts)
+  end
+
+  @doc """
+  Enrolls (or replaces) a service identified by `name`.
+
+  `probe` must be a zero-arity function. `opts` accepts `:threshold` (a
+  positive integer, default `#{@default_threshold}`) and `:on_change` (an
+  arity-2 callback, default a no-op). The service starts `:up` with `0`
+  consecutive failures; re-enrolling an existing `name` resets it to that
+  initial state.
+  """
+  @spec enroll(GenServer.server(), term(), probe(), keyword()) :: :ok
+  def enroll(server, name, probe, opts \\ []) when is_function(probe, 0) do
+    GenServer.call(server, {:enroll, name, probe, opts})
+  end
+
+  @doc """
+  Runs one probe for every currently enrolled service.
+
+  Every service's probe runs in its own process and all probes of the sweep
+  are launched before any of them must finish. Blocks and returns `:ok` only
+  after every probe has finished and been applied. Returns `:ok` immediately
+  when nothing is enrolled.
+  """
+  @spec sweep(GenServer.server()) :: :ok
+  def sweep(s (truncated)
+13:29:29.704 [debug] claude -p RESULT (stop="end_turn"):
+<file path="test_harness.exs">
+defmodule AsyncMonitorTest do
+  use ExUnit.Case, async: false
+
+  defp script(list) do
+    {:ok, pid} = Agent.start_link(fn -> list end)
+    fn -> next(pid) end
+  end
+
+  defp next(pid) do
+    Agent.get_and_update(pid, fn
+      [x] -> {x, [x]}
+      [x | rest] -> {x, rest}
+      [] -> {:ok, []}
+    end)
+  end
+
+  setup do
+    {:ok, server} = AsyncMonitor.start_link([])
+    %{server: server}
+  end
+
+  test "enroll returns :ok, a new service is up, overview starts empty", %{server: server} do
+    assert AsyncMonitor.overview(server) == %{}
+    assert :ok = AsyncMonitor.enroll(server, "svc", script([:ok]))
+    assert {:ok, :up} = AsyncMonitor.status(server, "svc")
+    assert AsyncMonitor.overview(server) == %{"svc" => :up}
+  end
+
+  test "status of an unknown service is {:error, :not_found}", %{server: server} do
+    assert {:error, :not_found} = AsyncMonitor.status(server, "nope")
+  end
+
+  test "sweep with no services returns :ok", %{server: server} do
+    assert :ok = AsyncMonitor.sweep(server)
+  end
+
+  test "a sweep runs one probe per service and applies results", %{server: server} do
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    :ok =
+      AsyncMonitor.enroll(server, "svc", script([{:error, :boom}]),
+        threshold: 3,
+        on_change: on_change
+      )
+
+    assert :ok = AsyncMonitor.sweep(server)
+    assert :ok = AsyncMonitor.sweep(server)
+    assert {:ok, :up} = AsyncMonitor.status(server, "svc")
+    refute_receive {:change, _, _}, 50
+
+    assert :ok = AsyncMonitor.sweep(server)
+    assert {:ok, :down} = AsyncMonitor.status(server, "svc")
+    assert_receive {:change, "svc", :down}
+
+    assert :ok = AsyncMonitor.sweep(server)
+    assert {:ok, :down} = AsyncMonitor.status(server, "svc")
+    refute_receive {:change, _, _}, 100
+  end
+
+  test "threshold defaults to 3", %{server: server} do
+    :ok = AsyncMonitor.enroll(server, "svc", script([{:error, :boom}]))
+    assert :ok = AsyncMonitor.sweep(server)
+    assert :ok = AsyncMonitor.sweep(server)
+    assert {:ok, :up} = AsyncMonitor.status(server, "svc")
+    assert :ok = AsyncMonitor.sweep(server)
+    assert {:ok, :down} = AsyncMonitor.status(server, "svc")
+  end
+
+  test "a healthy probe resets the consecutive-failure count", %{server: server} do
+    seq = [{:error, :boom}, {:error, :boom}, :ok, {:error, :boom}, {:error, :boom}]
+    :ok = AsyncMonitor.enroll(server, "svc", script(seq), threshold: 3)
+    for _ <- 1..5, do: assert(:ok = AsyncMonitor.sweep(server))
+    assert {:ok, :up} = AsyncMonitor.status(server, "svc")
+  end
+
+  test "a service recovers to up and notifies", %{server: server} do
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    seq = [{:error, :boom}, {:error, :boom}, {:error, :boom}, :ok]
+    :ok = AsyncMonitor.enroll(server, "svc", script(seq), threshold: 3, on_change: on_change)
+
+    for _ <- 1..3, do: assert(:ok = AsyncMonitor.sweep(server))
+    assert {:ok, :down} = AsyncMonitor.status(server, "svc")
+    assert_receive {:change, "svc", :down}
+
+    assert :ok = AsyncMonitor.sweep(server)
+    assert {:ok, :up} = AsyncMonitor.status(server, "svc")
+    assert_receive {:change, "svc", :up}
+  end
+
+  test "services are independent within a sweep", %{server: server} do
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    :ok =
+      AsyncMonitor.enroll(server, "a", script([{:error, :boom}]),
+        threshold: 1,
+        on_change: on_change
+      )
+
+    :ok = AsyncMonitor.enroll(server, "b", script([:ok]), on_change: on_change)
+
+    assert :ok = AsyncMonitor.sweep(server)
+    assert {:ok, :down} = AsyncMonitor.status(server, "a")
+    assert {:ok, :up} = AsyncMonitor.status(server, "b")
+    assert AsyncMonitor.overview(server) == %{"a" => :down, "b" => :up}
+    assert_receive {:change, "a", :down}
+    refute_receive {:change, "b", _}, 50
+  end
+
+  test "probes within a sweep run concurrently in separate processes", %{server: server} do
+    me = self()
+
+    # Each probe announces its own process pid, then blocks until told to continue.
+    # Both announcements can only arrive if both probes were dispatched before the
+    # sweep waited for either to finish.
+    rendezvous = fn tag ->
+      fn ->
+        send(me, {:started, tag, self()})
+
+        receive do
+          :go -> :ok
+        end
+      end
+    end
+
+    :ok = AsyncMonitor.enroll(server, "a", rendezvous.(:a))
+    :ok = AsyncMonitor.enroll(server, "b", rendezvous.(:b))
+
+    sweeper = Task.async(fn -> AsyncMonitor.sweep(server) end)
+
+    assert_receive {:started, :a, pid_a}, 1_000
+    assert_receive {:started, :b, pid_b}, 1_000
+
+    send(pid_a, :go)
+    send(pid_b, :go)
+
+    assert :ok = Task.await(sweeper, 1_000)
+    assert {:ok, :up} = AsyncMonitor.status(server, "a")
+    assert {:ok, :up} = AsyncMonitor.status(server, "b")
+  end
+
+  test "a probe that raises counts as a failure and does not crash the server", %{server: server} do
+    :ok = AsyncMonitor.enroll(server, "svc", fn -> raise "boom" end, threshold: 1)
+    assert :ok = AsyncMonitor.sweep(server)
+    assert {:ok, :down} = AsyncMonitor.status(server, "svc")
+    assert Process.alive?(server)
+  end
+
+  test "re-enrolling a name resets its state", %{server: server} do
+    :ok = AsyncMonitor.enroll(server, "svc", script([{:error, :boom}]), threshold: 1)
+    assert :ok = AsyncMonitor.sweep(server)
+    assert {:ok, :down} = AsyncMonitor.status(server, "svc")
+
+    :ok = AsyncMonitor.enroll(server, "svc", script([:ok]))
+    assert {:ok, :up} = AsyncMonitor.status(server, "svc")
+    assert :ok = AsyncMonitor.sweep(server)
+    assert {:ok, :up} = AsyncMonitor.status(server, "svc")
+  end
+
+  test "a service with no :on_change can transition without crashing", %{server: server} do
+    :ok = AsyncMonitor.enroll(server, "svc", script([{:error, :boom}]), threshold: 1)
+    assert :ok = AsyncMonitor.sweep(server)
+    assert {:ok, :down} = AsyncMonitor.status(server, "svc")
+    assert Process.alive?(server)
+  end
+
+  test "unexpected messages are ignored and do not disturb state", %{server: server} do
+    :ok = AsyncMonitor.enroll(server, "svc", script([:ok]))
+    send(server, :hello)
+    send(server, {:weird, 1, 2})
+    assert {:ok, :up} = AsyncMonitor.status(server, "svc")
+    assert :ok = AsyncMonitor.sweep(server)
+    assert Process.alive?(server)
+  end
+
+  test "unexpected casts are ignored and do not crash the server", %{server: server} do
+    # start_link links the server to this test process; trap exits so a crash in
+    # the server (e.g. a gutted handle_cast) surfaces as an assertion failure here
+    # rather than silently killing the test process.
+    Process.flag(:trap_exit, true)
+
+    :ok = AsyncMonitor.enroll(server, "svc", script([{:error, :boom}]), threshold: 1)
+
+    assert :ok = GenServer.cast(server, :hello)
+    assert :ok = GenServer.cast(server, {:weird, 1, 2})
+
+    # A subsequent synchronous call is processed only after the earlier casts, so
+    # if handle_cast/2 crashed the server this call (and thus the test) fails.
+    assert {:ok, :up} = AsyncMonitor.status(server, "svc")
+    assert Process.alive?(server)
+
+    # State is untouched by the casts: the service still needs one failing sweep
+    # (threshold 1) to go down, proving the casts neither advanced nor reset it.
+    assert :ok = AsyncMonitor.sweep(server)
+    assert {:ok, :down} = AsyncMonitor.status(server, "svc")
+    assert Process.alive?(server)
+
+    refute_received {:EXIT, ^server, _reason}
+  end
+end
+</file>
+13:29:29.704 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 11544, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 11544, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 11544, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 11544, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 5389, "type" => "message"}], "output_tokens" => 5389, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:29:29.728 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01 solution.ex
+13:29:30.721 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":222,"lines_over_98":0,"max_line_length":86,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:29:30.694049Z","warning_details":[]}
+13:29:30.761 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:29:31.565 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":169,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 14/14 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"AsyncMonitorTest","test":"test enroll returns :ok, a new service is up, overview starts empty"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test status of an unknown service is {:error, :not_found}"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test sweep with no services returns :ok"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a sweep runs one probe per service and applies results"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test threshold defaults to 3"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a healthy probe resets the consecutive-failure count"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service recovers to up and notifies"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test services are independent within a sweep"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test probes within a sweep run concurrently in separate processes"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a probe that raises counts as a failure and does not crash the server"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test re-enrolling a name resets its state"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service with no :on_change can transition without crashing"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test unexpected casts are ignored and do not crash the server"}],"tests_errors":0,"tests_excluded":0,"tests_failed":14,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:29:31.538841Z","warning_details":["solution.ex: line 11: variable \"opts\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:29:31.569 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:29:32.384 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 12/14 failed"],"tests":0.14},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"AsyncMonitorTest","test":"test enroll returns :ok, a new service is up, overview starts empty"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a sweep runs one probe per service and applies results"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test threshold defaults to 3"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a healthy probe resets the consecutive-failure count"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service recovers to up and notifies"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test services are independent within a sweep"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test probes within a sweep run concurrently in separate processes"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a probe that raises counts as a failure and does not crash the server"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test re-enrolling a name resets its state"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service with no :on_change can transition without crashing"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test unexpected casts are ignored and do not crash the server"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:29:32.356650Z","warning_details":["solution.ex: line 26: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 26: variable \"opts\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 26: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:29:32.389 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:29:33.253 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 12/14 failed"],"tests":0.14},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"AsyncMonitorTest","test":"test sweep with no services returns :ok"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a sweep runs one probe per service and applies results"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test threshold defaults to 3"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a healthy probe resets the consecutive-failure count"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service recovers to up and notifies"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test services are independent within a sweep"},{"message":"{:EXIT, #PID<0.230.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :sweep, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 33, error_info: %{module: Exception}]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"AsyncMonitorTest","test":"test probes within a sweep run concurrently in separate processes"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a probe that raises counts as a failure and does not crash the server"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test re-enrolling a name resets its state"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service with no :on_change can transition without crashing"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test unexpected casts are ignored and do not crash the server"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:29:33.224831Z","warning_details":["solution.ex: line 32: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:29:33.258 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:29:34.142 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 13/14 failed"],"tests":0.07},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"AsyncMonitorTest","test":"test enroll returns :ok, a new service is up, overview starts empty"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test status of an unknown service is {:error, :not_found}"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a sweep runs one probe per service and applies results"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test threshold defaults to 3"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a healthy probe resets the consecutive-failure count"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service recovers to up and notifies"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test services are independent within a sweep"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test probes within a sweep run concurrently in separate processes"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a probe that raises counts as a failure and does not crash the server"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test re-enrolling a name resets its state"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test a service with no :on_change can transition without crashing"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test unexpected casts are ignored and do not crash the server"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:29:34.114882Z","warning_details":["solution.ex: line 38: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 38: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:29:34.147 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:29:35.139 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 2/14 failed"],"tests":0.86},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"AsyncMonitorTest","test":"test enroll returns :ok, a new service is up, overview starts empty"},{"message":"MUTATION","module":"AsyncMonitorTest","test":"test services are independent within a sweep"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:29:35.108495Z","warning_details":["solution.ex: line 44: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:29:35.144 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:29:36.006 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.3,"reasons":["tests: 14/14 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test enroll returns :ok, a new service is up, overview starts empty"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test status of an unknown service is {:error, :not_found}"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test sweep with no services returns :ok"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a sweep runs one probe per service and applies results"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test threshold defaults to 3"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a healthy probe resets the consecutive-failure count"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a service recovers to up and notifies"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test services are independent within a sweep"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test probes within a sweep run concurrently in separate processes"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a probe that raises counts as a failure and does not crash the server"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test re-enrolling a name resets its state"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a service with no :on_change can transition without crashing"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :init, 1, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 51, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, { (truncated)
+13:29:36.010 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:29:36.810 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":163,"lines_over_98":0,"max_line_length":84,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":19,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 19 warning(s) → hard fail (overall 0.0)","tests: 14/14 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 68, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test enroll returns :ok, a new service is up, overview starts empty"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test status of an unknown service is {:error, :not_found}"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test sweep with no services returns :ok"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a sweep runs one probe per service and applies results"},{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test threshold defaults to 3"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a healthy probe resets the consecutive-failure count"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a service recovers to up and notifies"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test services are independent within a sweep"},{"message":"{:EXIT, #PID<0.228.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test probes within a sweep run concurrently in separate processes"},{"message":"{:EXIT, #PID<0.230.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a probe that raises counts as a failure and does not crash the server"},{"message":"{:EXIT, #PID<0.232.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test re-enrolling a name resets its state"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test a service with no :on_change can transition without crashing"},{"message":"{:EXIT, #PID<0.238.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 56, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_ca (truncated)
+13:29:36.814 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:29:37.839 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 1/14 failed"],"tests":0.93},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_cast, 2, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 92, error_info: %{module: Exception}]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.271.0>, {:status, \"svc\"}, 5000]}}","module":"AsyncMonitorTest","test":"test unexpected casts are ignored and do not crash the server"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:29:37.811831Z","warning_details":["solution.ex: line 91: variable \"state\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:29:37.843 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut solution.ex
+13:29:38.858 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":178,"lines_over_98":0,"max_line_length":92,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 1/14 failed"],"tests":0.93},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.266.0>}: {%RuntimeError{message: \"MUTATION\"}, [{AsyncMonitor, :handle_info, 2, [file: ~c\".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01_mut/solution.ex\", line: 97, error_info: %{module: Exception}]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"AsyncMonitorTest","test":"test unexpected messages are ignored and do not disturb state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:29:38.829018Z","warning_details":["solution.ex: line 96: variable \"state\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:29:38.879 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01 solution.ex (seed 560075368)
+13:29:39.901 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":222,"lines_over_98":0,"max_line_length":86,"mode":"full","pipe_chain_count":0,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/015_004_concurrent_sweep_heartbeat_monitor_01/solution.ex","task":"015_004_concurrent_sweep_heartbeat_monitor_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:29:39.876872Z","warning_details":[]}
+13:29:39.930 [info] cycle 015_004_concurrent_sweep_heartbeat_monitor_01: ACCEPTED on attempt 1
+13:29:39.931 [info] promoted 015_004_concurrent_sweep_heartbeat_monitor_01 -> tasks/015_004_concurrent_sweep_heartbeat_monitor_01

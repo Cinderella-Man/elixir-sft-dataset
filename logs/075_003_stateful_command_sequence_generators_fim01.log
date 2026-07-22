@@ -1,0 +1,317 @@
+19:27:47.106 [info] FIM 075_003_stateful_command_sequence_generators_fim01 → 075_003_stateful_command_sequence_generators_02: target account_command/1
+19:27:47.106 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+19:27:47.106 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `account_command/1`.
+
+Generate a prompt describing how to implement `account_command/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `account_command/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `account_command/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `account_command/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `CommandGenerators` that provides `StreamData` generators for **valid stateful command sequences**, intended for model-based property testing with `StreamData` and `ExUnitProperties`.
+
+The point of these generators is that they never emit an invalid program: each command in a generated sequence must satisfy its **precondition** given the model state produced by all the commands before it. The generator threads a symbolic model as it builds the sequence, so a consumer can run every generated program against a real system without ever having to filter or discard sequences.
+
+I need two independent stateful generators in the public API:
+
+- `CommandGenerators.stack_program(max_length \\ 20)` — produces a list of `0..max_length` commands for a stack model. Commands are `{:push, integer}`, `:pop`, `:peek`, and `:clear`. The invariant: running the sequence against a stack must never `:pop` or `:peek` an empty stack. So `:pop`/`:peek` may only be generated when the modeled stack is non-empty; `{:push, _}` and `:clear` are always allowed.
+
+- `CommandGenerators.account_program(max_length \\ 20)` — produces a list of `0..max_length` commands for a bank-account model whose balance must never go negative. Commands are `{:deposit, amount}` (amount `1..1000`) and `{:withdraw, amount}` (amount `1..current_balance`). A `:withdraw` may only be generated when the modeled balance is positive, and its amount must not exceed the modeled balance at that point.
+
+Both invariants must be enforced *inside* the generators by conditioning each step's available commands on the current model state — consumers must never need `StreamData.filter/2`. Each generator must return a `%StreamData{}` struct that composes with the standard `StreamData` combinators.
+
+Give me the complete module in a single file. Use only `stream_data` as an external dependency, no others.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule CommandGenerators do
+  @moduledoc """
+  `StreamData` generators for **valid stateful command sequences**, for use with
+  model-based property testing via `StreamData` and `ExUnitProperties`.
+
+  Each generator threads a *symbolic model* while it builds a sequence: at every
+  step the set of commands offered is conditioned on the current model state, so
+  a command's precondition is satisfied by construction. The result is that a
+  consumer can run every generated program against a real system without ever
+  filtering out invalid sequences.
+
+  ## Usage
+
+      use ExUnitProperties
+
+      property "the stack never underflows" do
+        check all program <- CommandGenerators.stack_program() do
+          assert run_stack(program) != :underflow
+        end
+      end
+
+  All generators return `%StreamData{}` structs and compose with the standard
+  `StreamData` combinator API.
+  """
+
+  alias StreamData, as: SD
+
+  # ---------------------------------------------------------------------------
+  # Stack model
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Produces a valid program of `0..max_length` stack commands.
+
+  Commands: `{:push, integer}`, `:pop`, `:peek`, `:clear`. `:pop`/`:peek` are
+  only offered when the modeled stack is non-empty, so running the program can
+  never underflow.
+  """
+  @spec stack_program(non_neg_integer()) :: StreamData.t([term()])
+  def stack_program(max_length \\ 20) when is_integer(max_length) and max_length >= 0 do
+    SD.bind(SD.integer(0..max_length), fn n ->
+      stack_build(n, 0, [])
+    end)
+  end
+
+  # `size` is the only piece of stack state the preconditions depend on.
+  defp stack_build(0, _size, acc), do: SD.constant(Enum.reverse(acc))
+
+  defp stack_build(n, size, acc) do
+    SD.bind(stack_command(size), fn cmd ->
+      stack_build(n - 1, stack_apply(size, cmd), [cmd | acc])
+    end)
+  end
+
+  defp stack_command(size) do
+    push = SD.map(SD.integer(-1000..1000), fn v -> {:push, v} end)
+    base = [push, SD.constant(:clear)]
+
+    choices =
+      if size > 0 do
+        base ++ [SD.constant(:pop), SD.constant(:peek)]
+      else
+        base
+      end
+
+    SD.one_of(choices)
+  end
+
+  defp stack_apply(size, {:push, _v}), do: size + 1
+  defp stack_apply(size, :pop), do: size - 1
+  defp stack_apply(size, :peek), do: size
+  defp stack_apply(_size, :clear), do: 0
+
+  # ---------------------------------------------------------------------------
+  # Bank-account model
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Produces a valid program of `0..max_length` account commands.
+
+  Commands: `{:deposit, 1..1000}` and `{:withdraw, 1..balance}`. `:withdraw` is
+  only offered when the modeled balance is positive, and its amount is bounded by
+  the current balance, so the balance can never go negative.
+  """
+  @spec account_program(non_neg_integer()) :: StreamData.t([term()])
+  def account_program(max_length \\ 20) when is_integer(max_length) and max_length >= 0 do
+    SD.bind(SD.integer(0..max_length), fn n ->
+      account_build(n, 0, [])
+    end)
+  end
+
+  defp account_build(0, _bal, acc), do: SD.constant(Enum.reverse(acc))
+
+  defp account_build(n, bal, acc) do
+    SD.bind(account_command(bal), fn cmd ->
+      account_build(n - 1, account_apply(bal, cmd), [cmd | acc])
+    end)
+  end
+
+  defp account_command(bal) do
+    deposit = SD.map(SD.integer(1..1000), fn a -> {:deposit, a} end)
+
+    if bal > 0 do
+      withdraw = SD.map(SD.integer(1..bal), fn a -> {:withdraw, a} end)
+      SD.one_of([deposit, withdraw])
+    else
+      deposit
+    end
+  end
+
+  defp account_apply(bal, {:deposit, a}), do: bal + a
+  defp account_apply(bal, {:withdraw, a}), do: bal - a
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - prompt.md — description + skeleton module with a `# TODO` for account_command/1
+  - solution.ex — just the account_command/1 function
+
+
+19:28:12.735 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `account_command/1` function. It takes the current modeled
+account balance `bal` and returns a `%StreamData{}` generator for a single
+account command whose precondition holds for that balance. It must always offer a
+deposit command: map `StreamData.integer(1..1000)` into `{:deposit, amount}`. If
+`bal` is positive, it must additionally offer a withdrawal whose amount is bounded
+by the balance — map `StreamData.integer(1..bal)` into `{:withdraw, amount}` — and
+combine the deposit and withdrawal generators with `StreamData.one_of/1`. When
+`bal` is `0` (or otherwise non-positive), only the deposit generator is offered, so
+a generated `:withdraw` can never exceed the modeled balance and the balance can
+never go negative. Use the `SD` alias for `StreamData`.
+
+```elixir
+defmodule CommandGenerators do
+  @moduledoc """
+  `StreamData` generators for **valid stateful command sequences**, for use with
+  model-based property testing via `StreamData` and `ExUnitProperties`.
+
+  Each generator threads a *symbolic model* while it builds a sequence: at every
+  step the set of commands offered is conditioned on the current model state, so
+  a command's precondition is satisfied by construction. The result is that a
+  consumer can run every generated program against a real system without ever
+  filtering out invalid sequences.
+
+  ## Usage
+
+      use ExUnitProperties
+
+      property "the stack never underflows" do
+        check all program <- CommandGenerators.stack_program() do
+          assert run_stack(program) != :underflow
+        end
+      end
+
+  All generators return `%StreamData{}` structs and compose with the standard
+  `StreamData` combinator API.
+  """
+
+  alias StreamData, as: SD
+
+  # ---------------------------------------------------------------------------
+  # Stack model
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Produces a valid program of `0..max_length` stack commands.
+
+  Commands: `{:push, integer}`, `:pop`, `:peek`, `:clear`. `:pop`/`:peek` are
+  only offered when the modeled stack is non-empty, so running the program can
+  never underflow.
+  """
+  @spec stack_program(non_neg_integer()) :: StreamData.t([term()])
+  def stack_program(max_length \\ 20) when is_integer(max_length) and max_length >= 0 do
+    SD.bind(SD.integer(0..max_length), fn n ->
+      stack_build(n, 0, [])
+    end)
+  end
+
+  # `size` is the only piece of stack state the preconditions depend on.
+  defp stack_build(0, _size, acc), do: SD.constant(Enum.reverse(acc))
+
+  defp stack_build(n, size, acc) do
+    SD.bind(stack_command(size), fn cmd ->
+      stack_build(n - 1, stack_apply(size, cmd), [cmd | acc])
+    end)
+  end
+
+  defp stack_command(size) do
+    push = SD.map(SD.integer(-1000..1000), fn v -> {:push, v} end)
+    base = [push, SD.constant(:clear)]
+
+    choices =
+      if size > 0 do
+        base ++ [SD.constant(:pop), SD.constant(:peek)]
+      else
+        base
+      end
+
+    SD.one_of(choices)
+  end
+
+  defp stack_apply(size, {:push, _v}), do: size + 1
+  defp stack_apply(size, :pop), do: size - 1
+  defp stack_apply(size, :peek), do: size
+  defp stack_apply(_size, :clear), do: 0
+
+  # ---------------------------------------------------------------------------
+  # Bank-account model
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Produces a valid program of `0..max_length` account commands.
+
+  Commands: `{:deposit, 1..1000}` and `{:withdraw, 1..balance}`. `:withdraw` is
+  only offered when the modeled balance is positive, and its amount is bounded by
+  the current balance, so the balance can never go negative.
+  """
+  @spec account_program(non_neg_integer()) :: StreamData.t([term()])
+  def account_program(max_length \\ 20) when is_integer(max_length) and max_length >= 0 do
+    SD.bind(SD.integer(0..max_length), fn n ->
+      account_build(n, 0, [])
+    end)
+  end
+
+  defp account_build(0, _bal, acc), do: SD.constant(Enum.reverse(acc))
+
+  defp account_build(n, bal, acc) do
+    SD.bind(account_command(bal), fn cmd ->
+      account_build(n - 1, account_apply(bal, cmd), [cmd | acc])
+    end)
+  end
+
+  defp account_command(bal) do
+    # TODO
+  end
+
+  defp account_apply(bal, {:deposit, a}), do: bal + a
+  defp account_apply(bal, {:withdraw, a}), do: bal - a
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp account_command(bal) do
+    deposit = SD.map(SD.integer(1..1000), fn a -> {:deposit, a} end)
+
+    if bal > 0 do
+      withdraw = SD.map(SD.integer(1..bal), fn a -> {:withdraw, a} end)
+      SD.one_of([deposit, withdraw])
+    else
+      deposit
+    end
+  end
+</file>
+19:28:12.735 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2907, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2907, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 2907, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 2907, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2204, "type" => "message"}], "output_tokens" => 2204, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+19:28:12.754 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_075_003_stateful_command_sequence_generators_02/075_003_stateful_command_sequence_generators_02 solution.ex
+19:28:13.570 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":10,"lines_over_98":0,"max_line_length":71,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"075_003_stateful_command_sequence_generators_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_075_003_stateful_command_sequence_generators_02/075_003_stateful_command_sequence_generators_02/solution.ex","task":"075_003_stateful_command_sequence_generators_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T17:28:13.547066Z"}
+19:28:13.571 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_075_003_stateful_command_sequence_generators_02/075_003_stateful_command_sequence_generators_02 .gen_staging/fim_075_003_stateful_command_sequence_generators_02/mutant.ex
+19:28:14.380 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":28,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"075_003_stateful_command_sequence_generators_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.63,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 6/12 failed"],"tests":0.5},"shape":"fim","solution_file":".gen_staging/fim_075_003_stateful_command_sequence_generators_02/mutant.ex","task":"075_003_stateful_command_sequence_generators_02","test_failures":[{"message":"MUTATION","module":"CommandGeneratorsTest","test":"property CommandGenerators.account_program always produces a valid account program (balance never negative)"},{"message":"MUTATION","module":"CommandGeneratorsTest","test":"property CommandGenerators.account_program respects the length bound"},{"message":"MUTATION","module":"CommandGeneratorsTest","test":"property CommandGenerators.account_program deposit amounts are within 1..1000 and withdrawals are positive"},{"message":"MUTATION","module":"CommandGeneratorsTest","test":"property CommandGenerators.account_program no withdrawal ever exceeds the modeled balance at that point"},{"message":"MUTATION","module":"CommandGeneratorsTest","test":"property CommandGenerators.account_program produces both deposits and withdrawals across many samples"},{"message":"MUTATION","module":"CommandGeneratorsTest","test":"property composability with StreamData account programs can be mapped to their final balance"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-04T17:28:14.356974Z"}
+19:28:14.380 [debug] fim mutation gate: killed
+19:28:14.382 [info] promoted 075_003_stateful_command_sequence_generators_02 -> tasks/075_003_stateful_command_sequence_generators_02

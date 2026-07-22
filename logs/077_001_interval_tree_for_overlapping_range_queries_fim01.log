@@ -1,0 +1,426 @@
+06:51:48.008 [info] FIM 077_001_interval_tree_for_overlapping_range_queries_fim01 → 077_001_interval_tree_for_overlapping_range_queries_04: target do_enclosing/3
+06:51:48.008 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+06:51:48.008 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `do_enclosing/3`.
+
+Generate a prompt describing how to implement `do_enclosing/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `do_enclosing/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `do_enclosing/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `do_enclosing/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `IntervalTree` that implements an interval tree for efficient overlapping range queries.
+
+I need these functions in the public API:
+- `IntervalTree.new()` which returns an empty interval tree.
+- `IntervalTree.insert(tree, {start, finish})` which inserts an interval into the tree and returns the updated tree. Both `start` and `finish` are integers, and `start <= finish` is guaranteed.
+- `IntervalTree.overlapping(tree, {start, finish})` which returns a list of all intervals stored in the tree that overlap with the query range. Two intervals overlap if they share at least one point — so `{1, 3}` and `{3, 5}` are considered overlapping (touching counts).
+- `IntervalTree.enclosing(tree, point)` which returns a list of all intervals stored in the tree that contain the given integer point. An interval `{s, f}` contains `point` if `s <= point <= f`.
+
+The tree must be a persistent purely-functional data structure — every `insert` returns a new tree value without mutating the input. It should not be a GenServer or process; it's a plain data structure module.
+
+The internal representation should be a proper interval tree (augmented BST where each node stores the maximum `finish` value in its subtree) so that `overlapping` and `enclosing` can prune branches efficiently, not a flat list scan.
+
+Support degenerate intervals where `start == finish` (a single-point interval). An empty tree must return `[]` for any query.
+
+Give me the complete module in a single file. Use only the Elixir standard library, no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule IntervalTree do
+  @moduledoc """
+  A persistent, purely-functional interval tree implemented as an augmented AVL tree.
+
+  Each node in the tree stores:
+    - An interval `{start, finish}` used as the BST key (ordered by `start`).
+    - `max_finish` — the maximum `finish` value across all intervals in the subtree.
+      This augmentation lets `overlapping/2` and `enclosing/2` prune entire
+      branches without visiting them.
+    - `height` — the AVL height used to keep the tree balanced on every `insert/2`.
+
+  ## Complexity (n = number of stored intervals, k = result size)
+
+    - `insert/2`       — O(log n)
+    - `overlapping/2`  — O(log n + k)  (branch pruning via `max_finish` and BST start order)
+    - `enclosing/2`    — O(log n + k)  (same pruning strategy)
+
+  ## Overlap definition
+  Two intervals are considered overlapping when they share at least one point,
+  i.e. `{1, 3}` and `{3, 5}` overlap (touching at 3 counts).
+
+  ## Persistence
+  Every `insert/2` returns a **new** tree value. The original tree is never
+  mutated. The module is plain data — it is not a GenServer or process.
+
+  ## Examples
+
+      iex> tree =
+      ...>   IntervalTree.new()
+      ...>   |> IntervalTree.insert({1, 5})
+      ...>   |> IntervalTree.insert({3, 8})
+      ...>   |> IntervalTree.insert({10, 15})
+      iex> IntervalTree.overlapping(tree, {4, 6}) |> Enum.sort()
+      [{1, 5}, {3, 8}]
+      iex> IntervalTree.enclosing(tree, 4) |> Enum.sort()
+      [{1, 5}, {3, 8}]
+      iex> IntervalTree.overlapping(tree, {20, 25})
+      []
+  """
+
+  # ---------------------------------------------------------------------------
+  # Types
+  # ---------------------------------------------------------------------------
+
+  @type interval :: {integer(), integer()}
+
+  @typep node_t :: %{
+           required(:interval) => interval(),
+           required(:max_finish) => integer(),
+           required(:height) => pos_integer(),
+           required(:left) => t(),
+           required(:right) => t()
+         }
+
+  @type t :: nil | node_t()
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc "Returns an empty interval tree."
+  @spec new() :: t()
+  def new(), do: nil
+
+  @doc """
+  Inserts `interval` into `tree` and returns the updated tree.
+
+  The original `tree` is unmodified (persistent / purely-functional).
+  """
+  @spec insert(t(), interval()) :: t()
+  def insert(tree, {_start, _finish} = interval), do: do_insert(tree, interval)
+
+  @doc """
+  Returns all intervals stored in `tree` that overlap with `query`.
+
+  Two intervals overlap when they share at least one point:
+  `{s1, f1}` overlaps `{s2, f2}` iff `s1 <= f2` and `f1 >= s2`.
+  """
+  @spec overlapping(t(), interval()) :: [interval()]
+  def overlapping(nil, _query), do: []
+  def overlapping(tree, {qs, qf}), do: do_overlapping(tree, qs, qf, [])
+
+  @doc """
+  Returns all intervals stored in `tree` that contain `point`.
+
+  An interval `{s, f}` contains `point` iff `s <= point <= f`.
+  """
+  @spec enclosing(t(), integer()) :: [interval()]
+  def enclosing(nil, _point), do: []
+  def enclosing(tree, point), do: do_enclosing(tree, point, [])
+
+  # ---------------------------------------------------------------------------
+  # Node construction helpers
+  # ---------------------------------------------------------------------------
+
+  # Height of a tree (0 for the empty tree).
+  @spec height(t()) :: non_neg_integer()
+  defp height(nil), do: 0
+  defp height(%{height: h}), do: h
+
+  # Build a node, computing `height` and `max_finish` from children.
+  @spec make_node(interval(), t(), t()) :: node_t()
+  defp make_node({_s, f} = interval, left, right) do
+    h = 1 + max(height(left), height(right))
+    mf = f |> max_with_child(left) |> max_with_child(right)
+    %{interval: interval, max_finish: mf, height: h, left: left, right: right}
+  end
+
+  # Fold the child's max_finish into a running maximum.
+  @spec max_with_child(integer(), t()) :: integer()
+  defp max_with_child(acc, nil), do: acc
+  defp max_with_child(acc, %{max_finish: mf}), do: max(acc, mf)
+
+  # ---------------------------------------------------------------------------
+  # AVL rotations
+  # ---------------------------------------------------------------------------
+  # Each rotation rebuilds affected nodes via make_node so that `height` and
+  # `max_finish` remain correct throughout the tree.
+
+  # Left-heavy: right rotation around `x`, promoting left child `y`.
+  #
+  #       x                y
+  #      / \              / \
+  #     y   C    =>      A   x
+  #    / \                  / \
+  #   A   B                B   C
+  #
+  defp rotate_right(%{
+         interval: xi,
+         left: %{interval: yi, left: a, right: b},
+         right: c
+       }) do
+    make_node(yi, a, make_node(xi, b, c))
+  end
+
+  # Right-heavy: left rotation around `x`, promoting right child `y`.
+  #
+  #     x                  y
+  #    / \                / \
+  #   A   y      =>      x   C
+  #      / \            / \
+  #     B   C          A   B
+  #
+  defp rotate_left(%{
+         interval: xi,
+         left: a,
+         right: %{interval: yi, left: b, right: c}
+       }) do
+    make_node(yi, make_node(xi, a, b), c)
+  end
+
+  # Balance factor: positive = left-heavy, negative = right-heavy.
+  @spec balance_factor (truncated)
+06:52:42.751 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `do_enclosing/3` function — the recursive worker behind the
+public `enclosing/2` API. It walks the augmented AVL tree accumulating every stored
+interval `{s, f}` that contains the given integer `point` (i.e. `s <= point <= f`),
+using the `max_finish` augmentation and the BST start-ordering to prune branches it
+does not need to visit.
+
+It takes three arguments: the current tree/node, the query `point`, and an accumulator
+list `acc` of intervals found so far. It returns the accumulator extended with any
+matching intervals in this subtree.
+
+Write it as three clauses:
+
+1. **Empty subtree** — for `nil`, there is nothing to add; return `acc` unchanged.
+2. **Prune rule 1** — for a node whose `max_finish` is strictly less than `point`, no
+   interval anywhere in this subtree extends far enough to contain `point`, so return
+   `acc` unchanged without descending.
+3. **General node** — destructure the node's `interval` as `{s, f} = iv`, plus its
+   `left` and `right` children. First, if the current node's interval contains `point`
+   (`s <= point and point <= f`), prepend `iv` to `acc`. Then always recurse into the
+   `left` subtree (safe because the `max_finish` guard above already pruned subtrees
+   that cannot reach `point`). Finally, apply prune rule 2: because every start in the
+   `right` subtree is `>= s`, only recurse right when `s <= point`; otherwise every
+   right-subtree interval starts after `point` and can be skipped, so return the
+   accumulator as-is.
+
+```elixir
+defmodule IntervalTree do
+  @moduledoc """
+  A persistent, purely-functional interval tree implemented as an augmented AVL tree.
+
+  Each node in the tree stores:
+    - An interval `{start, finish}` used as the BST key (ordered by `start`).
+    - `max_finish` — the maximum `finish` value across all intervals in the subtree.
+      This augmentation lets `overlapping/2` and `enclosing/2` prune entire
+      branches without visiting them.
+    - `height` — the AVL height used to keep the tree balanced on every `insert/2`.
+
+  ## Complexity (n = number of stored intervals, k = result size)
+
+    - `insert/2`       — O(log n)
+    - `overlapping/2`  — O(log n + k)  (branch pruning via `max_finish` and BST start order)
+    - `enclosing/2`    — O(log n + k)  (same pruning strategy)
+
+  ## Overlap definition
+  Two intervals are considered overlapping when they share at least one point,
+  i.e. `{1, 3}` and `{3, 5}` overlap (touching at 3 counts).
+
+  ## Persistence
+  Every `insert/2` returns a **new** tree value. The original tree is never
+  mutated. The module is plain data — it is not a GenServer or process.
+
+  ## Examples
+
+      iex> tree =
+      ...>   IntervalTree.new()
+      ...>   |> IntervalTree.insert({1, 5})
+      ...>   |> IntervalTree.insert({3, 8})
+      ...>   |> IntervalTree.insert({10, 15})
+      iex> IntervalTree.overlapping(tree, {4, 6}) |> Enum.sort()
+      [{1, 5}, {3, 8}]
+      iex> IntervalTree.enclosing(tree, 4) |> Enum.sort()
+      [{1, 5}, {3, 8}]
+      iex> IntervalTree.overlapping(tree, {20, 25})
+      []
+  """
+
+  # ---------------------------------------------------------------------------
+  # Types
+  # ---------------------------------------------------------------------------
+
+  @type interval :: {integer(), integer()}
+
+  @typep node_t :: %{
+           required(:interval) => interval(),
+           required(:max_finish) => integer(),
+           required(:height) => pos_integer(),
+           required(:left) => t(),
+           required(:right) => t()
+         }
+
+  @type t :: nil | node_t()
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc "Returns an empty interval tree."
+  @spec new() :: t()
+  def new(), do: nil
+
+  @doc """
+  Inserts `interval` into `tree` and returns the updated tree.
+
+  The original `tree` is unmodified (persistent / purely-functional).
+  """
+  @spec insert(t(), interval()) :: t()
+  def insert(tree, {_start, _finish} = interval), do: do_insert(tree, interval)
+
+  @doc """
+  Returns all intervals stored in `tree` that overlap with `query`.
+
+  Two intervals overlap when they share at least one point:
+  `{s1, f1}` overlaps `{s2, f2}` iff `s1 <= f2` and `f1 >= s2`.
+  """
+  @spec overlapping(t(), interval()) :: [interval()]
+  def overlapping(nil, _query), do: []
+  def overlapping(tree, {qs, qf}), do: do_overlapping(tree, qs, qf, [])
+
+  @doc """
+  Returns all intervals stored in `tree` that contain `point`.
+
+  An interval `{s, f}` contains `point` iff `s <= point <= f`.
+  """
+  @spec enclosing(t(), integer()) :: [interval()]
+  def enclosing(nil, _point), do: []
+  def enclosing(tree, point), do: do_enclosing(tree, point, [])
+
+  # ---------------------------------------------------------------------------
+  # Node construction helpers
+  # ---------------------------------------------------------------------------
+
+  # Height of a tree (0 for the empty tree).
+  @spec height(t()) :: non_neg_integer()
+  defp height(nil), do: 0
+  defp height(%{height: h}), do: h
+
+  # Build a node, computing `height` and `max_finish` from children.
+  @spec make_node(interval(), t(), t()) :: node_t()
+  defp make_node({_s, f} = interval, left, right) do
+    h = 1 + max(height(left), height(right))
+    mf = f |> max_with_child(left) |> max_with_child(right)
+    %{interval: interval, max_finish: mf, height: h, left: left, right: right}
+  end
+
+  # Fold the child's max_finish into a running maximum.
+  @spec max_with_child(integer(), t()) :: integer()
+  defp max_with_child(acc, nil), do: acc
+  defp max_with_child(acc, %{max_finish: mf}), do: max(acc, mf)
+
+  # ---------------------------------------------------------------------------
+  # AVL rotations
+  # ---------------------------------------------------------------------------
+  # Each rotation rebuilds affected nodes via make_node so that `height` and
+  # `max_finish` remain correct throughout the tree.
+
+  # Left-heavy: right rotation around `x`, promoting left child `y`.
+  #
+  #       x                y
+  #      / \              / \
+  #     y   C    =>      A   x
+  #    / \                  / \
+  #   A   B                B   C
+  #
+  defp rotate_right(%{
+         interval: xi,
+         left: %{interval: yi, left: a, right: b},
+         right: c
+       }) do
+    make_node(yi, a, make_node(xi, b, c))
+  end
+
+  # Right-heavy: left rotation around `x`, promoting right child `y`.
+  #
+  #     x                  y
+  #    / \                / \
+  #   A   y      =>      x   C
+  #      / \            / \
+  #     B   C          A   B
+  #
+  defp rotate_left(%{
+         interval: xi,
+         left: a,
+         right: %{interval: yi, left: b, right: c}
+       }) do
+    make_node(yi, make_node(xi, a, b), c)
+  end
+
+  # Balance factor: positive = left-heavy, negative = right-heavy.
+  @spec balance_factor(t()) :: integer()
+  defp balance_factor(nil), do: 0
+  defp balance_factor(%{left: l, right: r}), do: height(l) - height(r)
+
+  # Rebalance a node whose subtree heights may differ by more than 1.
+  @spec rebalance(node_t()) :: node_t()
+  defp rebalance(%{interval: xi, left: l, right: r} = node) do
+    lh = height(l)
+    rh = height(r)
+
+    cond do
+      # Left-heavy by more than 1
+      lh - rh > 1 ->
+        if balance_factor(l) >= 0 do
+          # Left-Left case: single right rotation
+          rotate_right(node)
+        else
+          # Left-Right case: rotate left child left, then rotate node right
+          rotate_right(make_node(xi, rotate_left(l), r))
+        end
+
+      # Right-heavy by more than 1
+      rh - lh > 1 ->
+        if balance_factor(r) <= 0 do
+          # Right-Right case: single left rotation
+          rotate_left(node)
+        else
+          # Right-Left case: rotate right child right, then rotate node left
+          rotate_left(make_node(xi, l, rotate_right(r)))
+        end
+
+      # Already balanced
+      true ->
+        node
+    end
+  end
+
+  # ------------------------------------------------------- (truncated)
+06:52:42.751 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5426, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5426, "cache_read_input_tokens" => 14924, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5426, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5426, "cache_read_input_tokens" => 14924, "input_tokens" => 2972, "output_tokens" => 5365, "type" => "message"}], "output_tokens" => 5365, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+06:52:42.772 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_077_001_interval_tree_for_overlapping_range_queries_04/077_001_interval_tree_for_overlapping_range_queries_04 solution.ex
+06:52:43.440 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":20,"lines_over_98":0,"max_line_length":84,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"077_001_interval_tree_for_overlapping_range_queries_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_077_001_interval_tree_for_overlapping_range_queries_04/077_001_interval_tree_for_overlapping_range_queries_04/solution.ex","task":"077_001_interval_tree_for_overlapping_range_queries_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-10T04:52:43.413875Z"}
+06:52:43.441 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_077_001_interval_tree_for_overlapping_range_queries_04/077_001_interval_tree_for_overlapping_range_queries_04 .gen_staging/fim_077_001_interval_tree_for_overlapping_range_queries_04/mutant.ex
+06:52:44.095 [debug] grade JSON: {"analysis":{"defp_count":3,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":12,"lines_over_98":0,"max_line_length":84,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":9,"compiled":true,"parent":"077_001_interval_tree_for_overlapping_range_queries_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.1,"mode":"fim","overall":0.0,"reasons":["compilation: 9 warning(s) → hard fail (overall 0.0)","tests: 6/20 failed"],"tests":0.7},"shape":"fim","solution_file":".gen_staging/fim_077_001_interval_tree_for_overlapping_range_queries_04/mutant.ex","task":"077_001_interval_tree_for_overlapping_range_queries_04","test_failures":[{"message":"MUTATION","module":"IntervalTreeTest","test":"test enclosing finds interval containing the point"},{"message":"MUTATION","module":"IntervalTreeTest","test":"test enclosing misses interval that does not contain the point"},{"message":"MUTATION","module":"IntervalTreeTest","test":"test degenerate interval is found by enclosing at its exact point"},{"message":"MUTATION","module":"IntervalTreeTest","test":"test enclosing returns all intervals that contain the point"},{"message":"MUTATION","module":"IntervalTreeTest","test":"test correct results with many intervals inserted"},{"message":"MUTATION","module":"IntervalTreeTest","test":"test enclosing at a point equal to duplicated starts returns every stored copy"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":20,"timestamp":"2026-07-10T04:52:44.068617Z"}
+06:52:44.095 [debug] fim mutation gate: killed
+06:52:44.097 [info] promoted 077_001_interval_tree_for_overlapping_range_queries_04 -> tasks/077_001_interval_tree_for_overlapping_range_queries_04

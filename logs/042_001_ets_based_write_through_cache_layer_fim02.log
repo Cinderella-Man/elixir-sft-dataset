@@ -1,0 +1,458 @@
+10:21:32.203 [info] FIM 042_001_ets_based_write_through_cache_layer_fim02 → 042_001_ets_based_write_through_cache_layer_03: target ensure_table/2
+10:21:32.203 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+10:21:32.203 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `ensure_table/2`.
+
+Generate a prompt describing how to implement `ensure_table/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `ensure_table/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `ensure_table/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `ensure_table/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `CacheLayer` that wraps database reads with an ETS-backed write-through cache.
+
+I need these functions in the public API:
+- `CacheLayer.start_link(opts)` to start the process as a GenServer. It should accept a `:name` option for process registration and own the lifecycle of all ETS tables it creates.
+- `CacheLayer.fetch(server, table, key, fallback_fn)` which returns the cached value for `{table, key}` if it exists in ETS, or calls `fallback_fn.()` on a cache miss, stores the result in ETS, and returns it. The return value should always be `{:ok, value}`.
+- `CacheLayer.invalidate(server, table, key)` which removes the entry for `{table, key}` from the cache. Returns `:ok`.
+- `CacheLayer.invalidate_all(server, table)` which removes **all** cached entries for the given `table`. Returns `:ok`.
+
+Each `table` is an atom and should correspond to a separate ETS table owned by the GenServer. Tables should be created lazily on first use (i.e. create the ETS table the first time a given table atom is seen). Use `:set` type ETS tables with public read access so that `fetch` can read directly from ETS without going through the GenServer process, while writes and deletes are serialised through the GenServer.
+
+The `fallback_fn` is a zero-arity anonymous function that the caller supplies. It will typically query a database. You must guarantee it is called **at most once** per cache miss — do not call it more than once even under concurrent access.
+
+Give me the complete module in a single file. Use only OTP and the standard library, no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule CacheLayer do
+  @moduledoc """
+  An ETS-backed write-through cache implemented as a GenServer.
+
+  ## Design
+
+  Each logical `table` (an atom) maps to a **separate** ETS table owned by this
+  process. Tables are created lazily the first time a given atom is seen.
+
+  The ETS tables are created with `[:set, :public]` so callers can read values
+  directly from ETS without any GenServer round-trip. All writes and deletes are
+  serialised through the GenServer so that `fallback_fn` is invoked **at most
+  once** per cache miss even under heavy concurrent load (the GenServer
+  re-checks ETS before calling the fallback).
+
+  ## Locating ETS tables without a GenServer call
+
+  When a `CacheLayer` creates a new ETS table it advertises the tid via
+  `:persistent_term` under the key `{CacheLayer, server_pid, table_atom}`.
+  `fetch/4` reads that term first (O(1), no copying for the reference itself)
+  and then hits ETS directly on a cache hit, so the happy path never touches
+  the GenServer mailbox.
+  """
+
+  use GenServer
+
+  # --------------------------------------------------------------------------
+  # Public API
+  # --------------------------------------------------------------------------
+
+  @doc """
+  Starts the `CacheLayer` GenServer and links it to the calling process.
+
+  ## Options
+
+  Accepts any option understood by `GenServer.start_link/3`. In practice the
+  most useful one is:
+
+    * `:name` – registers the process under the given name so callers can
+      reference it by atom instead of by pid.
+
+  ## Examples
+
+      {:ok, pid} = CacheLayer.start_link()
+      {:ok, _}   = CacheLayer.start_link(name: :my_cache)
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc """
+  Returns `{:ok, value}` for the cached `{table, key}` pair.
+
+  ### Cache hit (fast path)
+  The value is read directly from the ETS table — no GenServer round-trip.
+
+  ### Cache miss (slow path)
+  The call is forwarded to the GenServer, which:
+
+  1. Re-checks the ETS table (a concurrent caller may have just populated the
+     entry).
+  2. If the entry is still absent, calls `fallback_fn.()` **exactly once**,
+     stores the result in ETS, and returns it.
+
+  `fallback_fn` must be a zero-arity anonymous function. It is guaranteed to be
+  called at most once per cache miss regardless of concurrent callers.
+
+  ## Examples
+
+      CacheLayer.fetch(:my_cache, :users, 42, fn -> DB.get_user(42) end)
+      #=> {:ok, %User{id: 42, ...}}
+  """
+  @spec fetch(GenServer.server(), atom(), term(), (() -> term())) :: {:ok, term()}
+  def fetch(server, table, key, fallback_fn)
+      when is_atom(table) and is_function(fallback_fn, 0) do
+    pid = resolve_pid!(server)
+
+    case :persistent_term.get({__MODULE__, pid, table}, :no_table) do
+      :no_table ->
+        # Table has not been created yet; let the GenServer handle everything,
+        # including table creation.
+        GenServer.call(server, {:fetch, table, key, fallback_fn})
+
+      tid ->
+        # Table exists — try a direct ETS read (no GenServer involved).
+        case :ets.lookup(tid, key) do
+          [{^key, value}] ->
+            {:ok, value}
+
+          [] ->
+            # Cache miss: serialise through the GenServer so only one caller
+            # runs the fallback.
+            GenServer.call(server, {:fetch, table, key, fallback_fn})
+        end
+    end
+  end
+
+  @doc """
+  Removes the cached entry for `{table, key}`.
+
+  Returns `:ok` whether or not the entry existed.
+
+  ## Examples
+
+      :ok = CacheLayer.invalidate(:my_cache, :users, 42)
+  """
+  @spec invalidate(GenServer.server(), atom(), term()) :: :ok
+  def invalidate(server, table, key) when is_atom(table) do
+    GenServer.call(server, {:invalidate, table, key})
+  end
+
+  @doc """
+  Removes **all** cached entries for `table`.
+
+  The ETS table itself is kept alive for future use; only its contents are
+  cleared.
+
+  Returns `:ok` whether or not the table had any entries.
+
+  ## Examples
+
+      :ok = CacheLayer.invalidate_all(:my_cache, :users)
+  """
+  @spec invalidate_all(GenServer.server(), atom()) :: :ok
+  def invalidate_all(server, table) when is_atom(table) do
+    GenServer.call(server, {:invalidate_all, table})
+  end
+
+  # --------------------------------------------------------------------------
+  # GenServer callbacks
+  # --------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(:ok) do
+    # Trap exits so `terminate/2` is reliably called, giving us a chance to
+    # clean up :persistent_term entries even if the supervisor shuts us down.
+    Process.flag(:trap_exit, true)
+    {:ok, %{tables: %{}}}
+  end
+
+  @impl GenServer
+  # Fetch — serialised write path (also handles first-time table creation).
+  def handle_call({:fetch, table, key, fallback_fn}, _from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    # Re-check ETS before invoking the fallback: a concurrent caller that also
+    # missed the cache and ended up here first may have already populated it.
+    value =
+      case :ets.lookup(tid, key) do
+        [{^key, cached}] ->
+          cached
+
+        [] ->
+          fresh = fallback_fn.()
+          :ets.insert(tid, {key, fresh})
+          fresh
+      end
+
+    {:reply, {:ok, value}, state}
+  end
+
+  def handle_c (truncated)
+10:22:09.077 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `ensure_table/2` function.
+
+It takes a `table` atom and the GenServer `state` (a map with a `:tables` field
+mapping table atoms to ETS tids) and returns a `{tid, state}` tuple.
+
+Look up `table` in `state.tables`. If it is already present, return the existing
+tid together with the unchanged state. If it is absent, this is the first time the
+atom has been seen, so create the ETS table lazily: build an **unnamed** `:set`,
+`:public` ETS table with `:ets.new/2` (unnamed so that multiple `CacheLayer`
+instances using the same atom cannot collide). Publish the new tid via
+`:persistent_term.put/2` under the key `{__MODULE__, self(), table}` so that
+`fetch/4` can find the tid and read directly from ETS without a GenServer
+round-trip on future calls. Then store the tid in `state.tables` and return the
+new tid together with the updated state.
+
+```elixir
+defmodule CacheLayer do
+  @moduledoc """
+  An ETS-backed write-through cache implemented as a GenServer.
+
+  ## Design
+
+  Each logical `table` (an atom) maps to a **separate** ETS table owned by this
+  process. Tables are created lazily the first time a given atom is seen.
+
+  The ETS tables are created with `[:set, :public]` so callers can read values
+  directly from ETS without any GenServer round-trip. All writes and deletes are
+  serialised through the GenServer so that `fallback_fn` is invoked **at most
+  once** per cache miss even under heavy concurrent load (the GenServer
+  re-checks ETS before calling the fallback).
+
+  ## Locating ETS tables without a GenServer call
+
+  When a `CacheLayer` creates a new ETS table it advertises the tid via
+  `:persistent_term` under the key `{CacheLayer, server_pid, table_atom}`.
+  `fetch/4` reads that term first (O(1), no copying for the reference itself)
+  and then hits ETS directly on a cache hit, so the happy path never touches
+  the GenServer mailbox.
+  """
+
+  use GenServer
+
+  # --------------------------------------------------------------------------
+  # Public API
+  # --------------------------------------------------------------------------
+
+  @doc """
+  Starts the `CacheLayer` GenServer and links it to the calling process.
+
+  ## Options
+
+  Accepts any option understood by `GenServer.start_link/3`. In practice the
+  most useful one is:
+
+    * `:name` – registers the process under the given name so callers can
+      reference it by atom instead of by pid.
+
+  ## Examples
+
+      {:ok, pid} = CacheLayer.start_link()
+      {:ok, _}   = CacheLayer.start_link(name: :my_cache)
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+
+  @doc """
+  Returns `{:ok, value}` for the cached `{table, key}` pair.
+
+  ### Cache hit (fast path)
+  The value is read directly from the ETS table — no GenServer round-trip.
+
+  ### Cache miss (slow path)
+  The call is forwarded to the GenServer, which:
+
+  1. Re-checks the ETS table (a concurrent caller may have just populated the
+     entry).
+  2. If the entry is still absent, calls `fallback_fn.()` **exactly once**,
+     stores the result in ETS, and returns it.
+
+  `fallback_fn` must be a zero-arity anonymous function. It is guaranteed to be
+  called at most once per cache miss regardless of concurrent callers.
+
+  ## Examples
+
+      CacheLayer.fetch(:my_cache, :users, 42, fn -> DB.get_user(42) end)
+      #=> {:ok, %User{id: 42, ...}}
+  """
+  @spec fetch(GenServer.server(), atom(), term(), (() -> term())) :: {:ok, term()}
+  def fetch(server, table, key, fallback_fn)
+      when is_atom(table) and is_function(fallback_fn, 0) do
+    pid = resolve_pid!(server)
+
+    case :persistent_term.get({__MODULE__, pid, table}, :no_table) do
+      :no_table ->
+        # Table has not been created yet; let the GenServer handle everything,
+        # including table creation.
+        GenServer.call(server, {:fetch, table, key, fallback_fn})
+
+      tid ->
+        # Table exists — try a direct ETS read (no GenServer involved).
+        case :ets.lookup(tid, key) do
+          [{^key, value}] ->
+            {:ok, value}
+
+          [] ->
+            # Cache miss: serialise through the GenServer so only one caller
+            # runs the fallback.
+            GenServer.call(server, {:fetch, table, key, fallback_fn})
+        end
+    end
+  end
+
+  @doc """
+  Removes the cached entry for `{table, key}`.
+
+  Returns `:ok` whether or not the entry existed.
+
+  ## Examples
+
+      :ok = CacheLayer.invalidate(:my_cache, :users, 42)
+  """
+  @spec invalidate(GenServer.server(), atom(), term()) :: :ok
+  def invalidate(server, table, key) when is_atom(table) do
+    GenServer.call(server, {:invalidate, table, key})
+  end
+
+  @doc """
+  Removes **all** cached entries for `table`.
+
+  The ETS table itself is kept alive for future use; only its contents are
+  cleared.
+
+  Returns `:ok` whether or not the table had any entries.
+
+  ## Examples
+
+      :ok = CacheLayer.invalidate_all(:my_cache, :users)
+  """
+  @spec invalidate_all(GenServer.server(), atom()) :: :ok
+  def invalidate_all(server, table) when is_atom(table) do
+    GenServer.call(server, {:invalidate_all, table})
+  end
+
+  # --------------------------------------------------------------------------
+  # GenServer callbacks
+  # --------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(:ok) do
+    # Trap exits so `terminate/2` is reliably called, giving us a chance to
+    # clean up :persistent_term entries even if the supervisor shuts us down.
+    Process.flag(:trap_exit, true)
+    {:ok, %{tables: %{}}}
+  end
+
+  @impl GenServer
+  # Fetch — serialised write path (also handles first-time table creation).
+  def handle_call({:fetch, table, key, fallback_fn}, _from, state) do
+    {tid, state} = ensure_table(table, state)
+
+    # Re-check ETS before invoking the fallback: a concurrent caller that also
+    # missed the cache and ended up here first may have already populated it.
+    value =
+      case :ets.lookup(tid, key) do
+        [{^key, cached}] ->
+          cached
+
+        [] ->
+          fresh = fallback_fn.()
+          :ets.insert(tid, {key, fresh})
+          fresh
+      end
+
+    {:reply, {:ok, value}, state}
+  end
+
+  def handle_call({:invalidate, table, key}, _from, state) do
+    case Map.get(state.tables, table) do
+      nil -> :ok
+      tid -> :ets.delete(tid, key)
+    end
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:invalidate_all, table}, _from, state) do
+    case Map.get(state.tables, table) do
+      nil -> :ok
+      tid -> :ets.delete_all_objects(tid)
+    end
+
+    {:reply, :ok, state}
+  end
+
+  @impl GenServer
+  def terminate(_reason, state) do
+    pid = self()
+
+    # Delete each ETS table (which also frees its memory) and remove the
+    # corresponding :persistent_term entry so stale tids cannot leak to callers
+    # that somehow still hold a reference to this (now-dead) server.
+    Enum.each(state.tables, fn {table, tid} ->
+      :persistent_term.erase({__MODULE__, pid, table})
+      :ets.delete(tid)
+    end)
+
+    :ok
+  end
+
+  # --------------------------------------------------------------------------
+  # Private helpers
+  # --------------------------------------------------------------------------
+
+  # Returns the tid for `table`, creating the ETS table if this is the first
+  # time we have seen this atom. Publishing via :persistent_term is done here
+  # so `fetch/4` can find the tid on the next call without hitting the GenServer.
+  defp ensure_table(table, %{tables: tables} = state) do
+    # TODO
+  end
+
+  # Resolve any valid GenServer.server() reference to a concrete pid.
+  defp resolve_pid!(pid) when is_pid(pid), do: pid
+
+  defp resolve_pid!(name) do
+    case GenServer.whereis(name) do
+      nil -> raise ArgumentError, "CacheLayer: cannot resolve #{inspect(name)} to a pid"
+      pid -> pid
+    end
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp ensure_table(table, %{tables: tables} = state) do
+    case Map.get(tables, table) do
+      nil ->
+        # Named tables would collide if (truncated)
+10:22:09.077 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4258, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4258, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 4258, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 4258, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 3383, "type" => "message"}], "output_tokens" => 3383, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+10:22:09.096 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_042_001_ets_based_write_through_cache_layer_03/042_001_ets_based_write_through_cache_layer_03 solution.ex
+10:22:09.768 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":17,"lines_over_98":0,"max_line_length":77,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"042_001_ets_based_write_through_cache_layer_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_042_001_ets_based_write_through_cache_layer_03/042_001_ets_based_write_through_cache_layer_03/solution.ex","task":"042_001_ets_based_write_through_cache_layer_03","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T08:22:09.740659Z"}
+10:22:09.769 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_042_001_ets_based_write_through_cache_layer_03/042_001_ets_based_write_through_cache_layer_03 .gen_staging/fim_042_001_ets_based_write_through_cache_layer_03/mutant.ex
+10:22:10.439 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":54,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"parent":"042_001_ets_based_write_through_cache_layer_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.6,"mode":"fim","overall":0.39,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 9/11 failed"],"tests":0.18},"shape":"fim","solution_file":".gen_staging/fim_042_001_ets_based_write_through_cache_layer_03/mutant.ex","task":"042_001_ets_based_write_through_cache_layer_03","test_failures":[{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :ensure_table, 2, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 204, error_info: %{module: Exception}]}, {CacheLayer, :handle_call, 3, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 145]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CacheLayerTest","test":"test cache miss calls fallback and returns value"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :ensure_table, 2, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 204, error_info: %{module: Exception}]}, {CacheLayer, :handle_call, 3, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 145]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CacheLayerTest","test":"test cache hit does not call fallback a second time"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :ensure_table, 2, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 204, error_info: %{module: Exception}]}, {CacheLayer, :handle_call, 3, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 145]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CacheLayerTest","test":"test fallback return value is correctly stored and returned"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :ensure_table, 2, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 204, error_info: %{module: Exception}]}, {CacheLayer, :handle_call, 3, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 145]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CacheLayerTest","test":"test invalidate removes the key so the next fetch calls fallback again"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :ensure_table, 2, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 204, error_info: %{module: Exception}]}, {CacheLayer, :handle_call, 3, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 145]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CacheLayerTest","test":"test invalidate only removes the targeted key, leaving others intact"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :ensure_table, 2, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 204, error_info: %{module: Exception}]}, {CacheLayer, :handle_call, 3, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 145]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CacheLayerTest","test":"test invalidate_all clears every key in the table"},{"message":"{:EXIT, #PID<0.243.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :ensure_table, 2, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 204, error_info: %{module: Exception}]}, {CacheLayer, :handle_call, 3, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 145]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CacheLayerTest","test":"test different tables are completely independent namespaces"},{"message":"{:EXIT, #PID<0.247.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :ensure_table, 2, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 204, error_info: %{module: Exception}]}, {CacheLayer, :handle_call, 3, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 145]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CacheLayerTest","test":"test invalidate_all on one table does not affect another"},{"message":"{:EXIT, #PID<0.251.0>}: {%RuntimeError{message: \"MUTATION\"}, [{CacheLayer, :ensure_table, 2, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 204, error_info: %{module: Exception}]}, {CacheLayer, :handle_call, 3, [file: ~c\"/tmp/evalfim_570061_2627.ex\", line: 145]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"CacheLayerTest","test":"test tables are created on demand and can hold any term as value"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T08:22:10.417585Z"}
+10:22:10.439 [debug] fim mutation gate: killed
+10:22:10.441 [info] promoted 042_001_ets_based_write_through_cache_layer_03 -> tasks/042_001_ets_based_write_through_cache_layer_03

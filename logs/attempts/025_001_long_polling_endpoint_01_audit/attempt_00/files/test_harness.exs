@@ -1,0 +1,265 @@
+defmodule NotificationPollerTest do
+  use ExUnit.Case, async: false
+  import Plug.Test
+  import Plug.Conn
+
+  # -------------------------------------------------------
+  # Setup — start a fresh Notifications server per test
+  # -------------------------------------------------------
+
+  setup do
+    server = :"notifications_#{System.unique_integer([:positive])}"
+    start_supervised!({Notifications, name: server})
+
+    opts = [
+      notifications_server: server,
+      # short timeout so tests run fast
+      timeout_ms: 500
+    ]
+
+    %{server: server, opts: opts}
+  end
+
+  # -------------------------------------------------------
+  # Helper to invoke the router like a real HTTP request
+  # -------------------------------------------------------
+
+  defp poll(opts, user_id) do
+    :get
+    |> conn("/api/notifications/poll")
+    |> assign(:user_id, user_id)
+    |> NotificationRouter.call(NotificationRouter.init(opts))
+  end
+
+  # -------------------------------------------------------
+  # Basic publish / receive
+  # -------------------------------------------------------
+
+  test "returns a notification published mid-poll", %{server: server, opts: opts} do
+    payload = %{"type" => "message", "body" => "hello"}
+
+    # Start the long-poll in a background task
+    task =
+      Task.async(fn ->
+        poll(opts, "user:1")
+      end)
+
+    # Give the poll a moment to subscribe, then publish
+    Process.sleep(100)
+    Notifications.publish(server, "user:1", payload)
+
+    conn = Task.await(task, 2_000)
+
+    assert conn.status == 200
+    assert get_resp_header(conn, "content-type") |> hd() =~ "application/json"
+    assert Jason.decode!(conn.resp_body) == payload
+  end
+
+  test "returns 204 when timeout expires with no notifications", %{opts: opts} do
+    # Poll with the short 500ms timeout — nobody publishes anything
+    conn = poll(opts, "user:1")
+
+    assert conn.status == 204
+    assert conn.resp_body == ""
+  end
+
+  # -------------------------------------------------------
+  # Authentication
+  # -------------------------------------------------------
+
+  test "returns 401 when user_id is not in assigns", %{opts: opts} do
+    conn =
+      :get
+      |> conn("/api/notifications/poll")
+      |> NotificationRouter.call(NotificationRouter.init(opts))
+
+    assert conn.status == 401
+  end
+
+  # -------------------------------------------------------
+  # User isolation
+  # -------------------------------------------------------
+
+  test "user A notification not delivered to user B", %{server: server, opts: opts} do
+    # User B starts polling
+    task_b =
+      Task.async(fn ->
+        poll(opts, "user:b")
+      end)
+
+    Process.sleep(100)
+
+    # Publish only to user A
+    Notifications.publish(server, "user:a", %{"for" => "a"})
+
+    # User B should time out with 204
+    conn_b = Task.await(task_b, 2_000)
+    assert conn_b.status == 204
+  end
+
+  test "delivers to the correct user among many pollers", %{server: server, opts: opts} do
+    task_a = Task.async(fn -> poll(opts, "user:a") end)
+    task_b = Task.async(fn -> poll(opts, "user:b") end)
+
+    Process.sleep(100)
+
+    Notifications.publish(server, "user:b", %{"msg" => "for_b"})
+
+    conn_b = Task.await(task_b, 2_000)
+    assert conn_b.status == 200
+    assert Jason.decode!(conn_b.resp_body) == %{"msg" => "for_b"}
+
+    # User A should time out
+    conn_a = Task.await(task_a, 2_000)
+    assert conn_a.status == 204
+  end
+
+  # -------------------------------------------------------
+  # Multiple subscribers for the same user
+  # -------------------------------------------------------
+
+  test "all pollers for one user receive it", %{server: server, opts: opts} do
+    task1 = Task.async(fn -> poll(opts, "user:1") end)
+    task2 = Task.async(fn -> poll(opts, "user:1") end)
+
+    Process.sleep(100)
+
+    Notifications.publish(server, "user:1", %{"n" => 1})
+
+    conn1 = Task.await(task1, 2_000)
+    conn2 = Task.await(task2, 2_000)
+
+    assert conn1.status == 200
+    assert conn2.status == 200
+    assert Jason.decode!(conn1.resp_body) == %{"n" => 1}
+    assert Jason.decode!(conn2.resp_body) == %{"n" => 1}
+  end
+
+  # -------------------------------------------------------
+  # Only the first notification is returned (single shot)
+  # -------------------------------------------------------
+
+  test "poll returns only the first of several", %{server: server, opts: opts} do
+    task = Task.async(fn -> poll(opts, "user:1") end)
+
+    Process.sleep(100)
+
+    Notifications.publish(server, "user:1", %{"seq" => 1})
+    Notifications.publish(server, "user:1", %{"seq" => 2})
+
+    conn = Task.await(task, 2_000)
+
+    assert conn.status == 200
+    assert Jason.decode!(conn.resp_body) == %{"seq" => 1}
+  end
+
+  # -------------------------------------------------------
+  # Payload types
+  # -------------------------------------------------------
+
+  test "handles various JSON-serialisable payloads", %{server: server, opts: opts} do
+    payloads = [
+      %{"simple" => true},
+      %{"nested" => %{"a" => [1, 2, 3]}},
+      %{"unicode" => "héllo 🌍"}
+    ]
+
+    for payload <- payloads do
+      task = Task.async(fn -> poll(opts, "user:1") end)
+      Process.sleep(100)
+      Notifications.publish(server, "user:1", payload)
+
+      conn = Task.await(task, 2_000)
+      assert conn.status == 200
+      assert Jason.decode!(conn.resp_body) == payload
+    end
+  end
+
+  # -------------------------------------------------------
+  # Router — 404 for unknown routes
+  # -------------------------------------------------------
+
+  test "router returns 404 for unknown paths", %{opts: opts} do
+    conn =
+      :get
+      |> conn("/api/unknown")
+      |> NotificationRouter.call(NotificationRouter.init(opts))
+
+    assert conn.status == 404
+  end
+
+  # -------------------------------------------------------
+  # Notifications pub/sub unit tests
+  # -------------------------------------------------------
+
+  test "subscribe and publish delivers message to calling process", %{server: server} do
+    Notifications.subscribe(server, "user:direct")
+    Notifications.publish(server, "user:direct", %{"direct" => true})
+
+    assert_receive {:notification, %{"direct" => true}}, 500
+  end
+
+  test "publish to a user with no subscribers does not crash", %{server: server} do
+    assert :ok = Notifications.publish(server, "nobody", %{"ignored" => true})
+  end
+
+  test "401 response body is exactly unauthorized", %{opts: opts} do
+    conn =
+      :get
+      |> conn("/api/notifications/poll")
+      |> NotificationRouter.call(NotificationRouter.init(opts))
+
+    assert conn.status == 401
+    assert conn.resp_body == "unauthorized"
+  end
+
+  test "start_link defaults to the Notifications name and default server args work" do
+    start_supervised!({Notifications, []})
+
+    assert :ok = Notifications.subscribe("user:default")
+    assert :ok = Notifications.publish("user:default", %{"defaulted" => true})
+
+    assert_receive {:notification, %{"defaulted" => true}}, 500
+  end
+
+  test "poller plug used directly accepts the notifications server as a pid", %{server: server} do
+    pid = Process.whereis(server)
+    assert is_pid(pid)
+
+    poller_opts = NotificationPoller.init(notifications_server: pid, timeout_ms: 5_000)
+
+    task =
+      Task.async(fn ->
+        :get
+        |> conn("/api/notifications/poll")
+        |> assign(:user_id, "user:pid")
+        |> NotificationPoller.call(poller_opts)
+      end)
+
+    # Republish on a bounded schedule until the blocking receive has subscribed.
+    conn =
+      Enum.reduce_while(1..40, nil, fn _i, _acc ->
+        Notifications.publish(pid, "user:pid", %{"via" => "pid"})
+
+        case Task.yield(task, 50) do
+          {:ok, conn} -> {:halt, conn}
+          nil -> {:cont, nil}
+        end
+      end)
+
+    refute is_nil(conn)
+    assert conn.status == 200
+    assert get_resp_header(conn, "content-type") |> hd() =~ "application/json"
+    assert Jason.decode!(conn.resp_body) == %{"via" => "pid"}
+  end
+
+  test "router returns 404 for a non-GET request to the poll path", %{opts: opts} do
+    conn =
+      :post
+      |> conn("/api/notifications/poll")
+      |> assign(:user_id, "user:1")
+      |> NotificationRouter.call(NotificationRouter.init(opts))
+
+    assert conn.status == 404
+  end
+end

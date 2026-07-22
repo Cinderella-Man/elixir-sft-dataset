@@ -1,0 +1,464 @@
+02:50:52.470 [info] VARIATION 025_002_cursor_resumable_gap_free_long_poll_01: Cursor-Resumable Gap-Free Long Poll
+02:50:52.471 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01 solution.ex
+02:50:54.484 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":false,"line_count":223,"lines_over_98":0,"max_line_length":89,"mode":"full","pipe_chain_count":9,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":0.75,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.95,"reasons":["analysis: @spec annotations present → 0/2 pts"],"tests":1.0},"shape":"single","solution_file":".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01/solution.ex","task":"025_002_cursor_resumable_gap_free_long_poll_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-04T00:50:54.460897Z"}
+02:50:54.485 [info] cycle 025_002_cursor_resumable_gap_free_long_poll_01: repairing — The solution is green but does not meet the house style: no @spec on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+02:50:54.485 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+02:50:54.485 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+=== FAILURE REPORT ===
+The solution is green but does not meet the house style: no @spec on any public function. Fix solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical and do not weaken test_harness.exs.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement a **cursor-resumable, gap-free** long-polling notifications endpoint. Unlike a naive long poll (which silently drops any notification published in the window between two polls), this variant hands every response a monotonic **cursor** and keeps a short per-user replay buffer, so a client that echoes its last cursor back never misses an event — even one published while it was not connected.
+
+## 1. `Notifications` module
+
+This module manages sequenced pub/sub for user notifications. Back it with a `GenServer` (do **not** use `Registry`, since we must assign sequence numbers and retain recent history). It should provide:
+
+- `Notifications.start_link(opts)` — starts the backing process. Accept a `:name` option for registration (default `Notifications`) and a `:buffer_size` option (max retained events per user, default `100`).
+
+- `Notifications.subscribe(server \\ Notifications, user_id)` — subscribes the calling process to notifications for `user_id`. When an event is published, the subscribing process receives `{:notification, seq, payload}` where `seq` is the event's assigned sequence number. Returns `:ok`. The server must monitor subscribers and drop them on exit.
+
+- `Notifications.publish(server \\ Notifications, user_id, payload)` — assigns the next per-user sequence number (starting at 1), appends `{seq, payload}` to that user's replay buffer (evicting oldest beyond `:buffer_size`), delivers `{:notification, seq, payload}` to all current subscribers, and returns `{:ok, seq}`.
+
+- `Notifications.events_since(server \\ Notifications, user_id, cursor)` — returns the buffered `{seq, payload}` tuples for `user_id` whose `seq` is strictly greater than `cursor`, **oldest first**.
+
+Use only OTP primitives (`GenServer`, `Process`). No Phoenix.PubSub, no external deps.
+
+## 2. `NotificationPoller` Plug
+
+Build a Plug module `NotificationPoller` for `GET /api/notifications/poll`. It must:
+
+- Accept a `:notifications_server` option and a `:timeout_ms` option (default `30_000`).
+
+- Extract the user ID from `conn.assigns.user_id`. If missing, return 401 with body `"unauthorized"`.
+
+- Read a `since` query parameter (an integer cursor; default `0`, and any missing/negative/garbage value is treated as `0`).
+
+- **Subscribe first, then check the buffer** (this ordering is what closes the gap): after subscribing, call `events_since(server, user_id, since)`.
+  - If the buffer already has newer events, respond immediately (do not block).
+  - Otherwise, block on a `receive` with `after` waiting for a `{:notification, seq, payload}` message.
+
+- A 200 response has `content-type: application/json`, a header `x-notification-cursor` set to the highest returned sequence number, and a JSON body of the shape `{"cursor": <max_seq>, "events": [<payload>, ...]}`. When answering from the buffer, include every newer event in order; when answering from a live message, include just that one event.
+
+- On timeout, return 204 No Content with an empty body and an `x-notification-cursor` header echoing the request's `since` cursor (so the client resumes from where it was).
+
+Use `Jason` for JSON encoding.
+
+## 3. `NotificationRouter` Plug.Router
+
+Build a thin `NotificationRouter` using `Plug.Router` that:
+
+- Has a `plug :match` and `plug :dispatch` pipeline.
+- Forwards `GET /api/notifications/poll` to `NotificationPoller`, passing through `:notifications_server` and `:timeout_ms`.
+- Returns 404 for anything else.
+
+## General requirements
+
+- All modules go in a single file.
+- No external dependencies except `Jason` and `Plug`.
+- The long-poll must truly hold the connection open (a blocking `receive`), not a polling loop with `Process.sleep`.
+- Keep the implementation straightforward — no GenStage, no Phoenix Channels, no websockets.
+
+----- solution.ex -----
+defmodule Notifications do
+  @moduledoc """
+  Sequenced in-memory pub/sub for user notifications, backed by a `GenServer`.
+
+  Every published event for a user is assigned a strictly increasing per-user
+  sequence number and appended to a bounded replay buffer. Subscribers receive
+  `{:notification, seq, payload}` messages, and clients can ask for everything
+  newer than a cursor via `events_since/3`, giving gap-free delivery across
+  disconnected polls.
+  """
+
+  use GenServer
+
+  @default_buffer_size 100
+
+  @doc """
+  Starts the backing `GenServer`.
+
+  Options:
+    * `:name` — registration name and server reference (default `Notifications`)
+    * `:buffer_size` — max retained events per user (default `100`)
+  """
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  @doc false
+  def child_spec(opts) do
+    %{
+      id: Keyword.get(opts, :name, __MODULE__),
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker
+    }
+  end
+
+  @doc """
+  Subscribes the calling process to notifications for `user_id`.
+  """
+  def subscribe(server \\ __MODULE__, user_id) do
+    GenServer.call(server, {:subscribe, user_id, self()})
+  end
+
+  @doc """
+  Publishes `payload` to `user_id`, returning `{:ok, seq}` with the assigned
+  sequence number.
+  """
+  def publish(server \\ __MODULE__, user_id, payload) do
+    GenServer.call(server, {:publish, user_id, payload})
+  end
+
+  @doc """
+  Returns buffered `{seq, payload}` tuples for `user_id` with `seq > cursor`,
+  oldest first.
+  """
+  def events_since(server \\ __MODULE__, user_id, cursor) do
+    GenServer.call(server, {:events_since, user_id, cursor})
+  end
+
+  # ------------------------------------------------------------------
+  # Server callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    state = %{
+      buffer_size: Keyword.get(opts, :buffer_size, @default_buffer_size),
+      seq: %{},
+      buf: %{},
+      subs: %{},
+      mons: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:subscribe, user_id, pid}, _from, state) do
+    ref = Process.monitor(pid)
+    subs = Map.update(state.subs, user_id, [pid], fn pids -> [pid | pids] end)
+    mons = Map.put(state.mons, ref, {user_id, pid})
+    {:reply, :ok, %{state | subs: subs, mons: mons}}
+  end
+
+  def handle_call({:publish, user_id, payload}, _from, state) do
+    seq = Map.get(state.seq, user_id, 0) + 1
+    entry = {seq, payload}
+
+    # Newest kept at the head; retain only the most recent buffer_size entries.
+    buf =
+      [entry | Map.get(state.buf, user_id, [])]
+      |> Enum.take(state.buffer_size)
+
+    state = %{
+      state
+      | seq: Map.put(state.seq, user_id, seq),
+        buf: Map.put(state.buf, user_id, buf)
+    }
+
+    for pid <- Map.get(state.subs, user_id, []) do
+      send(pid, {:notification, seq, payload})
+    end
+
+    {:reply, {:ok, seq}, state}
+  end
+
+  def handle_call({:events_since, user_id, cursor}, _from, state) do
+    events =
+      state.buf
+      |> Map.get(user_id, [])
+      |> Enum.reverse()
+      |> Enum.filter(fn {seq, _payload} -> seq > cursor end)
+
+    {:reply, events, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid (truncated)
+02:51:42.173 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule Notifications do
+  @moduledoc """
+  Sequenced in-memory pub/sub for user notifications, backed by a `GenServer`.
+
+  Every published event for a user is assigned a strictly increasing per-user
+  sequence number and appended to a bounded replay buffer. Subscribers receive
+  `{:notification, seq, payload}` messages, and clients can ask for everything
+  newer than a cursor via `events_since/3`, giving gap-free delivery across
+  disconnected polls.
+  """
+
+  use GenServer
+
+  @type server :: GenServer.server()
+  @type user_id :: term()
+  @type payload :: term()
+  @type seq :: pos_integer()
+  @type event :: {seq(), payload()}
+
+  @default_buffer_size 100
+
+  @doc """
+  Starts the backing `GenServer`.
+
+  Options:
+    * `:name` — registration name and server reference (default `Notifications`)
+    * `:buffer_size` — max retained events per user (default `100`)
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    name = Keyword.get(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  @doc false
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
+  def child_spec(opts) do
+    %{
+      id: Keyword.get(opts, :name, __MODULE__),
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker
+    }
+  end
+
+  @doc """
+  Subscribes the calling process to notifications for `user_id`.
+  """
+  @spec subscribe(server(), user_id()) :: :ok
+  def subscribe(server \\ __MODULE__, user_id) do
+    GenServer.call(server, {:subscribe, user_id, self()})
+  end
+
+  @doc """
+  Publishes `payload` to `user_id`, returning `{:ok, seq}` with the assigned
+  sequence number.
+  """
+  @spec publish(server(), user_id(), payload()) :: {:ok, seq()}
+  def publish(server \\ __MODULE__, user_id, payload) do
+    GenServer.call(server, {:publish, user_id, payload})
+  end
+
+  @doc """
+  Returns buffered `{seq, payload}` tuples for `user_id` with `seq > cursor`,
+  oldest first.
+  """
+  @spec events_since(server(), user_id(), non_neg_integer()) :: [event()]
+  def events_since(server \\ __MODULE__, user_id, cursor) do
+    GenServer.call(server, {:events_since, user_id, cursor})
+  end
+
+  # ------------------------------------------------------------------
+  # Server callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    state = %{
+      buffer_size: Keyword.get(opts, :buffer_size, @default_buffer_size),
+      seq: %{},
+      buf: %{},
+      subs: %{},
+      mons: %{}
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:subscribe, user_id, pid}, _from, state) do
+    ref = Process.monitor(pid)
+    subs = Map.update(state.subs, user_id, [pid], fn pids -> [pid | pids] end)
+    mons = Map.put(state.mons, ref, {user_id, pid})
+    {:reply, :ok, %{state | subs: subs, mons: mons}}
+  end
+
+  def handle_call({:publish, user_id, payload}, _from, state) do
+    seq = Map.get(state.seq, user_id, 0) + 1
+    entry = {seq, payload}
+
+    # Newest kept at the head; retain only the most recent buffer_size entries.
+    buf =
+      [entry | Map.get(state.buf, user_id, [])]
+      |> Enum.take(state.buffer_size)
+
+    state = %{
+      state
+      | seq: Map.put(state.seq, user_id, seq),
+        buf: Map.put(state.buf, user_id, buf)
+    }
+
+    for pid <- Map.get(state.subs, user_id, []) do
+      send(pid, {:notification, seq, payload})
+    end
+
+    {:reply, {:ok, seq}, state}
+  end
+
+  def handle_call({:events_since, user_id, cursor}, _from, state) do
+    events =
+      state.buf
+      |> Map.get(user_id, [])
+      |> Enum.reverse()
+      |> Enum.filter(fn {seq, _payload} -> seq > cursor end)
+
+    {:reply, events, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    case Map.pop(state.mons, ref) do
+      {nil, _mons} ->
+        {:noreply, state}
+
+      {{user_id, pid}, mons} ->
+        subs = Map.update(state.subs, user_id, [], fn pids -> List.delete(pids, pid) end)
+        {:noreply, %{state | subs: subs, mons: mons}}
+    end
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+end
+
+defmodule NotificationPoller do
+  @moduledoc """
+  Plug implementing cursor-resumable, gap-free long-polling for
+  `GET /api/notifications/poll`.
+
+  It subscribes first, then consults the replay buffer for anything newer than
+  the request's `since` cursor. If the buffer already holds newer events they
+  are returned immediately; otherwise it blocks on a `receive` until a live
+  notification arrives or the timeout elapses. Because subscription happens
+  before the buffer check, no event can slip through the gap.
+  """
+
+  import Plug.Conn
+
+  @default_timeout_ms 30_000
+
+  @doc """
+  Initializes the plug, returning the given options unchanged.
+  """
+  @spec init(keyword()) :: keyword()
+  def init(opts), do: opts
+
+  @doc """
+  Handles a poll request: authenticates, subscribes, and either replays buffered
+  events, blocks for a live notification, or times out with a 204 response.
+  """
+  @spec call(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
+  def call(conn, opts) do
+    server = Keyword.fetch!(opts, :notifications_server)
+    timeout = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
+    conn = fetch_query_params(conn)
+
+    case conn.assigns[:user_id] do
+      nil ->
+        send_resp(conn, 401, "unauthorized")
+
+      user_id ->
+        cursor = parse_cursor(conn.query_params["since"])
+        Notifications.subscribe(server, user_id)
+
+        case Notifications.events_since(server, user_id, cursor) do
+          [] -> wait_for_notification(conn, timeout, cursor)
+          events -> respond_with_events(conn, events)
+        end
+    end
+  end
+
+  defp parse_cursor(nil), do: 0
+
+  defp parse_cursor(str) when is_binary(str) do
+    case Integer.parse(str) do
+      {n, _rest} when n >= 0 -> n
+      _ -> 0
+    end
+  end
+
+  defp wait_for_notification(conn, timeout, cursor) do
+    receive do
+      {:notification, seq, payload} ->
+        respond_with_events(conn, [{seq, payload}])
+    after
+      timeout ->
+        conn
+        |> put_resp_header("x-notification-cursor", Integer.to_string(cursor))
+        |> send_resp(204, "")
+    end
+  end
+
+  defp respond_with_events(conn, events) do
+    {max_seq, _payload} = List.last(events)
+    payloads = Enum.map(events, fn {_seq, payload} -> payload end)
+    body = Jason.encode!(%{"cursor" => max_seq, "events" => payloads})
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> put_resp_header("x-notification-cursor", Integer.to_string(max_seq))
+    |> send_resp(200, body)
+  end
+end
+
+defmodule NotificationRouter do
+  @moduledoc """
+  Thin `Plug.Router` that forwards `GET /api/notifications/poll` to
+  `NotificationPoller`, passing through the `:notifications_server` and
+  `:timeout_ms` options, and returns 404 for everything else.
+  """
+
+  use Plug.Router, copy_opts_to_assign: :poller_opts
+
+  plug :match
+  plug :dispatch
+
+  get "/api/notifications/poll" do
+    opts = conn.assigns.poller_opts
+    NotificationPoller.call(conn, NotificationPoller.init(opts))
+  end
+
+  match _ do
+    send_resp(conn, 404, "not found")
+  end
+end
+</file>
+02:51:42.173 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8778, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8778, "cache_read_input_tokens" => 14777, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8778, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8778, "cache_read_input_tokens" => 14777, "input_tokens" => 2972, "output_tokens" => 4311, "type" => "message"}], "output_tokens" => 4311, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+02:51:42.183 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01 solution.ex
+02:51:44.173 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":243,"lines_over_98":0,"max_line_length":89,"mode":"full","pipe_chain_count":9,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01/solution.ex","task":"025_002_cursor_resumable_gap_free_long_poll_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-04T00:51:44.149726Z"}
+02:51:44.178 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut solution.ex
+02:51:44.974 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":190,"lines_over_98":7,"max_line_length":478,"mode":"full","pipe_chain_count":9,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 16/16 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex","task":"025_002_cursor_resumable_gap_free_long_poll_01_mut","test_failures":[{"message":"failed to start child with the spec {Notifications, [name: :notifications_4548]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:13: Notifications.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test an event published BEFORE the poll is not missed (replayed from buffer)"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_4612]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:13: Notifications.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test multiple buffered events replay in order with the highest cursor"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_4676]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:13: Notifications.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test resuming from a cursor returns only newer events, no duplicates"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_4740]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:13: Notifications.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test blocks and returns a notification that arrives during the poll"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_4804]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:13: Notifications.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test 204 on timeout echoes the request cursor so the client can resume"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_4868]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:13: Notifications.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test missing / garbage / negative since is treated as 0"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_4932]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:13: Notifications.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test 401 when user_id is absent"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_4996]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:13: Notifications.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test events for user A do not leak to user B"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_5060]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_ (truncated)
+02:51:44.978 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut solution.ex
+02:51:45.759 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":187,"lines_over_98":7,"max_line_length":478,"mode":"full","pipe_chain_count":9,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.27,"reasons":["compilation: 1 warning(s) → -0.1 pts","tests: 16/16 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex","task":"025_002_cursor_resumable_gap_free_long_poll_01_mut","test_failures":[{"message":"MUTATION","module":"CursorLongPollTest","test":"test an event published BEFORE the poll is not missed (replayed from buffer)"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test multiple buffered events replay in order with the highest cursor"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test resuming from a cursor returns only newer events, no duplicates"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test blocks and returns a notification that arrives during the poll"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test 204 on timeout echoes the request cursor so the client can resume"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test missing / garbage / negative since is treated as 0"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test 401 when user_id is absent"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test events for user A do not leak to user B"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test per-user sequences are independent"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test multiple live pollers for the same user all receive the event"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test buffer retains only the most recent :buffer_size events"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test router returns 404 for unknown paths"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test publish assigns monotonic sequences and delivers with seq"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test events_since filters strictly greater than cursor"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test publish to a user with no subscribers does not crash"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test dead subscribers are dropped and do not accumulate"}],"tests_errors":0,"tests_excluded":0,"tests_failed":16,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-04T00:51:45.734547Z"}
+02:51:45.765 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut solution.ex
+02:51:46.593 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":191,"lines_over_98":7,"max_line_length":478,"mode":"full","pipe_chain_count":9,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.47,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 11/16 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.31},"shape":"single","solution_file":".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex","task":"025_002_cursor_resumable_gap_free_long_poll_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test an event published BEFORE the poll is not missed (replayed from buffer)"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test multiple buffered events replay in order with the highest cursor"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test resuming from a cursor returns only newer events, no duplicates"},{"message":"{:EXIT, #PID<0.223.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: \"user:1\", poller_opts: [notifications_server: :notifications_4547, timeout_ms: 500]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"GET\", owner: nil, params: %{}, path_info: [\"api\", \"notifications\", \"poll\"], path_params: %{}, port: 80, private: %{plug_route: {\"/api/notifications/poll\", #Function<1.53196727/2 in NotificationRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"since=0\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_headers: [], request_path: \"/api/notifications/poll\", resp_body: nil, resp_cookies: %{}, resp_headers: [{\"cache-control\", \"max-age=0, private, must-revalidate\"}], scheme: :http, script_name: [], secret_key_base: nil, state: :unset, status: nil}, kind: :error, reason: %RuntimeError{message: \"MUTATION\"}, stack: [{Notifications, :subscribe, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 30, error_info: %{module: Exception}]}, {NotificationPoller, :call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 134]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 177]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}, [{Notifications, :subscribe, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 30, error_info: %{module: Exception}]}, {NotificationPoller, :call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 134]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 177]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CursorLongPollTest","test":"test blocks and returns a notification that arrives during the poll"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test 204 on timeout echoes the request cursor so the client can resume"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test missing / garbage / negative since is treated as 0"},{"message":"{:EXIT, #PID<0.236.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: \"user:b\", poller_opts: [notifications_server: :notifications_194, timeout_ms: 500]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"GET\", owner: nil, params: %{}, path_info: [\"api\", \"notifications\", \"poll\"], path_params: %{}, port: 80, private: %{plug_route: {\"/api/notifications/poll\", #Function<1.53196727/2 in NotificationRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"since=0\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_headers: [], request_path: \"/api/notifications/poll\", resp_body: nil, resp_cookies: %{}, resp_headers: [{\"cache-control\", \"max-age=0, private, must-revalidate\"}], scheme: :http, script_name: [], secret_key_base: nil, state: :unset, status: nil}, kind: :error, reason: %RuntimeError{message: \"MUTATION\"}, stack: [{Notifications, :subscribe, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 30, error_info: %{module: Exception}]}, {NotificationPoller, :call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 134]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 177]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}, [{Notifications, :subscribe, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 30, error_info: %{module: Exception}]}, {NotificationPoller, :call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 134]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 177]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CursorLongPollTest","test":"test events for user A do not leak to user B"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test per-user sequences are independent"},{"message":"{:EXIT, #PID<0.243.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: \"user:1\", poller_opts: [notifications_server: :notifications_258, timeout_ms: 500]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.e (truncated)
+02:51:46.599 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut solution.ex
+02:51:47.660 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":191,"lines_over_98":7,"max_line_length":478,"mode":"full","pipe_chain_count":9,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.33,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 14/16 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.13},"shape":"single","solution_file":".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex","task":"025_002_cursor_resumable_gap_free_long_poll_01_mut","test_failures":[{"message":"MUTATION","module":"CursorLongPollTest","test":"test an event published BEFORE the poll is not missed (replayed from buffer)"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test multiple buffered events replay in order with the highest cursor"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test resuming from a cursor returns only newer events, no duplicates"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test blocks and returns a notification that arrives during the poll"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test 204 on timeout echoes the request cursor so the client can resume"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test missing / garbage / negative since is treated as 0"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test events for user A do not leak to user B"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test per-user sequences are independent"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test multiple live pollers for the same user all receive the event"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test buffer retains only the most recent :buffer_size events"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test publish assigns monotonic sequences and delivers with seq"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test events_since filters strictly greater than cursor"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test publish to a user with no subscribers does not crash"},{"message":"MUTATION","module":"CursorLongPollTest","test":"test dead subscribers are dropped and do not accumulate"}],"tests_errors":0,"tests_excluded":0,"tests_failed":14,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-04T00:51:47.638103Z"}
+02:51:47.666 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut solution.ex
+02:51:48.509 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":191,"lines_over_98":7,"max_line_length":478,"mode":"full","pipe_chain_count":9,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.44,"reasons":["compilation: 5 warning(s) → -0.5 pts","tests: 11/16 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.31},"shape":"single","solution_file":".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex","task":"025_002_cursor_resumable_gap_free_long_poll_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test an event published BEFORE the poll is not missed (replayed from buffer)"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test multiple buffered events replay in order with the highest cursor"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test resuming from a cursor returns only newer events, no duplicates"},{"message":"{:EXIT, #PID<0.223.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: \"user:1\", poller_opts: [notifications_server: :notifications_2181, timeout_ms: 500]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"GET\", owner: nil, params: %{}, path_info: [\"api\", \"notifications\", \"poll\"], path_params: %{}, port: 80, private: %{plug_route: {\"/api/notifications/poll\", #Function<1.53196727/2 in NotificationRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"since=0\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_headers: [], request_path: \"/api/notifications/poll\", resp_body: nil, resp_cookies: %{}, resp_headers: [{\"cache-control\", \"max-age=0, private, must-revalidate\"}], scheme: :http, script_name: [], secret_key_base: nil, state: :unset, status: nil}, kind: :error, reason: %RuntimeError{message: \"MUTATION\"}, stack: [{Notifications, :events_since, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 42, error_info: %{module: Exception}]}, {NotificationPoller, :call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 136]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 177]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}, [{Notifications, :events_since, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 42, error_info: %{module: Exception}]}, {NotificationPoller, :call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 136]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 177]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CursorLongPollTest","test":"test blocks and returns a notification that arrives during the poll"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test 204 on timeout echoes the request cursor so the client can resume"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test missing / garbage / negative since is treated as 0"},{"message":"{:EXIT, #PID<0.236.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: \"user:b\", poller_opts: [notifications_server: :notifications_323, timeout_ms: 500]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"GET\", owner: nil, params: %{}, path_info: [\"api\", \"notifications\", \"poll\"], path_params: %{}, port: 80, private: %{plug_route: {\"/api/notifications/poll\", #Function<1.53196727/2 in NotificationRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"since=0\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_headers: [], request_path: \"/api/notifications/poll\", resp_body: nil, resp_cookies: %{}, resp_headers: [{\"cache-control\", \"max-age=0, private, must-revalidate\"}], scheme: :http, script_name: [], secret_key_base: nil, state: :unset, status: nil}, kind: :error, reason: %RuntimeError{message: \"MUTATION\"}, stack: [{Notifications, :events_since, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 42, error_info: %{module: Exception}]}, {NotificationPoller, :call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 136]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 177]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}, [{Notifications, :events_since, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 42, error_info: %{module: Exception}]}, {NotificationPoller, :call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 136]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 177]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CursorLongPollTest","test":"test events for user A do not leak to user B"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test per-user sequences are independent"},{"message":"{:EXIT, #PID<0.243.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: \"user:1\", poller_opts: [notifications_server: :notifications_451, timeout_ms: 500]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, h (truncated)
+02:51:48.515 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut solution.ex
+02:51:49.297 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":183,"lines_over_98":7,"max_line_length":478,"mode":"full","pipe_chain_count":9,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.24,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 16/16 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.0},"shape":"single","solution_file":".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex","task":"025_002_cursor_resumable_gap_free_long_poll_01_mut","test_failures":[{"message":"failed to start child with the spec {Notifications, [name: :notifications_1154]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test an event published BEFORE the poll is not missed (replayed from buffer)"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_1218]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test multiple buffered events replay in order with the highest cursor"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_1282]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test resuming from a cursor returns only newer events, no duplicates"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_1346]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test blocks and returns a notification that arrives during the poll"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_1410]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test 204 on timeout echoes the request cursor so the client can resume"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_1474]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test missing / garbage / negative since is treated as 0"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_1538]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test 401 when user_id is absent"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_1602]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test events for user A do not leak to user B"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_1666]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test per-user sequences are independent"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_1730]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test multiple live pollers for the same user all receive the event"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_1794]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test buffer retains only the most recent :buffer_size events"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_1858]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"CursorLongPollTest","test":"test router returns 404 for unknown paths"},{"message":"failed to start child with the spec {Notifications, [name: :notifications_1922]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex:47: Notifications.init/1\n        (stdlib 8.0.2) gen_server.erl:2276: :gen_server.init_it/2\n        (stdlib 8.0.2) gen_server.erl:2236: :gen_server.init_it/6\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do (truncated)
+02:51:49.303 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut solution.ex
+02:51:50.107 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":168,"lines_over_98":7,"max_line_length":478,"mode":"full","pipe_chain_count":5,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":9,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.1,"mode":"full","overall":0.27,"reasons":["compilation: 9 warning(s) → -0.9 pts","tests: 14/16 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.13},"shape":"single","solution_file":".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex","task":"025_002_cursor_resumable_gap_free_long_poll_01_mut","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_call, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:notifications_4803, {:publish, \"user:1\", %{\"body\" => \"early\"}}, 5000]}}","module":"CursorLongPollTest","test":"test an event published BEFORE the poll is not missed (replayed from buffer)"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_call, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:notifications_4867, {:publish, \"user:1\", %{\"n\" => 1}}, 5000]}}","module":"CursorLongPollTest","test":"test multiple buffered events replay in order with the highest cursor"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_call, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:notifications_4931, {:publish, \"user:1\", %{\"n\" => 1}}, 5000]}}","module":"CursorLongPollTest","test":"test resuming from a cursor returns only newer events, no duplicates"},{"message":"{:EXIT, #PID<0.226.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_call, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:notifications_4995, {:subscribe, \"user:1\", #PID<0.229.0>}, 5000]}}","module":"CursorLongPollTest","test":"test blocks and returns a notification that arrives during the poll"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_call, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:notifications_5059, {:publish, \"user:1\", %{\"n\" => 1}}, 5000]}}","module":"CursorLongPollTest","test":"test 204 on timeout echoes the request cursor so the client can resume"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_call, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:notifications_5123, {:publish, \"user:1\", %{\"n\" => 1}}, 5000]}}","module":"CursorLongPollTest","test":"test missing / garbage / negative since is treated as 0"},{"message":"{:EXIT, #PID<0.242.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_call, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:notifications_5251, {:subscribe, \"user:b\", #PID<0.245.0>}, 5000]}}","module":"CursorLongPollTest","test":"test events for user A do not leak to user B"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_call, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:notifications_5315, {:publish, \"user:a\", %{\"x\" => \"a1\"}}, 5000]}}","module":"CursorLongPollTest","test":"test per-user sequences are independent"},{"message":"{:EXIT, #PID<0.251.0>}: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_call, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:notifications_5379, {:subscribe, \"user:1\", #PID<0.255.0>}, 5000]}}","module":"CursorLongPollTest","test":"test multiple live pollers for the same user all receive the event"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_call, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 64, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:notifications_5507, {:publish, \"user:1\", %{\"n\" => 1}}, 5000]}}","module":"CursorLongPollTest","test":"test buffer retains only the most recent :buffer_size events"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_call, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 60, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:notifications_5571, {:subscribe, \"user:direct\", #PID<0.265.0>}, 5000]}}","module":"CursorLongPollTest","test":"test publish assigns monotonic sequences and delivers with seq"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_call, 3, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_ (truncated)
+02:51:50.114 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut solution.ex
+02:51:52.115 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":184,"lines_over_98":7,"max_line_length":478,"mode":"full","pipe_chain_count":9,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.9,"reasons":["compilation: 3 warning(s) → -0.3 pts","tests: 1/16 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.94},"shape":"single","solution_file":".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex","task":"025_002_cursor_resumable_gap_free_long_poll_01_mut","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{Notifications, :handle_info, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 96, error_info: %{module: Exception}]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [:notifications_1026, {:publish, \"user:1\", %{\"n\" => 1}}, 5000]}}","module":"CursorLongPollTest","test":"test dead subscribers are dropped and do not accumulate"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-04T00:51:52.092889Z"}
+02:51:52.120 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut solution.ex
+02:51:52.955 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":175,"lines_over_98":7,"max_line_length":478,"mode":"full","pipe_chain_count":9,"public_fn_count":13,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"score":{"analysis":0.88,"analysis_max_points":8,"compilation":0.4,"mode":"full","overall":0.48,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 10/16 failed","analysis: no lines over 98 chars (found 7) → 0/1 pts"],"tests":0.38},"shape":"single","solution_file":".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex","task":"025_002_cursor_resumable_gap_free_long_poll_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test an event published BEFORE the poll is not missed (replayed from buffer)"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test multiple buffered events replay in order with the highest cursor"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test resuming from a cursor returns only newer events, no duplicates"},{"message":"{:EXIT, #PID<0.223.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: \"user:1\", poller_opts: [notifications_server: :notifications_2631, timeout_ms: 500]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"GET\", owner: nil, params: %{}, path_info: [\"api\", \"notifications\", \"poll\"], path_params: %{}, port: 80, private: %{plug_route: {\"/api/notifications/poll\", #Function<1.53196727/2 in NotificationRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"since=0\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_headers: [], request_path: \"/api/notifications/poll\", resp_body: nil, resp_cookies: %{}, resp_headers: [{\"cache-control\", \"max-age=0, private, must-revalidate\"}], scheme: :http, script_name: [], secret_key_base: nil, state: :unset, status: nil}, kind: :error, reason: %RuntimeError{message: \"MUTATION\"}, stack: [{NotificationPoller, :call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 124, error_info: %{module: Exception}]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 161]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}, [{NotificationPoller, :call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 124, error_info: %{module: Exception}]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 161]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CursorLongPollTest","test":"test blocks and returns a notification that arrives during the poll"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test 204 on timeout echoes the request cursor so the client can resume"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test missing / garbage / negative since is treated as 0"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test 401 when user_id is absent"},{"message":"{:EXIT, #PID<0.236.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: \"user:b\", poller_opts: [notifications_server: :notifications_134, timeout_ms: 500]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"GET\", owner: nil, params: %{}, path_info: [\"api\", \"notifications\", \"poll\"], path_params: %{}, port: 80, private: %{plug_route: {\"/api/notifications/poll\", #Function<1.53196727/2 in NotificationRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"since=0\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_headers: [], request_path: \"/api/notifications/poll\", resp_body: nil, resp_cookies: %{}, resp_headers: [{\"cache-control\", \"max-age=0, private, must-revalidate\"}], scheme: :http, script_name: [], secret_key_base: nil, state: :unset, status: nil}, kind: :error, reason: %RuntimeError{message: \"MUTATION\"}, stack: [{NotificationPoller, :call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 124, error_info: %{module: Exception}]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 161]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}, [{NotificationPoller, :call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 124, error_info: %{module: Exception}]}, {NotificationRouter, :\"-dispatch/2-fun-0-\", 4, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 263]}, {:telemetry, :span, 3, [file: ~c\"/home/kamil/projects/elixir-sft-dataset/deps/telemetry/src/telemetry.erl\", line: 359]}, {NotificationRouter, :dispatch, 2, [file: ~c\"deps/plug/lib/plug/router.ex\", line: 259]}, {NotificationRouter, :plug_builder_call, 2, [file: ~c\".gen_staging/025_002_cursor_resumable_gap_free_long_poll_01_mut/solution.ex\", line: 161]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c\"lib/task/supervised.ex\", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c\"lib/task/supervised.ex\", line: 40]}]}","module":"CursorLongPollTest","test":"test events for user A do not leak to user B"},{"message":"** (RuntimeError) MUTATION","module":"CursorLongPollTest","test":"test per-user sequences are independent"},{"message":"{:EXIT, #PID<0.243.0>}: {%Plug.Conn.WrapperError{conn: %Plug.Conn{adapter: {Plug.Adapters.Test.Conn, :...}, assigns: %{user_id: \"user:1\", poller_opts: [notifications_server: :notifications_262, timeout_ms: 500]}, body_params: %Plug.Conn.Unfetched{aspect: :body_params}, cookies: %Plug.Conn.Unfetched{aspect: :cookies}, halted: false, host: \"www.example.com\", method: \"GET\", owner: nil, params: %{}, path_info: [\"api\", \"notifications\", \"poll\"], path_params: %{}, port: 80, private: %{plug_route: {\"/api/notifications/poll\", #Function<1.53196727/2 in NotificationRouter.do_match/4>}}, query_params: %Plug.Conn.Unfetched{aspect: :query_params}, query_string: \"since=0\", remote_ip: {127, 0, 0, 1}, req_cookies: %Plug.Conn.Unfetched{aspect: :cookies}, req_he (truncated)
+02:51:52.956 [info] cycle 025_002_cursor_resumable_gap_free_long_poll_01: ACCEPTED on attempt 1
+02:51:52.957 [info] promoted 025_002_cursor_resumable_gap_free_long_poll_01 -> tasks/025_002_cursor_resumable_gap_free_long_poll_01

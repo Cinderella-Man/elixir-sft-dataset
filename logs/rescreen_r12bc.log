@@ -1,0 +1,79 @@
+Blind-solve screen: 13 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/13] 001_001_rate_limiter_01 ... GREEN
+[2/13] 005_004_filteredeventbus_01 ... GREEN
+[3/13] 007_003_streamingpercentile_01 ... GREEN
+[4/13] 010_004_rolling_window_quota_tracker_01 ... RED (test different window sizes on same key: 
+
+match (=) failed
+code:  assert {:ok, 8} = QuotaTracker.usage(t, :api, 2000)
+left:  {:ok, 8}
+right: {:ok, 3}
+)
+[5/13] 016_001_paginated_list_endpoint_01 ... RED (test returns first page with default page_size when no params given: function PaginatedList.Repo.get_dynamic_repo/0 is undefined (module PaginatedList.Repo is not available))
+[6/13] 017_001_search_endpoint_with_filtering_and_sorting_01 ... RED (test returns all products when no filters are given: function MyApp.Repo.get_dynamic_repo/0 is undefined (module MyApp.Repo is not available))
+[7/13] 018_001_crud_with_soft_delete_01 ... RED (test POST /api/documents creates a document with valid attrs: function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available))
+[8/13] 019_001_bulk_create_endpoint_with_partial_failure_reporting_01 ... RED (test request body validation returns 400 when 'items' key is missing: function MyApp.Repo.get_dynamic_repo/0 is undefined (module MyApp.Repo is not available))
+[9/13] 023_001_idempotent_post_endpoint_01 ... RED (test error responses are also cached under idempotency key: 
+
+Assertion with == failed
+code:  assert result2 == {:error, :invalid_params}
+left:  {:ok, {:error, :invalid_params}}
+right: {:error, :invalid_params}
+)
+[10/13] 023_003_fingerprint_conflict_idempotent_payments_01 ... GREEN
+[11/13] 042_003_true_write_through_cache_with_backing_store_propagation_01 ... 
+18:30:45.052 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 1, ~0 min waited so far)
+
+18:45:46.910 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 2, ~15 min waited so far)
+
+19:00:48.758 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 3, ~30 min waited so far)
+
+19:15:51.346 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 4, ~45 min waited so far)
+
+19:30:53.280 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 5, ~60 min waited so far)
+
+19:45:55.471 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 6, ~75 min waited so far)
+
+20:01:00.466 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 7, ~90 min waited so far)
+
+20:16:02.413 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 8, ~105 min waited so far)
+
+20:31:04.356 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 9, ~120 min waited so far)
+
+20:46:06.529 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 10, ~135 min waited so far)
+
+21:01:08.911 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 11, ~150 min waited so far)
+
+21:16:10.892 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 12, ~165 min waited so far)
+
+21:31:13.045 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 13, ~180 min waited so far)
+
+21:46:14.924 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 14, ~195 min waited so far)
+
+22:01:17.125 [warning] usage limit / out of credits on screen_blind (042_003_true_write_through_cache_with_backing_store_propagation_01) — waiting 900000ms (attempt 15, ~210 min waited so far)
+GREEN
+[12/13] 042_004_single_flight_non_blocking_write_through_cache_01 ... GREEN
+[13/13] 097_002_weighted_strength_score_password_policy_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 13   green: 7   RED: 6   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 010_004_rolling_window_quota_tracker_01: test different window sizes on same key: 
+
+match (=) failed
+code:  assert {:ok, 8} = QuotaTracker.usage(t, :api, 2000)
+left:  {:ok, 8}
+right: {:ok, 3}
+
+    - 016_001_paginated_list_endpoint_01: test returns first page with default page_size when no params given: function PaginatedList.Repo.get_dynamic_repo/0 is undefined (module PaginatedList.Repo is not available)
+    - 017_001_search_endpoint_with_filtering_and_sorting_01: test returns all products when no filters are given: function MyApp.Repo.get_dynamic_repo/0 is undefined (module MyApp.Repo is not available)
+    - 018_001_crud_with_soft_delete_01: test POST /api/documents creates a document with valid attrs: function SoftCrud.Repo.get_dynamic_repo/0 is undefined (module SoftCrud.Repo is not available)
+    - 019_001_bulk_create_endpoint_with_partial_failure_reporting_01: test request body validation returns 400 when 'items' key is missing: function MyApp.Repo.get_dynamic_repo/0 is undefined (module MyApp.Repo is not available)
+    - 023_001_idempotent_post_endpoint_01: test error responses are also cached under idempotency key: 
+
+Assertion with == failed
+code:  assert result2 == {:error, :invalid_params}
+left:  {:ok, {:error, :invalid_params}}
+right: {:error, :invalid_params}
+

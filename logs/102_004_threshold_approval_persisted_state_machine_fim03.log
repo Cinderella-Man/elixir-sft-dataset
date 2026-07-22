@@ -1,0 +1,428 @@
+07:41:21.895 [info] FIM 102_004_threshold_approval_persisted_state_machine_fim03 → 102_004_threshold_approval_persisted_state_machine_04: target load_latest/2
+07:41:21.895 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+07:41:21.895 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `load_latest/2`.
+
+Generate a prompt describing how to implement `load_latest/2` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `load_latest/2` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `load_latest/2` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `load_latest/2` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir GenServer module called `StateMachine` that manages the lifecycle of
+stateful entities, persists every state transition to a database, and drives a **multi-approval
+workflow** in which the `:approve` event carries a persisted approval counter and only advances
+the entity to `:approved` once a configured number of approvals has been reached.
+
+## State Machine Definition
+
+Use the following change-request review lifecycle:
+
+States: `:draft`, `:in_review`, `:approved`, `:rejected`, `:withdrawn`
+
+Each entity also carries a non-negative integer **approval count**.
+
+Transitions (current_state + event → next_state), with their effect on the approval count:
+
+  - :draft      + :submit   → :in_review   (approval count reset to 0)
+  - :in_review  + :approve  → depends on the count (see below)
+  - :in_review  + :reject   → :rejected    (approval count unchanged)
+  - :draft      + :withdraw → :withdrawn   (approval count unchanged)
+  - :in_review  + :withdraw → :withdrawn   (approval count unchanged)
+
+Any other (state, event) combination is invalid.
+
+### The `:approve` event
+
+`:approve` is only valid from `:in_review`. Applying it **increments the approval count by 1**,
+then:
+
+  - If the new count is **less than** the configured required number of approvals, the entity
+    **stays in** `:in_review` (a transition row is still recorded, with `from_state` and
+    `to_state` both `:in_review` and the new count).
+  - If the new count is **greater than or equal to** the required number of approvals, the entity
+    transitions to `:approved` with that count.
+
+The required number of approvals is configured on the server (see `start_link/1`).
+
+## Public API
+
+- `StateMachine.start_link(opts)` — starts the GenServer. Accepts a `:repo` option (an Ecto repo
+  module), an optional `:required_approvals` option (a positive integer; **defaults to 2** when
+  not supplied), and an optional `:name` option for process registration.
+
+- `StateMachine.start(server, entity_id)` — loads the latest persisted state **and approval
+  count** for the given entity from the database. If no record exists, the entity starts in the
+  `:draft` state with an approval count of 0. Returns `{:ok, current_state, approval_count}`.
+
+- `StateMachine.get_state(server, entity_id)` — returns `{:ok, current_state, approval_count}`
+  for a previously started entity, or `{:error, :not_found}` if the entity has never been started
+  in this session.
+
+- `StateMachine.transition(server, entity_id, event)` — attempts to apply `event`.
+  - If valid: persists a transition row (new state + event + resulting approval count), updates
+    in-memory state, and returns `{:ok, new_state, new_approval_count}`.
+  - If the (state, event) pair is not valid: returns `{:error, :invalid_transition}` and writes
+    nothing.
+  - If the entity has not been started yet: returns `{:error, :not_found}`.
+
+- `StateMachine.history(server, entity_id)` — returns `{:ok, list}` where list is every recorded
+  transition for that entity in chronological (insertion) order. Each entry is a map with keys
+  `:event`, `:from_state`, `:to_state`, `:approvals`, and `:inserted_at`.
+
+## Persistence
+
+Use Ecto. Assume the caller supplies a configured Ecto repo. The relevant table is
+`entity_transitions` with these columns:
+
+  - `id` — bigint primary key (auto-increment)
+  - `entity_id` — string, non-null, indexed
+  - `event` — string (the atom serialised as a string), non-null
+  - `from_state` — string, non-null
+  - `to_state` — string, non-null
+  - `approvals` — integer, non-null (the approval count *after* this transition)
+  - `inserted_at` — utc_datetime_usec, non-null
+
+Provide:
+  1. The `EntityTransition` Ecto schema module.
+  2. An Ecto migration file that creates the table.
+  3. The `StateMachine` GenServer module.
+
+The GenServer keeps an in-memory map of `%{entity_id => {current_state, approval_count}}`. On
+`start/2`, it queries the DB for the most recent row for that entity and derives both the current
+`to_state` and the current `approvals` value. On restart, the in-memory map is empty, so the next
+`start/2` re-hydrates from the DB — including a partially-approved entity's mid-review count.
+
+## Concurrency
+
+`transition/3` must be implemented as a `call` (not a cast) so that concurrent callers serialize
+through the GenServer. Because the increment-and-check happens inside `handle_call`, a burst of
+concurrent `:approve` calls is applied one at a time: the count climbs deterministically and the
+entity flips to `:approved` on exactly the call that reaches the required threshold; any further
+`:approve` calls after that (from the terminal `:approved` state) are `:invalid_transition`.
+
+## Error Handling
+
+- DB write failures in `transition/3` should return `{:error, {:db_error, reason}}` and must NOT
+  update the in-memory state.
+
+## Deliverables
+
+Give me all three modules/files in clearly separated blocks. Use only Ecto (plus its adapters) as
+the external dependency — no additional libraries.
+
+## Additional interface contract
+
+- The test environment provides a real, already-configured SQLite Ecto repo and injects it into
+  your GenServer via the `repo:` option — do NOT define a repo module or any repo configuration.
+  Your migration file must be at a `priv/repo/migrations/<name>.exs` path: it is executed against
+  that repo before the tests run, so the schema/migration must be valid for SQLite (plain
+  `Ecto.Migration`, no database-specific SQL).
+
+=== WHOLE MODULE ===
+```elixir
+defmodule EntityTransition do
+  @moduledoc """
+  Ecto schema for a single persisted state-machine transition.
+
+  Every successful `StateMachine.transition/3` (and every intermediate
+  approval step) writes exactly one row into the `entity_transitions`
+  table. A row captures the event that was applied, the state the entity
+  moved from and to, and the approval counter *after* the transition.
+  """
+
+  use Ecto.Schema
+
+  @type t :: %__MODULE__{}
+
+  schema "entity_transitions" do
+    field(:entity_id, :string)
+    field(:event, :string)
+    field(:from_state, :string)
+    field(:to_state, :string)
+    field(:approvals, :integer)
+    field(:inserted_at, :utc_datetime_usec)
+  end
+end
+
+defmodule Repo.Migrations.CreateEntityTransitions do
+  @moduledoc """
+  Migration that creates the `entity_transitions` table used to persist
+  every state-machine transition, together with an index on `entity_id`
+  so per-entity look-ups stay fast.
+
+  Written with plain `Ecto.Migration` primitives so it is valid across
+  adapters (including SQLite) with no database-specific SQL.
+  """
+
+  use Ecto.Migration
+
+  @doc """
+  Create the `entity_transitions` table and its `entity_id` index.
+  """
+  @spec change() :: :ok
+  def change do
+    create table(:entity_transitions) do
+      add(:entity_id, :string, null: false)
+      add(:event, :string, null: false)
+      add(:from_state, :string, null: false)
+      add(:to_state, :string, null: false)
+      add(:approva (truncated)
+07:42:11.500 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `load_latest/2` function. It takes the Ecto `repo` module and an
+`entity_id` string, and returns a `{current_state, approval_count}` tuple describing the
+entity's most recently persisted position in the workflow.
+
+Build an `Ecto.Query` (using the imported `from/2`) over `EntityTransition` that filters to
+rows whose `entity_id` matches the given `entity_id`, orders the rows by `id` descending, and
+limits the result to a single row — the newest transition. Fetch it with `repo.one/1`.
+
+If no row exists (the query returns `nil`), the entity has no history, so return `{:draft, 0}`
+— the default starting state with an approval count of `0`. Otherwise, derive the current state
+from the fetched row's `to_state` string (convert it back to an atom with `String.to_atom/1`)
+and read the current approval count from the row's `approvals` field, returning
+`{state_atom, approvals}`.
+
+```elixir
+defmodule EntityTransition do
+  @moduledoc """
+  Ecto schema for a single persisted state-machine transition.
+
+  Every successful `StateMachine.transition/3` (and every intermediate
+  approval step) writes exactly one row into the `entity_transitions`
+  table. A row captures the event that was applied, the state the entity
+  moved from and to, and the approval counter *after* the transition.
+  """
+
+  use Ecto.Schema
+
+  @type t :: %__MODULE__{}
+
+  schema "entity_transitions" do
+    field(:entity_id, :string)
+    field(:event, :string)
+    field(:from_state, :string)
+    field(:to_state, :string)
+    field(:approvals, :integer)
+    field(:inserted_at, :utc_datetime_usec)
+  end
+end
+
+defmodule Repo.Migrations.CreateEntityTransitions do
+  @moduledoc """
+  Migration that creates the `entity_transitions` table used to persist
+  every state-machine transition, together with an index on `entity_id`
+  so per-entity look-ups stay fast.
+
+  Written with plain `Ecto.Migration` primitives so it is valid across
+  adapters (including SQLite) with no database-specific SQL.
+  """
+
+  use Ecto.Migration
+
+  @doc """
+  Create the `entity_transitions` table and its `entity_id` index.
+  """
+  @spec change() :: :ok
+  def change do
+    create table(:entity_transitions) do
+      add(:entity_id, :string, null: false)
+      add(:event, :string, null: false)
+      add(:from_state, :string, null: false)
+      add(:to_state, :string, null: false)
+      add(:approvals, :integer, null: false)
+      add(:inserted_at, :utc_datetime_usec, null: false)
+    end
+
+    create(index(:entity_transitions, [:entity_id]))
+
+    :ok
+  end
+end
+
+defmodule StateMachine do
+  @moduledoc """
+  GenServer that manages the lifecycle of stateful entities following a
+  change-request review workflow, persisting every transition to a
+  database via an injected Ecto repo.
+
+  ## States
+
+    * `:draft`
+    * `:in_review`
+    * `:approved`
+    * `:rejected`
+    * `:withdrawn`
+
+  Each entity also carries a non-negative integer approval count.
+
+  ## Transitions
+
+    * `:draft`     + `:submit`   -> `:in_review` (count reset to 0)
+    * `:in_review` + `:approve`  -> increments the count, then either
+      stays in `:in_review` (count below the required threshold) or
+      moves to `:approved` (count at/above the threshold)
+    * `:in_review` + `:reject`   -> `:rejected` (count unchanged)
+    * `:draft`     + `:withdraw` -> `:withdrawn` (count unchanged)
+    * `:in_review` + `:withdraw` -> `:withdrawn` (count unchanged)
+
+  Any other `(state, event)` pair is invalid.
+
+  The number of approvals required to reach `:approved` is configured on
+  the server via `start_link/1` (defaults to `2`).
+
+  The server keeps an in-memory map of
+  `%{entity_id => {current_state, approval_count}}`. On restart the map is
+  empty, so the next `start/2` re-hydrates from the database — including a
+  partially-approved entity's mid-review count.
+  """
+
+  use GenServer
+
+  import Ecto.Query, only: [from: 2]
+
+  @type state_name :: :draft | :in_review | :approved | :rejected | :withdrawn
+  @type event :: :submit | :approve | :reject | :withdraw
+  @type server :: GenServer.server()
+
+  @default_required_approvals 2
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Start the state-machine server.
+
+  Options:
+
+    * `:repo` (required) — a configured Ecto repo module used for all
+      persistence.
+    * `:required_approvals` — a positive integer number of approvals
+      needed to reach `:approved`. Defaults to `2`.
+    * `:name` — optional process name for registration.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, init_opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, init_opts, gen_opts)
+  end
+
+  @doc """
+  Load the latest persisted state and approval count for `entity_id`.
+
+  If no record exists, the entity starts in `:draft` with an approval
+  count of `0`. Returns `{:ok, current_state, approval_count}`.
+  """
+  @spec start(server(), String.t()) :: {:ok, state_name(), non_neg_integer()}
+  def start(server, entity_id) do
+    GenServer.call(server, {:start, entity_id})
+  end
+
+  @doc """
+  Return `{:ok, current_state, approval_count}` for a previously started
+  entity, or `{:error, :not_found}` if it has never been started in this
+  session.
+  """
+  @spec get_state(server(), String.t()) ::
+          {:ok, state_name(), non_neg_integer()} | {:error, :not_found}
+  def get_state(server, entity_id) do
+    GenServer.call(server, {:get_state, entity_id})
+  end
+
+  @doc """
+  Attempt to apply `event` to `entity_id`.
+
+  On a valid transition, persists a transition row (new state + event +
+  resulting approval count), updates the in-memory state and returns
+  `{:ok, new_state, new_approval_count}`.
+
+  Returns `{:error, :invalid_transition}` (writing nothing) for an invalid
+  `(state, event)` pair, `{:error, :not_found}` if the entity has not been
+  started, or `{:error, {:db_error, reason}}` if persistence fails (the
+  in-memory state is left unchanged in that case).
+  """
+  @spec transition(server(), String.t(), event()) ::
+          {:ok, state_name(), non_neg_integer()}
+          | {:error, :invalid_transition | :not_found | {:db_error, term()}}
+  def transition(server, entity_id, event) do
+    GenServer.call(server, {:transition, entity_id, event})
+  end
+
+  @doc """
+  Return `{:ok, list}` with every recorded transition for `entity_id` in
+  chronological (insertion) order.
+
+  Each entry is a map with keys `:event`, `:from_state`, `:to_state`,
+  `:approvals` and `:inserted_at`.
+  """
+  @spec history(server(), String.t()) :: {:ok, [map()]}
+  def history(server, entity_id) do
+    GenServer.call(server, {:history, entity_id})
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  @spec init(keyword()) :: {:ok, map()}
+  def init(opts) do
+    repo = Keyword.fetch!(opts, :repo)
+    required = Keyword.get(opts, :required_approvals, @default_required_approvals)
+
+    {:ok, %{repo: repo, required: required, entities: %{}}}
+  end
+
+  @impl true
+  def handle_call({:start, entity_id}, _from, state) do
+    {current_state, approvals} = load_latest(state.repo, entity_id)
+    entities = Map.put(state.entities, entity_id, {current_state, approvals})
+
+    {:reply, {:ok, current_state, approvals}, %{state | entities: entities}}
+  end
+
+  def handle_call({:get_state, entity_id}, _from, state) do
+    case Map.fetch(state.entities, entity_id) do
+      {:ok, {current_state, approvals}} ->
+        {:reply, {:ok, current_state, approvals}, state}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:transition, entity_id, event}, _from, state) do
+    case Map.fetch(state.entities, entity_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      (truncated)
+07:42:11.501 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10256, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10256, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 10256, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 10256, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 4731, "type" => "message"}], "output_tokens" => 4731, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+07:42:11.521 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_102_004_threshold_approval_persisted_state_machine_04/102_004_threshold_approval_persisted_state_machine_04 solution.ex
+07:42:12.470 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":14,"lines_over_98":0,"max_line_length":78,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"102_004_threshold_approval_persisted_state_machine_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_102_004_threshold_approval_persisted_state_machine_04/102_004_threshold_approval_persisted_state_machine_04/solution.ex","task":"102_004_threshold_approval_persisted_state_machine_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-11T05:42:12.448675Z"}
+07:42:12.471 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_102_004_threshold_approval_persisted_state_machine_04/102_004_threshold_approval_persisted_state_machine_04 .gen_staging/fim_102_004_threshold_approval_persisted_state_machine_04/mutant.ex
+07:42:13.436 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":76,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"parent":"102_004_threshold_approval_persisted_state_machine_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.7,"mode":"fim","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 12/15 failed"],"tests":0.2},"shape":"fim","solution_file":".gen_staging/fim_102_004_threshold_approval_persisted_state_machine_04/mutant.ex","task":"102_004_threshold_approval_persisted_state_machine_04","test_failures":[{"message":"{:EXIT, #PID<0.232.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest, 2, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 295, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 194]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test start/2 returns :draft with 0 approvals for a brand-new entity"},{"message":"{:EXIT, #PID<0.242.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest, 2, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 295, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 194]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test submit moves draft to in_review with count reset to 0"},{"message":"{:EXIT, #PID<0.247.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest, 2, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 295, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 194]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test approve stays in_review until the required count, then flips to approved"},{"message":"{:EXIT, #PID<0.252.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest, 2, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 295, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 194]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test reject from in_review"},{"message":"{:EXIT, #PID<0.257.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest, 2, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 295, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 194]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test withdraw from draft and from in_review"},{"message":"{:EXIT, #PID<0.262.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest, 2, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 295, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 194]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test required_approvals option changes the threshold"},{"message":"{:EXIT, #PID<0.268.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest, 2, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 295, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 194]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test approve from draft is invalid"},{"message":"{:EXIT, #PID<0.273.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest, 2, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 295, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 194]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test approved is terminal: further events are invalid"},{"message":"{:EXIT, #PID<0.283.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest, 2, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 295, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 194]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test invalid transition writes nothing"},{"message":"{:EXIT, #PID<0.288.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest, 2, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 295, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 194]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test history records event, states, and approvals in order"},{"message":"{:EXIT, #PID<0.298.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest, 2, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 295, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 194]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test start/2 re-hydrates a mid-review approval count after restart"},{"message":"{:EXIT, #PID<0.304.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StateMachine, :load_latest, 2, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 295, error_info: %{module: Exception}]}, {StateMachine, :handle_call, 3, [file: ~c\"/tmp/evalfim_1517099_2630.ex\", line: 194]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StateMachineTest","test":"test concurrent approvals climb to the threshold exactly once"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":3,"tes (truncated)
+07:42:13.436 [debug] fim mutation gate: killed
+07:42:13.437 [info] promoted 102_004_threshold_approval_persisted_state_machine_04 -> tasks/102_004_threshold_approval_persisted_state_machine_04

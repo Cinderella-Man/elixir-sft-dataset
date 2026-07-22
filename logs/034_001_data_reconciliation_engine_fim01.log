@@ -1,0 +1,390 @@
+04:25:18.540 [info] FIM 034_001_data_reconciliation_engine_fim01 → 034_001_data_reconciliation_engine_02: target diff/3
+04:25:18.540 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+04:25:18.540 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `diff/3`.
+
+Generate a prompt describing how to implement `diff/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `diff/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `diff/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `diff/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `Reconciler` that takes two lists of records and reconciles them by a shared key, producing a structured diff.
+
+I need these functions in the public API:
+
+- `Reconciler.reconcile(left, right, opts)` where `left` and `right` are lists of maps, and `opts` is a keyword list. It should return a map with three keys:
+  - `:matched` — a list of `%{left: record, right: record, differences: diff_map}` entries for records present in both lists. `diff_map` is a map of `%{field => %{left: val, right: val}}` for any fields whose values differ. It is empty if the records are identical on all compared fields.
+  - `:only_in_left` — a list of records present in `left` but absent in `right`.
+  - `:only_in_right` — a list of records present in `right` but absent in `left`.
+
+The `opts` keyword list must support:
+- `:key_fields` (required) — a list of atoms that together form the composite key used to match records across the two lists (e.g., `[:id]` or `[:org_id, :user_id]`).
+- `:compare_fields` (optional) — a list of atoms specifying which fields to diff on matched records. If omitted or `nil`, all fields except the key fields are compared.
+
+Behaviour requirements:
+- Key matching must be exact. Two records match if and only if all key fields have equal values.
+- Composite keys must work correctly — `[:org_id, :user_id]` should only match records where both fields are equal.
+- Field comparison must be value-exact (using `==`).
+- Records in `:matched` must include both the original left and right record in full, even if some fields are excluded from comparison.
+- If a `compare_fields` field is missing from one or both records, treat the missing value as `nil` and diff accordingly.
+- Order of results does not matter.
+- The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
+
+Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff.
+
+  ## Example
+
+      left  = [%{id: 1, name: "Alice", age: 30}, %{id: 2, name: "Bob", age: 25}]
+      right = [%{id: 1, name: "Alice", age: 31}, %{id: 3, name: "Carol", age: 28}]
+
+      Reconciler.reconcile(left, right, key_fields: [:id])
+      #=> %{
+      #=>   matched: [
+      #=>     %{
+      #=>       left: %{id: 1, name: "Alice", age: 30},
+      #=>       right: %{id: 1, name: "Alice", age: 31},
+      #=>       differences: %{age: %{left: 30, right: 31}}
+      #=>     }
+      #=>   ],
+      #=>   only_in_left:  [%{id: 2, name: "Bob",   age: 25}],
+      #=>   only_in_right: [%{id: 3, name: "Carol",  age: 28}]
+      #=> }
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @type matched_entry :: %{
+          left: record(),
+          right: record(),
+          differences: diff_map()
+        }
+
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` lists of maps by the composite key defined in `opts`.
+
+  ## Options
+
+    * `:key_fields` (required) — list of atoms forming the composite match key,
+      e.g. `[:id]` or `[:org_id, :user_id]`.
+
+    * `:compare_fields` (optional) — list of atoms to diff on matched pairs.
+      Defaults to all fields present in either record, minus the key fields.
+
+  ## Return value
+
+  A map with three keys:
+
+    * `:matched`       — pairs found in both lists, each with a `differences` map.
+    * `:only_in_left`  — records found only in `left`.
+    * `:only_in_right` — records found only in `right`.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields_opt = Keyword.get(opts, :compare_fields, nil)
+
+    # Index both sides by composite key — last write wins for duplicate keys,
+    # consistent with a pure functional, side-effect-free contract.
+    left_index = index_by(left, key_fields)
+    right_index = index_by(right, key_fields)
+
+    left_keys = MapSet.new(Map.keys(left_index))
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      matched_keys
+      |> Enum.map(fn key ->
+        l = Map.fetch!(left_index, key)
+        r = Map.fetch!(right_index, key)
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields_opt)
+        %{left: l, right: r, differences: diff(l, r, fields)}
+      end)
+
+    only_in_left = Enum.map(only_left_keys, &Map.fetch!(left_index, &1))
+    only_in_right = Enum.map(only_right_keys, &Map.fetch!(right_index, &1))
+
+    %{matched: matched, only_in_left: only_in_left, only_in_right: only_in_right}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Validates and returns :key_fields from opts, raising on bad input.
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        unless Enum.all?(fields, &is_atom/1) do
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+        fields
+
+      {:ok, _} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  # Builds a map of composite_key => record for fast O(1) lookups.
+  # The composite key is a tuple of the values at the key fields in order,
+  # e.g. {org_id_val, user_id_val}.  A single-field key uses a 1-tuple so
+  # the representation is uniform and avoids collisions with plain values.
+  @spec index_by([record()], [atom()]) :: %{tuple() => record()}
+  defp index_by(records, key_fields) do
+    Map.new(records, fn record ->
+      {composite_key(record, key_fields), record}
+    end)
+  end
+
+  @spec composite_key(record(), [atom()]) :: tuple()
+  defp composite_key(record, key_fields) do
+    key_fields
+    |> Enum.map(&Map.get(record, &1))
+    |> List.to_tuple()
+  end
+
+  # Determines which fields to compare for a matched pair.
+  # If compare_fields is explicitly provided, use it directly.
+  # Otherwise, derive it as: (all keys in left ∪ right) minus key_fields.
+  @spec resolve_compare_fields(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  defp resolve_compare_fields(_left, _right, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    all_fields =
+      (Map.keys (truncated)
+04:25:46.890 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `diff/3` function.
+
+It receives three arguments: `left` (a record map), `right` (a record map), and
+`fields` (a list of atom field names to compare). It must compare `left` and
+`right` on each field in `fields` using value-exact equality (`==`), treating a
+field that is missing from either record as `nil`. It returns a `diff_map` —
+`%{field => %{left: left_value, right: right_value}}` — containing an entry for
+every field whose values differ, and no entry for fields whose values are equal.
+If no fields differ, it returns an empty map (`%{}`). The function must be pure:
+no processes, no side effects, standard library only.
+
+```elixir
+defmodule Reconciler do
+  @moduledoc """
+  Reconciles two lists of records by a composite key, producing a structured diff.
+
+  ## Example
+
+      left  = [%{id: 1, name: "Alice", age: 30}, %{id: 2, name: "Bob", age: 25}]
+      right = [%{id: 1, name: "Alice", age: 31}, %{id: 3, name: "Carol", age: 28}]
+
+      Reconciler.reconcile(left, right, key_fields: [:id])
+      #=> %{
+      #=>   matched: [
+      #=>     %{
+      #=>       left: %{id: 1, name: "Alice", age: 30},
+      #=>       right: %{id: 1, name: "Alice", age: 31},
+      #=>       differences: %{age: %{left: 30, right: 31}}
+      #=>     }
+      #=>   ],
+      #=>   only_in_left:  [%{id: 2, name: "Bob",   age: 25}],
+      #=>   only_in_right: [%{id: 3, name: "Carol",  age: 28}]
+      #=> }
+  """
+
+  @type record :: map()
+  @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
+
+  @type matched_entry :: %{
+          left: record(),
+          right: record(),
+          differences: diff_map()
+        }
+
+  @type result :: %{
+          matched: [matched_entry()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @doc """
+  Reconciles `left` and `right` lists of maps by the composite key defined in `opts`.
+
+  ## Options
+
+    * `:key_fields` (required) — list of atoms forming the composite match key,
+      e.g. `[:id]` or `[:org_id, :user_id]`.
+
+    * `:compare_fields` (optional) — list of atoms to diff on matched pairs.
+      Defaults to all fields present in either record, minus the key fields.
+
+  ## Return value
+
+  A map with three keys:
+
+    * `:matched`       — pairs found in both lists, each with a `differences` map.
+    * `:only_in_left`  — records found only in `left`.
+    * `:only_in_right` — records found only in `right`.
+  """
+  @spec reconcile([record()], [record()], keyword()) :: result()
+  def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
+    key_fields = fetch_key_fields!(opts)
+    compare_fields_opt = Keyword.get(opts, :compare_fields, nil)
+
+    # Index both sides by composite key — last write wins for duplicate keys,
+    # consistent with a pure functional, side-effect-free contract.
+    left_index = index_by(left, key_fields)
+    right_index = index_by(right, key_fields)
+
+    left_keys = MapSet.new(Map.keys(left_index))
+    right_keys = MapSet.new(Map.keys(right_index))
+
+    matched_keys = MapSet.intersection(left_keys, right_keys)
+    only_left_keys = MapSet.difference(left_keys, right_keys)
+    only_right_keys = MapSet.difference(right_keys, left_keys)
+
+    matched =
+      matched_keys
+      |> Enum.map(fn key ->
+        l = Map.fetch!(left_index, key)
+        r = Map.fetch!(right_index, key)
+        fields = resolve_compare_fields(l, r, key_fields, compare_fields_opt)
+        %{left: l, right: r, differences: diff(l, r, fields)}
+      end)
+
+    only_in_left = Enum.map(only_left_keys, &Map.fetch!(left_index, &1))
+    only_in_right = Enum.map(only_right_keys, &Map.fetch!(right_index, &1))
+
+    %{matched: matched, only_in_left: only_in_left, only_in_right: only_in_right}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  # Validates and returns :key_fields from opts, raising on bad input.
+  defp fetch_key_fields!(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      {:ok, fields} when is_list(fields) and fields != [] ->
+        unless Enum.all?(fields, &is_atom/1) do
+          raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+        end
+
+        fields
+
+      {:ok, _} ->
+        raise ArgumentError, ":key_fields must be a non-empty list of atoms"
+
+      :error ->
+        raise ArgumentError, "required option :key_fields is missing"
+    end
+  end
+
+  # Builds a map of composite_key => record for fast O(1) lookups.
+  # The composite key is a tuple of the values at the key fields in order,
+  # e.g. {org_id_val, user_id_val}.  A single-field key uses a 1-tuple so
+  # the representation is uniform and avoids collisions with plain values.
+  @spec index_by([record()], [atom()]) :: %{tuple() => record()}
+  defp index_by(records, key_fields) do
+    Map.new(records, fn record ->
+      {composite_key(record, key_fields), record}
+    end)
+  end
+
+  @spec composite_key(record(), [atom()]) :: tuple()
+  defp composite_key(record, key_fields) do
+    key_fields
+    |> Enum.map(&Map.get(record, &1))
+    |> List.to_tuple()
+  end
+
+  # Determines which fields to compare for a matched pair.
+  # If compare_fields is explicitly provided, use it directly.
+  # Otherwise, derive it as: (all keys in left ∪ right) minus key_fields.
+  @spec resolve_compare_fields(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  defp resolve_compare_fields(_left, _right, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
+    all_fields =
+      (Map.keys(left) ++ Map.keys(right))
+      |> Enum.uniq()
+
+    key_set = MapSet.new(key_fields)
+    Enum.reject(all_fields, &MapSet.member?(key_set, &1))
+  end
+
+  # Compares `left` and `right` on the given fields using `==`.
+  # Missing fields are treated as nil.
+  @spec diff(record(), record(), [atom()]) :: diff_map()
+  defp diff(left, right, fields) do
+    # TODO
+  end
+end
+```
+</file>
+
+<file path="solution.ex">
+  # Compares `left` and `right` on the given fields using `==`.
+  # Missing fields are treated as nil.
+  @spec diff(record(), record(), [atom()]) :: diff_map()
+  defp diff(left, right, fields) do
+    Enum.reduce(fields, %{}, fn field, acc ->
+      lv = Map.get(left, field)
+      rv = Map.get(right, field)
+
+      if lv == rv do
+        acc
+      else
+        Map.put(acc, field, %{left: lv, right: rv})
+      end
+    end)
+  end
+</file>
+04:25:46.890 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3734, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3734, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3734, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3734, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2729, "type" => "message"}], "output_tokens" => 2729, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+04:25:46.910 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_034_001_data_reconciliation_engine_02/034_001_data_reconciliation_engine_02 solution.ex
+04:25:47.609 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":15,"lines_over_98":0,"max_line_length":63,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"parent":"034_001_data_reconciliation_engine_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.9,"mode":"fim","overall":0.99,"reasons":["compilation: 1 warning(s) → -0.1 pts"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_034_001_data_reconciliation_engine_02/034_001_data_reconciliation_engine_02/solution.ex","task":"034_001_data_reconciliation_engine_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":16,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-04T02:25:47.584279Z"}
+04:25:47.609 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_034_001_data_reconciliation_engine_02/034_001_data_reconciliation_engine_02 .gen_staging/fim_034_001_data_reconciliation_engine_02/mutant.ex
+04:25:48.295 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":4,"lines_over_98":0,"max_line_length":54,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"parent":"034_001_data_reconciliation_engine_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.6,"mode":"fim","overall":0.43,"reasons":["compilation: 4 warning(s) → -0.4 pts","tests: 12/16 failed"],"tests":0.25},"shape":"fim","solution_file":".gen_staging/fim_034_001_data_reconciliation_engine_02/mutant.ex","task":"034_001_data_reconciliation_engine_02","test_failures":[{"message":"MUTATION","module":"ReconcilerTest","test":"test records present in both lists appear in :matched"},{"message":"MUTATION","module":"ReconcilerTest","test":"test records only in left appear in :only_in_left"},{"message":"MUTATION","module":"ReconcilerTest","test":"test records only in right appear in :only_in_right"},{"message":"MUTATION","module":"ReconcilerTest","test":"test identical matched records have empty differences map"},{"message":"MUTATION","module":"ReconcilerTest","test":"test differing fields are reported correctly"},{"message":"MUTATION","module":"ReconcilerTest","test":"test matched entry carries full original records regardless of diffs"},{"message":"MUTATION","module":"ReconcilerTest","test":"test compare_fields restricts which fields are diffed"},{"message":"MUTATION","module":"ReconcilerTest","test":"test compare_fields still diffs the specified fields"},{"message":"MUTATION","module":"ReconcilerTest","test":"test when compare_fields is omitted, all non-key fields are compared"},{"message":"MUTATION","module":"ReconcilerTest","test":"test composite key matches only when all key fields are equal"},{"message":"MUTATION","module":"ReconcilerTest","test":"test a field missing from one record is diffed as nil vs present value"},{"message":"MUTATION","module":"ReconcilerTest","test":"test mixed scenario with matches, diffs, and uniques"}],"tests_errors":0,"tests_excluded":0,"tests_failed":12,"tests_passed":4,"tests_ran":true,"tests_skipped":0,"tests_total":16,"timestamp":"2026-07-04T02:25:48.269972Z"}
+04:25:48.295 [debug] fim mutation gate: killed
+04:25:48.296 [info] promoted 034_001_data_reconciliation_engine_02 -> tasks/034_001_data_reconciliation_engine_02

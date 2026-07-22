@@ -1,0 +1,700 @@
+22:03:30.245 [info] VARIATION 034_003_rule_driven_tolerant_reconciler_with_compiled_config_01: Rule-Driven Tolerant Reconciler with Compiled Config
+22:03:30.245 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+22:03:30.245 [debug] claude -p USER prompt:
+Write me an Elixir module called `TolerantReconciler` that reconciles two lists of records using **per-field comparison rules** instead of strict equality — so a 0.005 rounding difference on a money column or a stray capital letter in a name does not count as a mismatch.
+
+The module is split into a validated-configuration stage and an execution stage.
+
+## Public API
+
+- `TolerantReconciler.compile(opts)` — validates a keyword list and returns `{:ok, config}` or `{:error, reason}`.
+- `TolerantReconciler.run(config, left, right)` — runs the reconciliation, where `left` and `right` are lists of maps. Returns a report map.
+- `TolerantReconciler.field_summary(report)` — takes a report from `run/3` and returns a map of `%{field => number_of_matched_pairs_where_it_differed}`.
+
+## compile/1 options
+
+- `:key_fields` (required) — a non-empty list of atoms forming the composite key.
+- `:compare_fields` (optional) — a list of atoms to compare on matched pairs. If omitted or `nil`, compare every field present in either record of the pair, minus the key fields.
+- `:rules` (optional) — a keyword list of `field => rule`. Any compared field with no entry here uses the `:exact` rule. Defaults to `[]`.
+
+### Rules
+
+- `:exact` — the values differ unless `left == right`.
+- `{:numeric, tolerance}` — `tolerance` must be a number `>= 0`. If **both** values are numbers, they are considered equal when `abs(left - right) <= tolerance`. If either value is not a number, fall back to `==`.
+- `:case_insensitive` — if **both** values are binaries, they are considered equal when their trimmed, downcased forms are equal (`String.trim/1` then `String.downcase/1`). If either value is not a binary, fall back to `==`.
+- `:ignore` — the field is never compared and can never appear in a differences map, even if it is listed in `:compare_fields`.
+
+### compile/1 errors
+
+Return exactly these error tuples (first failure wins is not required — any one of the applicable errors is acceptable when several apply):
+
+- `{:error, :missing_key_fields}` — `:key_fields` is absent.
+- `{:error, :invalid_key_fields}` — `:key_fields` is present but is not a non-empty list of atoms.
+- `{:error, :invalid_compare_fields}` — `:compare_fields` is present, not `nil`, and is not a list of atoms.
+- `{:error, :invalid_rules}` — `:rules` is not a keyword list (a list of `{atom, term}` pairs).
+- `{:error, {:invalid_rule, field}}` — the rule given for `field` is not one of the four rules above (including a `{:numeric, tolerance}` whose tolerance is not a number `>= 0`).
+
+On success the return is `{:ok, config}`. The shape of `config` is up to you — treat it as opaque; it is only ever passed back into `run/3`.
+
+## run/3 report
+
+Records are matched across the two lists by **exact** equality on all key fields (comparison rules apply to compared fields only, never to key fields). A key field missing from a record is treated as `nil`. If a key repeats within one list, the last record with that key wins.
+
+`run(config, left, right)` returns a map with three keys:
+
+- `:matched` — a list of `%{left: record, right: record, differences: diff_map}` for keys present on both sides. `diff_map` is `%{field => %{left: left_value, right: right_value, rule: rule}}` for every compared field whose values differ **under its rule**, where `rule` is the rule that was applied (`:exact` when the field had no entry in `:rules`). `diff_map` is `%{}` when the pair agrees under all rules. A compared field missing from a record is treated as `nil`. The `:left` and `:right` records are the full originals.
+- `:only_in_left` — records whose key appears only in `left`.
+- `:only_in_right` — records whose key appears only in `right`.
+
+Order of results does not matter.
+
+## field_summary/1
+
+Given a report from `run/3`, return a map from field name to the number of entries in `:matched` whose `differences` map contains that field. Fields that never differed are **omitted** from the map (so an all-clean report gives `%{}`).
+
+## Constraints
+
+- Pure functions — no processes, no side effects, no external dependencies. Elixir standard library only.
+
+Give me the complete module in a single file.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+22:04:08.403 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TolerantReconciler do
+  @moduledoc """
+  Reconciles two lists of record maps using per-field comparison rules rather than
+  strict equality.
+
+  The module is split into two stages:
+
+    * `compile/1` validates a keyword list of options and produces an opaque
+      configuration value.
+    * `run/3` executes a reconciliation of two lists of maps against that
+      configuration and returns a report.
+
+  Records are paired across the two lists by exact equality on the composite key
+  built from `:key_fields`. Comparison rules never apply to key fields. Compared
+  fields are checked with the rule configured for them (defaulting to `:exact`),
+  so a small numeric drift or a difference in letter case need not count as a
+  mismatch.
+
+  Supported rules:
+
+    * `:exact` — values differ unless `left == right`.
+    * `{:numeric, tolerance}` — when both values are numbers, they are equal when
+      `abs(left - right) <= tolerance`; otherwise falls back to `==`.
+    * `:case_insensitive` — when both values are binaries, they are equal when
+      their trimmed and downcased forms are equal; otherwise falls back to `==`.
+    * `:ignore` — the field is never compared.
+
+  All functions are pure: no processes, no side effects, no external dependencies.
+  """
+
+  @type field :: atom()
+  @type rule :: :exact | :ignore | :case_insensitive | {:numeric, number()}
+  @type record :: map()
+  @type difference :: %{left: term(), right: term(), rule: rule()}
+  @type differences :: %{optional(field()) => difference()}
+  @type matched_pair :: %{left: record(), right: record(), differences: differences()}
+  @type report :: %{
+          matched: [matched_pair()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @opaque config :: %__MODULE__{
+            key_fields: [field()],
+            compare_fields: [field()] | nil,
+            rules: %{optional(field()) => rule()}
+          }
+
+  @enforce_keys [:key_fields, :compare_fields, :rules]
+  defstruct [:key_fields, :compare_fields, :rules]
+
+  @doc """
+  Validates reconciliation options and returns an opaque configuration.
+
+  ## Options
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the composite key.
+    * `:compare_fields` (optional) — a list of atoms to compare on matched pairs. When
+      omitted or `nil`, every field present in either record of a pair is compared,
+      minus the key fields.
+    * `:rules` (optional) — a keyword list of `field => rule`. Compared fields without
+      an entry use the `:exact` rule. Defaults to `[]`.
+
+  Returns `{:ok, config}` or one of `{:error, :missing_key_fields}`,
+  `{:error, :invalid_key_fields}`, `{:error, :invalid_compare_fields}`,
+  `{:error, :invalid_rules}` or `{:error, {:invalid_rule, field}}`.
+
+  ## Examples
+
+      iex> {:ok, config} = TolerantReconciler.compile(key_fields: [:id])
+      iex> match?(%TolerantReconciler{}, config)
+      true
+
+      iex> TolerantReconciler.compile([])
+      {:error, :missing_key_fields}
+  """
+  @spec compile(keyword()) ::
+          {:ok, config()}
+          | {:error,
+             :missing_key_fields
+             | :invalid_key_fields
+             | :invalid_compare_fields
+             | :invalid_rules
+             | {:invalid_rule, field()}}
+  def compile(opts) when is_list(opts) do
+    with {:ok, key_fields} <- validate_key_fields(opts),
+         {:ok, compare_fields} <- validate_compare_fields(opts),
+         {:ok, rules} <- validate_rules(opts) do
+      {:ok,
+       %__MODULE__{
+         key_fields: key_fields,
+         compare_fields: compare_fields,
+         rules: rules
+       }}
+    end
+  end
+
+  def compile(_opts), do: {:error, :missing_key_fields}
+
+  @doc """
+  Reconciles `left` and `right` (lists of maps) using the compiled `config`.
+
+  Records are paired by exact equality on all key fields; a key field missing from a
+  record is treated as `nil`. When a key repeats within one list, the last record with
+  that key wins.
+
+  Returns a report map with:
+
+    * `:matched` — `%{left: record, right: record, differences: diff_map}` for every key
+      present on both sides, where `diff_map` maps each differing compared field to
+      `%{left: value, right: value, rule: rule}`.
+    * `:only_in_left` — records whose key appears only in `left`.
+    * `:only_in_right` — records whose key appears only in `right`.
+
+  ## Examples
+
+      iex> {:ok, config} =
+      ...>   TolerantReconciler.compile(key_fields: [:id], rules: [amount: {:numeric, 0.01}])
+      iex> report =
+      ...>   TolerantReconciler.run(config, [%{id: 1, amount: 10.0}], [%{id: 1, amount: 10.005}])
+      iex> Enum.map(report.matched, & &1.differences)
+      [%{}]
+  """
+  @spec run(config(), [record()], [record()]) :: report()
+  def run(%__MODULE__{} = config, left, right) when is_list(left) and is_list(right) do
+    left_index = index_by_key(left, config.key_fields)
+    right_index = index_by_key(right, config.key_fields)
+
+    left_keys = left_index |> Map.keys() |> MapSet.new()
+    right_keys = right_index |> Map.keys() |> MapSet.new()
+
+    matched =
+      left_keys
+      |> MapSet.intersection(right_keys)
+      |> Enum.map(fn key ->
+        left_record = Map.fetch!(left_index, key)
+        right_record = Map.fetch!(right_index, key)
+
+        %{
+          left: left_record,
+          right: right_record,
+          differences: diff_records(config, left_record, right_record)
+        }
+      end)
+
+    %{
+      matched: matched,
+      only_in_left: records_for(left_index, MapSet.difference(left_keys, right_keys)),
+      only_in_right: records_for(right_index, MapSet.difference(right_keys, left_keys))
+    }
+  end
+
+  @doc """
+  Summarises how often each field differed across the matched pairs of a report.
+
+  Returns a map of `%{field => number_of_matched_pairs_where_it_differed}`. Fields that
+  never differed are omitted, so an all-clean report yields `%{}`.
+
+  ## Examples
+
+      iex> {:ok, config} = TolerantReconciler.compile(key_fields: [:id])
+      iex> report = TolerantReconciler.run(config, [%{id: 1, name: "a"}], [%{id: 1, name: "b"}])
+      iex> TolerantReconciler.field_summary(report)
+      %{name: 1}
+  """
+  @spec field_summary(report()) :: %{optional(field()) => pos_integer()}
+  def field_summary(%{matched: matched}) when is_list(matched) do
+    Enum.reduce(matched, %{}, fn %{differences: differences}, acc ->
+      Enum.reduce(Map.keys(differences), acc, fn field, inner ->
+        Map.update(inner, field, 1, &(&1 + 1))
+      end)
+    end)
+  end
+
+  # -- validation ----------------------------------------------------------------
+
+  defp validate_key_fields(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      :error -> {:error, :missing_key_fields}
+      {:ok, [_ | _] = fields} -> if atoms?(fields), do: {:ok, fields}, else: key_error()
+      {:ok, _other} -> key_error()
+    end
+  end
+
+  defp key_error, do: {:error, :invalid_key_fields}
+
+  defp validate_compare_fields(opts) do
+    case Keyword.fetch(opts, :compare_fields) do
+      :error -> {:ok, nil}
+      {:ok, nil} -> {:ok, nil}
+      {:ok, fields} when is_list(fields) -> compare_fields_or_error(fields)
+      {:ok, _other} -> {:error, :invalid_compare_fields}
+    end
+  end
+
+  defp compare_fields_or_error(fields) do
+    if atoms?(fields), do: {:ok, fields}, else: {:error, :invalid_compare_fields}
+  end
+
+  defp validate_rules(opts) do
+    case Keyword.fetch(opts, :rules) do
+      :error -> {:ok, %{}}
+      {:ok, rules} when is_list(rules) -> build_rules(rules)
+      {:ok, _other} -> {:error, :invalid_rules}
+    end
+  end
+
+  defp build_rules(rules) do
+    if Keyword.keyword?(rules) do
+      Enum.reduce_while(rules, {:ok, %{}}, fn {field, rule}, {:ok, acc} ->
+        if valid_rule?(rule) do
+          {:cont, {:ok, Map.put(acc, field, rule)}}
+        else
+          {:halt, {:error, {:invalid_rule, field}}}
+        end
+      end)
+    else
+      {:error, :invalid_rules}
+    end
+  end
+
+  defp valid_rule?(:exact), do: true
+  defp valid_rule?(:ignore), do: true
+  defp valid_rule?(:case_insens (truncated)
+22:04:08.403 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5200, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5200, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5200, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5200, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 4068, "type" => "message"}], "output_tokens" => 4068, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+22:04:08.430 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01 solution.ex
+22:04:09.217 [debug] grade JSON: {"analysis":{"defp_count":23,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":288,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":14,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01/solution.ex","task":"034_003_rule_driven_tolerant_reconciler_with_compiled_config_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":29,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-12T20:04:09.182415Z","warning_details":["solution.ex: line 33: type record/0 is overriding a built-in type"]}
+22:04:09.222 [info] cycle 034_003_rule_driven_tolerant_reconciler_with_compiled_config_01: repairing — The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them (solution.ex: line 33: type record/0 is overriding a built-in type). Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+22:04:09.222 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+22:04:09.223 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: 1 compile warning(s) — silence them (solution.ex: line 33: type record/0 is overriding a built-in type). Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me an Elixir module called `TolerantReconciler` that reconciles two lists of records using **per-field comparison rules** instead of strict equality — so a 0.005 rounding difference on a money column or a stray capital letter in a name does not count as a mismatch.
+
+The module is split into a validated-configuration stage and an execution stage.
+
+## Public API
+
+- `TolerantReconciler.compile(opts)` — validates a keyword list and returns `{:ok, config}` or `{:error, reason}`.
+- `TolerantReconciler.run(config, left, right)` — runs the reconciliation, where `left` and `right` are lists of maps. Returns a report map.
+- `TolerantReconciler.field_summary(report)` — takes a report from `run/3` and returns a map of `%{field => number_of_matched_pairs_where_it_differed}`.
+
+## compile/1 options
+
+- `:key_fields` (required) — a non-empty list of atoms forming the composite key.
+- `:compare_fields` (optional) — a list of atoms to compare on matched pairs. If omitted or `nil`, compare every field present in either record of the pair, minus the key fields.
+- `:rules` (optional) — a keyword list of `field => rule`. Any compared field with no entry here uses the `:exact` rule. Defaults to `[]`.
+
+### Rules
+
+- `:exact` — the values differ unless `left == right`.
+- `{:numeric, tolerance}` — `tolerance` must be a number `>= 0`. If **both** values are numbers, they are considered equal when `abs(left - right) <= tolerance`. If either value is not a number, fall back to `==`.
+- `:case_insensitive` — if **both** values are binaries, they are considered equal when their trimmed, downcased forms are equal (`String.trim/1` then `String.downcase/1`). If either value is not a binary, fall back to `==`.
+- `:ignore` — the field is never compared and can never appear in a differences map, even if it is listed in `:compare_fields`.
+
+### compile/1 errors
+
+Return exactly these error tuples (first failure wins is not required — any one of the applicable errors is acceptable when several apply):
+
+- `{:error, :missing_key_fields}` — `:key_fields` is absent.
+- `{:error, :invalid_key_fields}` — `:key_fields` is present but is not a non-empty list of atoms.
+- `{:error, :invalid_compare_fields}` — `:compare_fields` is present, not `nil`, and is not a list of atoms.
+- `{:error, :invalid_rules}` — `:rules` is not a keyword list (a list of `{atom, term}` pairs).
+- `{:error, {:invalid_rule, field}}` — the rule given for `field` is not one of the four rules above (including a `{:numeric, tolerance}` whose tolerance is not a number `>= 0`).
+
+On success the return is `{:ok, config}`. The shape of `config` is up to you — treat it as opaque; it is only ever passed back into `run/3`.
+
+## run/3 report
+
+Records are matched across the two lists by **exact** equality on all key fields (comparison rules apply to compared fields only, never to key fields). A key field missing from a record is treated as `nil`. If a key repeats within one list, the last record with that key wins.
+
+`run(config, left, right)` returns a map with three keys:
+
+- `:matched` — a list of `%{left: record, right: record, differences: diff_map}` for keys present on both sides. `diff_map` is `%{field => %{left: left_value, right: right_value, rule: rule}}` for every compared field whose values differ **under its rule**, where `rule` is the rule that was applied (`:exact` when the field had no entry in `:rules`). `diff_map` is `%{}` when the pair agrees under all rules. A compared field missing from a record is treated as `nil`. The `:left` and `:right` records are the full originals.
+- `:only_in_left` — records whose key appears only in `left`.
+- `:only_in_right` — records whose key appears only in `right`.
+
+Order of results does not matter.
+
+## field_summary/1
+
+Given a report from `run/3`, return a map from field name to the number of entries in `:matched` whose `differences` map contains that field. Fields that never differed are **omitted** from the map (so an all-clean report gives `%{}`).
+
+## Constraints
+
+- Pure functions — no processes, no side effects, no external dependencies. Elixir standard library only.
+
+Give me the complete module in a single file.
+
+----- solution.ex -----
+defmodule TolerantReconciler do
+  @moduledoc """
+  Reconciles two lists of record maps using per-field comparison rules rather than
+  strict equality.
+
+  The module is split into two stages:
+
+    * `compile/1` validates a keyword list of options and produces an opaque
+      configuration value.
+    * `run/3` executes a reconciliation of two lists of maps against that
+      configuration and returns a report.
+
+  Records are paired across the two lists by exact equality on the composite key
+  built from `:key_fields`. Comparison rules never apply to key fields. Compared
+  fields are checked with the rule configured for them (defaulting to `:exact`),
+  so a small numeric drift or a difference in letter case need not count as a
+  mismatch.
+
+  Supported rules:
+
+    * `:exact` — values differ unless `left == right`.
+    * `{:numeric, tolerance}` — when both values are numbers, they are equal when
+      `abs(left - right) <= tolerance`; otherwise falls back to `==`.
+    * `:case_insensitive` — when both values are binaries, they are equal when
+      their trimmed and downcased forms are equal; otherwise falls back to `==`.
+    * `:ignore` — the field is never compared.
+
+  All functions are pure: no processes, no side effects, no external dependencies.
+  """
+
+  @type field :: atom()
+  @type rule :: :exact | :ignore | :case_insensitive | {:numeric, number()}
+  @type record :: map()
+  @type difference :: %{left: term(), right: term(), rule: rule()}
+  @type differences :: %{optional(field()) => difference()}
+  @type matched_pair :: %{left: record(), right: record(), differences: differences()}
+  @type report :: %{
+          matched: [matched_pair()],
+          only_in_left: [record()],
+          only_in_right: [record()]
+        }
+
+  @opaque config :: %__MODULE__{
+            key_fields: [field()],
+            compare_fields: [field()] | nil,
+            rules: %{optional(field()) => rule()}
+          }
+
+  @enforce_keys [:key_fields, :compare_fields, :rules]
+  defstruct [:key_fields, :compare_fields, :rules]
+
+  @doc """
+  Validates reconciliation options and returns an opaque configuration.
+
+  ## Options
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the composite key.
+    * `:compare_fields` (optional) — a list of atoms to compare on matched pairs. When
+      omitted or `nil`, every field present in either record of a pair is compared,
+      minus the key fields.
+    * `:rules` (optional) — a keyword list of `field => rule`. Compared fields without
+      an entry use the `:exact` rule. Defaults to `[]`.
+
+  Re (truncated)
+22:04:45.266 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TolerantReconciler do
+  @moduledoc """
+  Reconciles two lists of record maps using per-field comparison rules rather than
+  strict equality.
+
+  The module is split into two stages:
+
+    * `compile/1` validates a keyword list of options and produces an opaque
+      configuration value.
+    * `run/3` executes a reconciliation of two lists of maps against that
+      configuration and returns a report.
+
+  Records are paired across the two lists by exact equality on the composite key
+  built from `:key_fields`. Comparison rules never apply to key fields. Compared
+  fields are checked with the rule configured for them (defaulting to `:exact`),
+  so a small numeric drift or a difference in letter case need not count as a
+  mismatch.
+
+  Supported rules:
+
+    * `:exact` — values differ unless `left == right`.
+    * `{:numeric, tolerance}` — when both values are numbers, they are equal when
+      `abs(left - right) <= tolerance`; otherwise falls back to `==`.
+    * `:case_insensitive` — when both values are binaries, they are equal when
+      their trimmed and downcased forms are equal; otherwise falls back to `==`.
+    * `:ignore` — the field is never compared.
+
+  All functions are pure: no processes, no side effects, no external dependencies.
+  """
+
+  @type field :: atom()
+  @type rule :: :exact | :ignore | :case_insensitive | {:numeric, number()}
+  @type record_map :: map()
+  @type difference :: %{left: term(), right: term(), rule: rule()}
+  @type differences :: %{optional(field()) => difference()}
+  @type matched_pair :: %{
+          left: record_map(),
+          right: record_map(),
+          differences: differences()
+        }
+  @type report :: %{
+          matched: [matched_pair()],
+          only_in_left: [record_map()],
+          only_in_right: [record_map()]
+        }
+
+  @opaque config :: %__MODULE__{
+            key_fields: [field()],
+            compare_fields: [field()] | nil,
+            rules: %{optional(field()) => rule()}
+          }
+
+  @enforce_keys [:key_fields, :compare_fields, :rules]
+  defstruct [:key_fields, :compare_fields, :rules]
+
+  @doc """
+  Validates reconciliation options and returns an opaque configuration.
+
+  ## Options
+
+    * `:key_fields` (required) — a non-empty list of atoms forming the composite key.
+    * `:compare_fields` (optional) — a list of atoms to compare on matched pairs. When
+      omitted or `nil`, every field present in either record of a pair is compared,
+      minus the key fields.
+    * `:rules` (optional) — a keyword list of `field => rule`. Compared fields without
+      an entry use the `:exact` rule. Defaults to `[]`.
+
+  Returns `{:ok, config}` or one of `{:error, :missing_key_fields}`,
+  `{:error, :invalid_key_fields}`, `{:error, :invalid_compare_fields}`,
+  `{:error, :invalid_rules}` or `{:error, {:invalid_rule, field}}`.
+
+  ## Examples
+
+      iex> {:ok, config} = TolerantReconciler.compile(key_fields: [:id])
+      iex> match?(%TolerantReconciler{}, config)
+      true
+
+      iex> TolerantReconciler.compile([])
+      {:error, :missing_key_fields}
+  """
+  @spec compile(keyword()) ::
+          {:ok, config()}
+          | {:error,
+             :missing_key_fields
+             | :invalid_key_fields
+             | :invalid_compare_fields
+             | :invalid_rules
+             | {:invalid_rule, field()}}
+  def compile(opts) when is_list(opts) do
+    with {:ok, key_fields} <- validate_key_fields(opts),
+         {:ok, compare_fields} <- validate_compare_fields(opts),
+         {:ok, rules} <- validate_rules(opts) do
+      {:ok,
+       %__MODULE__{
+         key_fields: key_fields,
+         compare_fields: compare_fields,
+         rules: rules
+       }}
+    end
+  end
+
+  def compile(_opts), do: {:error, :missing_key_fields}
+
+  @doc """
+  Reconciles `left` and `right` (lists of maps) using the compiled `config`.
+
+  Records are paired by exact equality on all key fields; a key field missing from a
+  record is treated as `nil`. When a key repeats within one list, the last record with
+  that key wins.
+
+  Returns a report map with:
+
+    * `:matched` — `%{left: record, right: record, differences: diff_map}` for every key
+      present on both sides, where `diff_map` maps each differing compared field to
+      `%{left: value, right: value, rule: rule}`.
+    * `:only_in_left` — records whose key appears only in `left`.
+    * `:only_in_right` — records whose key appears only in `right`.
+
+  ## Examples
+
+      iex> {:ok, config} =
+      ...>   TolerantReconciler.compile(key_fields: [:id], rules: [amount: {:numeric, 0.01}])
+      iex> report =
+      ...>   TolerantReconciler.run(config, [%{id: 1, amount: 10.0}], [%{id: 1, amount: 10.005}])
+      iex> Enum.map(report.matched, & &1.differences)
+      [%{}]
+  """
+  @spec run(config(), [record_map()], [record_map()]) :: report()
+  def run(%__MODULE__{} = config, left, right) when is_list(left) and is_list(right) do
+    left_index = index_by_key(left, config.key_fields)
+    right_index = index_by_key(right, config.key_fields)
+
+    left_keys = left_index |> Map.keys() |> MapSet.new()
+    right_keys = right_index |> Map.keys() |> MapSet.new()
+
+    matched =
+      left_keys
+      |> MapSet.intersection(right_keys)
+      |> Enum.map(fn key ->
+        left_record = Map.fetch!(left_index, key)
+        right_record = Map.fetch!(right_index, key)
+
+        %{
+          left: left_record,
+          right: right_record,
+          differences: diff_records(config, left_record, right_record)
+        }
+      end)
+
+    %{
+      matched: matched,
+      only_in_left: records_for(left_index, MapSet.difference(left_keys, right_keys)),
+      only_in_right: records_for(right_index, MapSet.difference(right_keys, left_keys))
+    }
+  end
+
+  @doc """
+  Summarises how often each field differed across the matched pairs of a report.
+
+  Returns a map of `%{field => number_of_matched_pairs_where_it_differed}`. Fields that
+  never differed are omitted, so an all-clean report yields `%{}`.
+
+  ## Examples
+
+      iex> {:ok, config} = TolerantReconciler.compile(key_fields: [:id])
+      iex> report = TolerantReconciler.run(config, [%{id: 1, name: "a"}], [%{id: 1, name: "b"}])
+      iex> TolerantReconciler.field_summary(report)
+      %{name: 1}
+  """
+  @spec field_summary(report()) :: %{optional(field()) => pos_integer()}
+  def field_summary(%{matched: matched}) when is_list(matched) do
+    Enum.reduce(matched, %{}, fn %{differences: differences}, acc ->
+      Enum.reduce(Map.keys(differences), acc, fn field, inner ->
+        Map.update(inner, field, 1, &(&1 + 1))
+      end)
+    end)
+  end
+
+  # -- validation ----------------------------------------------------------------
+
+  defp validate_key_fields(opts) do
+    case Keyword.fetch(opts, :key_fields) do
+      :error -> {:error, :missing_key_fields}
+      {:ok, [_ | _] = fields} -> if atoms?(fields), do: {:ok, fields}, else: key_error()
+      {:ok, _other} -> key_error()
+    end
+  end
+
+  defp key_error, do: {:error, :invalid_key_fields}
+
+  defp validate_compare_fields(opts) do
+    case Keyword.fetch(opts, :compare_fields) do
+      :error -> {:ok, nil}
+      {:ok, nil} -> {:ok, nil}
+      {:ok, fields} when is_list(fields) -> compare_fields_or_error(fields)
+      {:ok, _other} -> {:error, :invalid_compare_fields}
+    end
+  end
+
+  defp compare_fields_or_error(fields) do
+    if atoms?(fields), do: {:ok, fields}, else: {:error, :invalid_compare_fields}
+  end
+
+  defp validate_rules(opts) do
+    case Keyword.fetch(opts, :rules) do
+      :error -> {:ok, %{}}
+      {:ok, rules} when is_list(rules) -> build_rules(rules)
+      {:ok, _other} -> {:error, :invalid_rules}
+    end
+  end
+
+  defp build_rules(rules) do
+    if Keyword.keyword?(rules) do
+      Enum.reduce_while(rules, {:ok, %{}}, fn {field, rule}, {:ok, acc} ->
+        if valid_rule?(rule) do
+          {:cont, {:ok, Map.put(acc, field, rule)}}
+        else
+          {:halt, {:error, {:invalid_rule, field}}}
+        end
+      end)
+    else
+      {:error, :invalid_rules}
+    end
+  end
+
+  defp valid_rule?(:exact), do: true
+  (truncated)
+22:04:45.266 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 14564, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 14564, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 14564, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 14564, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 4115, "type" => "message"}], "output_tokens" => 4115, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+22:04:45.297 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01 solution.ex
+22:04:46.093 [debug] grade JSON: {"analysis":{"defp_count":23,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":292,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":14,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01/solution.ex","task":"034_003_rule_driven_tolerant_reconciler_with_compiled_config_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":29,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-12T20:04:46.065575Z","warning_details":[]}
+22:04:46.107 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01_mut solution.ex
+22:04:46.931 [debug] grade JSON: {"analysis":{"defp_count":23,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":222,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":14,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":8,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.2,"mode":"full","overall":0.0,"reasons":["compilation: 8 warning(s) → hard fail (overall 0.0)","tests: 29/29 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01_mut/solution.ex","task":"034_003_rule_driven_tolerant_reconciler_with_compiled_config_01_mut","test_failures":[{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test compile succeeds with only key_fields"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test compile rejects missing key_fields"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test compile rejects empty or non-atom key_fields"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test compile rejects invalid compare_fields"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test compile accepts nil compare_fields"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test compile rejects non-keyword rules"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test compile rejects an unknown rule for a field"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test compile rejects a numeric rule with a bad tolerance"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test compile accepts all four rule kinds"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test partitions records into matched, only_in_left and only_in_right"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test composite keys match only when all key fields are equal"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test empty inputs"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test fields with no rule default to :exact and report the rule used"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test identical records produce an empty differences map"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test a compared field missing from one record is treated as nil"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test numeric rule absorbs differences within tolerance"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test numeric rule reports differences beyond tolerance with the rule attached"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test numeric rule falls back to equality when a value is not a number"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test numeric rule with zero tolerance still matches equal numbers"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test case_insensitive rule ignores case and surrounding whitespace"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test case_insensitive rule still reports genuinely different strings"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test case_insensitive rule falls back to equality for non-binaries"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test ignore rule keeps a field out of the differences map"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test ignore rule wins even when the field is listed in compare_fields"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test compare_fields restricts which fields are compared"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test with no compare_fields, key fields are excluded from the diff"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test field_summary counts matched pairs per differing field, omitting clean fields"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test field_summary of a clean report is empty"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test mixed scenario across all rule kinds"}],"tests_errors":0,"tests_excluded":0,"tests_failed":29,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-12T20:04:46.901856Z","warning_details":["solution.ex: line 115: function validate_rules/1 is unused","solution.ex: line 77: function validate_key_fields/1 is unused","solution.ex: line 98: function validate_compare_fields/1 is unused","solution.ex: line 137: function valid_rule?/1 is unused","solution.ex: line 94: function key_error/0 is unused"]}
+22:04:46.939 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01_mut solution.ex
+22:04:47.778 [debug] grade JSON: {"analysis":{"defp_count":23,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":203,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":8,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":8,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.2,"mode":"full","overall":0.0,"reasons":["compilation: 8 warning(s) → hard fail (overall 0.0)","tests: 20/29 failed"],"tests":0.31},"shape":"single","solution_file":".gen_staging/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01_mut/solution.ex","task":"034_003_rule_driven_tolerant_reconciler_with_compiled_config_01_mut","test_failures":[{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test partitions records into matched, only_in_left and only_in_right"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test composite keys match only when all key fields are equal"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test empty inputs"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test fields with no rule default to :exact and report the rule used"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test identical records produce an empty differences map"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test a compared field missing from one record is treated as nil"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test numeric rule absorbs differences within tolerance"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test numeric rule reports differences beyond tolerance with the rule attached"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test numeric rule falls back to equality when a value is not a number"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test numeric rule with zero tolerance still matches equal numbers"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test case_insensitive rule ignores case and surrounding whitespace"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test case_insensitive rule still reports genuinely different strings"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test case_insensitive rule falls back to equality for non-binaries"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test ignore rule keeps a field out of the differences map"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test ignore rule wins even when the field is listed in compare_fields"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test compare_fields restricts which fields are compared"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test with no compare_fields, key fields are excluded from the diff"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test field_summary counts matched pairs per differing field, omitting clean fields"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test field_summary of a clean report is empty"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test mixed scenario across all rule kinds"}],"tests_errors":0,"tests_excluded":0,"tests_failed":20,"tests_passed":9,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-12T20:04:47.750847Z","warning_details":["solution.ex: line 44: variable \"config\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 152: function records_for/2 is unused","solution.ex: line 200: function normalize_string/1 is unused","solution.ex: line 148: function key_of/2 is unused","solution.ex: line 142: function index_by_key/2 is unused"]}
+22:04:47.786 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01_mut solution.ex
+22:04:48.625 [debug] grade JSON: {"analysis":{"defp_count":23,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":222,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":14,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.93,"reasons":["tests: 3/29 failed"],"tests":0.9},"shape":"single","solution_file":".gen_staging/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01_mut/solution.ex","task":"034_003_rule_driven_tolerant_reconciler_with_compiled_config_01_mut","test_failures":[{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test field_summary counts matched pairs per differing field, omitting clean fields"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test field_summary of a clean report is empty"},{"message":"MUTATION","module":"TolerantReconcilerTest","test":"test mixed scenario across all rule kinds"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":26,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-12T20:04:48.595938Z","warning_details":[]}
+22:04:48.626 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01 solution.ex (seed 262811319)
+22:04:49.468 [debug] grade JSON: {"analysis":{"defp_count":23,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":292,"lines_over_98":0,"max_line_length":97,"mode":"full","pipe_chain_count":14,"public_fn_count":4,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01/solution.ex","task":"034_003_rule_driven_tolerant_reconciler_with_compiled_config_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":29,"tests_ran":true,"tests_skipped":0,"tests_total":29,"timestamp":"2026-07-12T20:04:49.441995Z","warning_details":[]}
+22:04:49.472 [info] cycle 034_003_rule_driven_tolerant_reconciler_with_compiled_config_01: ACCEPTED on attempt 1
+22:04:49.474 [info] promoted 034_003_rule_driven_tolerant_reconciler_with_compiled_config_01 -> tasks/034_003_rule_driven_tolerant_reconciler_with_compiled_config_01

@@ -1,0 +1,369 @@
+15:09:04.547 [info] FIM 065_003_parallel_stage_saga_coordinator_fim01 → 065_003_parallel_stage_saga_coordinator_02: target run_stages/4
+15:09:04.547 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+15:09:04.547 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `run_stages/4`.
+
+Generate a prompt describing how to implement `run_stages/4` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `run_stages/4` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `run_stages/4` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `run_stages/4` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Parallel-Stage Saga / Compensating Transaction Coordinator
+
+Write me an Elixir module called `ParallelSaga` that executes a **staged saga**. The
+saga is built from a series of **stages**; each stage contains one or more steps, and
+all steps **within a stage run concurrently**. Every step has a forward **action** and
+a **compensating action**. If any step in a stage fails, the coordinator undoes the
+work already done — the succeeded steps of the failing stage plus every step of all
+earlier stages — by running their compensating actions, and returns an error.
+
+Use only the Elixir/OTP standard library (`Task` is allowed) — no external
+dependencies. Give me the complete module in a single file.
+
+## Public API
+
+```elixir
+ParallelSaga.new()
+|> ParallelSaga.stage([
+     {:reserve, &reserve/1, &cancel/1},
+     {:notify,  &notify/1,  &unnotify/1}
+   ])
+|> ParallelSaga.stage([
+     {:charge, &charge/1, &refund/1}
+   ])
+|> ParallelSaga.execute(%{order_id: 42})
+```
+
+### `ParallelSaga.new/0`
+
+Returns a new, empty saga value (opaque).
+
+### `ParallelSaga.stage(saga, steps)`
+
+Appends a stage and returns the updated saga. `steps` is a list of
+`{name, action, compensation}` tuples:
+
+- `name` — an identifier for the step.
+- `action` — a 1-arity function receiving the current **context** (a map), returning
+  `{:ok, result}` or `{:error, reason}`.
+- `compensation` — a 1-arity function receiving the context that undoes the step.
+
+`action` and `compensation` must both be arity-1 functions, otherwise raise
+`ArgumentError`. Stages run in the order added.
+
+### `ParallelSaga.execute(saga, context)`
+
+For each stage in order:
+
+- Start **all** of the stage's actions concurrently, each receiving the **same**
+  context — the context as it was at the start of the stage. (Steps in the same stage
+  therefore cannot see each other's results; only later stages see a stage's results.)
+- Await all actions.
+  - If every action returns `{:ok, result}`: merge each result into the context under
+    its `name` key and proceed to the next stage.
+  - If **any** action returns `{:error, reason}`: the stage fails. Begin compensation.
+
+**Compensation pass.** Run the compensations of every step that must be undone, in
+this order: first the **succeeded** steps of the failing stage (in reverse of their
+declared order within the stage), then every earlier stage (most recent stage first,
+each stage's steps in reverse declared order). The failed step(s) are *not* compensated
+(their actions did not succeed). Each compensation receives the context accumulated up
+to the point of failure (including the failing stage's succeeded results). Compensation
+is best-effort: errors are recorded but do not stop the pass.
+
+### Return values
+
+- **All stages succeed:** `{:ok, final_context}`.
+- **A stage fails:** `{:error, error}` where `error` has exactly these keys:
+  - `:stage` — the 0-based index of the failing stage.
+  - `:failed` — a map `name => reason` for every step in that stage whose action
+    returned `{:error, _}` (there may be more than one).
+  - `:compensated` — the list of step names whose compensations ran, in run order.
+  - `:compensations` — a map `name => compensation_return_value`.
+- **Empty saga:** `{:ok, context}` unchanged.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule ParallelSaga do
+  @moduledoc """
+  A staged saga / compensating-transaction coordinator.
+
+  The saga is a list of stages; the steps within a stage run **concurrently**, each
+  receiving the same start-of-stage context. If any step in a stage fails, the
+  succeeded steps of that stage plus all earlier stages are compensated (best-effort)
+  in reverse completion order.
+  """
+
+  @opaque t :: %__MODULE__{stages: [[step()]]}
+  @type context :: map()
+  @type step :: %{
+          name: term(),
+          action: (context() -> {:ok, term()} | {:error, term()}),
+          compensation: (context() -> term())
+        }
+  @type error :: %{
+          stage: non_neg_integer(),
+          failed: %{optional(term()) => term()},
+          compensated: [term()],
+          compensations: %{optional(term()) => term()}
+        }
+
+  @await_timeout 5_000
+
+  defstruct stages: []
+
+  @doc "Returns a new, empty saga."
+  @spec new() :: t()
+  def new, do: %__MODULE__{stages: []}
+
+  @doc "Appends a stage of `{name, action, compensation}` tuples."
+  @spec stage(t(), [{term(), function(), function()}]) :: t()
+  def stage(%__MODULE__{stages: stages} = saga, steps) when is_list(steps) do
+    normalized =
+      Enum.map(steps, fn {name, action, compensation} ->
+        unless is_function(action, 1) and is_function(compensation, 1) do
+          raise ArgumentError, "action and compensation must be arity-1 functions"
+        end
+
+        %{name: name, action: action, compensation: compensation}
+      end)
+
+    %__MODULE__{saga | stages: stages ++ [normalized]}
+  end
+
+  @doc "Runs the saga from `context`."
+  @spec execute(t(), context()) :: {:ok, context()} | {:error, error()}
+  def execute(%__MODULE__{stages: stages}, context) when is_map(context) do
+    run_stages(stages, 0, context, [])
+  end
+
+  # `completed` holds step maps in reverse completion order (most recent first).
+  defp run_stages([], _idx, context, _completed), do: {:ok, context}
+
+  defp run_stages([stage | rest], idx, context, completed) do
+    results =
+      stage
+      |> Enum.map(fn step -> {step, Task.async(fn -> step.action.(context) end)} end)
+      |> Enum.map(fn {step, task} -> {step, Task.await(task, @await_timeout)} end)
+
+    failures = for {step, {:error, reason}} <- results, into: %{}, do: {step.name, reason}
+
+    if map_size(failures) == 0 do
+      new_context =
+        Enum.reduce(results, context, fn {step, {:ok, result}}, acc ->
+          Map.put(acc, step.name, result)
+        end)
+
+      succeeded = Enum.map(results, fn {step, _} -> step end)
+      run_stages(rest, idx + 1, new_context, Enum.reverse(succeeded) ++ completed)
+    else
+      succeeded = for {step, {:ok, _}} <- results, do: step
+
+      comp_context =
+        Enum.reduce(results, context, fn
+          {step, {:ok, result}}, acc -> Map.put(acc, step.name, result)
+          {_step, {:error, _}}, acc -> acc
+        end)
+
+      to_compensate = Enum.reverse(succeeded) ++ completed
+      compensate(to_compensate, comp_context, idx, failures)
+    end
+  end
+
+  defp compensate(to_compensate, context, stage_idx, failures) do
+    {compensated, compensations} =
+      Enum.reduce(to_compensate, {[], %{}}, fn %{name: name, compensation: comp}, {names, results} ->
+        result = comp.(context)
+        {[name | names], Map.put(results, name, result)}
+      end)
+
+    {:error,
+     %{
+       stage: stage_idx,
+       failed: failures,
+       compensated: Enum.reverse(compensated),
+       compensations: compensations
+     }}
+  end
+end
+```
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blo (truncated)
+15:09:38.351 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Implement `run_stages/4`
+
+Implement the private, recursive `run_stages/4` function — the engine that drives the
+`ParallelSaga` coordinator. It has the signature `run_stages(stages, idx, context, completed)`:
+
+- `stages` — the remaining stages to run, each a list of step maps
+  (`%{name:, action:, compensation:}`).
+- `idx` — the 0-based index of the current (head) stage.
+- `context` — the accumulated context map as it stands at the start of the current stage.
+- `completed` — every step already successfully run in *earlier* stages, held as step maps
+  in **reverse completion order** (most recent first), ready for compensation.
+
+Behaviour:
+
+- **Base case** (no stages left): return `{:ok, context}`.
+- **Recursive case** (a `stage` at the head, followed by `rest`):
+  1. Start **all** of the stage's actions concurrently with `Task.async/1`, each action
+     receiving the **same** start-of-stage `context`. Then `Task.await/2` each task using
+     the `@await_timeout`. Keep each step paired with its result.
+  2. Collect the **failures**: a map `name => reason` for every step whose action returned
+     `{:error, reason}`.
+  3. **If there are no failures:** merge every step's `{:ok, result}` into the context under
+     the step's `name` key to form the new context. Then recurse into `rest` with `idx + 1`,
+     the new context, and an updated `completed` list — this stage's steps (in reverse of
+     their declared order) prepended to the existing `completed`.
+  4. **If there is at least one failure:** the stage fails. Build the compensation context by
+     merging only the **succeeded** steps' results into `context` (failed steps contribute
+     nothing). Determine the steps to compensate: the succeeded steps of the failing stage in
+     reverse declared order, followed by everything in `completed`. Hand that list, the
+     compensation context, the current `idx`, and the `failures` map to `compensate/4`, and
+     return its result.
+
+```elixir
+defmodule ParallelSaga do
+  @moduledoc """
+  A staged saga / compensating-transaction coordinator.
+
+  The saga is a list of stages; the steps within a stage run **concurrently**, each
+  receiving the same start-of-stage context. If any step in a stage fails, the
+  succeeded steps of that stage plus all earlier stages are compensated (best-effort)
+  in reverse completion order.
+  """
+
+  @opaque t :: %__MODULE__{stages: [[step()]]}
+  @type context :: map()
+  @type step :: %{
+          name: term(),
+          action: (context() -> {:ok, term()} | {:error, term()}),
+          compensation: (context() -> term())
+        }
+  @type error :: %{
+          stage: non_neg_integer(),
+          failed: %{optional(term()) => term()},
+          compensated: [term()],
+          compensations: %{optional(term()) => term()}
+        }
+
+  @await_timeout 5_000
+
+  defstruct stages: []
+
+  @doc "Returns a new, empty saga."
+  @spec new() :: t()
+  def new, do: %__MODULE__{stages: []}
+
+  @doc "Appends a stage of `{name, action, compensation}` tuples."
+  @spec stage(t(), [{term(), function(), function()}]) :: t()
+  def stage(%__MODULE__{stages: stages} = saga, steps) when is_list(steps) do
+    normalized =
+      Enum.map(steps, fn {name, action, compensation} ->
+        unless is_function(action, 1) and is_function(compensation, 1) do
+          raise ArgumentError, "action and compensation must be arity-1 functions"
+        end
+
+        %{name: name, action: action, compensation: compensation}
+      end)
+
+    %__MODULE__{saga | stages: stages ++ [normalized]}
+  end
+
+  @doc "Runs the saga from `context`."
+  @spec execute(t(), context()) :: {:ok, context()} | {:error, error()}
+  def execute(%__MODULE__{stages: stages}, context) when is_map(context) do
+    run_stages(stages, 0, context, [])
+  end
+
+  # `completed` holds step maps in reverse completion order (most recent first).
+  defp run_stages([], _idx, context, _completed) do
+    # TODO
+  end
+
+  defp run_stages([stage | rest], idx, context, completed) do
+    # TODO
+  end
+
+  defp compensate(to_compensate, context, stage_idx, failures) do
+    {compensated, compensations} =
+      Enum.reduce(to_compensate, {[], %{}}, fn %{name: name, compensation: comp}, {names, results} ->
+        result = comp.(context)
+        {[name | names], Map.put(results, name, result)}
+      end)
+
+    {:error,
+     %{
+       stage: stage_idx,
+       failed: failures,
+       compensated: Enum.reverse(compensated),
+       compensations: compensations
+     }}
+  end
+end
+```
+</file>
+<file path="solution.ex">
+# `completed` holds step maps in reverse completion order (most recent first).
+defp run_stages([], _idx, context, _completed), do: {:ok, context}
+
+defp run_stages([stage | rest], idx, context, completed) do
+  results =
+    stage
+    |> Enum.map(fn step -> {step, Task.async(fn -> step.action.(context) end)} end)
+    |> Enum.map(fn {step, task} -> {step, Task.await(task, @await_timeout)} end)
+
+  failures = for {step, {:error, reason}} <- results, into: %{}, do: {step.name, reason}
+
+  if map_size(failures) == 0 do
+    new_context =
+      Enum.reduce(results, context, fn {step, {:ok, result}}, acc ->
+        Map.put(acc, step.name, result)
+      end)
+
+    succeeded = Enum.map(results, fn {step, _} -> step end)
+    run_stages(rest, idx + 1, new_context, Enum.reverse(succeeded) ++ completed)
+  else
+    succeeded = for {step, {:ok, _}} <- results, do: step
+
+    comp_context =
+      Enum.reduce(results, context, fn
+        {step, {:ok, result}}, acc -> Map.put(acc, step.name, result)
+        {_step, {:error, _}}, acc -> acc
+      end)
+
+    to_compensate = Enum.reverse(succeeded) ++ completed
+    compensate(to_compensate, comp_context, idx, failures)
+  end
+end
+</file>
+15:09:38.352 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3369, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3369, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3369, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3369, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2474, "type" => "message"}], "output_tokens" => 2474, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+15:09:38.371 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_065_003_parallel_stage_saga_coordinator_02/065_003_parallel_stage_saga_coordinator_02 solution.ex
+15:09:39.098 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":32,"lines_over_98":0,"max_line_length":88,"mode":"fim","pipe_chain_count":2,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"parent":"065_003_parallel_stage_saga_coordinator_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.3,"mode":"fim","overall":0.93,"reasons":["compilation: 7 warning(s) → -0.7 pts"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_065_003_parallel_stage_saga_coordinator_02/065_003_parallel_stage_saga_coordinator_02/solution.ex","task":"065_003_parallel_stage_saga_coordinator_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-04T13:09:39.076023Z"}
+15:09:39.099 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_065_003_parallel_stage_saga_coordinator_02/065_003_parallel_stage_saga_coordinator_02 .gen_staging/fim_065_003_parallel_stage_saga_coordinator_02/mutant.ex
+15:09:39.799 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":7,"lines_over_98":0,"max_line_length":59,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":15,"compiled":true,"parent":"065_003_parallel_stage_saga_coordinator_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.0,"mode":"fim","overall":0.27,"reasons":["compilation: 15 warning(s) → -1.5 pts","tests: 9/10 failed"],"tests":0.1},"shape":"fim","solution_file":".gen_staging/fim_065_003_parallel_stage_saga_coordinator_02/mutant.ex","task":"065_003_parallel_stage_saga_coordinator_02","test_failures":[{"message":"MUTATION","module":"ParallelSagaTest","test":"test happy path: all stages succeed and results merge"},{"message":"MUTATION","module":"ParallelSagaTest","test":"test steps in the same stage do not see each other's results"},{"message":"MUTATION","module":"ParallelSagaTest","test":"test a later stage sees an earlier stage's results"},{"message":"MUTATION","module":"ParallelSagaTest","test":"test a failing step compensates its succeeded sibling and earlier stages"},{"message":"MUTATION","module":"ParallelSagaTest","test":"test multiple failures in a stage are all reported"},{"message":"MUTATION","module":"ParallelSagaTest","test":"test within-stage compensation runs in reverse declared order"},{"message":"MUTATION","module":"ParallelSagaTest","test":"test best-effort compensation: an erroring compensation does not stop the rest"},{"message":"MUTATION","module":"ParallelSagaTest","test":"test a compensation sees its own step's stored result"},{"message":"MUTATION","module":"ParallelSagaTest","test":"test empty saga returns the context unchanged"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-04T13:09:39.774279Z"}
+15:09:39.799 [debug] fim mutation gate: killed
+15:09:39.801 [info] promoted 065_003_parallel_stage_saga_coordinator_02 -> tasks/065_003_parallel_stage_saga_coordinator_02

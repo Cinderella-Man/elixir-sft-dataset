@@ -1,0 +1,52 @@
+=== validate (perfect) ===
+Concurrency: 16 (EVAL_CONCURRENCY to override)
+  corpus-integrity: all pass ✓
+Perfect-score: 75 tasks (overall must be 1.0) ...
+...........................................................................
+=== VALIDATION SUMMARY ===
+  perfect-score: all pass ✓
+
+ALL PERFECT ✓ (every task scores 1.0)
+validate_perfect_exit=0
+=== validate --mutants ===
+Concurrency: 16 (EVAL_CONCURRENCY to override)
+  corpus-integrity: all pass ✓
+Whole-solution mutation: 8 tasks (skipping %{fim: 12, adapt: 3, bugfix: 12, test_fim: 40} — fim has --fim; tfim is gated at mint time) ...
+........
+=== VALIDATION SUMMARY ===
+  whole-mutation: all pass ✓
+
+ALL HARNESSES KILL THEIR MUTANT ✓
+validate_mutants_exit=0
+=== validate --fim ===
+Concurrency: 16 (EVAL_CONCURRENCY to override)
+  corpus-integrity: all pass ✓
+FIM mutation: 12 tasks ...
+............
+=== VALIDATION SUMMARY ===
+  fim-mutation: all pass ✓
+
+ALL FIM TARGETS EXERCISED ✓
+validate_fim_exit=0
+=== format gate (corpus) ===
+=== FORMAT STATUS (canonical = Code.format_string! on this toolchain) ===
+
+harness       0 deviating /   929
+module        0 deviating /  1878
+bundle        0 deviating /    11
+fragment      0 deviating /  4259
+manifest      0 deviating /     9
+embeds        0 deviating /  4259
+
+total: 0 deviating, 0 errors — GATE (--check: exits 1 when anything deviates; --apply to rewrite)
+format_exit=0
+=== tfim embed drift (dry run) ===
+tfim embeds: %{unchanged: 3268} (report only)
+tfim_drift_exit=0
+=== bugfix embed drift (dry run) ===
+bugfix embeds: %{unchanged: 960} (report only)
+bugfix_drift_exit=0
+=== adapt embed drift (dry run) ===
+adapt embeds: %{unchanged: 249} (report only)
+adapt_drift_exit=0
+ALL DONE

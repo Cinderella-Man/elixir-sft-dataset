@@ -1,0 +1,1105 @@
+13:20:54.986 [info] VARIATION 015_002_sliding_window_failure_count_heartbeat_monitor_01: Sliding-Window Failure-Count Heartbeat Monitor
+13:20:54.986 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:20:54.986 [debug] claude -p USER prompt:
+# Sliding-Window Failure-Count Heartbeat Monitor
+
+Write me an Elixir `GenServer` module called `WindowMonitor` that watches a set of
+registered services by running a health *probe* for each one and deciding whether
+the service is `:up` or `:down` based on **how many of its most recent probe
+results were failures** — a sliding window, not a run of consecutive failures.
+
+Use only the OTP standard library — no external dependencies. Give me the complete
+module in a single file.
+
+## Public API
+
+- `WindowMonitor.start_link(opts \\ [])` — starts the process, linked to the caller,
+  returning the usual `GenServer.on_start()` result. `opts` is a keyword list
+  defaulting to `[]`. When a `:name` option is present it is used for process
+  registration (so the other functions accept either the pid or the registered
+  name); when absent the process starts unregistered. A freshly started server
+  watches zero services.
+
+- `WindowMonitor.watch(server, name, probe, opts \\ [])` — registers a service to
+  be watched and returns `:ok`.
+  - `name` is any term identifying the service (compared by value).
+  - `probe` is a **zero-arity** function returning either `:ok` (healthy) or
+    `{:error, reason}` (unhealthy); `reason` may be any term. Guard the public
+    function with `is_function(probe, 0)`.
+  - `opts` may contain:
+    - `:window` — a positive integer, the number of most-recent probe results the
+      server retains for this service. Defaults to `5`.
+    - `:threshold` — a positive integer, the number of failures **within the
+      retained window** at or above which the service is considered `:down`.
+      Defaults to `3`.
+    - `:on_change` — an arity-2 function called as `on_change.(name, new_status)`
+      on each status transition (see below). Defaults to a no-op.
+    - `:interval` — a positive integer number of milliseconds, or the atom
+      `:manual` (the default). When a positive integer, the server automatically
+      probes this service on that interval using `Process.send_after/3`; the first
+      automatic probe fires one interval after `watch`, and probing repeats
+      indefinitely. When `:manual`, the service is only probed via `probe_now/2`.
+  - A newly watched service starts with status `:up` and an **empty** result
+    window. Watching a `name` that already exists replaces its configuration and
+    resets it to this initial state.
+
+- `WindowMonitor.probe_now(server, name)` — runs exactly one probe for the named
+  service immediately (the same work an automatic tick performs), applies the
+  result, and returns `{:ok, new_status}` where `new_status` is that service's
+  status after the probe. Returns `{:error, :not_found}` if `name` is not watched.
+
+- `WindowMonitor.health(server, name)` — returns `{:ok, :up}` / `{:ok, :down}` for
+  a watched service, or `{:error, :not_found}` if it was never watched.
+
+- `WindowMonitor.report(server)` — returns a map `%{name => :up | :down}` of every
+  currently watched service and its current status. Empty map `%{}` when nothing is
+  watched.
+
+## Running a probe
+
+A single probe invokes the service's `probe` function (**synchronously inside the
+server process**) and records the outcome as either a success or a failure. The
+server keeps only the `:window` most-recent outcomes for the service (older ones are
+discarded). After recording:
+
+- Let `f` be the number of **failures among the retained results** (at most
+  `:window` of them) and `t` be `:threshold`.
+- The new status is `:down` when `f >= t`, otherwise `:up`.
+- The status is recomputed from the window on **every** probe. Because the window
+  slides, a service can recover automatically: once enough healthy results push
+  failures out of the window so that `f < t`, it returns to `:up` — no explicit
+  "success streak" is required.
+
+Failures do **not** have to be consecutive. For example with `window: 5` and
+`threshold: 3`, the sequence error, ok, error, ok, error leaves three failures in
+the window and marks the service `:down`, even though no two failures were adjacent.
+
+## Status transitions and notifications
+
+A "transition" is any change of the status field (`:up` → `:down` or
+`:down` → `:up`). On each actual change — and only then — the service's `:on_change`
+function is called exactly once as `on_change.(name, new_status)` with the status
+just entered. A probe that leaves the status unchanged calls nothing.
+
+## Independence and robustness
+
+- Services are fully independent: one service's results, window, or status never
+  affect another's.
+- Any message the server does not understand must be ignored: it must neither crash
+  the process nor alter any service's state.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+13:22:02.937 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule WindowMonitor do
+  @moduledoc """
+  A `GenServer` that watches registered services and classifies each as `:up`
+  or `:down` using a **sliding window of recent probe results**.
+
+  For every watched service the server retains only its `:window` most-recent
+  probe outcomes. After each probe it counts how many of those retained results
+  were failures (`f`) and compares against the configured `:threshold` (`t`):
+  the service is `:down` when `f >= t`, otherwise `:up`. Because the window
+  slides, failures need not be consecutive and a service recovers on its own
+  once enough healthy results push failures out of the window.
+
+  Services are independent — one service's results, window, or status never
+  affect another's. On each actual status change the service's `:on_change`
+  callback is invoked exactly once. Unknown messages are ignored.
+
+  Only the OTP standard library is used.
+  """
+
+  use GenServer
+
+  @typedoc "A zero-arity health probe."
+  @type probe :: (-> :ok | {:error, term()})
+
+  @typedoc "A service status."
+  @type status :: :up | :down
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the monitor linked to the caller.
+
+  When `opts` contains a `:name`, the process is registered under it; otherwise
+  it starts unregistered. A freshly started server watches zero services.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, opts, name: name)
+      :error -> GenServer.start_link(__MODULE__, opts)
+    end
+  end
+
+  @doc """
+  Registers `name` to be watched using the zero-arity `probe`.
+
+  Options: `:window` (positive integer, default `5`), `:threshold` (positive
+  integer, default `3`), `:on_change` (arity-2 callback, default no-op) and
+  `:interval` (positive integer milliseconds or `:manual`, default `:manual`).
+
+  A newly watched service starts `:up` with an empty window. Re-watching an
+  existing `name` replaces its configuration and resets it to this state.
+  """
+  @spec watch(GenServer.server(), term(), probe(), keyword()) :: :ok
+  def watch(server, name, probe, opts \\ []) when is_function(probe, 0) do
+    GenServer.call(server, {:watch, name, probe, opts})
+  end
+
+  @doc """
+  Runs exactly one probe for `name` immediately, applies the result, and returns
+  `{:ok, new_status}`. Returns `{:error, :not_found}` if `name` is not watched.
+  """
+  @spec probe_now(GenServer.server(), term()) ::
+          {:ok, status()} | {:error, :not_found}
+  def probe_now(server, name) do
+    GenServer.call(server, {:probe_now, name})
+  end
+
+  @doc """
+  Returns `{:ok, status}` for a watched service or `{:error, :not_found}`.
+  """
+  @spec health(GenServer.server(), term()) ::
+          {:ok, status()} | {:error, :not_found}
+  def health(server, name) do
+    GenServer.call(server, {:health, name})
+  end
+
+  @doc """
+  Returns a map `%{name => status}` for every currently watched service.
+  """
+  @spec report(GenServer.server()) :: %{optional(term()) => status()}
+  def report(server) do
+    GenServer.call(server, :report)
+  end
+
+  # ── GenServer callbacks ───────────────────────────────────────────────────
+
+  @impl true
+  @spec init(keyword()) :: {:ok, map()}
+  def init(_opts) do
+    {:ok, %{services: %{}, counter: 0}}
+  end
+
+  @impl true
+  def handle_call({:watch, name, probe, opts}, _from, state) do
+    window = Keyword.get(opts, :window, 5)
+    threshold = Keyword.get(opts, :threshold, 3)
+    on_change = Keyword.get(opts, :on_change, fn _name, _status -> :ok end)
+    interval = Keyword.get(opts, :interval, :manual)
+    epoch = state.counter + 1
+
+    service = %{
+      probe: probe,
+      window: window,
+      threshold: threshold,
+      on_change: on_change,
+      interval: interval,
+      status: :up,
+      results: [],
+      epoch: epoch
+    }
+
+    maybe_schedule(name, interval, epoch)
+    services = Map.put(state.services, name, service)
+    {:reply, :ok, %{state | services: services, counter: epoch}}
+  end
+
+  def handle_call({:probe_now, name}, _from, state) do
+    case Map.get(state.services, name) do
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      service ->
+        {new_service, new_status} = probe_and_notify(name, service)
+        services = Map.put(state.services, name, new_service)
+        {:reply, {:ok, new_status}, %{state | services: services}}
+    end
+  end
+
+  def handle_call({:health, name}, _from, state) do
+    case Map.get(state.services, name) do
+      nil -> {:reply, {:error, :not_found}, state}
+      %{status: status} -> {:reply, {:ok, status}, state}
+    end
+  end
+
+  def handle_call(:report, _from, state) do
+    report = Map.new(state.services, fn {name, %{status: s}} -> {name, s} end)
+    {:reply, report, state}
+  end
+
+  def handle_call(_other, _from, state) do
+    {:reply, {:error, :unknown_request}, state}
+  end
+
+  @impl true
+  def handle_info({:tick, name, epoch}, state) do
+    case Map.get(state.services, name) do
+      %{epoch: ^epoch, interval: interval} = service when is_integer(interval) ->
+        {new_service, _status} = probe_and_notify(name, service)
+        maybe_schedule(name, interval, epoch)
+        services = Map.put(state.services, name, new_service)
+        {:noreply, %{state | services: services}}
+
+      _other ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info(_msg, state) do
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast(_msg, state) do
+    {:noreply, state}
+  end
+
+  # ── Internal helpers ──────────────────────────────────────────────────────
+
+  @spec maybe_schedule(term(), pos_integer() | :manual, non_neg_integer()) :: :ok
+  defp maybe_schedule(name, interval, epoch) when is_integer(interval) do
+    Process.send_after(self(), {:tick, name, epoch}, interval)
+    :ok
+  end
+
+  defp maybe_schedule(_name, :manual, _epoch), do: :ok
+
+  @spec probe_and_notify(term(), map()) :: {map(), status()}
+  defp probe_and_notify(name, service) do
+    outcome = run_probe(service.probe)
+    results = Enum.take([outcome | service.results], service.window)
+    failures = Enum.count(results, &(&1 == :fail))
+    new_status = if failures >= service.threshold, do: :down, else: :up
+
+    if new_status != service.status do
+      service.on_change.(name, new_status)
+    end
+
+    {%{service | results: results, status: new_status}, new_status}
+  end
+
+  @spec run_probe(probe()) :: :ok | :fail
+  defp run_probe(probe) do
+    case probe.() do
+      :ok -> :ok
+      _other -> :fail
+    end
+  end
+end
+</file>
+13:22:02.937 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5592, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5592, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5592, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5592, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 5682, "type" => "message"}], "output_tokens" => 5682, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:22:02.977 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01 solution.ex
+13:22:04.259 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":201,"lines_over_98":0,"max_line_length":81,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":12,"timestamp":"2026-07-15T11:22:04.226753Z","warning_details":[]}
+13:22:04.288 [info] cycle 015_002_sliding_window_failure_count_heartbeat_monitor_01: repairing — The files graded green but fall short of the house style / harness standard: only 12 test(s) — the harness needs at least 14 (max of 3 and the 14 public function(s)). Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+13:22:04.288 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:22:04.288 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+The files graded green but fall short of the house style / harness standard: only 12 test(s) — the harness needs at least 14 (max of 3 and the 14 public function(s)). Fix solution.ex and/or test_harness.exs to resolve every point above — keep the module's behavior correct, keep ALL tests (do not delete any), and do not weaken what the tests verify. When a harness assertion is the problem, rewrite it to check observable behavior; do not remove coverage.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+# Sliding-Window Failure-Count Heartbeat Monitor
+
+Write me an Elixir `GenServer` module called `WindowMonitor` that watches a set of
+registered services by running a health *probe* for each one and deciding whether
+the service is `:up` or `:down` based on **how many of its most recent probe
+results were failures** — a sliding window, not a run of consecutive failures.
+
+Use only the OTP standard library — no external dependencies. Give me the complete
+module in a single file.
+
+## Public API
+
+- `WindowMonitor.start_link(opts \\ [])` — starts the process, linked to the caller,
+  returning the usual `GenServer.on_start()` result. `opts` is a keyword list
+  defaulting to `[]`. When a `:name` option is present it is used for process
+  registration (so the other functions accept either the pid or the registered
+  name); when absent the process starts unregistered. A freshly started server
+  watches zero services.
+
+- `WindowMonitor.watch(server, name, probe, opts \\ [])` — registers a service to
+  be watched and returns `:ok`.
+  - `name` is any term identifying the service (compared by value).
+  - `probe` is a **zero-arity** function returning either `:ok` (healthy) or
+    `{:error, reason}` (unhealthy); `reason` may be any term. Guard the public
+    function with `is_function(probe, 0)`.
+  - `opts` may contain:
+    - `:window` — a positive integer, the number of most-recent probe results the
+      server retains for this service. Defaults to `5`.
+    - `:threshold` — a positive integer, the number of failures **within the
+      retained window** at or above which the service is considered `:down`.
+      Defaults to `3`.
+    - `:on_change` — an arity-2 function called as `on_change.(name, new_status)`
+      on each status transition (see below). Defaults to a no-op.
+    - `:interval` — a positive integer number of milliseconds, or the atom
+      `:manual` (the default). When a positive integer, the server automatically
+      probes this service on that interval using `Process.send_after/3`; the first
+      automatic probe fires one interval after `watch`, and probing repeats
+      indefinitely. When `:manual`, the service is only probed via `probe_now/2`.
+  - A newly watched service starts with status `:up` and an **empty** result
+    window. Watching a `name` that already exists replaces its configuration and
+    resets it to this initial state.
+
+- `WindowMonitor.probe_now(server, name)` — runs exactly one probe for the named
+  service immediately (the same work an automatic tick performs), applies the
+  result, and returns `{:ok, new_status}` where `new_status` is that service's
+  status after the probe. Returns `{:error, :not_found}` if `name` is not watched.
+
+- `WindowMonitor.health(server, name)` — returns `{:ok, :up}` / `{:ok, :down}` for
+  a watched service, or `{:error, :not_found}` if it was never watched.
+
+- `WindowMonitor.report(server)` — returns a map `%{name => :up | :down}` of every
+  currently watched service and its current status. Empty map `%{}` when nothing is
+  watched.
+
+## Running a probe
+
+A single probe invokes the service's `probe` function (**synchronously inside the
+server process**) and records the outcome as either a success or a failure. The
+server keeps only the `:window` most-recent outcomes for the service (older ones are
+discarded). After recording:
+
+- Let `f` be the number of **failures among the retained results** (at most
+  `:window` of them) and `t` be `:threshold`.
+- The new status is `:down` when `f >= t`, otherwise `:up`.
+- The status is recomputed from the window on **every** probe. Because the window
+  slides, a service can recover automatically: once enough healthy results push
+  failures out of the window so that `f < t`, it returns to `:up` — no explicit
+  "success streak" is required.
+
+Failures do **not** have to be consecutive. For example with `window: 5` and
+`threshold: 3`, the sequence error, ok, error, ok, error leaves three failures in
+the window and marks the service `:down`, even though no two failures were adjacent.
+
+## Status transitions and notifications
+
+A "transition" is any change of the status field (`:up` → `:down` or
+`:down` → `:up`). On each actual change — and only then — the service's `:on_change`
+function is called exactly once as `on_change.(name, new_status)` with the status
+just entered. A probe that leaves the status unchanged calls nothing.
+
+## Independence and robustness
+
+- Services are fully independent: one service's results, window, or status never
+  affect another's.
+- Any message the server does not understand must be ignored: it must neither crash
+  the process nor alter any service's state.
+
+----- solution.ex -----
+defmodule WindowMonitor do
+  @moduledoc """
+  A `GenServer` that watches registered services and classifies each as `:up`
+  or `:down` using a **sliding window of recent probe results**.
+
+  For every watched service the server retains only its `:window` most-recent
+  probe outcomes. After each probe it counts how many of those retained results
+  were failures (`f`) and compares against the configured `:threshold` (`t`):
+  the service is `:down` when `f >= t`, otherwise `:up`. Because the window
+  slides, failures need not be consecutive and a service recovers on its own
+  once enough healthy results push failures out of the window.
+
+  Services are independent — one service's results, window, or status never
+  affect another's. On each actual status change the service's `:on_change`
+  callback is invoked exactly once. Unknown messages are ignored.
+
+  Only the OTP standard library is used.
+  """
+
+  use GenServer
+
+  @typedoc "A zero-arity health probe."
+  @type probe :: (-> :ok | {:error, term()})
+
+  @typedoc "A service status."
+  @type status :: :up | :down
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the monitor linked to the caller.
+
+  When `opts` contains a `:name`, the process is registered under it; otherwise
+  it starts unregistered. A freshly started server watches zero services.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, opts, name: name)
+      :error -> GenServer.start_link(__MODULE__, opts)
+    end
+  end
+
+  @doc """
+  Registers `name` to be watched using the zero-arity `probe`.
+
+  Options: `:window` (positive integer, default `5`), `:threshold` (positive
+  integer, default `3`), `:on_change` (arity-2 callback, default no-op) and
+  `:interval` (positive integer milliseconds or `:manual`, default `:manual`).
+
+  A newly watched service starts `:up` with a (truncated)
+13:22:51.714 [debug] claude -p RESULT (stop="end_turn"):
+<file path="test_harness.exs">
+defmodule WindowMonitorTest do
+  use ExUnit.Case, async: false
+
+  # Deterministic scripted probe: yields the given results in order on successive
+  # calls; once a single element remains, that element repeats forever.
+  defp script(list) do
+    {:ok, pid} = Agent.start_link(fn -> list end)
+    fn -> next(pid) end
+  end
+
+  defp next(pid) do
+    Agent.get_and_update(pid, fn
+      [x] -> {x, [x]}
+      [x | rest] -> {x, rest}
+      [] -> {:ok, []}
+    end)
+  end
+
+  setup do
+    {:ok, server} = WindowMonitor.start_link([])
+    %{server: server}
+  end
+
+  test "watch returns :ok, a new service is :up, and report starts empty", %{server: server} do
+    assert WindowMonitor.report(server) == %{}
+    assert :ok = WindowMonitor.watch(server, "svc", script([:ok]))
+    assert {:ok, :up} = WindowMonitor.health(server, "svc")
+    assert WindowMonitor.report(server) == %{"svc" => :up}
+  end
+
+  test "report lists all watched services", %{server: server} do
+    :ok = WindowMonitor.watch(server, "a", script([:ok]))
+    :ok = WindowMonitor.watch(server, "b", script([:ok]))
+    assert WindowMonitor.report(server) == %{"a" => :up, "b" => :up}
+  end
+
+  test "health and probe_now on an unknown service return {:error, :not_found}", %{
+    server: server
+  } do
+    assert {:error, :not_found} = WindowMonitor.health(server, "nope")
+    assert {:error, :not_found} = WindowMonitor.probe_now(server, "nope")
+  end
+
+  test "probe_now returns {:ok, status}", %{server: server} do
+    :ok = WindowMonitor.watch(server, "svc", script([:ok]))
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+  end
+
+  test "service goes down when window failure count reaches threshold, notifying once",
+       %{server: server} do
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    :ok =
+      WindowMonitor.watch(server, "svc", script([{:error, :boom}]),
+        window: 5,
+        threshold: 3,
+        on_change: on_change
+      )
+
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    refute_receive {:change, _, _}, 50
+
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+    assert_receive {:change, "svc", :down}
+
+    # Still failing while already down: no further notification.
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+    refute_receive {:change, _, _}, 100
+  end
+
+  test "threshold and window default to 3 and 5", %{server: server} do
+    :ok = WindowMonitor.watch(server, "svc", script([{:error, :boom}]))
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+  end
+
+  test "non-consecutive failures within the window still trip the threshold", %{server: server} do
+    # error, ok, error, ok, error -> 3 failures in a 5-wide window -> down
+    seq = [{:error, :boom}, :ok, {:error, :boom}, :ok, {:error, :boom}, :ok]
+
+    :ok = WindowMonitor.watch(server, "svc", script(seq), window: 5, threshold: 3)
+
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+  end
+
+  test "a service recovers automatically as failures slide out of the window", %{server: server} do
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    seq = [{:error, :boom}, {:error, :boom}, {:error, :boom}, :ok, :ok, :ok, :ok]
+
+    :ok =
+      WindowMonitor.watch(server, "svc", script(seq),
+        window: 5,
+        threshold: 3,
+        on_change: on_change
+      )
+
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+    assert_receive {:change, "svc", :down}
+
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+    # 6th probe: window now holds only 2 failures -> back up.
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert_receive {:change, "svc", :up}
+    refute_receive {:change, _, _}, 100
+  end
+
+  test "services are independent", %{server: server} do
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    :ok =
+      WindowMonitor.watch(server, "a", script([{:error, :boom}]),
+        threshold: 1,
+        on_change: on_change
+      )
+
+    :ok = WindowMonitor.watch(server, "b", script([:ok]), on_change: on_change)
+
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "a")
+    assert_receive {:change, "a", :down}
+    assert {:ok, :up} = WindowMonitor.health(server, "b")
+    assert WindowMonitor.report(server) == %{"a" => :down, "b" => :up}
+    refute_receive {:change, "b", _}, 50
+  end
+
+  test "automatic interval probing drives a service down", %{server: server} do
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    :ok =
+      WindowMonitor.watch(server, "auto", script([{:error, :boom}]),
+        threshold: 1,
+        interval: 20,
+        on_change: on_change
+      )
+
+    assert_receive {:change, "auto", :down}, 2_000
+    assert {:ok, :down} = WindowMonitor.health(server, "auto")
+    refute_receive {:change, _, _}, 200
+  end
+
+  test "re-watching a name resets its state", %{server: server} do
+    :ok = WindowMonitor.watch(server, "svc", script([{:error, :boom}]), threshold: 1)
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+
+    :ok = WindowMonitor.watch(server, "svc", script([:ok]))
+    assert {:ok, :up} = WindowMonitor.health(server, "svc")
+    assert WindowMonitor.report(server) == %{"svc" => :up}
+  end
+
+  test "unexpected messages are ignored and do not disturb state", %{server: server} do
+    :ok = WindowMonitor.watch(server, "svc", script([:ok]))
+    send(server, :hello)
+    send(server, {:weird, 1, 2})
+    assert {:ok, :up} = WindowMonitor.health(server, "svc")
+    assert Process.alive?(server)
+  end
+
+  test "a manual (default interval) service is never probed automatically", %{server: server} do
+    # Probe would fail with threshold 1, so any automatic probe would flip it :down.
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    :ok =
+      WindowMonitor.watch(server, "svc", script([{:error, :boom}]),
+        threshold: 1,
+        on_change: on_change
+      )
+
+    # No :interval given -> :manual; nothing should probe it on its own.
+    refute_receive {:change, _, _}, 150
+    assert {:ok, :up} = WindowMonitor.health(server, "svc")
+    assert WindowMonitor.report(server) == %{"svc" => :up}
+  end
+
+  test "probe_now only probes the named service, leaving others untouched", %{server: server} do
+    :ok = WindowMonitor.watch(server, "a", script([{:error, :boom}]), threshold: 1)
+    :ok = WindowMonitor.watch(server, "b", script([{:error, :boom}]), threshold: 1)
+
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "a")
+    # "b" was never probed, so it must still be :up with an empty window.
+    assert {:ok, :up} = WindowMonitor.health(server, "b")
+    assert WindowMonitor.report(server) == %{"a" => :down, "b" => :up}
+  end
+end
+</file>
+13:22:51.714 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 11240, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 11240, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 11240, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 11240, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 4327, "type" => "message"}], "output_tokens" => 4327, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:22:51.738 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01 solution.ex
+13:22:53.181 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":201,"lines_over_98":0,"max_line_length":81,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:22:53.154931Z","warning_details":[]}
+13:22:53.219 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:22:54.141 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":156,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 14/14 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test report lists all watched services"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test health and probe_now on an unknown service return {:error, :not_found}"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now returns {:ok, status}"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test service goes down when window failure count reaches threshold, notifying once"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test threshold and window default to 3 and 5"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test non-consecutive failures within the window still trip the threshold"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a service recovers automatically as failures slide out of the window"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test services are independent"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a manual (default interval) service is never probed automatically"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now only probes the named service, leaving others untouched"}],"tests_errors":0,"tests_excluded":0,"tests_failed":14,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:22:54.071836Z","warning_details":["solution.ex: line 10: variable \"opts\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:22:54.149 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:22:55.094 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 13/14 failed"],"tests":0.07},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test report lists all watched services"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now returns {:ok, status}"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test service goes down when window failure count reaches threshold, notifying once"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test threshold and window default to 3 and 5"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test non-consecutive failures within the window still trip the threshold"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a service recovers automatically as failures slide out of the window"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test services are independent"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a manual (default interval) service is never probed automatically"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now only probes the named service, leaving others untouched"}],"tests_errors":0,"tests_excluded":0,"tests_failed":13,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:22:55.069579Z","warning_details":["solution.ex: line 19: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 19: variable \"opts\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 19: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:22:55.100 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:22:56.209 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 9/14 failed"],"tests":0.36},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"WindowMonitorTest","test":"test health and probe_now on an unknown service return {:error, :not_found}"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now returns {:ok, status}"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test service goes down when window failure count reaches threshold, notifying once"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test threshold and window default to 3 and 5"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test non-consecutive failures within the window still trip the threshold"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a service recovers automatically as failures slide out of the window"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test services are independent"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now only probes the named service, leaving others untouched"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:22:56.184077Z","warning_details":["solution.ex: line 25: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 25: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:22:56.214 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:22:57.464 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 8/14 failed"],"tests":0.43},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test health and probe_now on an unknown service return {:error, :not_found}"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test services are independent"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a manual (default interval) service is never probed automatically"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now only probes the named service, leaving others untouched"}],"tests_errors":0,"tests_excluded":0,"tests_failed":8,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:22:57.440102Z","warning_details":["solution.ex: line 31: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 31: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:22:57.469 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:22:58.886 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 6/14 failed"],"tests":0.57},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test report lists all watched services"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test services are independent"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a manual (default interval) service is never probed automatically"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now only probes the named service, leaving others untouched"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:22:58.858632Z","warning_details":["solution.ex: line 37: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:22:58.891 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:22:59.704 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.3,"reasons":["tests: 14/14 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test report lists all watched services"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test health and probe_now on an unknown service return {:error, :not_found}"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test probe_now returns {:ok, status}"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test service goes down when window failure count reaches threshold, notifying once"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test threshold and window default to 3 and 5"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test non-consecutive failures within the window still trip the threshold"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test a service recovers automatically as failures slide out of the window"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test services are independent"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test a manual (default interval) service is never probed automatically"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/01 (truncated)
+13:22:59.708 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:23:00.566 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":128,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":11,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 11 warning(s) → hard fail (overall 0.0)","tests: 14/14 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 61, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test report lists all watched services"},{"message":"{:EXIT, #PID<0.212.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 57, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test health and probe_now on an unknown service return {:error, :not_found}"},{"message":"{:EXIT, #PID<0.214.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test probe_now returns {:ok, status}"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test service goes down when window failure count reaches threshold, notifying once"},{"message":"{:EXIT, #PID<0.220.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test threshold and window default to 3 and 5"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test non-consecutive failures within the window still trip the threshold"},{"message":"{:EXIT, #PID<0.226.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test a service recovers automatically as failures slide out of the window"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test services are independent"},{"message":"{:EXIT, #PID<0.232.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"{:EXIT, #PID<0.238.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"{:EXIT, #PID<0.241.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_d (truncated)
+13:23:00.572 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:23:01.903 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":150,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 2/14 failed"],"tests":0.86},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_info, 2, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"{:EXIT, #PID<0.242.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_info, 2, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 105, error_info: %{module: Exception}]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":12,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:23:01.872725Z","warning_details":["solution.ex: line 100: variable \"epoch\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 100: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 100: variable \"state\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 104: variable \"state\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:23:01.908 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:23:03.397 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)"],"tests":1.0},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":14,"timestamp":"2026-07-15T11:23:03.368809Z","warning_details":["solution.ex: line 118: variable \"state\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:23:03.397 [debug] base mutation gate (per-fn): handle_cast/2 survived
+13:23:03.416 [info] cycle 015_002_sliding_window_failure_count_heartbeat_monitor_01: repairing — Mutation gate failed: the raise-mutant of `handle_cast/2` still passes the tests — that public function is not exercised by test_harness.exs. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+13:23:03.416 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+13:23:03.416 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Mutation gate failed: the raise-mutant of `handle_cast/2` still passes the tests — that public function is not exercised by test_harness.exs. Strengthen test_harness.exs so it fails when that code is gutted (add assertions that actually exercise the behavior) — do not weaken the implementation.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+# Sliding-Window Failure-Count Heartbeat Monitor
+
+Write me an Elixir `GenServer` module called `WindowMonitor` that watches a set of
+registered services by running a health *probe* for each one and deciding whether
+the service is `:up` or `:down` based on **how many of its most recent probe
+results were failures** — a sliding window, not a run of consecutive failures.
+
+Use only the OTP standard library — no external dependencies. Give me the complete
+module in a single file.
+
+## Public API
+
+- `WindowMonitor.start_link(opts \\ [])` — starts the process, linked to the caller,
+  returning the usual `GenServer.on_start()` result. `opts` is a keyword list
+  defaulting to `[]`. When a `:name` option is present it is used for process
+  registration (so the other functions accept either the pid or the registered
+  name); when absent the process starts unregistered. A freshly started server
+  watches zero services.
+
+- `WindowMonitor.watch(server, name, probe, opts \\ [])` — registers a service to
+  be watched and returns `:ok`.
+  - `name` is any term identifying the service (compared by value).
+  - `probe` is a **zero-arity** function returning either `:ok` (healthy) or
+    `{:error, reason}` (unhealthy); `reason` may be any term. Guard the public
+    function with `is_function(probe, 0)`.
+  - `opts` may contain:
+    - `:window` — a positive integer, the number of most-recent probe results the
+      server retains for this service. Defaults to `5`.
+    - `:threshold` — a positive integer, the number of failures **within the
+      retained window** at or above which the service is considered `:down`.
+      Defaults to `3`.
+    - `:on_change` — an arity-2 function called as `on_change.(name, new_status)`
+      on each status transition (see below). Defaults to a no-op.
+    - `:interval` — a positive integer number of milliseconds, or the atom
+      `:manual` (the default). When a positive integer, the server automatically
+      probes this service on that interval using `Process.send_after/3`; the first
+      automatic probe fires one interval after `watch`, and probing repeats
+      indefinitely. When `:manual`, the service is only probed via `probe_now/2`.
+  - A newly watched service starts with status `:up` and an **empty** result
+    window. Watching a `name` that already exists replaces its configuration and
+    resets it to this initial state.
+
+- `WindowMonitor.probe_now(server, name)` — runs exactly one probe for the named
+  service immediately (the same work an automatic tick performs), applies the
+  result, and returns `{:ok, new_status}` where `new_status` is that service's
+  status after the probe. Returns `{:error, :not_found}` if `name` is not watched.
+
+- `WindowMonitor.health(server, name)` — returns `{:ok, :up}` / `{:ok, :down}` for
+  a watched service, or `{:error, :not_found}` if it was never watched.
+
+- `WindowMonitor.report(server)` — returns a map `%{name => :up | :down}` of every
+  currently watched service and its current status. Empty map `%{}` when nothing is
+  watched.
+
+## Running a probe
+
+A single probe invokes the service's `probe` function (**synchronously inside the
+server process**) and records the outcome as either a success or a failure. The
+server keeps only the `:window` most-recent outcomes for the service (older ones are
+discarded). After recording:
+
+- Let `f` be the number of **failures among the retained results** (at most
+  `:window` of them) and `t` be `:threshold`.
+- The new status is `:down` when `f >= t`, otherwise `:up`.
+- The status is recomputed from the window on **every** probe. Because the window
+  slides, a service can recover automatically: once enough healthy results push
+  failures out of the window so that `f < t`, it returns to `:up` — no explicit
+  "success streak" is required.
+
+Failures do **not** have to be consecutive. For example with `window: 5` and
+`threshold: 3`, the sequence error, ok, error, ok, error leaves three failures in
+the window and marks the service `:down`, even though no two failures were adjacent.
+
+## Status transitions and notifications
+
+A "transition" is any change of the status field (`:up` → `:down` or
+`:down` → `:up`). On each actual change — and only then — the service's `:on_change`
+function is called exactly once as `on_change.(name, new_status)` with the status
+just entered. A probe that leaves the status unchanged calls nothing.
+
+## Independence and robustness
+
+- Services are fully independent: one service's results, window, or status never
+  affect another's.
+- Any message the server does not understand must be ignored: it must neither crash
+  the process nor alter any service's state.
+
+----- solution.ex -----
+defmodule WindowMonitor do
+  @moduledoc """
+  A `GenServer` that watches registered services and classifies each as `:up`
+  or `:down` using a **sliding window of recent probe results**.
+
+  For every watched service the server retains only its `:window` most-recent
+  probe outcomes. After each probe it counts how many of those retained results
+  were failures (`f`) and compares against the configured `:threshold` (`t`):
+  the service is `:down` when `f >= t`, otherwise `:up`. Because the window
+  slides, failures need not be consecutive and a service recovers on its own
+  once enough healthy results push failures out of the window.
+
+  Services are independent — one service's results, window, or status never
+  affect another's. On each actual status change the service's `:on_change`
+  callback is invoked exactly once. Unknown messages are ignored.
+
+  Only the OTP standard library is used.
+  """
+
+  use GenServer
+
+  @typedoc "A zero-arity health probe."
+  @type probe :: (-> :ok | {:error, term()})
+
+  @typedoc "A service status."
+  @type status :: :up | :down
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the monitor linked to the caller.
+
+  When `opts` contains a `:name`, the process is registered under it; otherwise
+  it starts unregistered. A freshly started server watches zero services.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, opts, name: name)
+      :error -> GenServer.start_link(__MODULE__, opts)
+    end
+  end
+
+  @doc """
+  Registers `name` to be watched using the zero-arity `probe`.
+
+  Options: `:window` (positive integer, default `5`), `:threshold` (positive
+  integer, default `3`), `:on_change` (arity-2 callback, default no-op) and
+  `:interval` (positive integer milliseconds or `:manual`, default `:manual`).
+
+  A newly watched service starts `:up` with an empty window. Re-watching an
+  existing `name` replaces its configuration and resets it to this state.
+  """
+  @spec watch(GenServer.server(), term(), probe(), (truncated)
+13:24:01.379 [debug] claude -p RESULT (stop="end_turn"):
+<file path="test_harness.exs">
+defmodule WindowMonitorTest do
+  use ExUnit.Case, async: false
+
+  # Deterministic scripted probe: yields the given results in order on successive
+  # calls; once a single element remains, that element repeats forever.
+  defp script(list) do
+    {:ok, pid} = Agent.start_link(fn -> list end)
+    fn -> next(pid) end
+  end
+
+  defp next(pid) do
+    Agent.get_and_update(pid, fn
+      [x] -> {x, [x]}
+      [x | rest] -> {x, rest}
+      [] -> {:ok, []}
+    end)
+  end
+
+  setup do
+    {:ok, server} = WindowMonitor.start_link([])
+    %{server: server}
+  end
+
+  test "watch returns :ok, a new service is :up, and report starts empty", %{server: server} do
+    assert WindowMonitor.report(server) == %{}
+    assert :ok = WindowMonitor.watch(server, "svc", script([:ok]))
+    assert {:ok, :up} = WindowMonitor.health(server, "svc")
+    assert WindowMonitor.report(server) == %{"svc" => :up}
+  end
+
+  test "report lists all watched services", %{server: server} do
+    :ok = WindowMonitor.watch(server, "a", script([:ok]))
+    :ok = WindowMonitor.watch(server, "b", script([:ok]))
+    assert WindowMonitor.report(server) == %{"a" => :up, "b" => :up}
+  end
+
+  test "health and probe_now on an unknown service return {:error, :not_found}", %{
+    server: server
+  } do
+    assert {:error, :not_found} = WindowMonitor.health(server, "nope")
+    assert {:error, :not_found} = WindowMonitor.probe_now(server, "nope")
+  end
+
+  test "probe_now returns {:ok, status}", %{server: server} do
+    :ok = WindowMonitor.watch(server, "svc", script([:ok]))
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+  end
+
+  test "service goes down when window failure count reaches threshold, notifying once",
+       %{server: server} do
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    :ok =
+      WindowMonitor.watch(server, "svc", script([{:error, :boom}]),
+        window: 5,
+        threshold: 3,
+        on_change: on_change
+      )
+
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    refute_receive {:change, _, _}, 50
+
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+    assert_receive {:change, "svc", :down}
+
+    # Still failing while already down: no further notification.
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+    refute_receive {:change, _, _}, 100
+  end
+
+  test "threshold and window default to 3 and 5", %{server: server} do
+    :ok = WindowMonitor.watch(server, "svc", script([{:error, :boom}]))
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+  end
+
+  test "non-consecutive failures within the window still trip the threshold", %{server: server} do
+    # error, ok, error, ok, error -> 3 failures in a 5-wide window -> down
+    seq = [{:error, :boom}, :ok, {:error, :boom}, :ok, {:error, :boom}, :ok]
+
+    :ok = WindowMonitor.watch(server, "svc", script(seq), window: 5, threshold: 3)
+
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+  end
+
+  test "a service recovers automatically as failures slide out of the window", %{server: server} do
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    seq = [{:error, :boom}, {:error, :boom}, {:error, :boom}, :ok, :ok, :ok, :ok]
+
+    :ok =
+      WindowMonitor.watch(server, "svc", script(seq),
+        window: 5,
+        threshold: 3,
+        on_change: on_change
+      )
+
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+    assert_receive {:change, "svc", :down}
+
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+    # 6th probe: window now holds only 2 failures -> back up.
+    assert {:ok, :up} = WindowMonitor.probe_now(server, "svc")
+    assert_receive {:change, "svc", :up}
+    refute_receive {:change, _, _}, 100
+  end
+
+  test "services are independent", %{server: server} do
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    :ok =
+      WindowMonitor.watch(server, "a", script([{:error, :boom}]),
+        threshold: 1,
+        on_change: on_change
+      )
+
+    :ok = WindowMonitor.watch(server, "b", script([:ok]), on_change: on_change)
+
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "a")
+    assert_receive {:change, "a", :down}
+    assert {:ok, :up} = WindowMonitor.health(server, "b")
+    assert WindowMonitor.report(server) == %{"a" => :down, "b" => :up}
+    refute_receive {:change, "b", _}, 50
+  end
+
+  test "automatic interval probing drives a service down", %{server: server} do
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    :ok =
+      WindowMonitor.watch(server, "auto", script([{:error, :boom}]),
+        threshold: 1,
+        interval: 20,
+        on_change: on_change
+      )
+
+    assert_receive {:change, "auto", :down}, 2_000
+    assert {:ok, :down} = WindowMonitor.health(server, "auto")
+    refute_receive {:change, _, _}, 200
+  end
+
+  test "re-watching a name resets its state", %{server: server} do
+    :ok = WindowMonitor.watch(server, "svc", script([{:error, :boom}]), threshold: 1)
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+
+    :ok = WindowMonitor.watch(server, "svc", script([:ok]))
+    assert {:ok, :up} = WindowMonitor.health(server, "svc")
+    assert WindowMonitor.report(server) == %{"svc" => :up}
+  end
+
+  test "unexpected messages are ignored and do not disturb state", %{server: server} do
+    :ok = WindowMonitor.watch(server, "svc", script([:ok]))
+    send(server, :hello)
+    send(server, {:weird, 1, 2})
+    assert {:ok, :up} = WindowMonitor.health(server, "svc")
+    assert Process.alive?(server)
+  end
+
+  test "unexpected casts are ignored and do not crash the server", %{server: server} do
+    # Register a service so we can prove its state survives the casts untouched.
+    :ok = WindowMonitor.watch(server, "svc", script([{:error, :boom}]), threshold: 1)
+
+    # A gutted handle_cast/2 (one that raises) would crash the server here; the
+    # follow-up synchronous calls would then exit instead of returning cleanly.
+    assert :ok = GenServer.cast(server, :hello)
+    assert :ok = GenServer.cast(server, {:weird, 1, 2})
+
+    # The server must still be alive and its state must be exactly as before:
+    # the casts must not have probed "svc" (which would flip it :down).
+    assert Process.alive?(server)
+    assert {:ok, :up} = WindowMonitor.health(server, "svc")
+    assert WindowMonitor.report(server) == %{"svc" => :up}
+
+    # And it must still function normally after ignoring the casts.
+    assert {:ok, :down} = WindowMonitor.probe_now(server, "svc")
+  end
+
+  test "a manual (default interval) service is never probed automatically", %{server: server} do
+    # Probe would fail with threshold 1, so any automatic probe would flip it :down.
+    me = self()
+    on_change = fn n, s -> send(me, {:change, n, s}) end
+
+    :ok =
+      WindowMonitor.watch(server, "svc", script([{:error, :boom}]),
+        threshold: 1,
+        on_change: on_change
+      )
+
+    # No :interval given -> :manual; nothing should probe it on its own.
+    refute_receive {:change, _, _}, 150
+    assert {:ok, :up} = WindowMonitor.health(server, "svc")
+    assert WindowMonitor.report(server) == %{"svc" => :up}
+  end
+
+  test "probe_now only probes the named service, leaving others untouched", %{server: server} do
+    :ok = WindowMonitor.watch(server, "a", script([{:error, :boom}]), threshold: 1)
+    :ok = WindowMonitor.watch(server, "b", script([{:e (truncated)
+13:24:01.379 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 11670, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 11670, "cache_read_input_tokens" => 14864, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 11670, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 11670, "cache_read_input_tokens" => 14864, "input_tokens" => 2, "output_tokens" => 5152, "type" => "message"}], "output_tokens" => 5152, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:24:01.396 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01 solution.ex
+13:24:02.834 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":201,"lines_over_98":0,"max_line_length":81,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-15T11:24:02.809585Z","warning_details":[]}
+13:24:02.873 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:24:03.880 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":156,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 15/15 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test report lists all watched services"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test health and probe_now on an unknown service return {:error, :not_found}"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now returns {:ok, status}"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test service goes down when window failure count reaches threshold, notifying once"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test threshold and window default to 3 and 5"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test non-consecutive failures within the window still trip the threshold"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a service recovers automatically as failures slide out of the window"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test services are independent"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test unexpected casts are ignored and do not crash the server"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a manual (default interval) service is never probed automatically"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now only probes the named service, leaving others untouched"}],"tests_errors":0,"tests_excluded":0,"tests_failed":15,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-15T11:24:03.833861Z","warning_details":["solution.ex: line 10: variable \"opts\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:24:03.888 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:24:04.717 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 14/15 failed"],"tests":0.07},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test report lists all watched services"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now returns {:ok, status}"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test service goes down when window failure count reaches threshold, notifying once"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test threshold and window default to 3 and 5"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test non-consecutive failures within the window still trip the threshold"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a service recovers automatically as failures slide out of the window"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test services are independent"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test unexpected casts are ignored and do not crash the server"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a manual (default interval) service is never probed automatically"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now only probes the named service, leaving others untouched"}],"tests_errors":0,"tests_excluded":0,"tests_failed":14,"tests_passed":1,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-15T11:24:04.691288Z","warning_details":["solution.ex: line 19: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 19: variable \"opts\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 19: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:24:04.721 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:24:05.941 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 10/15 failed"],"tests":0.33},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"WindowMonitorTest","test":"test health and probe_now on an unknown service return {:error, :not_found}"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now returns {:ok, status}"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test service goes down when window failure count reaches threshold, notifying once"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test threshold and window default to 3 and 5"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test non-consecutive failures within the window still trip the threshold"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a service recovers automatically as failures slide out of the window"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test services are independent"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test unexpected casts are ignored and do not crash the server"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now only probes the named service, leaving others untouched"}],"tests_errors":0,"tests_excluded":0,"tests_failed":10,"tests_passed":5,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-15T11:24:05.914944Z","warning_details":["solution.ex: line 25: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 25: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:24:05.946 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:24:07.162 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 9/15 failed"],"tests":0.4},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test health and probe_now on an unknown service return {:error, :not_found}"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test services are independent"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test unexpected casts are ignored and do not crash the server"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a manual (default interval) service is never probed automatically"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now only probes the named service, leaving others untouched"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":6,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-15T11:24:07.135939Z","warning_details":["solution.ex: line 31: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 31: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:24:07.166 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:24:08.595 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 7/15 failed"],"tests":0.53},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"MUTATION","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test report lists all watched services"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test services are independent"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test unexpected casts are ignored and do not crash the server"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test a manual (default interval) service is never probed automatically"},{"message":"MUTATION","module":"WindowMonitorTest","test":"test probe_now only probes the named service, leaving others untouched"}],"tests_errors":0,"tests_excluded":0,"tests_failed":7,"tests_passed":8,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-15T11:24:08.567977Z","warning_details":["solution.ex: line 37: variable \"server\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:24:08.600 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:24:09.425 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.3,"reasons":["tests: 15/15 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test report lists all watched services"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test health and probe_now on an unknown service return {:error, :not_found}"},{"message":"{:EXIT, #PID<0.213.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test probe_now returns {:ok, status}"},{"message":"{:EXIT, #PID<0.215.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test service goes down when window failure count reaches threshold, notifying once"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test threshold and window default to 3 and 5"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test non-consecutive failures within the window still trip the threshold"},{"message":"{:EXIT, #PID<0.221.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test a service recovers automatically as failures slide out of the window"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test services are independent"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"{:EXIT, #PID<0.227.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 44, error_info: %{module: Exception}]}, {:gen_server, :init_it, 2, [file: ~c\"gen_server.erl\", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c\"gen_server.erl\", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test unexpected casts are ignored and do not crash the server"},{"message":"{:EXIT, #PID<0.233.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :init, 1, [file: ~c\".gen_staging/015_002_sli (truncated)
+13:24:09.429 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:24:10.252 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":128,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":11,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 11 warning(s) → hard fail (overall 0.0)","tests: 15/15 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.207.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 61, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"{:EXIT, #PID<0.209.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test report lists all watched services"},{"message":"{:EXIT, #PID<0.212.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 57, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test health and probe_now on an unknown service return {:error, :not_found}"},{"message":"{:EXIT, #PID<0.214.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test probe_now returns {:ok, status}"},{"message":"{:EXIT, #PID<0.217.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test service goes down when window failure count reaches threshold, notifying once"},{"message":"{:EXIT, #PID<0.220.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test threshold and window default to 3 and 5"},{"message":"{:EXIT, #PID<0.223.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test non-consecutive failures within the window still trip the threshold"},{"message":"{:EXIT, #PID<0.226.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test a service recovers automatically as failures slide out of the window"},{"message":"{:EXIT, #PID<0.229.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test services are independent"},{"message":"{:EXIT, #PID<0.232.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"{:EXIT, #PID<0.238.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"{:EXIT, #PID<0.241.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_call, 3, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 49, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_d (truncated)
+13:24:10.256 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:24:11.544 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":150,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":4,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.6,"mode":"full","overall":0.0,"reasons":["compilation: 4 warning(s) → hard fail (overall 0.0)","tests: 2/15 failed"],"tests":0.87},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.235.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_info, 2, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 101, error_info: %{module: Exception}]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"{:EXIT, #PID<0.242.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_info, 2, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 105, error_info: %{module: Exception}]}, {:gen_server, :try_handle_info, 3, [file: ~c\"gen_server.erl\", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"}],"tests_errors":0,"tests_excluded":0,"tests_failed":2,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-15T11:24:11.516965Z","warning_details":["solution.ex: line 100: variable \"epoch\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 100: variable \"name\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 100: variable \"state\" is unused (if the variable is not meant to be used, prefix it with an underscore)","solution.ex: line 104: variable \"state\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:24:11.548 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut solution.ex
+13:24:13.032 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":159,"lines_over_98":0,"max_line_length":87,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 1/15 failed"],"tests":0.93},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01_mut","test_failures":[{"message":"{:EXIT, #PID<0.245.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :handle_cast, 2, [file: ~c\".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01_mut/solution.ex\", line: 119, error_info: %{module: Exception}]}, {:gen_server, :try_handle_cast, 3, [file: ~c\"gen_server.erl\", line: 2460]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2418]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test unexpected casts are ignored and do not crash the server"}],"tests_errors":0,"tests_excluded":0,"tests_failed":1,"tests_passed":14,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-15T11:24:13.005501Z","warning_details":["solution.ex: line 118: variable \"state\" is unused (if the variable is not meant to be used, prefix it with an underscore)"]}
+13:24:13.052 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01 solution.ex (seed 556639668)
+13:24:14.553 [debug] grade JSON: {"analysis":{"defp_count":4,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":201,"lines_over_98":0,"max_line_length":81,"mode":"full","pipe_chain_count":0,"public_fn_count":14,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/015_002_sliding_window_failure_count_heartbeat_monitor_01/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-15T11:24:14.505746Z","warning_details":[]}
+13:24:14.598 [info] cycle 015_002_sliding_window_failure_count_heartbeat_monitor_01: ACCEPTED on attempt 2
+13:24:14.599 [info] promoted 015_002_sliding_window_failure_count_heartbeat_monitor_01 -> tasks/015_002_sliding_window_failure_count_heartbeat_monitor_01

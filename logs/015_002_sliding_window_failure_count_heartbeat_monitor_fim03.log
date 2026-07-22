@@ -1,0 +1,399 @@
+13:33:38.611 [info] FIM 015_002_sliding_window_failure_count_heartbeat_monitor_fim03 → 015_002_sliding_window_failure_count_heartbeat_monitor_04: target maybe_schedule/3
+13:33:38.611 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:33:38.611 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `maybe_schedule/3`.
+
+Generate a prompt describing how to implement `maybe_schedule/3` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `maybe_schedule/3` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `maybe_schedule/3` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `maybe_schedule/3` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+# Sliding-Window Failure-Count Heartbeat Monitor
+
+Write me an Elixir `GenServer` module called `WindowMonitor` that watches a set of
+registered services by running a health *probe* for each one and deciding whether
+the service is `:up` or `:down` based on **how many of its most recent probe
+results were failures** — a sliding window, not a run of consecutive failures.
+
+Use only the OTP standard library — no external dependencies. Give me the complete
+module in a single file.
+
+## Public API
+
+- `WindowMonitor.start_link(opts \\ [])` — starts the process, linked to the caller,
+  returning the usual `GenServer.on_start()` result. `opts` is a keyword list
+  defaulting to `[]`. When a `:name` option is present it is used for process
+  registration (so the other functions accept either the pid or the registered
+  name); when absent the process starts unregistered. A freshly started server
+  watches zero services.
+
+- `WindowMonitor.watch(server, name, probe, opts \\ [])` — registers a service to
+  be watched and returns `:ok`.
+  - `name` is any term identifying the service (compared by value).
+  - `probe` is a **zero-arity** function returning either `:ok` (healthy) or
+    `{:error, reason}` (unhealthy); `reason` may be any term. Guard the public
+    function with `is_function(probe, 0)`.
+  - `opts` may contain:
+    - `:window` — a positive integer, the number of most-recent probe results the
+      server retains for this service. Defaults to `5`.
+    - `:threshold` — a positive integer, the number of failures **within the
+      retained window** at or above which the service is considered `:down`.
+      Defaults to `3`.
+    - `:on_change` — an arity-2 function called as `on_change.(name, new_status)`
+      on each status transition (see below). Defaults to a no-op.
+    - `:interval` — a positive integer number of milliseconds, or the atom
+      `:manual` (the default). When a positive integer, the server automatically
+      probes this service on that interval using `Process.send_after/3`; the first
+      automatic probe fires one interval after `watch`, and probing repeats
+      indefinitely. When `:manual`, the service is only probed via `probe_now/2`.
+  - A newly watched service starts with status `:up` and an **empty** result
+    window. Watching a `name` that already exists replaces its configuration and
+    resets it to this initial state.
+
+- `WindowMonitor.probe_now(server, name)` — runs exactly one probe for the named
+  service immediately (the same work an automatic tick performs), applies the
+  result, and returns `{:ok, new_status}` where `new_status` is that service's
+  status after the probe. Returns `{:error, :not_found}` if `name` is not watched.
+
+- `WindowMonitor.health(server, name)` — returns `{:ok, :up}` / `{:ok, :down}` for
+  a watched service, or `{:error, :not_found}` if it was never watched.
+
+- `WindowMonitor.report(server)` — returns a map `%{name => :up | :down}` of every
+  currently watched service and its current status. Empty map `%{}` when nothing is
+  watched.
+
+## Running a probe
+
+A single probe invokes the service's `probe` function (**synchronously inside the
+server process**) and records the outcome as either a success or a failure. The
+server keeps only the `:window` most-recent outcomes for the service (older ones are
+discarded). After recording:
+
+- Let `f` be the number of **failures among the retained results** (at most
+  `:window` of them) and `t` be `:threshold`.
+- The new status is `:down` when `f >= t`, otherwise `:up`.
+- The status is recomputed from the window on **every** probe. Because the window
+  slides, a service can recover automatically: once enough healthy results push
+  failures out of the window so that `f < t`, it returns to `:up` — no explicit
+  "success streak" is required.
+
+Failures do **not** have to be consecutive. For example with `window: 5` and
+`threshold: 3`, the sequence error, ok, error, ok, error leaves three failures in
+the window and marks the service `:down`, even though no two failures were adjacent.
+
+## Status transitions and notifications
+
+A "transition" is any change of the status field (`:up` → `:down` or
+`:down` → `:up`). On each actual change — and only then — the service's `:on_change`
+function is called exactly once as `on_change.(name, new_status)` with the status
+just entered. A probe that leaves the status unchanged calls nothing.
+
+## Independence and robustness
+
+- Services are fully independent: one service's results, window, or status never
+  affect another's.
+- Any message the server does not understand must be ignored: it must neither crash
+  the process nor alter any service's state.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule WindowMonitor do
+  @moduledoc """
+  A `GenServer` that watches registered services and classifies each as `:up`
+  or `:down` using a **sliding window of recent probe results**.
+
+  For every watched service the server retains only its `:window` most-recent
+  probe outcomes. After each probe it counts how many of those retained results
+  were failures (`f`) and compares against the configured `:threshold` (`t`):
+  the service is `:down` when `f >= t`, otherwise `:up`. Because the window
+  slides, failures need not be consecutive and a service recovers on its own
+  once enough healthy results push failures out of the window.
+
+  Services are independent — one service's results, window, or status never
+  affect another's. On each actual status change the service's `:on_change`
+  callback is invoked exactly once. Unknown messages are ignored.
+
+  Only the OTP standard library is used.
+  """
+
+  use GenServer
+
+  @typedoc "A zero-arity health probe."
+  @type probe :: (-> :ok | {:error, term()})
+
+  @typedoc "A service status."
+  @type status :: :up | :down
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the monitor linked to the caller.
+
+  When `opts` contains a `:name`, the process is registered under it; otherwise
+  it starts unregistered. A freshly started server watches zero services.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, opts, name: name)
+      :error -> GenServer.start_link(__MODULE__, opts)
+    end
+  end
+
+  @doc """
+  Registers `name` to be watched using the zero-arity `probe`.
+
+  Options: `:window` (positive integer, default `5`), `:threshold` (positive
+  integer, default `3`), `:on_change` (arity-2 callback, default no-op) and
+  `:interval` (positive integer milliseconds or `:manual`, default `:manual`).
+
+  A newly watched service starts `:up` with an empty window. Re-watching an
+  existing `name` replaces its configuration and resets it to this state.
+  """
+  @spec watch(GenServer.server(), ter (truncated)
+13:34:36.065 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+# Fill in the Middle: `maybe_schedule/3`
+
+Below is the complete `WindowMonitor` module — a `GenServer` that watches
+registered services and classifies each as `:up` or `:down` using a sliding
+window of recent probe results — with the body of the private
+`maybe_schedule/3` helper removed. Your task is to implement it.
+
+Implement the private `maybe_schedule/3` function. It arranges the *next*
+automatic probe for a watched service and is called both when a service is first
+watched and after each automatic tick fires. It takes the service `name`, the
+service's `interval`, and the service's `epoch` (a monotonic generation number
+used to distinguish a service's current configuration from a stale one).
+
+- When `interval` is a positive integer (a number of milliseconds), schedule a
+  `{:tick, name, epoch}` message to be delivered to the server process itself
+  after `interval` milliseconds using `Process.send_after/3`, then return `:ok`.
+  Carrying `epoch` in the message lets `handle_info/2` ignore ticks left over
+  from a previous configuration of the same `name`.
+- When `interval` is the atom `:manual`, do nothing (no message is scheduled)
+  and simply return `:ok`.
+
+In both cases the function returns `:ok`. It should be written as two clauses —
+one for the integer-interval case (guarded with `is_integer/1`) and one for the
+`:manual` case.
+
+```elixir
+defmodule WindowMonitor do
+  @moduledoc """
+  A `GenServer` that watches registered services and classifies each as `:up`
+  or `:down` using a **sliding window of recent probe results**.
+
+  For every watched service the server retains only its `:window` most-recent
+  probe outcomes. After each probe it counts how many of those retained results
+  were failures (`f`) and compares against the configured `:threshold` (`t`):
+  the service is `:down` when `f >= t`, otherwise `:up`. Because the window
+  slides, failures need not be consecutive and a service recovers on its own
+  once enough healthy results push failures out of the window.
+
+  Services are independent — one service's results, window, or status never
+  affect another's. On each actual status change the service's `:on_change`
+  callback is invoked exactly once. Unknown messages are ignored.
+
+  Only the OTP standard library is used.
+  """
+
+  use GenServer
+
+  @typedoc "A zero-arity health probe."
+  @type probe :: (-> :ok | {:error, term()})
+
+  @typedoc "A service status."
+  @type status :: :up | :down
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the monitor linked to the caller.
+
+  When `opts` contains a `:name`, the process is registered under it; otherwise
+  it starts unregistered. A freshly started server watches zero services.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, opts, name: name)
+      :error -> GenServer.start_link(__MODULE__, opts)
+    end
+  end
+
+  @doc """
+  Registers `name` to be watched using the zero-arity `probe`.
+
+  Options: `:window` (positive integer, default `5`), `:threshold` (positive
+  integer, default `3`), `:on_change` (arity-2 callback, default no-op) and
+  `:interval` (positive integer milliseconds or `:manual`, default `:manual`).
+
+  A newly watched service starts `:up` with an empty window. Re-watching an
+  existing `name` replaces its configuration and resets it to this state.
+  """
+  @spec watch(GenServer.server(), term(), probe(), keyword()) :: :ok
+  def watch(server, name, probe, opts \\ []) when is_function(probe, 0) do
+    GenServer.call(server, {:watch, name, probe, opts})
+  end
+
+  @doc """
+  Runs exactly one probe for `name` immediately, applies the result, and returns
+  `{:ok, new_status}`. Returns `{:error, :not_found}` if `name` is not watched.
+  """
+  @spec probe_now(GenServer.server(), term()) ::
+          {:ok, status()} | {:error, :not_found}
+  def probe_now(server, name) do
+    GenServer.call(server, {:probe_now, name})
+  end
+
+  @doc """
+  Returns `{:ok, status}` for a watched service or `{:error, :not_found}`.
+  """
+  @spec health(GenServer.server(), term()) ::
+          {:ok, status()} | {:error, :not_found}
+  def health(server, name) do
+    GenServer.call(server, {:health, name})
+  end
+
+  @doc """
+  Returns a map `%{name => status}` for every currently watched service.
+  """
+  @spec report(GenServer.server()) :: %{optional(term()) => status()}
+  def report(server) do
+    GenServer.call(server, :report)
+  end
+
+  # ── GenServer callbacks ───────────────────────────────────────────────────
+
+  @impl true
+  @spec init(keyword()) :: {:ok, map()}
+  def init(_opts) do
+    {:ok, %{services: %{}, counter: 0}}
+  end
+
+  @impl true
+  def handle_call({:watch, name, probe, opts}, _from, state) do
+    window = Keyword.get(opts, :window, 5)
+    threshold = Keyword.get(opts, :threshold, 3)
+    on_change = Keyword.get(opts, :on_change, fn _name, _status -> :ok end)
+    interval = Keyword.get(opts, :interval, :manual)
+    epoch = state.counter + 1
+
+    service = %{
+      probe: probe,
+      window: window,
+      threshold: threshold,
+      on_change: on_change,
+      interval: interval,
+      status: :up,
+      results: [],
+      epoch: epoch
+    }
+
+    maybe_schedule(name, interval, epoch)
+    services = Map.put(state.services, name, service)
+    {:reply, :ok, %{state | services: services, counter: epoch}}
+  end
+
+  def handle_call({:probe_now, name}, _from, state) do
+    case Map.get(state.services, name) do
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      service ->
+        {new_service, new_status} = probe_and_notify(name, service)
+        services = Map.put(state.services, name, new_service)
+        {:reply, {:ok, new_status}, %{state | services: services}}
+    end
+  end
+
+  def handle_call({:health, name}, _from, state) do
+    case Map.get(state.services, name) do
+      nil -> {:reply, {:error, :not_found}, state}
+      %{status: status} -> {:reply, {:ok, status}, state}
+    end
+  end
+
+  def handle_call(:report, _from, state) do
+    report = Map.new(state.services, fn {name, %{status: s}} -> {name, s} end)
+    {:reply, report, state}
+  end
+
+  def handle_call(_other, _from, state) do
+    {:reply, {:error, :unknown_request}, state}
+  end
+
+  @impl true
+  def handle_info({:tick, name, epoch}, state) do
+    case Map.get(state.services, name) do
+      %{epoch: ^epoch, interval: interval} = service when is_integer(interval) ->
+        {new_service, _status} = probe_and_notify(name, service)
+        maybe_schedule(name, interval, epoch)
+        services = Map.put(state.services, name, new_service)
+        {:noreply, %{state | services: services}}
+
+      _other ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info(_msg, state) do
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast(_msg, state) do
+    {:noreply, state}
+  end
+
+  # ── Internal helpers ──────────────────────────────────────────────────────
+
+  @spec maybe_schedule(term(), pos_integer() | :manual, non_neg_integer()) :: :ok
+  defp maybe_schedule(name, interval, epoch) do
+    # TODO
+  end
+
+  @spec probe_and_notify(term(), map()) :: {map(), status()}
+  defp probe_and_notify(name, service) do
+    outcome = run_probe(service.probe)
+    results = Enum.take([outcome | service.results], service.window)
+    failures = Enum.count(results, &(&1 == :fail))
+    new_status = if failures >= service.threshold, do: :down, else: :up
+
+    if new_status != service.status do
+      service.on_change.(name, new_status)
+    end
+
+    {%{service | results: results, status: new_status}, new_status}
+  end
+
+  @spec run_probe(probe()) :: :ok | :fail
+  defp run_pro (truncated)
+13:34:36.065 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8460, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8460, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 8460, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 8460, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 4034, "type" => "message"}], "output_tokens" => 4034, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+13:34:36.094 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_015_002_sliding_window_failure_count_heartbeat_monitor_04/015_002_sliding_window_failure_count_heartbeat_monitor_04 solution.ex
+13:34:37.601 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":7,"lines_over_98":0,"max_line_length":81,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"015_002_sliding_window_failure_count_heartbeat_monitor_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_015_002_sliding_window_failure_count_heartbeat_monitor_04/015_002_sliding_window_failure_count_heartbeat_monitor_04/solution.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":15,"tests_ran":true,"tests_skipped":0,"tests_total":15,"timestamp":"2026-07-15T11:34:37.571526Z","warning_details":[]}
+13:34:37.619 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_015_002_sliding_window_failure_count_heartbeat_monitor_04/015_002_sliding_window_failure_count_heartbeat_monitor_04 .gen_staging/fim_015_002_sliding_window_failure_count_heartbeat_monitor_04/mutant.ex
+13:34:38.574 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":true,"line_count":8,"lines_over_98":0,"max_line_length":79,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"015_002_sliding_window_failure_count_heartbeat_monitor_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 14/15 failed"],"tests":0.07},"shape":"fim","solution_file":".gen_staging/fim_015_002_sliding_window_failure_count_heartbeat_monitor_04/mutant.ex","task":"015_002_sliding_window_failure_count_heartbeat_monitor_04","test_failures":[{"message":"{:EXIT, #PID<0.208.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :maybe_schedule, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 177, error_info: %{module: Exception}]}, {WindowMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 113]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test watch returns :ok, a new service is :up, and report starts empty"},{"message":"{:EXIT, #PID<0.211.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :maybe_schedule, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 177, error_info: %{module: Exception}]}, {WindowMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 113]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test report lists all watched services"},{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :maybe_schedule, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 177, error_info: %{module: Exception}]}, {WindowMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 113]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test probe_now returns {:ok, status}"},{"message":"{:EXIT, #PID<0.219.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :maybe_schedule, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 177, error_info: %{module: Exception}]}, {WindowMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 113]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test service goes down when window failure count reaches threshold, notifying once"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :maybe_schedule, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 177, error_info: %{module: Exception}]}, {WindowMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 113]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test threshold and window default to 3 and 5"},{"message":"{:EXIT, #PID<0.225.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :maybe_schedule, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 177, error_info: %{module: Exception}]}, {WindowMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 113]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test non-consecutive failures within the window still trip the threshold"},{"message":"{:EXIT, #PID<0.228.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :maybe_schedule, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 177, error_info: %{module: Exception}]}, {WindowMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 113]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test a service recovers automatically as failures slide out of the window"},{"message":"{:EXIT, #PID<0.231.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :maybe_schedule, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 177, error_info: %{module: Exception}]}, {WindowMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 113]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test services are independent"},{"message":"{:EXIT, #PID<0.234.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :maybe_schedule, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 173, error_info: %{module: Exception}]}, {WindowMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 113]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test automatic interval probing drives a service down"},{"message":"{:EXIT, #PID<0.237.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :maybe_schedule, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 177, error_info: %{module: Exception}]}, {WindowMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 113]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test re-watching a name resets its state"},{"message":"{:EXIT, #PID<0.240.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :maybe_schedule, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 177, error_info: %{module: Exception}]}, {WindowMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 113]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test unexpected messages are ignored and do not disturb state"},{"message":"{:EXIT, #PID<0.243.0>}: {%RuntimeError{message: \"MUTATION\"}, [{WindowMonitor, :maybe_schedule, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 177, error_info: %{module: Exception}]}, {WindowMonitor, :handle_call, 3, [file: ~c\"/tmp/evalfim_2810483_2628.ex\", line: 113]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"WindowMonitorTest","test":"test unexpected casts are igno (truncated)
+13:34:38.574 [debug] fim mutation gate: killed
+13:34:38.599 [info] promoted 015_002_sliding_window_failure_count_heartbeat_monitor_04 -> tasks/015_002_sliding_window_failure_count_heartbeat_monitor_04

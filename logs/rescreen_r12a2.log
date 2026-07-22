@@ -1,0 +1,32 @@
+Blind-solve screen: 5 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/5] 024_004_ordered_stream_webhook_receiver_with_gap_buffering_01 ... RED (test in-order deliveries are all received: ** (KeyError) key :secret not found in:
+
+    []
+)
+[2/5] 071_002_trait_composable_factory_01 ... RED (test build/1 returns a struct with default fields: {:invalid, %ExUnit.TestModule{file: "/home/kamil/projects/elixir-sft-dataset/tasks/071_002_trait_composable_factory_01/test_harness.exs", name: FactoryTest, setup_all?: true, state: {:failed, [{:error)
+[3/5] 071_003_bulk_list_factory_with_concurrent_insertion_01 ... RED (test build/1 returns a struct without touching the DB: {:invalid, %ExUnit.TestModule{file: "/home/kamil/projects/elixir-sft-dataset/tasks/071_003_bulk_list_factory_with_concurrent_insertion_01/test_harness.exs", name: FactoryTest, setup_all?: true, state:)
+[4/5] 071_004_validation_aware_factory_with_compensating_rollback_01 ... RED (test build/1 returns a struct with default fields: {:invalid, %ExUnit.TestModule{file: "/home/kamil/projects/elixir-sft-dataset/tasks/071_004_validation_aware_factory_with_compensating_rollback_01/test_harness.exs", name: FactoryTest, setup_all?: true)
+[5/5] 074_003_concurrency_and_message_assertion_helpers_01 ... RED (test process_exits/2 (runtime function) flunks with pid and liveness when the process outlives the timeout: 
+
+Assertion with =~ failed
+code:  assert error.message =~ "did not terminate"
+left:  "Expected process #PID<0.233.0> to exit within 50ms.\n\n    still alive?: true\n    waited: 50ms\n"
+right: "did not)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 5   green: 0   RED: 5   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 024_004_ordered_stream_webhook_receiver_with_gap_buffering_01: test in-order deliveries are all received: ** (KeyError) key :secret not found in:
+
+    []
+
+    - 071_002_trait_composable_factory_01: test build/1 returns a struct with default fields: {:invalid, %ExUnit.TestModule{file: "/home/kamil/projects/elixir-sft-dataset/tasks/071_002_trait_composable_factory_01/test_harness.exs", name: FactoryTest, setup_all?: true, state: {:failed, [{:error
+    - 071_003_bulk_list_factory_with_concurrent_insertion_01: test build/1 returns a struct without touching the DB: {:invalid, %ExUnit.TestModule{file: "/home/kamil/projects/elixir-sft-dataset/tasks/071_003_bulk_list_factory_with_concurrent_insertion_01/test_harness.exs", name: FactoryTest, setup_all?: true, state:
+    - 071_004_validation_aware_factory_with_compensating_rollback_01: test build/1 returns a struct with default fields: {:invalid, %ExUnit.TestModule{file: "/home/kamil/projects/elixir-sft-dataset/tasks/071_004_validation_aware_factory_with_compensating_rollback_01/test_harness.exs", name: FactoryTest, setup_all?: true
+    - 074_003_concurrency_and_message_assertion_helpers_01: test process_exits/2 (runtime function) flunks with pid and liveness when the process outlives the timeout: 
+
+Assertion with =~ failed
+code:  assert error.message =~ "did not terminate"
+left:  "Expected process #PID<0.233.0> to exit within 50ms.\n\n    still alive?: true\n    waited: 50ms\n"
+right: "did not

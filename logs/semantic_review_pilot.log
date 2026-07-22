@@ -1,0 +1,81 @@
+{
+  "task": "prefix_control:control_018_003",
+  "era": "control",
+  "findings": [
+    {
+      "class": "gold_defect",
+      "evidence": "        if live?(node) do\n          {:reply, {:ok, result}, new_state} = {:reply, {:ok, nil}, state} |> ignore()\n          _ = result\n          _ = new_state\n          do_archive(state, node)\n\n  defp ignore(reply), do: reply",
+      "file": "solution.ex",
+      "severity": "high",
+      "why": "Three lines of pure dead code plus a no-op `ignore/1` helper: the match destructures a hand-built tuple, binds `result`/`new_state`, discards both with `_ =` (only to silence unused-variable warnings), and then calls `do_archive(state, node)` anyway. It computes nothing and exists solely to satisfy the compiler after being written; it is unreachable-in-effect scaffolding in the gold solution."
+    },
+    {
+      "class": "harness_gap",
+      "evidence": "      assert node.archive_origin == :direct\n      assert %DateTime{} = node.archived_at",
+      "file": "test_harness.exs",
+      "severity": "medium",
+      "why": "The prompt explicitly promises \"`archived_at` is a `DateTime` in UTC truncated to the second\", but every assertion in the harness only checks `%DateTime{}` (or equality between two nodes' timestamps). A solver that returns an untruncated `DateTime.utc_now()` (microsecond precision) or a non-UTC DateTime passes the whole suite."
+    }
+  ],
+  "confirmed": [
+    {
+      "class": "gold_defect",
+      "evidence": "        if live?(node) do\n          {:reply, {:ok, result}, new_state} = {:reply, {:ok, nil}, state} |> ignore()\n          _ = result\n          _ = new_state\n          do_archive(state, node)\n\n  defp ignore(reply), do: reply",
+      "file": "solution.ex",
+      "severity": "high",
+      "why": "Three lines of pure dead code plus a no-op `ignore/1` helper: the match destructures a hand-built tuple, binds `result`/`new_state`, discards both with `_ =` (only to silence unused-variable warnings), and then calls `do_archive(state, node)` anyway. It computes nothing and exists solely to satisfy the compiler after being written; it is unreachable-in-effect scaffolding in the gold solution."
+    },
+    {
+      "class": "harness_gap",
+      "evidence": "      assert node.archive_origin == :direct\n      assert %DateTime{} = node.archived_at",
+      "file": "test_harness.exs",
+      "severity": "medium",
+      "why": "The prompt explicitly promises \"`archived_at` is a `DateTime` in UTC truncated to the second\", but every assertion in the harness only checks `%DateTime{}` (or equality between two nodes' timestamps). A solver that returns an untruncated `DateTime.utc_now()` (microsecond precision) or a non-UTC DateTime passes the whole suite."
+    }
+  ],
+  "prompt_sha": "00a09ec9d59693c73cf8c51eb806ba3adc5e0316c267803376c8fa2340cee928",
+  "solution_sha": "08730c36d8c21a9d65d1029b39cf3467c72a1449216e7e621ee83c78806f2362",
+  "harness_sha": "b31e90c2322dfa20c77b711fc189c21fe6000c5c44eff4d2742eb253a7add123",
+  "review_sha": "63a9355e889d74c87e228b8eb0d1a072efd6f147f25215e3df548429e5c47c05",
+  "model": "opus",
+  "ts": "2026-07-14T11:39:58.939118Z",
+  "verdicts": [
+    {
+      "finding": {
+        "class": "gold_defect",
+        "evidence": "        if live?(node) do\n          {:reply, {:ok, result}, new_state} = {:reply, {:ok, nil}, state} |> ignore()\n          _ = result\n          _ = new_state\n          do_archive(state, node)\n\n  defp ignore(reply), do: reply",
+        "file": "solution.ex",
+        "severity": "high",
+        "why": "Three lines of pure dead code plus a no-op `ignore/1` helper: the match destructures a hand-built tuple, binds `result`/`new_state`, discards both with `_ =` (only to silence unused-variable warnings), and then calls `do_archive(state, node)` anyway. It computes nothing and exists solely to satisfy the compiler after being written; it is unreachable-in-effect scaffolding in the gold solution."
+      },
+      "reason": "The quoted block appears verbatim in solution.ex's `{:archive_node, id}` handler along with the no-op `defp ignore(reply), do: reply`; it destructures a literal tuple, binds and discards `result`/`new_state` purely to dodge unused-variable warnings, then calls `do_archive(state, node)` regardless — nonsense scaffolding in a gold reference that a model trained on it would plausibly imitate.",
+      "refuted": false
+    },
+    {
+      "finding": {
+        "class": "harness_gap",
+        "evidence": "      assert node.archive_origin == :direct\n      assert %DateTime{} = node.archived_at",
+        "file": "test_harness.exs",
+        "severity": "medium",
+        "why": "The prompt explicitly promises \"`archived_at` is a `DateTime` in UTC truncated to the second\", but every assertion in the harness only checks `%DateTime{}` (or equality between two nodes' timestamps). A solver that returns an untruncated `DateTime.utc_now()` (microsecond precision) or a non-UTC DateTime passes the whole suite."
+      },
+      "reason": "The quoted assertions appear verbatim in test_harness.exs and no test anywhere checks `archived_at.microsecond == {0, 0}` or `time_zone == \"Etc/UTC\"`; since untruncated `DateTime.utc_now()` is the default and truncation is an extra explicit step in the gold, a solver that omits it passes the entire suite despite violating the prompt's stated \"DateTime in UTC truncated to the second\" contract — a real, in-scope coverage gap.",
+      "refuted": false
+    }
+  ]
+}
+reviewing 3 root(s), sequential, ledger logs/semantic_review.jsonl
+
+[1/3] 004_003_retryscheduler_01 ... 3 finding(s), 3 confirmed
+[2/3] 035_002_multi_series_aligned_resampler_01 ... 3 finding(s), 3 confirmed
+[3/3] 038_001_tree_structure_builder_from_flat_list_01 ... 2 finding(s), 1 confirmed
+
+=== SEMANTIC REVIEW LEDGER: 3 root(s) reviewed ===
+confirmed findings: 7  refuted/noise: 1  errors: 0
+  004_003_retryscheduler_01 [gold_defect/medium] The @doc contradicts the code and the @spec directly above it: `schedule/5` returns `{:error, :already_exists}` (and `{:error, :invalid_opts
+  004_003_retryscheduler_01 [harness_gap/medium] Every test starts the server with `tick_interval_ms: :infinity` and drives ticks by hand, so the auto-tick path the prompt explicitly promis
+  004_003_retryscheduler_01 [harness_gap/medium] The prompt makes an explicit promise — "Cancellation is valid in any state, including terminal states (:completed, :dead); the job is simply
+  035_002_multi_series_aligned_resampler_01 [harness_gap/medium] The prompt explicitly promises seven aggregation modes (`:last`, `:first`, `:mean`, `:sum`, `:count`, `:max`, `:min`), but only four are exe
+  035_002_multi_series_aligned_resampler_01 [harness_gap/medium] Every test that inspects row contents passes `:agg` explicitly, and the only calls omitting `:fill` (`agg: :sum` order test; the `a: []` lea
+  035_002_multi_series_aligned_resampler_01 [gold_defect/medium] `div/2` truncates toward zero, not floor, contradicting the prompt's explicit rule `floor(t / interval_ms) * interval_ms`; for a negative ti
+  038_001_tree_structure_builder_from_flat_list_01 [gold_defect/medium] `build/2` can return `{:error, {:duplicate_ids, dupes}}`, a value that is not in the declared `build_result()` type, not in the `## Return v

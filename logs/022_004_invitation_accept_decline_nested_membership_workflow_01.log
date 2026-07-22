@@ -1,0 +1,690 @@
+21:59:32.776 [info] VARIATION 022_004_invitation_accept_decline_nested_membership_workflow_01: Invitation Accept-Decline Nested Membership Workflow
+21:59:32.776 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+21:59:32.776 [debug] claude -p USER prompt:
+Write me a set of Elixir modules that implement a nested resource endpoint for team membership built around an **invitation / RSVP workflow**, using only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Instead of adding members directly through the API, a team member *invites* another user. That creates a **pending invitation**. The invited user must then *accept* the invitation themselves before they become an actual member, or *decline* it to drop the invitation. This means a membership record can be in one of two visible states: **pending** (invited but not yet joined) and **active** (a full member).
+
+I need these modules:
+
+**`TeamStore`** — a GenServer that holds all application state in memory (users, teams, active members, and pending invitations). It should support these public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option for registration.
+- `TeamStore.create_user(server, id, token)` — stores a user with the given ID and bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id)` — creates a team with no members and no invitations. Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — adds a user directly as an active member (for seeding). Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true` or `false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true` if the user is an active member, else `false`.
+- `TeamStore.is_invited?(server, team_id, user_id)` — returns `true` if the user has a pending invitation for the team, else `false`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, list_of_active_member_ids}` or `{:error, :not_found}` if the team does not exist.
+- `TeamStore.list_invitations(server, team_id)` — returns `{:ok, list_of_pending_user_ids}` or `{:error, :not_found}` if the team does not exist.
+- `TeamStore.invite_member(server, team_id, user_id)` — creates a pending invitation for `user_id`. Returns `{:error, :not_found}` if the team does not exist, `{:error, :conflict}` if the user is already an active member, `{:error, :already_invited}` if the user already has a pending invitation, and `{:ok, user_id}` on success.
+- `TeamStore.accept_invite(server, team_id, user_id)` — turns a pending invitation into an active membership: it removes the pending invitation and adds the user as an active member. Returns `{:error, :not_found}` if the team does not exist, `{:error, :no_invitation}` if the user has no pending invitation for the team, and `{:ok, user_id}` on success.
+- `TeamStore.decline_invite(server, team_id, user_id)` — removes a pending invitation **without** adding the user as a member. Returns `{:error, :not_found}` if the team does not exist, `{:error, :no_invitation}` if the user has no pending invitation for the team, and `{:ok, user_id}` on success.
+
+**`AuthPlug`** — a Plug that reads the `authorization` header, expects `Bearer <token>`, looks the user up via `TeamStore.get_user_by_token/2`, and assigns `:current_user` to the conn. If the token is missing or invalid, it halts the connection with a 401 JSON response `{"error": "unauthorized"}`. It should accept a `:store` option at init time to know which TeamStore process to call. Note: authentication only verifies the token maps to a real user — it does **not** require the user to be a member of any team.
+
+**`TeamRouter`** — a `Plug.Router` that serves the following endpoints. It should accept a `:store` option and plug `AuthPlug` before route matching.
+
+- `GET /api/teams/:team_id/members` — If the team doesn't exist, return 404 `{"error": "not_found"}`. If the current user is not an active member of the team, return 403 `{"error": "forbidden"}`. Otherwise return 200 `{"members": [list_of_active_member_ids]}`.
+
+- `GET /api/teams/:team_id/invitations` — Same 404/403 rules as the members list (only an active member of the team may view its pending invitations). Otherwise return 200 `{"invitations": [list_of_pending_user_ids]}`.
+
+- `POST /api/teams/:team_id/invitations` — Reads a JSON body with `{"user_id": "..."}`. If the team doesn't exist, return 404 `{"error": "not_found"}`. If the current user is not an active member of the team, return 403 `{"error": "forbidden"}` (only members may invite). If the body is missing a string `user_id`, return 400 `{"error": "bad_request"}`. If the invited user is already an active member, return 409 `{"error": "conflict"}`. If the invited user already has a pending invitation, return 409 `{"error": "already_invited"}`. On success, return 201 `{"invited": user_id}`.
+
+- `POST /api/teams/:team_id/invitations/:user_id/accept` — The current user accepts *their own* invitation. If the team doesn't exist, return 404 `{"error": "not_found"}`. If the current user is not the same as the `:user_id` in the path, return 403 `{"error": "forbidden"}` (a user may only accept their own invitation). If the user has no pending invitation for the team, return 409 `{"error": "no_invitation"}`. On success, the user becomes an active member and the pending invitation is removed; return 200 `{"accepted": user_id}`.
+
+- `POST /api/teams/:team_id/invitations/:user_id/decline` — The current user declines *their own* invitation. Same 404 (team missing) and 403 (not your own invitation) rules as accept. If the user has no pending invitation for the team, return 409 `{"error": "no_invitation"}`. On success, the pending invitation is removed and the user does **not** become a member; return 200 `{"declined": user_id}`.
+
+For the endpoints above, the checks must be applied in the order they are listed (team existence first, then authorization, then the operation-specific outcomes).
+
+All error and success responses must be `application/json`. Give me all modules in a single file. Use only `plug`, `jason`, and the OTP standard library.
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+You have NO tools available in this session — do not attempt to read, write,
+edit, or run anything; reply directly with the file contents in your message.
+Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+markdown fences around the blocks. Each file must be exactly:
+
+<file path="RELATIVE/PATH">
+…verbatim file contents…
+</file>
+
+Emit exactly these files and nothing else:
+  - solution.ex — the complete implementation module
+
+
+22:00:40.406 [debug] claude -p RESULT (stop="end_turn"):
+<file path="solution.ex">
+defmodule TeamStore do
+  @moduledoc """
+  In-memory state store for teams, users, active members, and pending
+  invitations, implemented as a `GenServer`.
+
+  The store models an invitation / RSVP workflow: a member invites another
+  user, which creates a *pending* invitation. The invited user must then
+  accept the invitation to become an *active* member, or decline it to drop
+  the invitation.
+
+  State is kept purely in process memory and is lost when the process stops.
+  """
+
+  use GenServer
+
+  @typedoc "Opaque server reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  @typedoc "Internal state held by the GenServer."
+  @type state :: %{
+          users: %{optional(String.t()) => String.t()},
+          tokens: %{optional(String.t()) => String.t()},
+          teams: %{
+            optional(String.t()) => %{
+              members: MapSet.t(String.t()),
+              invitations: MapSet.t(String.t())
+            }
+          }
+        }
+
+  # ── Public API ──────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option used to register the process. Any other options
+  are ignored.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, rest} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, rest, server_opts)
+  end
+
+  @doc """
+  Stores a user with the given `id` and bearer `token`. Returns `:ok`.
+  """
+  @spec create_user(server(), String.t(), String.t()) :: :ok
+  def create_user(server, id, token) do
+    GenServer.call(server, {:create_user, id, token})
+  end
+
+  @doc """
+  Creates a team with no members and no invitations. Returns `:ok`.
+  """
+  @spec create_team(server(), String.t()) :: :ok
+  def create_team(server, team_id) do
+    GenServer.call(server, {:create_team, team_id})
+  end
+
+  @doc """
+  Adds a user directly as an active member (used for seeding). Returns `:ok`.
+  """
+  @spec add_member(server(), String.t(), String.t()) :: :ok
+  def add_member(server, team_id, user_id) do
+    GenServer.call(server, {:add_member, team_id, user_id})
+  end
+
+  @doc """
+  Looks up a user by bearer token.
+
+  Returns `{:ok, user_id}` when the token is known, otherwise `:error`.
+  """
+  @spec get_user_by_token(server(), String.t()) :: {:ok, String.t()} | :error
+  def get_user_by_token(server, token) do
+    GenServer.call(server, {:get_user_by_token, token})
+  end
+
+  @doc """
+  Returns `true` if the team exists, otherwise `false`.
+  """
+  @spec team_exists?(server(), String.t()) :: boolean()
+  def team_exists?(server, team_id) do
+    GenServer.call(server, {:team_exists?, team_id})
+  end
+
+  @doc """
+  Returns `true` if the user is an active member of the team, else `false`.
+  """
+  @spec is_member?(server(), String.t(), String.t()) :: boolean()
+  def is_member?(server, team_id, user_id) do
+    GenServer.call(server, {:is_member?, team_id, user_id})
+  end
+
+  @doc """
+  Returns `true` if the user has a pending invitation for the team, else
+  `false`.
+  """
+  @spec is_invited?(server(), String.t(), String.t()) :: boolean()
+  def is_invited?(server, team_id, user_id) do
+    GenServer.call(server, {:is_invited?, team_id, user_id})
+  end
+
+  @doc """
+  Lists active member IDs for a team.
+
+  Returns `{:ok, member_ids}` or `{:error, :not_found}` if the team does not
+  exist.
+  """
+  @spec list_members(server(), String.t()) ::
+          {:ok, [String.t()]} | {:error, :not_found}
+  def list_members(server, team_id) do
+    GenServer.call(server, {:list_members, team_id})
+  end
+
+  @doc """
+  Lists pending invitation user IDs for a team.
+
+  Returns `{:ok, user_ids}` or `{:error, :not_found}` if the team does not
+  exist.
+  """
+  @spec list_invitations(server(), String.t()) ::
+          {:ok, [String.t()]} | {:error, :not_found}
+  def list_invitations(server, team_id) do
+    GenServer.call(server, {:list_invitations, team_id})
+  end
+
+  @doc """
+  Creates a pending invitation for `user_id` on the given team.
+
+  Returns `{:error, :not_found}` if the team does not exist,
+  `{:error, :conflict}` if the user is already an active member,
+  `{:error, :already_invited}` if the user already has a pending invitation,
+  and `{:ok, user_id}` on success.
+  """
+  @spec invite_member(server(), String.t(), String.t()) ::
+          {:ok, String.t()}
+          | {:error, :not_found | :conflict | :already_invited}
+  def invite_member(server, team_id, user_id) do
+    GenServer.call(server, {:invite_member, team_id, user_id})
+  end
+
+  @doc """
+  Turns a pending invitation into an active membership.
+
+  Returns `{:error, :not_found}` if the team does not exist,
+  `{:error, :no_invitation}` if the user has no pending invitation, and
+  `{:ok, user_id}` on success.
+  """
+  @spec accept_invite(server(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, :not_found | :no_invitation}
+  def accept_invite(server, team_id, user_id) do
+    GenServer.call(server, {:accept_invite, team_id, user_id})
+  end
+
+  @doc """
+  Removes a pending invitation without adding the user as a member.
+
+  Returns `{:error, :not_found}` if the team does not exist,
+  `{:error, :no_invitation}` if the user has no pending invitation, and
+  `{:ok, user_id}` on success.
+  """
+  @spec decline_invite(server(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, :not_found | :no_invitation}
+  def decline_invite(server, team_id, user_id) do
+    GenServer.call(server, {:decline_invite, team_id, user_id})
+  end
+
+  # ── GenServer callbacks ─────────────────────────────────────────────────
+
+  @impl true
+  @spec init(term()) :: {:ok, state()}
+  def init(_opts) do
+    {:ok, %{users: %{}, tokens: %{}, teams: %{}}}
+  end
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    state = %{
+      state
+      | users: Map.put(state.users, id, token),
+        tokens: Map.put(state.tokens, token, id)
+    }
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:create_team, team_id}, _from, state) do
+    team = Map.get(state.teams, team_id, new_team())
+    {:reply, :ok, put_team(state, team_id, team)}
+  end
+
+  def handle_call({:add_member, team_id, user_id}, _from, state) do
+    team = Map.get(state.teams, team_id, new_team())
+
+    team = %{
+      team
+      | members: MapSet.put(team.members, user_id),
+        invitations: MapSet.delete(team.invitations, user_id)
+    }
+
+    {:reply, :ok, put_team(state, team_id, team)}
+  end
+
+  def handle_call({:get_user_by_token, token}, _from, state) do
+    case Map.fetch(state.tokens, token) do
+      {:ok, user_id} -> {:reply, {:ok, user_id}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:team_exists?, team_id}, _from, state) do
+    {:reply, Map.has_key?(state.teams, team_id), state}
+  end
+
+  def handle_call({:is_member?, team_id, user_id}, _from, state) do
+    result =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, team} -> MapSet.member?(team.members, user_id)
+        :error -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:is_invited?, team_id, user_id}, _from, state) do
+    result =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, team} -> MapSet.member?(team.invitations, user_id)
+        :error -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:list_members, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} -> {:reply, {:ok, MapSet.to_list(team.members)}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:list_invitations, team_id}, _from, state) do
+    case Map.fetch(state.teams, team_id) do
+      {:ok, team} -> {:reply, {:ok, MapSet.to_list(team.invitations)}, state}
+      :error -> {:reply, {:erro (truncated)
+22:00:40.406 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3086, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3086, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3086, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3086, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 7045, "type" => "message"}], "output_tokens" => 7045, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+22:00:40.440 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01 solution.ex
+22:00:41.385 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":558,"lines_over_98":0,"max_line_length":89,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":0.51,"reasons":["tests: 25/36 failed"],"tests":0.31},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01","test_failures":[{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET members returns 200 with active members for a member"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-carol\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET members returns 403 for a non-member"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-nobody\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with invalid token"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET members returns 404 for non-existent team"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET invitations returns 200 with an empty list initially"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-carol\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET invitations returns 403 for a non-member"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET invitations returns 404 for a non-existent team"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST invitations returns 201 and lists the pending invitation"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST invitations does not make the invited user a member yet"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 conflict when inviting an existing member"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 already_invited on a duplicate invite"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-carol\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST invitations returns 403 when inviter is not a member"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST invitations returns 404 for a non-existent team"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-nobody\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST invitations returns 401 with an invalid token"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST invitations returns 400 for a body missing user_id"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST accept turns the invitation into an active membership"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST accept removes the invitation from the pending list"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST accept returns 403 when accepting someone else's invitation"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-dave\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST accept returns 409 no_invitation when there is no pending invite"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-dave\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST accept returns 404 for a non-existent team"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST decline removes the invitation without making a member"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-dave\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST decline returns 409 no_invitation when there is no pending invite"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST decline returns 403 when declining someone else's invitation"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test response content-type is application/json"},{"message":":exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test invitations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":25,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:00:41.358735Z"}
+22:00:41.387 [info] cycle 022_004_invitation_accept_decline_nested_membership_workflow_01: repairing — Tests failed (25 failed, 0 errors):
+  - test GET members returns 200 with active members for a member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test GET members returns 403 for a non-member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-carol"}, 5000]}}
+  - test GET members returns 401 with invalid token (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-nobody"}, 5000]}}
+  - test GET members returns 404 for non-existent team (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test GET invitations returns 200 with an empty list initially (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test GET invitations returns 403 for a non-member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-carol"}, 5000]}}
+  - test GET invitations returns 404 for a non-existent team (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 201 and lists the pending invitation (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations does not make the invited user a member yet (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 409 conflict when inviting an existing member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 409 already_invited on a duplicate invite (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 403 when inviter is not a member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-carol"}, 5000]}}
+  - test POST invitations returns 404 for a non-existent team (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 401 with an invalid token (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-nobody"}, 5000]}}
+  - test POST invitations returns 400 for a body missing user_id (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST accept turns the invitation into an active membership (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST accept removes the invitation from the pending list (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST accept returns 403 when accepting someone else's invitation (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST accept returns 409 no_invitation when there is no pending invite (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-dave"}, 5000]}}
+  - test POST accept returns 404 for a non-existent team (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-dave"}, 5000]}}
+  - test POST decline removes the invitation without making a member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST decline returns 409 no_invitation when there is no pending invite (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-dave"}, 5000]}}
+  - test POST decline returns 403 when declining someone else's invitation (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test response content-type is application/json (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test invitations on team-1 do not affect team-2 (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+22:00:41.387 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer. You are given a single task description and must
+implement it completely and correctly using only the specified dependencies. You
+write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+
+22:00:41.387 [debug] claude -p USER prompt:
+A generated task failed its automated check. Fix it. You may edit solution.ex and/or test_harness.exs.
+Return ONLY the file(s) you changed; do NOT return prompt.md.
+Never DELETE a test from test_harness.exs — a fix that reduces the test count is rejected automatically. Fix the code or the test instead.
+
+=== FAILURE REPORT ===
+Tests failed (25 failed, 0 errors):
+  - test GET members returns 200 with active members for a member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test GET members returns 403 for a non-member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-carol"}, 5000]}}
+  - test GET members returns 401 with invalid token (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-nobody"}, 5000]}}
+  - test GET members returns 404 for non-existent team (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test GET invitations returns 200 with an empty list initially (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test GET invitations returns 403 for a non-member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-carol"}, 5000]}}
+  - test GET invitations returns 404 for a non-existent team (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 201 and lists the pending invitation (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations does not make the invited user a member yet (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 409 conflict when inviting an existing member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 409 already_invited on a duplicate invite (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 403 when inviter is not a member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-carol"}, 5000]}}
+  - test POST invitations returns 404 for a non-existent team (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 401 with an invalid token (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-nobody"}, 5000]}}
+  - test POST invitations returns 400 for a body missing user_id (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST accept turns the invitation into an active membership (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST accept removes the invitation from the pending list (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST accept returns 403 when accepting someone else's invitation (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST accept returns 409 no_invitation when there is no pending invite (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-dave"}, 5000]}}
+  - test POST accept returns 404 for a non-existent team (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-dave"}, 5000]}}
+  - test POST decline removes the invitation without making a member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST decline returns 409 no_invitation when there is no pending invite (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-dave"}, 5000]}}
+  - test POST decline returns 403 when declining someone else's invitation (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test response content-type is application/json (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test invitations on team-1 do not affect team-2 (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+
+House style — the solution MUST satisfy all of these:
+  - a module `@moduledoc` describing the module;
+  - an `@spec` AND `@doc` on every public function;
+  - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+  - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+
+=== CURRENT FILES ===
+----- prompt.md (READ-ONLY — do not return it) -----
+Write me a set of Elixir modules that implement a nested resource endpoint for team membership built around an **invitation / RSVP workflow**, using only `Plug` and standard OTP (no Phoenix, no database, no external dependencies beyond `plug` and `jason`).
+
+Instead of adding members directly through the API, a team member *invites* another user. That creates a **pending invitation**. The invited user must then *accept* the invitation themselves before they become an actual member, or *decline* it to drop the invitation. This means a membership record can be in one of two visible states: **pending** (invited but not yet joined) and **active** (a full member).
+
+I need these modules:
+
+**`TeamStore`** — a GenServer that holds all application state in memory (users, teams, active members, and pending invitations). It should support these public functions:
+
+- `TeamStore.start_link(opts)` — starts the process. Accepts a `:name` option for registration.
+- `TeamStore.create_user(server, id, token)` — stores a user with the given ID and bearer token. Returns `:ok`.
+- `TeamStore.create_team(server, team_id)` — creates a team with no members and no invitations. Returns `:ok`.
+- `TeamStore.add_member(server, team_id, user_id)` — adds a user directly as an active member (for seeding). Returns `:ok`.
+- `TeamStore.get_user_by_token(server, token)` — returns `{:ok, user_id}` or `:error`.
+- `TeamStore.team_exists?(server, team_id)` — returns `true` or `false`.
+- `TeamStore.is_member?(server, team_id, user_id)` — returns `true` if the user is an active member, else `false`.
+- `TeamStore.is_invited?(server, team_id, user_id)` — returns `true` if the user has a pending invitation for the team, else `false`.
+- `TeamStore.list_members(server, team_id)` — returns `{:ok, list_of_active_member_ids}` or `{:error, :not_found}` if the team does not exist.
+- `TeamStore.list_invitations(server, team_id)` — returns `{:ok, list_of_pending_user_ids}` or `{:error, :not_found}` if the team does not exist.
+- `TeamStore.invite_member(server, team_id, user_id)` — creates a pending invitation for `user_id`. Returns `{:error, :not_found}` if the team does not exist, `{:error, :conflict}` if the user is already an active member, `{:error, :already_invited}` if the user already has a pending invitation, and `{:ok, user_id}` on success.
+- `TeamStore.accept_invite(server, team_id, user_id)` — turns a pending invitation into an active membership: it removes the pending invitation and adds the user as an active member. Returns `{:error, :not_found}` if the team does no (truncated)
+22:01:58.419 [debug] claude -p RESULT (stop="end_turn"):
+The failure is that `AuthPlug` is configured with a compile-time store (`Application.compile_env(...)` → the literal `TeamStore` module name), so it calls a `TeamStore`-named process that doesn't exist in the tests (which start the store under a unique name and pass it via `conn.private`/`:store`). The fix is to make `AuthPlug` read the store from `conn.private[:team_store]` (which `TeamRouter.call/2` already stashes) before falling back to its init option.
+
+<file path="solution.ex">
+defmodule TeamStore do
+  @moduledoc """
+  In-memory state store for teams, users, active members, and pending
+  invitations, implemented as a `GenServer`.
+
+  The store models an invitation / RSVP workflow: a member invites another
+  user, which creates a *pending* invitation. The invited user must then
+  accept the invitation to become an *active* member, or decline it to drop
+  the invitation.
+
+  State is kept purely in process memory and is lost when the process stops.
+  """
+
+  use GenServer
+
+  @typedoc "Opaque server reference (pid or registered name)."
+  @type server :: GenServer.server()
+
+  @typedoc "Internal state held by the GenServer."
+  @type state :: %{
+          users: %{optional(String.t()) => String.t()},
+          tokens: %{optional(String.t()) => String.t()},
+          teams: %{
+            optional(String.t()) => %{
+              members: MapSet.t(String.t()),
+              invitations: MapSet.t(String.t())
+            }
+          }
+        }
+
+  # ── Public API ──────────────────────────────────────────────────────────
+
+  @doc """
+  Starts the store process.
+
+  Accepts a `:name` option used to register the process. Any other options
+  are ignored.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    {name, rest} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, rest, server_opts)
+  end
+
+  @doc """
+  Stores a user with the given `id` and bearer `token`. Returns `:ok`.
+  """
+  @spec create_user(server(), String.t(), String.t()) :: :ok
+  def create_user(server, id, token) do
+    GenServer.call(server, {:create_user, id, token})
+  end
+
+  @doc """
+  Creates a team with no members and no invitations. Returns `:ok`.
+  """
+  @spec create_team(server(), String.t()) :: :ok
+  def create_team(server, team_id) do
+    GenServer.call(server, {:create_team, team_id})
+  end
+
+  @doc """
+  Adds a user directly as an active member (used for seeding). Returns `:ok`.
+  """
+  @spec add_member(server(), String.t(), String.t()) :: :ok
+  def add_member(server, team_id, user_id) do
+    GenServer.call(server, {:add_member, team_id, user_id})
+  end
+
+  @doc """
+  Looks up a user by bearer token.
+
+  Returns `{:ok, user_id}` when the token is known, otherwise `:error`.
+  """
+  @spec get_user_by_token(server(), String.t()) :: {:ok, String.t()} | :error
+  def get_user_by_token(server, token) do
+    GenServer.call(server, {:get_user_by_token, token})
+  end
+
+  @doc """
+  Returns `true` if the team exists, otherwise `false`.
+  """
+  @spec team_exists?(server(), String.t()) :: boolean()
+  def team_exists?(server, team_id) do
+    GenServer.call(server, {:team_exists?, team_id})
+  end
+
+  @doc """
+  Returns `true` if the user is an active member of the team, else `false`.
+  """
+  @spec is_member?(server(), String.t(), String.t()) :: boolean()
+  def is_member?(server, team_id, user_id) do
+    GenServer.call(server, {:is_member?, team_id, user_id})
+  end
+
+  @doc """
+  Returns `true` if the user has a pending invitation for the team, else
+  `false`.
+  """
+  @spec is_invited?(server(), String.t(), String.t()) :: boolean()
+  def is_invited?(server, team_id, user_id) do
+    GenServer.call(server, {:is_invited?, team_id, user_id})
+  end
+
+  @doc """
+  Lists active member IDs for a team.
+
+  Returns `{:ok, member_ids}` or `{:error, :not_found}` if the team does not
+  exist.
+  """
+  @spec list_members(server(), String.t()) ::
+          {:ok, [String.t()]} | {:error, :not_found}
+  def list_members(server, team_id) do
+    GenServer.call(server, {:list_members, team_id})
+  end
+
+  @doc """
+  Lists pending invitation user IDs for a team.
+
+  Returns `{:ok, user_ids}` or `{:error, :not_found}` if the team does not
+  exist.
+  """
+  @spec list_invitations(server(), String.t()) ::
+          {:ok, [String.t()]} | {:error, :not_found}
+  def list_invitations(server, team_id) do
+    GenServer.call(server, {:list_invitations, team_id})
+  end
+
+  @doc """
+  Creates a pending invitation for `user_id` on the given team.
+
+  Returns `{:error, :not_found}` if the team does not exist,
+  `{:error, :conflict}` if the user is already an active member,
+  `{:error, :already_invited}` if the user already has a pending invitation,
+  and `{:ok, user_id}` on success.
+  """
+  @spec invite_member(server(), String.t(), String.t()) ::
+          {:ok, String.t()}
+          | {:error, :not_found | :conflict | :already_invited}
+  def invite_member(server, team_id, user_id) do
+    GenServer.call(server, {:invite_member, team_id, user_id})
+  end
+
+  @doc """
+  Turns a pending invitation into an active membership.
+
+  Returns `{:error, :not_found}` if the team does not exist,
+  `{:error, :no_invitation}` if the user has no pending invitation, and
+  `{:ok, user_id}` on success.
+  """
+  @spec accept_invite(server(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, :not_found | :no_invitation}
+  def accept_invite(server, team_id, user_id) do
+    GenServer.call(server, {:accept_invite, team_id, user_id})
+  end
+
+  @doc """
+  Removes a pending invitation without adding the user as a member.
+
+  Returns `{:error, :not_found}` if the team does not exist,
+  `{:error, :no_invitation}` if the user has no pending invitation, and
+  `{:ok, user_id}` on success.
+  """
+  @spec decline_invite(server(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, :not_found | :no_invitation}
+  def decline_invite(server, team_id, user_id) do
+    GenServer.call(server, {:decline_invite, team_id, user_id})
+  end
+
+  # ── GenServer callbacks ─────────────────────────────────────────────────
+
+  @impl true
+  @spec init(term()) :: {:ok, state()}
+  def init(_opts) do
+    {:ok, %{users: %{}, tokens: %{}, teams: %{}}}
+  end
+
+  @impl true
+  def handle_call({:create_user, id, token}, _from, state) do
+    state = %{
+      state
+      | users: Map.put(state.users, id, token),
+        tokens: Map.put(state.tokens, token, id)
+    }
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:create_team, team_id}, _from, state) do
+    team = Map.get(state.teams, team_id, new_team())
+    {:reply, :ok, put_team(state, team_id, team)}
+  end
+
+  def handle_call({:add_member, team_id, user_id}, _from, state) do
+    team = Map.get(state.teams, team_id, new_team())
+
+    team = %{
+      team
+      | members: MapSet.put(team.members, user_id),
+        invitations: MapSet.delete(team.invitations, user_id)
+    }
+
+    {:reply, :ok, put_team(state, team_id, team)}
+  end
+
+  def handle_call({:get_user_by_token, token}, _from, state) do
+    case Map.fetch(state.tokens, token) do
+      {:ok, user_id} -> {:reply, {:ok, user_id}, state}
+      :error -> {:reply, :error, state}
+    end
+  end
+
+  def handle_call({:team_exists?, team_id}, _from, state) do
+    {:reply, Map.has_key?(state.teams, team_id), state}
+  end
+
+  def handle_call({:is_member?, team_id, user_id}, _from, state) do
+    result =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, team} -> MapSet.member?(team.members, user_id)
+        :error -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:is_invited?, team_id, user_id}, _from, state) do
+    result =
+      case Map.fetch(state.teams, team_id) do
+        {:ok, team} -> MapSet.member?(team.invitations, user_id)
+        :error -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  (truncated)
+22:01:58.419 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 17651, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 17651, "cache_read_input_tokens" => 14890, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 17651, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 17651, "cache_read_input_tokens" => 14890, "input_tokens" => 2972, "output_tokens" => 8186, "type" => "message"}], "output_tokens" => 8186, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+22:01:58.456 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01 solution.ex
+22:01:59.348 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":565,"lines_over_98":0,"max_line_length":89,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":36,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:01:59.324470Z"}
+22:01:59.366 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:00.277 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":420,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":1,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.9,"mode":"full","overall":0.0,"reasons":["compilation: 1 warning(s) → hard fail (overall 0.0)","tests: 36/36 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"failed to start child with the spec {TeamStore, [name: :store_2]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex:20: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterInvitationTest","test":"test GET members returns 200 with active members for a member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_66]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex:20: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterInvitationTest","test":"test GET members returns 403 for a non-member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_130]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex:20: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with missing auth header"},{"message":"failed to start child with the spec {TeamStore, [name: :store_194]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex:20: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with invalid token"},{"message":"failed to start child with the spec {TeamStore, [name: :store_258]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex:20: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterInvitationTest","test":"test GET members returns 404 for non-existent team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_322]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex:20: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterInvitationTest","test":"test GET invitations returns 200 with an empty list initially"},{"message":"failed to start child with the spec {TeamStore, [name: :store_386]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex:20: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterInvitationTest","test":"test GET invitations returns 403 for a non-member"},{"message":"failed to start child with the spec {TeamStore, [name: :store_450]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex:20: TeamStore.start_link/1\n        (stdlib 8.0.2) supervisor.erl:1036: :supervisor.do_start_child_i/3\n        (stdlib 8.0.2) supervisor.erl:1021: :supervisor.do_start_child/3\n        (stdlib 8.0.2) supervisor.erl:1395: :supervisor.handle_start_child/2\n        (stdlib 8.0.2) supervisor.erl:1092: :supervisor.handle_call/3\n        (stdlib 8.0.2) gen_server.erl:2470: :gen_server.try_handle_call/4\n        (stdlib 8.0.2) gen_server.erl:2499: :gen_server.handle_msg/3\n        (stdlib 8.0.2) proc_lib.erl:333: :proc_lib.init_p_do_apply/3","module":"TeamRouterInvitationTest","test":"test GET invitations returns 404 for a non-existent team"},{"message":"failed to start child with the spec {TeamStore, [name: :store_514]}.\nReason: an exception was raised:\n    ** (RuntimeError) MUTATION\n        .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_0 (truncated)
+22:02:00.286 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:01.161 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":429,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 36/36 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 200 with active members for a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with missing auth header"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 404 for non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 200 with an empty list initially"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 201 and lists the pending invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations does not make the invited user a member yet"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 conflict when inviting an existing member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 already_invited on a duplicate invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 403 when inviter is not a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 400 for a body missing user_id"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept turns the invitation into an active membership"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept removes the invitation from the pending list"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 403 when accepting someone else's invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 409 no_invitation when there is no pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline removes the invitation without making a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 409 no_invitation when there is no pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 403 when declining someone else's invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test invitations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.invite_member returns conflict for an existing member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.invite_member returns already_invited on duplicate"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.invite_member returns not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.is_invited? reflects a pending invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.accept_invite adds member and clears invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.accept_invite returns no_invitation without a pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.decline_invite clears invitation without adding member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.list_invitations returns not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.list_members returns not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.get_user_by_token returns error for unknown token"}],"tests_errors":0,"tests_excluded":0,"tests_failed":36,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:01.136286Z"}
+22:02:01.173 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:02.054 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":429,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.8,"mode":"full","overall":0.0,"reasons":["compilation: 2 warning(s) → hard fail (overall 0.0)","tests: 36/36 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 200 with active members for a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with missing auth header"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 404 for non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 200 with an empty list initially"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 201 and lists the pending invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations does not make the invited user a member yet"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 conflict when inviting an existing member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 already_invited on a duplicate invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 403 when inviter is not a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 400 for a body missing user_id"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept turns the invitation into an active membership"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept removes the invitation from the pending list"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 403 when accepting someone else's invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 409 no_invitation when there is no pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline removes the invitation without making a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 409 no_invitation when there is no pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 403 when declining someone else's invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test invitations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.invite_member returns conflict for an existing member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.invite_member returns already_invited on duplicate"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.invite_member returns not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.is_invited? reflects a pending invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.accept_invite adds member and clears invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.accept_invite returns no_invitation without a pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.decline_invite clears invitation without adding member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.list_invitations returns not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.list_members returns not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.get_user_by_token returns error for unknown token"}],"tests_errors":0,"tests_excluded":0,"tests_failed":36,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:02.029370Z"}
+22:02:02.064 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:02.958 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":429,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 36/36 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 200 with active members for a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with missing auth header"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 404 for non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 200 with an empty list initially"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 201 and lists the pending invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations does not make the invited user a member yet"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 conflict when inviting an existing member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 already_invited on a duplicate invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 403 when inviter is not a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 400 for a body missing user_id"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept turns the invitation into an active membership"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept removes the invitation from the pending list"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 403 when accepting someone else's invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 409 no_invitation when there is no pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline removes the invitation without making a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 409 no_invitation when there is no pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 403 when declining someone else's invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test invitations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.invite_member returns conflict for an existing member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.invite_member returns already_invited on duplicate"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.invite_member returns not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.is_invited? reflects a pending invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.accept_invite adds member and clears invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.accept_invite returns no_invitation without a pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.decline_invite clears invitation without adding member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.list_invitations returns not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.list_members returns not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.get_user_by_token returns error for unknown token"}],"tests_errors":0,"tests_excluded":0,"tests_failed":36,"tests_passed":0,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:02.931043Z"}
+22:02:02.970 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:03.869 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":429,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 26/36 failed"],"tests":0.28},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 200 with active members for a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 404 for non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 200 with an empty list initially"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 201 and lists the pending invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations does not make the invited user a member yet"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 conflict when inviting an existing member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 already_invited on a duplicate invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 403 when inviter is not a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 400 for a body missing user_id"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept turns the invitation into an active membership"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept removes the invitation from the pending list"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 403 when accepting someone else's invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 409 no_invitation when there is no pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline removes the invitation without making a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 409 no_invitation when there is no pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 403 when declining someone else's invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test invitations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.get_user_by_token returns error for unknown token"}],"tests_errors":0,"tests_excluded":0,"tests_failed":26,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:03.844651Z"}
+22:02:03.880 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:04.774 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":429,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 23/36 failed"],"tests":0.36},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 200 with active members for a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 404 for non-existent team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 200 with an empty list initially"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 404 for a non-existent team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 201 and lists the pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations does not make the invited user a member yet"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 conflict when inviting an existing member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 already_invited on a duplicate invite"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 403 when inviter is not a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 404 for a non-existent team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 400 for a body missing user_id"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept turns the invitation into an active membership"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept removes the invitation from the pending list"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 403 when accepting someone else's invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 409 no_invitation when there is no pending invite"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 404 for a non-existent team"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline removes the invitation without making a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 409 no_invitation when there is no pending invite"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 403 when declining someone else's invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test invitations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":23,"tests_passed":13,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:04.751379Z"}
+22:02:04.787 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:05.691 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":429,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 19/36 failed"],"tests":0.47},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 200 with active members for a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 200 with an empty list initially"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 403 for a non-member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 201 and lists the pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations does not make the invited user a member yet"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 conflict when inviting an existing member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 already_invited on a duplicate invite"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 403 when inviter is not a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 400 for a body missing user_id"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept turns the invitation into an active membership"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept removes the invitation from the pending list"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 403 when accepting someone else's invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline removes the invitation without making a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 403 when declining someone else's invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test invitations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.accept_invite adds member and clears invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.decline_invite clears invitation without adding member"}],"tests_errors":0,"tests_excluded":0,"tests_failed":19,"tests_passed":17,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:05.669260Z"}
+22:02:05.701 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:06.599 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":429,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 3/36 failed"],"tests":0.92},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.is_invited? reflects a pending invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.accept_invite adds member and clears invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.decline_invite clears invitation without adding member"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":33,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:06.575200Z"}
+22:02:06.608 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:07.521 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":429,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 6/36 failed"],"tests":0.83},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 200 with active members for a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations does not make the invited user a member yet"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept turns the invitation into an active membership"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test response content-type is application/json"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test invitations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.list_members returns not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":30,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:07.497517Z"}
+22:02:07.531 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:08.409 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":429,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":3,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.7,"mode":"full","overall":0.0,"reasons":["compilation: 3 warning(s) → hard fail (overall 0.0)","tests: 6/36 failed"],"tests":0.83},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 200 with an empty list initially"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 201 and lists the pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept removes the invitation from the pending list"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline removes the invitation without making a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test invitations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.list_invitations returns not_found for a missing team"}],"tests_errors":0,"tests_excluded":0,"tests_failed":6,"tests_passed":30,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:08.385988Z"}
+22:02:08.418 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:09.300 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":429,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":7,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.3,"mode":"full","overall":0.0,"reasons":["compilation: 7 warning(s) → hard fail (overall 0.0)","tests: 16/36 failed"],"tests":0.56},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 201 and lists the pending invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations does not make the invited user a member yet"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 conflict when inviting an existing member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 already_invited on a duplicate invite"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept turns the invitation into an active membership"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept removes the invitation from the pending list"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 403 when accepting someone else's invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline removes the invitation without making a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 403 when declining someone else's invitation"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test invitations on team-1 do not affect team-2"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.invite_member returns conflict for an existing member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.invite_member returns already_invited on duplicate"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.invite_member returns not_found for a missing team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.is_invited? reflects a pending invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.accept_invite adds member and clears invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.decline_invite clears invitation without adding member"}],"tests_errors":0,"tests_excluded":0,"tests_failed":16,"tests_passed":20,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:09.276896Z"}
+22:02:09.308 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:10.209 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":429,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 5/36 failed"],"tests":0.86},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept turns the invitation into an active membership"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept removes the invitation from the pending list"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 409 no_invitation when there is no pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.accept_invite adds member and clears invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.accept_invite returns no_invitation without a pending invite"}],"tests_errors":0,"tests_excluded":0,"tests_failed":5,"tests_passed":31,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:10.183132Z"}
+22:02:10.218 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:11.117 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":429,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 3/36 failed"],"tests":0.92},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline removes the invitation without making a member"},{"message":"** (RuntimeError) MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 409 no_invitation when there is no pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test TeamStore.decline_invite clears invitation without adding member"}],"tests_errors":0,"tests_excluded":0,"tests_failed":3,"tests_passed":33,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:11.092305Z"}
+22:02:11.125 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:12.024 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":350,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":33,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.0,"mode":"full","overall":0.0,"reasons":["compilation: 33 warning(s) → hard fail (overall 0.0)","tests: 36/36 failed"],"tests":0.0},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :handle_call, 3, [file: ~c\".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex\", line: 115, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.215.0>, {:create_user, \"alice\", \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET members returns 200 with active members for a member"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :handle_call, 3, [file: ~c\".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex\", line: 115, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.219.0>, {:create_user, \"alice\", \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET members returns 403 for a non-member"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :handle_call, 3, [file: ~c\".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex\", line: 115, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.223.0>, {:create_user, \"alice\", \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with missing auth header"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :handle_call, 3, [file: ~c\".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex\", line: 115, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.227.0>, {:create_user, \"alice\", \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with invalid token"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :handle_call, 3, [file: ~c\".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex\", line: 115, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.231.0>, {:create_user, \"alice\", \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET members returns 404 for non-existent team"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :handle_call, 3, [file: ~c\".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex\", line: 115, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.235.0>, {:create_user, \"alice\", \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET invitations returns 200 with an empty list initially"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :handle_call, 3, [file: ~c\".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex\", line: 115, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.239.0>, {:create_user, \"alice\", \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET invitations returns 403 for a non-member"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :handle_call, 3, [file: ~c\".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex\", line: 115, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.243.0>, {:create_user, \"alice\", \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test GET invitations returns 404 for a non-existent team"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :handle_call, 3, [file: ~c\".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex\", line: 115, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.247.0>, {:create_user, \"alice\", \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST invitations returns 201 and lists the pending invitation"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :handle_call, 3, [file: ~c\".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex\", line: 115, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.251.0>, {:create_user, \"alice\", \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST invitations does not make the invited user a member yet"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :handle_call, 3, [file: ~c\".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex\", line: 115, error_info: %{module: Exception}]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}, {GenServer, :call, [#PID<0.255.0>, {:create_user, \"alice\", \"token-alice\"}, 5000]}}","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 conflict when inviting an existing member"},{"message":":exit: {{%RuntimeError{message: \"MUTATION\"}, [{TeamStore, :handle_ (truncated)
+22:02:12.036 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut solution.ex
+22:02:12.911 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":419,"lines_over_98":0,"max_line_length":98,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":5,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":0.5,"mode":"full","overall":0.0,"reasons":["compilation: 5 warning(s) → hard fail (overall 0.0)","tests: 26/36 failed"],"tests":0.28},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01_mut/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01_mut","test_failures":[{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 200 with active members for a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with missing auth header"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 401 with invalid token"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET members returns 404 for non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 200 with an empty list initially"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 403 for a non-member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test GET invitations returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 201 and lists the pending invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations does not make the invited user a member yet"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 conflict when inviting an existing member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 409 already_invited on a duplicate invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 403 when inviter is not a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 401 with an invalid token"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST invitations returns 400 for a body missing user_id"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept turns the invitation into an active membership"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept removes the invitation from the pending list"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 403 when accepting someone else's invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 409 no_invitation when there is no pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST accept returns 404 for a non-existent team"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline removes the invitation without making a member"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 409 no_invitation when there is no pending invite"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test POST decline returns 403 when declining someone else's invitation"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test response content-type is application/json"},{"message":"MUTATION","module":"TeamRouterInvitationTest","test":"test invitations on team-1 do not affect team-2"}],"tests_errors":0,"tests_excluded":0,"tests_failed":26,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:12.886929Z"}
+22:02:12.911 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01 solution.ex (seed 1256574675)
+22:02:13.800 [debug] grade JSON: {"analysis":{"defp_count":8,"has_doc_on_public_fns":true,"has_moduledoc":true,"has_typespecs":true,"line_count":565,"lines_over_98":0,"max_line_length":89,"mode":"full","pipe_chain_count":5,"public_fn_count":30,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"score":{"analysis":1.0,"analysis_max_points":8,"compilation":1.0,"mode":"full","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"single","solution_file":".gen_staging/022_004_invitation_accept_decline_nested_membership_workflow_01/solution.ex","task":"022_004_invitation_accept_decline_nested_membership_workflow_01","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":36,"tests_ran":true,"tests_skipped":0,"tests_total":36,"timestamp":"2026-07-10T20:02:13.778143Z"}
+22:02:13.804 [info] cycle 022_004_invitation_accept_decline_nested_membership_workflow_01: ACCEPTED on attempt 1
+22:02:13.805 [info] promoted 022_004_invitation_accept_decline_nested_membership_workflow_01 -> tasks/022_004_invitation_accept_decline_nested_membership_workflow_01

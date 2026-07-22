@@ -1,0 +1,512 @@
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 019_003_bulk_upsert_with_conflict_resolution_policies_01 ... RED (test all-or-nothing rolls back when any item is invalid: 
+
+Expected truthy, got false
+code: assert Map.has_key?(errs, "name")
+arguments:
+
+         # 1
+         %{name: "is required"}
+
+         # 2
+         "name"
+
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 019_003_bulk_upsert_with_conflict_resolution_policies_01: test all-or-nothing rolls back when any item is invalid: 
+
+Expected truthy, got false
+code: assert Map.has_key?(errs, "name")
+arguments:
+
+         # 1
+         %{name: "is required"}
+
+         # 2
+         "name"
+
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01 ... RED (test creates all valid items with results in original order: 
+
+Assertion with == failed
+code:  assert ConcurrentCatalog.get(id) == item
+left:  {:ok, %{id: 1, name: "Alpha", price: 10}}
+right: %{id: 1, name: "Alpha", price: 10}
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01: test creates all valid items with results in original order: 
+
+Assertion with == failed
+code:  assert ConcurrentCatalog.get(id) == item
+left:  {:ok, %{id: 1, name: "Alpha", price: 10}}
+right: %{id: 1, name: "Alpha", price: 10}
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 020_003_per_tenant_quota_enforced_upload_01 ... RED (test quota is enforced per-account and independent: failed to start child with the spec {FileUpload.Store, [name: :q16, quota_bytes: 16]}.
+Reason: bad child specification, got: {:already_started, #PID<0.225.0>})
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 020_003_per_tenant_quota_enforced_upload_01: test quota is enforced per-account and independent: failed to start child with the spec {FileUpload.Store, [name: :q16, quota_bytes: 16]}.
+Reason: bad child specification, got: {:already_started, #PID<0.225.0>}
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 022_002_role_scoped_nested_membership_endpoint_01 ... RED (test GET returns 200 with roles for a member: :exit: {:noproc, {GenServer, :call, [nil, {:get_user_by_token, "token-alice"}, 5000]}})
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 022_002_role_scoped_nested_membership_endpoint_01: test GET returns 200 with roles for a member: :exit: {:noproc, {GenServer, :call, [nil, {:get_user_by_token, "token-alice"}, 5000]}}
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 024_001_webhook_receiver_with_signature_verification_01 ... RED (test returns 400 when JSON is malformed: malformed request, a Jason.DecodeError exception was raised with message "unexpected byte at position 0: 0x74 (\"t\")")
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 024_001_webhook_receiver_with_signature_verification_01: test returns 400 when JSON is malformed: malformed request, a Jason.DecodeError exception was raised with message "unexpected byte at position 0: 0x74 (\"t\")"
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 031_003_csv_loader_with_type_coercion_and_enriched_schema_01 ... RED (test row with extra columns silently ignores extras: 
+
+Assertion with == failed
+code:  assert map_size(row) == 4
+left:  5
+right: 4
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 031_003_csv_loader_with_type_coercion_and_enriched_schema_01: test row with extra columns silently ignores extras: 
+
+Assertion with == failed
+code:  assert map_size(row) == 4
+left:  5
+right: 4
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 031_004_logfmt_record_validator_with_hand_written_parser_01 ... RED (test required field with empty value produces an error: 
+
+match (=) failed
+code:  assert {1, "level", msg} = find_error(errors, 1, "level")
+left:  {1, "level", msg}
+right: nil
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 031_004_logfmt_record_validator_with_hand_written_parser_01: test required field with empty value produces an error: 
+
+match (=) failed
+code:  assert {1, "level", msg} = find_error(errors, 1, "level")
+left:  {1, "level", msg}
+right: nil
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 032_003_jsonl_streaming_ingestion_with_parallel_batch_processing_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 032_004_multi_table_json_ingestion_with_type_discriminator_routing_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 034_002_cardinality_classifying_multi_key_reconciler_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 037_001_data_anonymizer_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 038_004_diagnostic_tree_validator_with_best_effort_repair_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 039_001_diff_generator_for_record_lists_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 040_004_conflict_detecting_strict_config_merger_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 041_004_weight_aware_cost_bounded_lru_cache_01 ... RED (test two cache instances are fully independent: failed to start child with the spec {WeightedLRUCache, [name: :wlru_264, max_weight: 5]}.
+Reason: bad child specification, got: {:already_started, #PID<0.245.0>})
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 041_004_weight_aware_cost_bounded_lru_cache_01: test two cache instances are fully independent: failed to start child with the spec {WeightedLRUCache, [name: :wlru_264, max_weight: 5]}.
+Reason: bad child specification, got: {:already_started, #PID<0.245.0>}
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 042_001_ets_based_write_through_cache_layer_01 ... RED (test stopping the server erases its :persistent_term entries and frees its ETS tables: errors were found at the given arguments:
+
+  * 1st argument: no persistent term stored with this key
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 042_001_ets_based_write_through_cache_layer_01: test stopping the server erases its :persistent_term entries and frees its ETS tables: errors were found at the given arguments:
+
+  * 1st argument: no persistent term stored with this key
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 042_002_failure_aware_write_through_cache_with_negative_caching_01 ... RED (test terminate/2 erases the persistent_term fast-path registry on shutdown: errors were found at the given arguments:
+
+  * 1st argument: no persistent term stored with this key
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 042_002_failure_aware_write_through_cache_with_negative_caching_01: test terminate/2 erases the persistent_term fast-path registry on shutdown: errors were found at the given arguments:
+
+  * 1st argument: no persistent term stored with this key
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 043_004_ordered_set_leaderboard_with_deterministic_tie_breaking_01 ... RED (compile: /tmp/screen_2314948_8261.ex: cannot compile module OrderedLeaderboard (errors have been logged))
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 043_004_ordered_set_leaderboard_with_deterministic_tie_breaking_01: compile: /tmp/screen_2314948_8261.ex: cannot compile module OrderedLeaderboard (errors have been logged)
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 044_002_histogram_metrics_collector_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 061_001_parallel_map_with_concurrency_limit_01 ... RED (test a crashing function returns {:error, reason} for that item: {:EXIT, #PID<0.270.0>}: {%RuntimeError{message: "boom"}, [{ParallelMapTest, :"-test a crashing function returns {:error, reason} for that item/1-fun-0-", 1, [file: ~c"tasks/061_001_parallel_map_with_c)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 061_001_parallel_map_with_concurrency_limit_01: test a crashing function returns {:error, reason} for that item: {:EXIT, #PID<0.270.0>}: {%RuntimeError{message: "boom"}, [{ParallelMapTest, :"-test a crashing function returns {:error, reason} for that item/1-fun-0-", 1, [file: ~c"tasks/061_001_parallel_map_with_c
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 061_002_fail_fast_parallel_map_with_cancellation_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 063_001_concurrent_data_fetcher_with_timeout_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 063_003_fallback_chain_concurrent_fetcher_01 ... RED (test uses the first fallback when it succeeds: :exit: {:noproc, {GenServer, :call, [FallbackFetcher.TaskSupervisor, {:start_task, [{:nonode@nohost, #PID<0.210.0>, #PID<0.210.0>}, :monitor], :temporary, nil}, :infinity]}})
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 063_003_fallback_chain_concurrent_fetcher_01: test uses the first fallback when it succeeds: :exit: {:noproc, {GenServer, :call, [FallbackFetcher.TaskSupervisor, {:start_task, [{:nonode@nohost, #PID<0.210.0>, #PID<0.210.0>}, :monitor], :temporary, nil}, :infinity]}}
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 064_001_work_stealing_task_queue_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 064_003_priority_aware_work_stealing_queue_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 070_004_resumable_journaled_saga_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 071_001_factory_module_for_test_data_generation_01 ... RED (compile: /tmp/screen_2320601_8261.ex: cannot compile module Factory (errors have been logged))
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 071_001_factory_module_for_test_data_generation_01: compile: /tmp/screen_2320601_8261.ex: cannot compile module Factory (errors have been logged)
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 071_002_trait_composable_factory_01 ... RED (compile: /tmp/screen_2321311_8264.ex: cannot compile module Factory (errors have been logged))
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 071_002_trait_composable_factory_01: compile: /tmp/screen_2321311_8264.ex: cannot compile module Factory (errors have been logged)
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 071_003_bulk_list_factory_with_concurrent_insertion_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 072_001_test_helper_for_time_dependent_code_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 073_002_savepoint_stack_nested_transaction_cleaner_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 073_004_fk_dependency_ordered_deletion_cleaner_01 ... RED (test clean/0 deletes children before the parents they reference: 
+
+match (=) failed
+code:  assert :ok = DBCleaner.clean()
+left:  :ok
+right: {:ok, ["comments", "posts", "users"]}
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 073_004_fk_dependency_ordered_deletion_cleaner_01: test clean/0 deletes children before the parents they reference: 
+
+match (=) failed
+code:  assert :ok = DBCleaner.clean()
+left:  :ok
+right: {:ok, ["comments", "posts", "users"]}
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 074_004_numeric_tolerance_and_exception_assertion_helpers_01 ... RED (test assert_monotonic/2 fails for equal adjacent values (not strict): 
+
+Assertion with =~ failed
+code:  assert result =~ "index 1"
+left:  "Expected list to be strictly increasing, but found a violating pair.\n\nindex:      1 -> 2\nelements:   2 then 2\nlist:       [1, 2)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 074_004_numeric_tolerance_and_exception_assertion_helpers_01: test assert_monotonic/2 fails for equal adjacent values (not strict): 
+
+Assertion with =~ failed
+code:  assert result =~ "index 1"
+left:  "Expected list to be strictly increasing, but found a violating pair.\n\nindex:      1 -> 2\nelements:   2 then 2\nlist:       [1, 2
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 076_002_compressed_radix_trie_with_path_compression_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 078_001_ring_buffer_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 078_004_concurrent_ring_buffer_sink_genserver_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 079_004_concurrent_bloom_filter_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 080_002_weighted_critical_path_dag_scheduler_01 ... RED (test predecessors and successors: protocol Enumerable not implemented for Tuple
+
+Got value:
+
+    {:ok, [:a, :b]}
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 080_002_weighted_critical_path_dag_scheduler_01: test predecessors and successors: protocol Enumerable not implemented for Tuple
+
+Got value:
+
+    {:ok, [:a, :b]}
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 096_001_input_sanitizer_module_01 ... RED (test Sanitizer.html/1 with default allowlist rejects javascript: URLs — strips the tag, keeps text: 
+
+Assertion with == failed
+code:  assert Sanitizer.html(~s[<a href="javascript:alert(1)">click</a>]) == "click"
+left:  "click</a>"
+right: "click"
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 096_001_input_sanitizer_module_01: test Sanitizer.html/1 with default allowlist rejects javascript: URLs — strips the tag, keeps text: 
+
+Assertion with == failed
+code:  assert Sanitizer.html(~s[<a href="javascript:alert(1)">click</a>]) == "click"
+left:  "click</a>"
+right: "click"
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 097_003_severity_classified_password_audit_with_strict_mode_01 ... RED (test raises when the context is missing the username: 
+
+Expected exception ArgumentError but got KeyError (key :username not found in:
+
+         %{min_length: 4}
+     )
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 097_003_severity_classified_password_audit_with_strict_mode_01: test raises when the context is missing the username: 
+
+Expected exception ArgumentError but got KeyError (key :username not found in:
+
+         %{min_length: 4}
+     )
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 100_001_totp_time_based_one_time_password_implementation_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 101_004_sliding_window_threshold_alerter_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 102_002_optimistic_concurrency_persisted_state_machine_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 108_003_capacity_bounded_bimap_with_lru_eviction_01 ... RED (test put then look up in both directions: :exit: {{:function_clause, [{:gb_trees, :delete, [{1, {0, :a, nil, nil}}, 0], [file: ~c"gb_trees.erl", line: 565]}, {BoundedBiMap, :touch, 3, [file: ~c"/tmp/screen_2331626_8196.ex", line: 309]}, {Boun)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 108_003_capacity_bounded_bimap_with_lru_eviction_01: test put then look up in both directions: :exit: {{:function_clause, [{:gb_trees, :delete, [{1, {0, :a, nil, nil}}, 0], [file: ~c"gb_trees.erl", line: 565]}, {BoundedBiMap, :touch, 3, [file: ~c"/tmp/screen_2331626_8196.ex", line: 309]}, {Boun
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 109_001_task_dependency_resolver_and_executor_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 109_003_fail_fast_task_runner_with_skip_propagation_01 ... GREEN
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 1   RED: 0   transport errors: 0
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 110_002_histogram_based_approximate_rolling_percentile_01 ... RED (test slices outside the window are excluded: 
+
+match (=) failed
+code:  assert {:error, :empty} = HistogramPercentile.query(:t, 0.5)
+left:  {:error, :empty}
+right: {:ok, 51.0}
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 110_002_histogram_based_approximate_rolling_percentile_01: test slices outside the window are excluded: 
+
+match (=) failed
+code:  assert {:error, :empty} = HistogramPercentile.query(:t, 0.5)
+left:  {:error, :empty}
+right: {:ok, 51.0}
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 110_003_sla_percentile_monitor_with_inverse_queries_01 ... RED (test expired samples drop out of query, rank, and count_above: 
+
+match (=) failed
+code:  assert {:ok, 64} = RankPercentile.query(:t, 0.5)
+left:  {:ok, 64}
+right: {:ok, 30}
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 110_003_sla_percentile_monitor_with_inverse_queries_01: test expired samples drop out of query, rank, and count_above: 
+
+match (=) failed
+code:  assert {:ok, 64} = RankPercentile.query(:t, 0.5)
+left:  {:ok, 64}
+right: {:ok, 30}
+
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 131_002_lazy_streaming_ndjson_parser_01 ... RED (compile: /tmp/screen_2336006_8263.ex: cannot compile module NdjsonStreamer (errors have been logged))
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 131_002_lazy_streaming_ndjson_parser_01: compile: /tmp/screen_2336006_8263.ex: cannot compile module NdjsonStreamer (errors have been logged)
+Blind-solve screen: 1 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/1] 134_003_chunked_merge_based_schema_inference_01 ... RED (compile: invalid syntax found on /tmp/screen_2336479_131.ex:187:41:
+     error: unexpected token: "\" (column 41, code point U+005C)
+     │
+ 187 │     with true <- Regex.match?(~r{^\d{4}-\d{2}-\d{2}$}, value),)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 1   green: 0   RED: 1   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 134_003_chunked_merge_based_schema_inference_01: compile: invalid syntax found on /tmp/screen_2336479_131.ex:187:41:
+     error: unexpected token: "\" (column 41, code point U+005C)
+     │
+ 187 │     with true <- Regex.match?(~r{^\d{4}-\d{2}-\d{2}$}, value),
+screen freshness over 332 root(s): fresh=310, fresh_legacy=6, fresh_via_strengthen=16
+screen freshness: OK ✓ (every root has fresh blind evidence)

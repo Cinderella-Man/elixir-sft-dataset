@@ -1,0 +1,26 @@
+{
+ "parent": "tasks/072_001_test_helper_for_time_dependent_code_01",
+ "dirs": [
+  {
+   "dir": "tasks/072_001_test_helper_for_time_dependent_code_03",
+   "kind": "module-FIM",
+   "parent": "tasks/072_001_test_helper_for_time_dependent_code_01",
+   "diff": [
+    "note: child gold not located in the parent (parent drifted at the target?)",
+    "- extra in embed      tasks/072_001_test_helper_for_time_dependent_code_03/prompt.md:49:   - If `clock` is an atom that exports `now/0` (e.g. `Clock.Real`), it calls",
+    "- extra in embed      tasks/072_001_test_helper_for_time_dependent_code_03/prompt.md:51:   - Otherwise (a registered-name atom, a PID, or any other term) it is",
+    "- extra in embed      tasks/072_001_test_helper_for_time_dependent_code_03/prompt.md:52:     forwarded to `Clock.Fake.now/1`, which sends a GenServer call.",
+    "- missing from embed  tasks/072_001_test_helper_for_time_dependent_code_01/solution.ex:35:   def now(clock) when is_atom(clock) do",
+    "- missing from embed  tasks/072_001_test_helper_for_time_dependent_code_01/solution.ex:36:     if function_exported?(clock, :now, 0) do",
+    "- missing from embed  tasks/072_001_test_helper_for_time_dependent_code_01/solution.ex:37:       # module atom \u2014 e.g. Clock.Real",
+    "- missing from embed  tasks/072_001_test_helper_for_time_dependent_code_01/solution.ex:38:       clock.now()",
+    "- missing from embed  tasks/072_001_test_helper_for_time_dependent_code_01/solution.ex:39:     else",
+    "- missing from embed  tasks/072_001_test_helper_for_time_dependent_code_01/solution.ex:40:       # registered-name atom \u2014 e.g. :my_test_clock",
+    "- missing from embed  tasks/072_001_test_helper_for_time_dependent_code_01/solution.ex:41:       Clock.Fake.now(clock)",
+    "- missing from embed  tasks/072_001_test_helper_for_time_dependent_code_01/solution.ex:42:     end",
+    "- missing from embed  tasks/072_001_test_helper_for_time_dependent_code_01/solution.ex:44:",
+    "- missing from embed  tasks/072_001_test_helper_for_time_dependent_code_01/solution.ex:45:   def now(clock), do: Clock.Fake.now(clock)"
+   ]
+  }
+ ]
+}

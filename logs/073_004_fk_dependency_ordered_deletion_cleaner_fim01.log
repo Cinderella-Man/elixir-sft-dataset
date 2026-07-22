@@ -1,0 +1,436 @@
+18:59:35.512 [info] FIM 073_004_fk_dependency_ordered_deletion_cleaner_fim01 → 073_004_fk_dependency_ordered_deletion_cleaner_02: target kahn/4
+18:59:35.512 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+18:59:35.512 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `kahn/4`.
+
+Generate a prompt describing how to implement `kahn/4` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `kahn/4` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `kahn/4` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `kahn/4` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `DBCleaner` that cleans integration-test tables using ordered `DELETE FROM` statements that respect **foreign-key dependencies**, rather than `TRUNCATE ... CASCADE`.
+
+`TRUNCATE ... CASCADE` is a blunt instrument — it can silently wipe tables you didn't list, and some setups disallow it. I want a cleaner that deletes rows in dependency order: a child table (one holding a foreign key) is emptied *before* the parent table it references, so no FK constraint is ever violated. That order must be derived by topologically sorting a dependency spec.
+
+I need this public API:
+
+- `DBCleaner.start(:deletion, opts \\ [])` — called in `setup`. `opts` must include `:repo` (an Ecto repo module) and `:tables`, a list describing the tables and their dependencies. Each entry is either a plain table-name string `"users"` (no dependencies) or a tuple `{"comments", ["posts"]}` meaning the `comments` table has a foreign key into `posts` (so `comments` must be deleted first). Validate every table/dependency name against `/[a-zA-Z_][a-zA-Z0-9_]*/` (raise `ArgumentError` on a bad name). This function issues no SQL; it just stores the normalized spec in the process dictionary. Returns `{:ok, :deletion}`.
+
+- `DBCleaner.deletion_order(spec)` — a pure helper that takes a normalized spec map `%{table => [dependency, ...]}` and returns `{:ok, ordered_tables}` where each table precedes the tables it depends on (children first, parents last). Dependencies that reference tables not in the map are ignored for ordering. If the dependencies contain a cycle, return `{:error, {:cycle, remaining_tables}}`. The order must be deterministic (break ties by sorting names).
+
+- `DBCleaner.clean()` — called in `on_exit`. Compute the deletion order, then issue `DELETE FROM <table>` via `repo.query!(repo, sql, [])` for each table in that order. On a cycle, issue no queries and return `{:error, {:cycle, ...}}`. Safe no-op if `start/2` was never called.
+
+Keep it self-contained in one file (no dependencies beyond Ecto), store state in the process dictionary, and implement the topological sort yourself (e.g. Kahn's algorithm). Guard against SQL injection via the identifier allowlist.
+
+Give me the complete module in a single file.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule DBCleaner do
+  @moduledoc """
+  Foreign-key-aware integration-test cleaner.
+
+  Instead of `TRUNCATE ... CASCADE`, `clean/0` issues `DELETE FROM <table>` in
+  an order derived by topologically sorting a dependency spec: a child table
+  (one holding a foreign key) is emptied before the parent it references, so no
+  FK constraint is violated and no unlisted table is ever touched.
+
+  State lives in the calling process's dictionary under `{DBCleaner, :state}`.
+  """
+
+  @state_key {__MODULE__, :state}
+  @valid_identifier ~r/\A[a-zA-Z_][a-zA-Z0-9_]*\z/
+
+  @spec start(:deletion, keyword()) :: {:ok, :deletion} | {:error, term()}
+  def start(strategy, opts \\ [])
+
+  def start(:deletion, opts) do
+    repo = fetch_repo!(opts)
+    entries = Keyword.get(opts, :tables, [])
+    spec = normalize_spec!(entries)
+
+    put_state(%{repo: repo, spec: spec})
+    {:ok, :deletion}
+  end
+
+  def start(unknown, _opts) do
+    {:error, "unknown strategy #{inspect(unknown)}. Expected :deletion"}
+  end
+
+  @doc """
+  Topologically sort a normalized spec (`%{table => [dependency, ...]}`) so each
+  table precedes the tables it depends on. Deterministic; `{:error, {:cycle, _}}`
+  on a dependency cycle.
+  """
+  @spec deletion_order(map()) :: {:ok, [String.t()]} | {:error, {:cycle, [String.t()]}}
+  def deletion_order(spec) when is_map(spec) do
+    nodes = Map.keys(spec)
+    node_set = MapSet.new(nodes)
+
+    indeg =
+      Enum.reduce(nodes, Map.new(nodes, &{&1, 0}), fn a, acc ->
+        Enum.reduce(deps(spec, a, node_set), acc, fn b, acc2 ->
+          Map.update!(acc2, b, &(&1 + 1))
+        end)
+      end)
+
+    kahn(spec, node_set, indeg, [])
+  end
+
+  @doc "Delete every registered table in dependency order."
+  @spec clean() :: :ok | {:error, term()}
+  def clean do
+    case get_state() do
+      nil ->
+        :ok
+
+      %{repo: repo, spec: spec} ->
+        case deletion_order(spec) do
+          {:ok, order} ->
+            try do
+              Enum.each(order, fn table ->
+                repo.query!(repo, "DELETE FROM #{table}", [])
+              end)
+
+              clear_state()
+              :ok
+            rescue
+              e ->
+                clear_state()
+                {:error, Exception.message(e)}
+            end
+
+          {:error, reason} ->
+            clear_state()
+            {:error, reason}
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Topological sort (Kahn's algorithm, one deterministic node per step)
+  # ---------------------------------------------------------------------------
+
+  defp kahn(spec, node_set, indeg, acc) do
+    ready =
+      indeg
+      |> Enum.filter(fn {_n, d} -> d == 0 end)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.sort()
+
+    case ready do
+      [] ->
+        if map_size(indeg) == 0 do
+          {:ok, Enum.reverse(acc)}
+        else
+          {:error, {:cycle, indeg |> Map.keys() |> Enum.sort()}}
+        end
+
+      [n | _] ->
+        indeg2 = Map.delete(indeg, n)
+
+        indeg3 =
+          Enum.reduce(deps(spec, n, node_set), indeg2, fn b, acc2 ->
+            Map.update!(acc2, b, &(&1 - 1))
+          end)
+
+        kahn(spec, node_set, indeg3, [n | acc])
+    end
+  end
+
+  defp deps(spec, node, node_set) do
+    spec
+    |> Map.get(node, [])
+    |> Enum.filter(&MapSet.member?(node_set, &1))
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation / normalization
+  # ---------------------------------------------------------------------------
+
+  defp normalize_spec!(entries) when is_list(entries) do
+    Enum.reduce(entries, %{}, fn entry, acc ->
+      {table, table_deps} =
+        case entry do
+          t when is_binary(t) ->
+            {t, []}
+
+          {t, ds} when is_binary(t) and is_list(ds) ->
+            {t, ds}
+
+          other ->
+            raise ArgumentError, "invalid table spec entry: #{inspect(other)}"
+        end
+
+      validate_identifier!(table)
+      Enum.each(table_deps, &validate_identifier!/1)
+      Map.put(acc, table, table_deps)
+    end)
+  end
+
+  defp normalize_spec!(other) do
+    raise ArgumentError, "expected :tables to be a list, got: #{inspect(other)}"
+  end
+
+  defp validate_identifier!(name) when is_binary(name) do
+    unless Regex.match?(@valid_identifier, name) do
+      raise ArgumentError,
+            "invalid identifier #{inspect(name)}. Must match /[a-zA-Z_][a-zA-Z0-9_]*/"
+    end
+
+    :ok
+  end
+
+  defp validate_identifier!(other) do
+    raise ArgumentError, "expected identifier to be a string, got: #{inspect(other)}"
+  end
+
+  defp fetch_repo!(opts) do
+    case Keyword.fetch(opts, :repo) do
+      {:ok, repo} when is_atom(repo) ->
+        repo
+
+      {:ok, other} ->
+        raise ArgumentError,
+     (truncated)
+19:00:08.302 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `kahn/4` function — the recursive core of the topological
+sort (Kahn's algorithm) used by `deletion_order/1`.
+
+It receives four arguments: `spec` (the normalized dependency map
+`%{table => [dependency, ...]}`), `node_set` (a `MapSet` of every table name in
+the spec), `indeg` (a map from each still-unprocessed table to its current
+in-degree — how many not-yet-emitted tables still depend on it), and `acc` (the
+tables emitted so far, in reverse order).
+
+Each step must pick exactly one node deterministically:
+
+- Compute the `ready` nodes: every entry in `indeg` whose in-degree is `0`.
+  Sort them by name so ties break deterministically.
+- If there are no ready nodes, the sort is finished: when `indeg` is empty every
+  table was emitted, so return `{:ok, Enum.reverse(acc)}`. Otherwise the
+  remaining nodes form a cycle, so return `{:error, {:cycle, remaining}}` where
+  `remaining` is the sorted list of the keys still left in `indeg`.
+- Otherwise take the first ready node `n` (the smallest by name). Remove it from
+  `indeg`, then for each of its in-map dependencies (use `deps(spec, n,
+  node_set)`) decrement that dependency's in-degree by one. Recurse with the
+  updated in-degree map and `n` prepended to `acc`.
+
+This emits children before the parents they reference (parents accumulate
+in-degree from their children and only become ready once every child has been
+emitted).
+
+```elixir
+defmodule DBCleaner do
+  @moduledoc """
+  Foreign-key-aware integration-test cleaner.
+
+  Instead of `TRUNCATE ... CASCADE`, `clean/0` issues `DELETE FROM <table>` in
+  an order derived by topologically sorting a dependency spec: a child table
+  (one holding a foreign key) is emptied before the parent it references, so no
+  FK constraint is violated and no unlisted table is ever touched.
+
+  State lives in the calling process's dictionary under `{DBCleaner, :state}`.
+  """
+
+  @state_key {__MODULE__, :state}
+  @valid_identifier ~r/\A[a-zA-Z_][a-zA-Z0-9_]*\z/
+
+  @spec start(:deletion, keyword()) :: {:ok, :deletion} | {:error, term()}
+  def start(strategy, opts \\ [])
+
+  def start(:deletion, opts) do
+    repo = fetch_repo!(opts)
+    entries = Keyword.get(opts, :tables, [])
+    spec = normalize_spec!(entries)
+
+    put_state(%{repo: repo, spec: spec})
+    {:ok, :deletion}
+  end
+
+  def start(unknown, _opts) do
+    {:error, "unknown strategy #{inspect(unknown)}. Expected :deletion"}
+  end
+
+  @doc """
+  Topologically sort a normalized spec (`%{table => [dependency, ...]}`) so each
+  table precedes the tables it depends on. Deterministic; `{:error, {:cycle, _}}`
+  on a dependency cycle.
+  """
+  @spec deletion_order(map()) :: {:ok, [String.t()]} | {:error, {:cycle, [String.t()]}}
+  def deletion_order(spec) when is_map(spec) do
+    nodes = Map.keys(spec)
+    node_set = MapSet.new(nodes)
+
+    indeg =
+      Enum.reduce(nodes, Map.new(nodes, &{&1, 0}), fn a, acc ->
+        Enum.reduce(deps(spec, a, node_set), acc, fn b, acc2 ->
+          Map.update!(acc2, b, &(&1 + 1))
+        end)
+      end)
+
+    kahn(spec, node_set, indeg, [])
+  end
+
+  @doc "Delete every registered table in dependency order."
+  @spec clean() :: :ok | {:error, term()}
+  def clean do
+    case get_state() do
+      nil ->
+        :ok
+
+      %{repo: repo, spec: spec} ->
+        case deletion_order(spec) do
+          {:ok, order} ->
+            try do
+              Enum.each(order, fn table ->
+                repo.query!(repo, "DELETE FROM #{table}", [])
+              end)
+
+              clear_state()
+              :ok
+            rescue
+              e ->
+                clear_state()
+                {:error, Exception.message(e)}
+            end
+
+          {:error, reason} ->
+            clear_state()
+            {:error, reason}
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Topological sort (Kahn's algorithm, one deterministic node per step)
+  # ---------------------------------------------------------------------------
+
+  defp kahn(spec, node_set, indeg, acc) do
+    # TODO
+  end
+
+  defp deps(spec, node, node_set) do
+    spec
+    |> Map.get(node, [])
+    |> Enum.filter(&MapSet.member?(node_set, &1))
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validation / normalization
+  # ---------------------------------------------------------------------------
+
+  defp normalize_spec!(entries) when is_list(entries) do
+    Enum.reduce(entries, %{}, fn entry, acc ->
+      {table, table_deps} =
+        case entry do
+          t when is_binary(t) ->
+            {t, []}
+
+          {t, ds} when is_binary(t) and is_list(ds) ->
+            {t, ds}
+
+          other ->
+            raise ArgumentError, "invalid table spec entry: #{inspect(other)}"
+        end
+
+      validate_identifier!(table)
+      Enum.each(table_deps, &validate_identifier!/1)
+      Map.put(acc, table, table_deps)
+    end)
+  end
+
+  defp normalize_spec!(other) do
+    raise ArgumentError, "expected :tables to be a list, got: #{inspect(other)}"
+  end
+
+  defp validate_identifier!(name) when is_binary(name) do
+    unless Regex.match?(@valid_identifier, name) do
+      raise ArgumentError,
+            "invalid identifier #{inspect(name)}. Must match /[a-zA-Z_][a-zA-Z0-9_]*/"
+    end
+
+    :ok
+  end
+
+  defp validate_identifier!(other) do
+    raise ArgumentError, "expected identifier to be a string, got: #{inspect(other)}"
+  end
+
+  defp fetch_repo!(opts) do
+    case Keyword.fetch(opts, :repo) do
+      {:ok, repo} when is_atom(repo) ->
+        repo
+
+      {:ok, other} ->
+        raise ArgumentError,
+              "expected :repo to be an atom (Ecto repo module), got: #{inspect(other)}"
+
+      :error ->
+        raise ArgumentError, ":repo is required. Pass repo: MyApp.Repo in opts"
+    end
+  end
+
+  defp put_state(state), do: Process.put(@state_key, state)
+  defp get_state, do: Process.get(@state_key)
+  defp clear_state, do: Process.delete(@state_key)
+end
+```
+</file>
+
+<file path="solution.ex">
+  defp kahn(spec, node_set, indeg, acc) do
+    ready =
+      indeg
+      |> Enum.filter(fn {_n, d} -> d == 0 end)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.sort()
+
+    case ready do
+      [] ->
+        if map_size(indeg) == 0 do
+          {:ok, Enum.reverse(acc)}
+        else
+          {:error, {:cycle, indeg |> Map.keys() |> Enum.sort()}}
+        end
+
+      [n | _] ->
+        indeg2 = Map.delete(indeg, n)
+
+        indeg3 =
+          Enum.reduce(deps(spec, n, node_set), indeg2, fn b, acc2 ->
+            Map.update!(acc2, b, &(&1 - 1))
+          end)
+
+        kahn(spec, node_set, indeg3, [n | acc])
+    end
+  end
+</file>
+19:00:08.302 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3798, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3798, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 3798, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 3798, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 2946, "type" => "message"}], "output_tokens" => 2946, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+19:00:08.321 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_073_004_fk_dependency_ordered_deletion_cleaner_02/073_004_fk_dependency_ordered_deletion_cleaner_02 solution.ex
+19:00:08.961 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":26,"lines_over_98":0,"max_line_length":68,"mode":"fim","pipe_chain_count":5,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"073_004_fk_dependency_ordered_deletion_cleaner_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_073_004_fk_dependency_ordered_deletion_cleaner_02/073_004_fk_dependency_ordered_deletion_cleaner_02/solution.ex","task":"073_004_fk_dependency_ordered_deletion_cleaner_02","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":10,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-04T17:00:08.936744Z"}
+19:00:08.962 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_073_004_fk_dependency_ordered_deletion_cleaner_02/073_004_fk_dependency_ordered_deletion_cleaner_02 .gen_staging/fim_073_004_fk_dependency_ordered_deletion_cleaner_02/mutant.ex
+19:00:09.598 [debug] grade JSON: {"analysis":{"defp_count":1,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":3,"lines_over_98":0,"max_line_length":40,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":6,"compiled":true,"parent":"073_004_fk_dependency_ordered_deletion_cleaner_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.4,"mode":"fim","overall":0.45,"reasons":["compilation: 6 warning(s) → -0.6 pts","tests: 7/10 failed"],"tests":0.3},"shape":"fim","solution_file":".gen_staging/fim_073_004_fk_dependency_ordered_deletion_cleaner_02/mutant.ex","task":"073_004_fk_dependency_ordered_deletion_cleaner_02","test_failures":[{"message":"MUTATION","module":"DBCleanerTest","test":"test clean/0 deletes children before the parents they reference"},{"message":"MUTATION","module":"DBCleanerTest","test":"test deletion_order/1 orders children first, parents last"},{"message":"MUTATION","module":"DBCleanerTest","test":"test deletion_order/1 breaks ties deterministically by name"},{"message":"MUTATION","module":"DBCleanerTest","test":"test deletion_order/1 ignores dependencies on unlisted tables"},{"message":"MUTATION","module":"DBCleanerTest","test":"test deletion_order/1 reports a cycle"},{"message":"MUTATION","module":"DBCleanerTest","test":"test clean/0 with a cyclic spec issues no queries and returns an error"},{"message":"MUTATION","module":"DBCleanerTest","test":"test plain string entries with no dependencies delete in sorted order"}],"tests_errors":0,"tests_excluded":0,"tests_failed":7,"tests_passed":3,"tests_ran":true,"tests_skipped":0,"tests_total":10,"timestamp":"2026-07-04T17:00:09.575720Z"}
+19:00:09.598 [debug] fim mutation gate: killed
+19:00:09.599 [info] promoted 073_004_fk_dependency_ordered_deletion_cleaner_02 -> tasks/073_004_fk_dependency_ordered_deletion_cleaner_02

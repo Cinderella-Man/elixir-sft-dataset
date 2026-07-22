@@ -1,0 +1,423 @@
+13:25:38.655 [info] VARIATIONS gen for 044_001_ets_based_metrics_collector_01 (3 slot(s))
+13:25:38.656 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+13:25:38.656 [debug] claude -p USER prompt:
+I have this SFT task (idea #44 — "ETS-Based Metrics Collector"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 3 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 44 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `Metrics` that collects application metrics using ETS tables for fast, concurrent-safe storage.
+
+I need these functions in the public API:
+- `Metrics.start_link(opts \\ [])` to start the backing GenServer. It should accept a `:name` option for process registration, defaulting to `__MODULE__`.
+- `Metrics.increment(name, amount \\ 1)` to atomically increment a named counter by `amount`. Counters are monotonically increasing and should never decrease. Use `:ets.update_counter` for atomicity.
+- `Metrics.gauge(name, value)` to set a named gauge to an exact value. Gauges can go up or down freely — each call overwrites the previous value.
+- `Metrics.get(name)` to return the current value of a metric by name, or `nil` if it doesn't exist.
+- `Metrics.all()` to return all metrics as a map of `%{name => value}`.
+- `Metrics.reset(name)` to set a metric back to `0` regardless of whether it is a counter or gauge.
+- `Metrics.snapshot()` to return a point-in-time map of all current metrics, identical in shape to `all/0` but semantically communicating immutability of the returned data.
+
+Counters and gauges can coexist in the same table — there is no need to declare a metric's type upfront; `increment` creates or bumps a counter entry and `gauge` creates or overwrites a gauge entry. The ETS table should be public and named so that `increment` can bypass the GenServer process for maximum throughput (i.e., the hot path for incrementing must not serialize through a GenServer `call`). The GenServer is only needed for initialisation and owning the table.
+
+Give me the complete implementation in a single file. Use only OTP/stdlib — no external dependencies.
+
+=== BASE solution.ex ===
+defmodule Metrics do
+  @moduledoc """
+  A concurrent-safe metrics collector backed by a named public ETS table.
+
+  Counters and gauges share the same table. The GenServer exists solely to
+  own the table and survive crashes — all hot-path reads and counter
+  increments go directly to ETS and never serialise through the process.
+
+  ## Quick start
+
+      {:ok, _pid} = Metrics.start_link()
+
+      Metrics.increment(:http_requests)          # => :ok
+      Metrics.increment(:http_requests, 4)        # => :ok
+      Metrics.gauge(:memory_mb, 412)             # => :ok
+      Metrics.get(:http_requests)                # => 5
+      Metrics.get(:does_not_exist)               # => nil
+      Metrics.all()                              # => %{http_requests: 5, memory_mb: 412}
+      Metrics.snapshot()                         # => %{http_requests: 5, memory_mb: 412}
+      Metrics.reset(:http_requests)              # => :ok
+      Metrics.get(:http_requests)                # => 0
+  """
+
+  use GenServer
+
+  # The ETS table name is fixed and module-scoped.  Because the table is
+  # :public and :named_table every caller can hit it directly without
+  # routing through the owning process.
+  @table __MODULE__
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the backing GenServer and creates the ETS table.
+
+  ## Options
+
+    * `:name` — registration name for the GenServer process.
+      Defaults to `#{__MODULE__}`.
+
+  Returns `{:ok, pid}` on success, or `{:error, {:already_started, pid}}`
+  if the server is already running.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, init_opts} = Keyword.pop(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, init_opts, name: name)
+  end
+
+  @doc """
+  Atomically increments the counter `name` by `amount` (default `1`).
+
+  If the counter does not yet exist it is initialised to `0` before the
+  increment is applied, so the first call returns `amount`. The increment
+  is performed with `:ets.update_counter/4`, which is atomic and requires
+  no round-trip to the GenServer.
+
+  `amount` must be a non-negative integer — counters are monotonically
+  increasing and never decrease.
+
+  Returns `:ok`.
+  """
+  @spec increment(term(), non_neg_integer()) :: :ok
+  def increment(name, amount \\ 1) when is_integer(amount) and amount >= 0 do
+    :ets.update_counter(@table, name, {2, amount}, {name, 0})
+    :ok
+  end
+
+  @doc """
+  Sets the gauge `name` to exactly `value`, overwriting any previous entry.
+
+  Gauges are free to move up or down. Unlike `increment/2` this write
+  is not atomic with respect to concurrent gauge writes for the same key,
+  which is acceptable for gauge semantics (last-write wins).
+  """
+  @spec gauge(term(), number()) :: :ok
+  def gauge(name, value) do
+    :ets.insert(@table, {name, value})
+    :ok
+  end
+
+  @doc """
+  Returns the current value of `name`, or `nil` if it has never been set.
+  """
+  @spec get(term()) :: number() | nil
+  def get(name) do
+    case :ets.lookup(@table, name) do
+      [{^name, value}] -> value
+      [] -> nil
+    end
+  end
+
+  @doc """
+  Returns all metrics as a map of `%{name => value}`.
+
+  The map is built from a full ETS table scan; prefer `snapshot/0` when
+  the intent is to capture a point-in-time view.
+  """
+  @spec all() :: %{term() => number()}
+  def all do
+    :ets.tab2list(@table)
+    |> Map.new()
+  end
+
+  @doc """
+  Returns a point-in-time snapshot of all metrics as `%{name => value}`.
+
+  Semantically identical to `all/0` but signals to the reader that the
+  returned map is an immutable capture — subsequent mutations do not
+  affect it.
+  """
+  @spec snapshot() :: %{term() => number()}
+  def snapshot, do: all()
+
+  @doc """
+  Resets the metric `name` to `0`.
+
+  Works for both counters and gauges. If `name` does not exist it is
+  created with the value `0`.
+  """
+  @spec reset(term()) :: :ok
+  def reset(name) do
+    :ets.insert(@table, {name, 0})
+    :ok
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl GenServer
+  def init(_opts) do
+    # :set          — one entry per key (duplicate keys overwrite)
+    # :named_table  — accessible by name from any process
+    # :public       — any process may read and write without going through the owner
+    # read_concurrency / write_concurrency — kernel-level optimisations for
+    #   the mixed read-heavy / write-heavy workloads typical of metrics
+    :ets.new(@table, [
+      :set,
+      :named_table,
+      :public,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
+
+    {:ok, %{}}
+  end
+end
+
+
+=== BASE test_harness.exs ===
+defmodule MetricsTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    start_supervised!(Metrics)
+    :ok
+  end
+
+  # -------------------------------------------------------
+  # Counters
+  # -------------------------------------------------------
+
+  test "increment creates a counter starting at 1" do
+    assert :ok = Metrics.increment(:hits)
+    assert Metrics.get(:hits) == 1
+  end
+
+  test "increment adds the given amount" do
+    Metrics.increment(:hits, 5)
+    Metrics.increment(:hits, 3)
+    assert Metrics.get(:hi (truncated)
+13:30:56.364 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `Metrics` that collects **latency/size distributions** using ETS for fast, concurrent-safe storage. This is a histogram collector (Prometheus-style), not a scalar counter/gauge collector.
+
+I need these functions in the public API:
+
+- `Metrics.start_link(opts \\ [])` to start the backing GenServer. It should accept a `:name` option for process registration (defaulting to `__MODULE__`) and a `:buckets` option: a sorted ascending list of integer upper bounds. Default to `[10, 50, 100, 500, 1000]`.
+- `Metrics.observe(name, value)` to record a single integer observation (e.g. a request latency in ms) for the histogram `name`. `value` must be a non-negative integer. This is the hot path and MUST NOT serialize through the GenServer — it must go directly to ETS using `:ets.update_counter`. Recording an observation atomically bumps the total count, the running sum, and the count for the matching bucket. A value `v` falls into the bucket of the smallest boundary `b` such that `v <= b`; a value larger than every boundary falls into the implicit `+Inf` bucket.
+- `Metrics.get(name)` to return the current summary of the histogram as a map `%{count: c, sum: s, average: avg, buckets: %{...}}`, or `nil` if nothing has ever been observed for `name`. The `:buckets` map is **cumulative** ("less-than-or-equal"): each configured boundary maps to the number of observations `<= that boundary`, plus an `:infinity` key mapping to the total count. `:average` is `sum / count` as a float (the average of an empty histogram never arises because `get` returns `nil` when there are no observations).
+- `Metrics.all()` to return a map of `%{name => total_count}` across every histogram.
+- `Metrics.reset(name)` to erase all recorded data for `name` so that a subsequent `get(name)` returns `nil`.
+
+The ETS table must be public and named so `observe` can bypass the owning process for maximum throughput. The GenServer exists only to own the table and to hold the bucket configuration. Use only OTP/stdlib — no external dependencies. Give me the complete implementation in a single file.
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule MetricsTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    start_supervised!(Metrics)
+    :ok
+  end
+
+  # -------------------------------------------------------
+  # observe / get basics
+  # -------------------------------------------------------
+
+  test "get returns nil for a histogram that has never been observed" do
+    assert Metrics.get(:never) == nil
+  end
+
+  test "a single observation produces count 1 and matching sum" do
+    assert :ok = Metrics.observe(:lat, 42)
+    summary = Metrics.get(:lat)
+    assert summary.count == 1
+    assert summary.sum == 42
+    assert_in_delta summary.average, 42.0, 0.0001
+  end
+
+  test "count, sum and average accumulate across observations" do
+    Metrics.observe(:lat, 5)
+    Metrics.observe(:lat, 42)
+    Metrics.observe(:lat, 42)
+    summary = Metrics.get(:lat)
+    assert summary.count == 3
+    assert summary.sum == 89
+    assert_in_delta summary.average, 89 / 3, 0.0001
+  end
+
+  # -------------------------------------------------------
+  # cumulative buckets
+  # -------------------------------------------------------
+
+  test "buckets are cumulative (less-than-or-equal)" do
+    Metrics.observe(:lat, 5)
+    Metrics.observe(:lat, 42)
+    Metrics.observe(:lat, 42)
+    b = Metrics.get(:lat).buckets
+    assert b[10] == 1
+    assert b[50] == 3
+    assert b[100] == 3
+    assert b[500] == 3
+    assert b[1000] == 3
+    assert b[:infinity] == 3
+  end
+
+  test "values above every boundary land only in the +Inf bucket" do
+    Metrics.observe(:big, 5000)
+    b = Metrics.get(:big).buckets
+    assert b[10] == 0
+    assert b[1000] == 0
+    assert b[:infinity] == 1
+    assert Metrics.get(:big).sum == 5000
+  end
+
+  test "a value exactly on a boundary is included at that boundary" do
+    Metrics.observe(:edge, 50)
+    b = Metrics.get(:edge).buckets
+    assert b[10] == 0
+    assert b[50] == 1
+    assert b[100] == 1
+  end
+
+  # -------------------------------------------------------
+  # custom buckets
+  # -------------------------------------------------------
+
+  test "custom bucket boundaries are honoured" do
+    stop_supervised(Metrics)
+    start_supervised!({Metrics, buckets: [1, 2, 3]})
+    Metrics.observe(:x, 2)
+    b = Metrics.get(:x).buckets
+    assert b[1] == 0
+    assert b[2] == 1
+    assert b[3] == 1
+    assert b[:infinity] == 1
+  end
+
+  # -------------------------------------------------------
+  # all / reset
+  # -------------------------------------------------------
+
+  test "all returns a map of name => total count" do
+    Metrics.observe(:a, 1)
+    Metrics.observe(:a, 2)
+    Metrics.observe(:b, 900)
+    result = Metrics.all()
+    assert result[:a] == 2
+    assert result[:b] == 1
+  end
+
+  test "reset erases a histogram entirely" do
+    Metrics.observe(:gone, 10)
+    assert Metrics.get(:gone).count == 1
+    Metrics.reset(:gone)
+    assert Metrics.get(:gone) == nil
+    assert Metrics.all()[:gone] == nil
+  end
+
+  test "reset of one histogram leaves others intact" do
+    Metrics.observe(:keep, 3)
+    Metrics.observe(:drop, 3)
+    Metrics.reset(:drop)
+    assert Metrics.get(:drop) == nil
+    assert Metrics.get(:keep).count == 1
+  end
+
+  # -------------------------------------------------------
+  # concurrency
+  # -------------------------------------------------------
+
+  test "100 concurrent observations aggregate correctly" do
+    1..100
+    |> Enum.map(fn _ -> Task.async(fn -> Metrics.observe(:c, 7) end) end)
+    |> Task.await_many(5_000)
+
+    summary = Metrics.get(:c)
+    assert summary.count == 100
+    assert summary.sum == 700
+    assert summary.buckets[10] == 100
+  end
+end
+</file>
+
+<file path="v1/solution.ex">
+defmodule Metrics do
+  @moduledoc """
+  A concurrent-safe histogram collector backed by a named public ETS table.
+
+  Each observation atomically bumps three ETS counters — the total count, the
+  running sum, and the matching bucket — all via `:ets.update_counter/4`, so
+  the hot path never serialises through the owning GenServer. The GenServer
+  exists only to own the table and hold the bucket configuration.
+
+  ## Quick start
+
+      {:ok, _pid} = Metrics.start_link()
+      Metrics.observe(:latency_ms, 42)      # => :ok
+      Metrics.get(:latency_ms)
+      # => %{count: 1, sum: 42, average: 42.0,
+      #      buckets: %{10 => 0, 50 => 1, 100 => 1, 500 => 1, 1000 => 1, infinity: 1}}
+  """
+
+  use GenServer
+
+  @table __MODULE__
+  @default_buckets [10, 50, 100, 500, 1000]
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the backing GenServer and creates the ETS table.
+
+  ## Options
+
+    * `:name` — registration name for the process. Defaults to `#{__MODULE__}`.
+    * `:buckets` — sorted ascending list of integer upper bounds.
+      Defaults to `#{inspect(@default_buckets)}`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, init_opts} = Keyword.pop(opts, :name, __MODULE__)
+    GenServer.start_link(__MODULE__, init_opts, name: name)
+  end
+
+  @doc """
+  Records a single non-negative integer observation for histogram `name`.
+
+  Atomically increments the total count, the running sum and the count for the
+  bucket that `value` falls into. Returns `:ok`.
+  """
+  @spec observe(term(), non_neg_integer()) :: :ok
+  def observe(name, value) when is_integer(value) and value >= 0 do
+    :ets.update_counter(@table, {name, :count}, {2, 1}, {{name, :count}, 0})
+    :ets.update_counter(@table, {name, :sum}, {2, value}, {{name, :sum}, 0})
+    u = bucket_for(value)
+    :ets.update_counter(@table, {name, :bucket, u}, {2, 1}, {{name, :bucket, u}, 0})
+    :ok
+  end
+
+  @doc """
+  Returns the histogram summary for `name`, or `nil` if nothing was observed.
+
+  The `:buckets` map is cumulative: each configured boundary maps to the number
+  of  (truncated)
+13:30:56.364 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 23471, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 23471, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 23471, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 23471, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 26615, "type" => "message"}], "output_tokens" => 26615, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}

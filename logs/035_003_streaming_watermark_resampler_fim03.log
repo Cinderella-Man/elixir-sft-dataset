@@ -1,0 +1,433 @@
+05:11:38.014 [info] FIM 035_003_streaming_watermark_resampler_fim03 → 035_003_streaming_watermark_resampler_04: target finalize/1
+05:11:38.014 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+05:11:38.014 [debug] claude -p USER prompt:
+I have this module which was a single-shot SFT answer. I want to create a
+"fill-in-the-middle" task out of it for the function `finalize/1`.
+
+Generate a prompt describing how to implement `finalize/1` (one function at a time),
+similar in spirit to this example:
+
+```
+Implement the private `handle_closed/2` function. It should execute the provided
+zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+return the result. If it fails, increment `failure_count`; if the count reaches
+`failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+cases return the result in the GenServer reply along with the updated state.
+```
+
+The `prompt.md` you produce must contain:
+  1. a natural-language description of what `finalize/1` must do; then
+  2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+     body of `finalize/1` replaced by `# TODO` (every other function intact).
+
+The `solution.ex` you produce is JUST the `finalize/1` function (its full definition).
+
+=== ORIGINAL PROMPT ===
+Write me an Elixir module called `StreamingResampler` — a **GenServer** that performs
+**online, streaming** resampling of a `{timestamp, value}` point stream into fixed-interval
+buckets. Unlike a batch resampler, it never sees the whole data set at once: points are
+pushed one at a time, and buckets are **finalized (emitted) as an event-time watermark
+advances**, with support for bounded late-arriving data.
+
+I need this public API:
+
+- `StreamingResampler.start_link(interval_ms, opts)` — start the server. `interval_ms` is
+  the bucket width in milliseconds. Returns `{:ok, pid}`. Raises `ArgumentError` for an
+  invalid `interval_ms` or invalid options.
+- `StreamingResampler.push(pid, timestamp_ms, value)` — ingest one data point. Returns `:ok`.
+  The **watermark** is the maximum timestamp ever seen. Pushing advances the watermark and
+  may finalize buckets.
+- `StreamingResampler.finalized(pid)` — return the list of buckets finalized *so far*, as
+  `{bucket_start_ms, aggregated_value}` tuples sorted ascending by bucket start.
+- `StreamingResampler.flush(pid)` — force-finalize every still-open bucket up to and
+  including the bucket containing the current watermark, then return the full sorted list of
+  all finalized buckets.
+- `StreamingResampler.stats(pid)` — return a map with at least `:late_dropped` (count of
+  dropped late points), `:watermark`, and `:open_buckets` (number of not-yet-finalized
+  buckets currently buffered).
+
+The options are:
+- `:agg` — aggregation mode, one of `:last`, `:first`, `:mean`, `:sum`, `:count`, `:max`,
+  `:min`. Defaults to `:last`.
+- `:fill` — gap-filling for empty buckets that get finalized: `:nil` or `:forward`. Defaults
+  to `:nil`.
+- `:allowed_lateness` — a non-negative integer number of milliseconds. Defaults to `0`.
+
+Semantics:
+- A point at timestamp `t` belongs to the bucket with start
+  `floor(t / interval_ms) * interval_ms`.
+- The grid's first bucket is fixed by the **first point ever pushed** (floored to a
+  boundary). Emission proceeds contiguously from there — every grid bucket is finalized in
+  ascending order with no gaps, including empty ones (subject to `:fill`).
+- A bucket `[start, start + interval_ms)` is finalized once
+  `watermark >= start + interval_ms + allowed_lateness`. Finalizing empty buckets uses the
+  `:fill` policy (`:forward` carries the last finalized non-nil aggregate; a leading gap is
+  `nil`).
+- A point whose bucket has **already been finalized** (its bucket start is earlier than the
+  next bucket awaiting emission) is a *late drop*: it is discarded and counted in
+  `:late_dropped`. Late points that still fall inside an open bucket (thanks to
+  `:allowed_lateness`) are accepted and included in that bucket's aggregate.
+- Aggregation follows the usual rules: `:last`/`:first` by timestamp within the bucket
+  (points may arrive out of order — order by timestamp internally), `:mean` (float), `:sum`,
+  `:count` (integer), `:max`, `:min`.
+
+Edge cases:
+- `finalized/1` and `flush/1` before any push return `[]`; `stats/1` reports a `nil`
+  watermark.
+- After `flush/1`, any subsequently pushed point belonging to an already-emitted bucket is a
+  late drop.
+
+Give me the complete module in a single file. Use only the Elixir standard library (GenServer
+is fine), no external dependencies.
+
+=== WHOLE MODULE ===
+```elixir
+defmodule StreamingResampler do
+  @moduledoc """
+  A GenServer that resamples a streaming `{timestamp, value}` point stream into
+  fixed-interval buckets online, finalizing buckets as an event-time watermark
+  advances and tolerating bounded late-arriving data.
+
+  The watermark is the maximum timestamp ever pushed. A bucket
+  `[start, start + interval)` is finalized once
+  `watermark >= start + interval + allowed_lateness`. Buckets are emitted
+  contiguously in ascending order (empty ones included, subject to `:fill`).
+  A point whose bucket has already been emitted is dropped and counted.
+  """
+
+  use GenServer
+
+  @valid_agg  [:last, :first, :mean, :sum, :count, :max, :min]
+  @valid_fill [:nil, :forward]
+
+  # --------------------------------------------------------------------------
+  # Client API
+  # --------------------------------------------------------------------------
+
+  @doc """
+  Start the streaming resampler.
+
+  `interval_ms` is the bucket width in milliseconds and must be a positive
+  integer. Options:
+
+    * `:agg` — aggregation mode, one of `#{inspect(@valid_agg)}` (default `:last`)
+    * `:fill` — gap-fill policy, one of `#{inspect(@valid_fill)}` (default `:nil`)
+    * `:allowed_lateness` — non-negative integer milliseconds (default `0`)
+
+  Raises `ArgumentError` for an invalid `interval_ms` or invalid options.
+  """
+  @spec start_link(pos_integer(), keyword()) :: GenServer.on_start()
+  def start_link(interval_ms, opts \\ []) do
+    unless is_integer(interval_ms) and interval_ms > 0 do
+      raise ArgumentError, "interval_ms must be a positive integer, got: #{inspect(interval_ms)}"
+    end
+
+    _ = fetch_opt!(opts, :agg, :last, @valid_agg)
+    _ = fetch_opt!(opts, :fill, :nil, @valid_fill)
+
+    lateness = Keyword.get(opts, :allowed_lateness, 0)
+
+    unless is_integer(lateness) and lateness >= 0 do
+      raise ArgumentError,
+            "allowed_lateness must be a non-negative integer, got: #{inspect(lateness)}"
+    end
+
+    GenServer.start_link(__MODULE__, {interval_ms, opts})
+  end
+
+  @doc """
+  Ingest one `{timestamp_ms, value}` data point.
+
+  Advances the watermark (the maximum timestamp seen) and may finalize buckets.
+  A point mapping to an already-finalized bucket is dropped and counted as late.
+  Returns `:ok`.
+  """
+  @spec push(GenServer.server(), integer(), number()) :: :ok
+  def push(pid, timestamp_ms, value) when is_integer(timestamp_ms) do
+    GenServer.call(pid, {:push, timestamp_ms, value})
+  end
+
+  @doc """
+  Return the buckets finalized so far as `{bucket_start_ms, aggregated_value}`
+  tuples, sorted ascending by bucket start.
+  """
+  @spec finalized(GenServer.server()) :: [{integer(), number() | nil}]
+  def finalized(pid), do: GenServer.call(pid, :finalized)
+
+  @doc """
+  Force-finalize every still-open bucket up to and including the bucket
+  containing the current watermark, then return the full sorted list of all
+  finalized buckets.
+  """
+  @spec flush(GenServer.server()) :: [{integer(), number() | nil}]
+  def flush(pid), do: GenServer.call(pid, :flush)
+
+  @doc """
+  Return a map of runtime statistics with `:late_dropped`, `:watermark`, and
+  `:open_buckets` (the number of not-yet-finalized buckets currently buffered).
+  """
+  @spec stats(GenServer.server()) :: map()
+  def stats(pid), do: GenServer.call(pid, :stats)
+
+  # --------------------------------------------------------------------------
+  # Server callbacks
+  # --------------------------------------------------------------------------
+
+  @impl true
+  def init({interval_ms, opts}) do
+    state = %{
+      interval: interval_ms,
+      lateness: Keyword.get(opts, :allowed_lateness, 0),
+      a (truncated)
+05:12:29.075 [debug] claude -p RESULT (stop="end_turn"):
+<file path="prompt.md">
+Implement the private `finalize/1` function. It drives contiguous, in-order
+finalization of buckets as the watermark advances, and is called after every
+push.
+
+`finalize/1` takes the server `state` and returns a (possibly updated) `state`:
+
+- If the grid has not been anchored yet (`next_emit` is `nil`, meaning no point
+  has ever been pushed), there is nothing to finalize — return `state`
+  unchanged.
+- Otherwise, check whether the bucket that is currently awaiting emission (the
+  one starting at `next_emit`) is fully closed. A bucket is closed once
+  `next_emit + interval + lateness <= watermark`. When it is closed:
+  finalize that bucket by piping `state` through `close_bucket/2` (with
+  `state.next_emit` as the bucket), then `advance/1`, then recurse into
+  `finalize/1` so that any further contiguous buckets are emitted too.
+- When the awaiting bucket is not yet closed, stop and return `state`.
+
+Emit buckets one at a time, in ascending order, with no gaps — empty buckets are
+finalized the same way (their `:fill` handling lives in `close_bucket/2`). Use
+whatever function clauses / recursion you find natural.
+
+```elixir
+defmodule StreamingResampler do
+  @moduledoc """
+  A GenServer that resamples a streaming `{timestamp, value}` point stream into
+  fixed-interval buckets online, finalizing buckets as an event-time watermark
+  advances and tolerating bounded late-arriving data.
+
+  The watermark is the maximum timestamp ever pushed. A bucket
+  `[start, start + interval)` is finalized once
+  `watermark >= start + interval + allowed_lateness`. Buckets are emitted
+  contiguously in ascending order (empty ones included, subject to `:fill`).
+  A point whose bucket has already been emitted is dropped and counted.
+  """
+
+  use GenServer
+
+  @valid_agg  [:last, :first, :mean, :sum, :count, :max, :min]
+  @valid_fill [:nil, :forward]
+
+  # --------------------------------------------------------------------------
+  # Client API
+  # --------------------------------------------------------------------------
+
+  @doc """
+  Start the streaming resampler.
+
+  `interval_ms` is the bucket width in milliseconds and must be a positive
+  integer. Options:
+
+    * `:agg` — aggregation mode, one of `#{inspect(@valid_agg)}` (default `:last`)
+    * `:fill` — gap-fill policy, one of `#{inspect(@valid_fill)}` (default `:nil`)
+    * `:allowed_lateness` — non-negative integer milliseconds (default `0`)
+
+  Raises `ArgumentError` for an invalid `interval_ms` or invalid options.
+  """
+  @spec start_link(pos_integer(), keyword()) :: GenServer.on_start()
+  def start_link(interval_ms, opts \\ []) do
+    unless is_integer(interval_ms) and interval_ms > 0 do
+      raise ArgumentError, "interval_ms must be a positive integer, got: #{inspect(interval_ms)}"
+    end
+
+    _ = fetch_opt!(opts, :agg, :last, @valid_agg)
+    _ = fetch_opt!(opts, :fill, :nil, @valid_fill)
+
+    lateness = Keyword.get(opts, :allowed_lateness, 0)
+
+    unless is_integer(lateness) and lateness >= 0 do
+      raise ArgumentError,
+            "allowed_lateness must be a non-negative integer, got: #{inspect(lateness)}"
+    end
+
+    GenServer.start_link(__MODULE__, {interval_ms, opts})
+  end
+
+  @doc """
+  Ingest one `{timestamp_ms, value}` data point.
+
+  Advances the watermark (the maximum timestamp seen) and may finalize buckets.
+  A point mapping to an already-finalized bucket is dropped and counted as late.
+  Returns `:ok`.
+  """
+  @spec push(GenServer.server(), integer(), number()) :: :ok
+  def push(pid, timestamp_ms, value) when is_integer(timestamp_ms) do
+    GenServer.call(pid, {:push, timestamp_ms, value})
+  end
+
+  @doc """
+  Return the buckets finalized so far as `{bucket_start_ms, aggregated_value}`
+  tuples, sorted ascending by bucket start.
+  """
+  @spec finalized(GenServer.server()) :: [{integer(), number() | nil}]
+  def finalized(pid), do: GenServer.call(pid, :finalized)
+
+  @doc """
+  Force-finalize every still-open bucket up to and including the bucket
+  containing the current watermark, then return the full sorted list of all
+  finalized buckets.
+  """
+  @spec flush(GenServer.server()) :: [{integer(), number() | nil}]
+  def flush(pid), do: GenServer.call(pid, :flush)
+
+  @doc """
+  Return a map of runtime statistics with `:late_dropped`, `:watermark`, and
+  `:open_buckets` (the number of not-yet-finalized buckets currently buffered).
+  """
+  @spec stats(GenServer.server()) :: map()
+  def stats(pid), do: GenServer.call(pid, :stats)
+
+  # --------------------------------------------------------------------------
+  # Server callbacks
+  # --------------------------------------------------------------------------
+
+  @impl true
+  def init({interval_ms, opts}) do
+    state = %{
+      interval: interval_ms,
+      lateness: Keyword.get(opts, :allowed_lateness, 0),
+      agg: fetch_opt!(opts, :agg, :last, @valid_agg),
+      fill: fetch_opt!(opts, :fill, :nil, @valid_fill),
+      open: %{},
+      emitted: [],
+      next_emit: nil,
+      last_value: nil,
+      late_dropped: 0,
+      watermark: nil
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:push, ts, value}, _from, state) do
+    state = ensure_started(state, ts)
+    state = %{state | watermark: bump(state.watermark, ts)}
+    bucket = floor_bucket(ts, state.interval)
+
+    state =
+      if bucket < state.next_emit do
+        %{state | late_dropped: state.late_dropped + 1}
+      else
+        open = Map.update(state.open, bucket, [{ts, value}], &[{ts, value} | &1])
+        %{state | open: open}
+      end
+
+    {:reply, :ok, finalize(state)}
+  end
+
+  def handle_call(:finalized, _from, state) do
+    {:reply, Enum.reverse(state.emitted), state}
+  end
+
+  def handle_call(:flush, _from, state) do
+    state = flush_all(state)
+    {:reply, Enum.reverse(state.emitted), state}
+  end
+
+  def handle_call(:stats, _from, state) do
+    stats = %{
+      late_dropped: state.late_dropped,
+      watermark: state.watermark,
+      open_buckets: map_size(state.open)
+    }
+
+    {:reply, stats, state}
+  end
+
+  # --------------------------------------------------------------------------
+  # Finalization
+  # --------------------------------------------------------------------------
+
+  defp ensure_started(%{next_emit: nil} = state, ts) do
+    %{state | next_emit: floor_bucket(ts, state.interval)}
+  end
+
+  defp ensure_started(state, _ts), do: state
+
+  defp finalize(state) do
+    # TODO
+  end
+
+  defp flush_all(%{next_emit: nil} = state), do: state
+
+  defp flush_all(state) do
+    last_bucket = floor_bucket(state.watermark, state.interval)
+    do_flush(state, last_bucket)
+  end
+
+  defp do_flush(state, last_bucket) do
+    if state.next_emit <= last_bucket do
+      state
+      |> close_bucket(state.next_emit)
+      |> advance()
+      |> do_flush(last_bucket)
+    else
+      state
+    end
+  end
+
+  defp advance(state), do: %{state | next_emit: state.next_emit + state.interval}
+
+  defp close_bucket(state, bucket) do
+    agg_value =
+      case Map.fetch(state.open, bucket) do
+        {:ok, points} -> points |> Enum.sort_by(&elem(&1, 0)) |> aggregate(state.agg)
+        :error        -> nil
+      end
+
+    filled =
+      case {agg_value, state.fill} do
+        {nil, :forward} -> state.last_value
+        {nil, :nil}     -> nil
+        {v, _}          -> v
+      end
+
+    last_value = if agg_value != nil, do: agg_value, else: state.last_value
+
+    %{
+      state
+      | open: Map.delete(state.open, bucket),
+        emitted: [{bucket, filled} | state.emitted],
+        last_value: last_value
+    }
+  end
+
+  # --------------------------------------------------------------------------
+  # Helpers
+  # --------------------------------------------------------------------------
+
+  defp bump(nil, ts), do: ts
+  defp bump(current, ts), do: max(current, ts)
+
+  defp floor_bucket(ts, interval), do: div(ts, interval) * interval
+
+  defp aggregate(points, :last),  do: points |> List.last() |> elem(1)
+  defp aggregate(points, :first), do: points |> hd() |> elem(1)
+  defp aggregate(points, :count), do: length(points)
+  defp aggregate(points, :sum), (truncated)
+05:12:29.075 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5303, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5303, "cache_read_input_tokens" => 14811, "inference_geo" => "not_available", "input_tokens" => 2972, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 5303, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 5303, "cache_read_input_tokens" => 14811, "input_tokens" => 2972, "output_tokens" => 4815, "type" => "message"}], "output_tokens" => 4815, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
+05:12:29.095 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_035_003_streaming_watermark_resampler_04/035_003_streaming_watermark_resampler_04 solution.ex
+05:12:29.749 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":12,"lines_over_98":0,"max_line_length":78,"mode":"fim","pipe_chain_count":3,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":0,"compiled":true,"parent":"035_003_streaming_watermark_resampler_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":1.0,"mode":"fim","overall":1.0,"reasons":["perfect score — no deductions"],"tests":1.0},"shape":"fim","solution_file":".gen_staging/fim_035_003_streaming_watermark_resampler_04/035_003_streaming_watermark_resampler_04/solution.ex","task":"035_003_streaming_watermark_resampler_04","test_failures":[],"tests_errors":0,"tests_excluded":0,"tests_failed":0,"tests_passed":11,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T03:12:29.726304Z"}
+05:12:29.750 [debug] grade: timeout --signal=KILL 120 elixir scripts/eval_task.exs .gen_staging/fim_035_003_streaming_watermark_resampler_04/035_003_streaming_watermark_resampler_04 .gen_staging/fim_035_003_streaming_watermark_resampler_04/mutant.ex
+05:12:30.431 [debug] grade JSON: {"analysis":{"defp_count":2,"has_doc_on_public_fns":false,"has_moduledoc":false,"has_typespecs":false,"line_count":7,"lines_over_98":0,"max_line_length":43,"mode":"fim","pipe_chain_count":0,"public_fn_count":0,"sql_injection_risk":false,"todo_count":0},"compile_errors":[],"compile_warnings":2,"compiled":true,"parent":"035_003_streaming_watermark_resampler_01","score":{"analysis":1.0,"analysis_max_points":3,"compilation":0.8,"mode":"fim","overall":0.41,"reasons":["compilation: 2 warning(s) → -0.2 pts","tests: 9/11 failed"],"tests":0.18},"shape":"fim","solution_file":".gen_staging/fim_035_003_streaming_watermark_resampler_04/mutant.ex","task":"035_003_streaming_watermark_resampler_04","test_failures":[{"message":"{:EXIT, #PID<0.208.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StreamingResampler, :finalize, 1, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 161, error_info: %{module: Exception}]}, {StreamingResampler, :handle_call, 3, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 124]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StreamingResamplerTest","test":"test buckets finalize as the watermark advances (lateness 0)"},{"message":"{:EXIT, #PID<0.210.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StreamingResampler, :finalize, 1, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 161, error_info: %{module: Exception}]}, {StreamingResampler, :handle_call, 3, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 124]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StreamingResamplerTest","test":"test flush finalizes the remaining open buckets"},{"message":"{:EXIT, #PID<0.212.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StreamingResampler, :finalize, 1, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 161, error_info: %{module: Exception}]}, {StreamingResampler, :handle_call, 3, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 124]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StreamingResamplerTest","test":"test late points into an already-finalized bucket are dropped and counted"},{"message":"{:EXIT, #PID<0.214.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StreamingResampler, :finalize, 1, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 161, error_info: %{module: Exception}]}, {StreamingResampler, :handle_call, 3, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 124]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StreamingResamplerTest","test":"test allowed_lateness keeps a bucket open for late arrivals"},{"message":"{:EXIT, #PID<0.216.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StreamingResampler, :finalize, 1, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 161, error_info: %{module: Exception}]}, {StreamingResampler, :handle_call, 3, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 124]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StreamingResamplerTest","test":"test empty buckets in the middle are emitted contiguously (fill :nil)"},{"message":"{:EXIT, #PID<0.218.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StreamingResampler, :finalize, 1, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 161, error_info: %{module: Exception}]}, {StreamingResampler, :handle_call, 3, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 124]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StreamingResamplerTest","test":"test fill :forward carries the last aggregate into empty buckets"},{"message":"{:EXIT, #PID<0.220.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StreamingResampler, :finalize, 1, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 161, error_info: %{module: Exception}]}, {StreamingResampler, :handle_call, 3, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 124]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StreamingResamplerTest","test":"test :last respects timestamp order even for out-of-order arrivals"},{"message":"{:EXIT, #PID<0.222.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StreamingResampler, :finalize, 1, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 161, error_info: %{module: Exception}]}, {StreamingResampler, :handle_call, 3, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 124]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StreamingResamplerTest","test":"test stats reports watermark and open bucket count"},{"message":"{:EXIT, #PID<0.226.0>}: {%RuntimeError{message: \"MUTATION\"}, [{StreamingResampler, :finalize, 1, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 161, error_info: %{module: Exception}]}, {StreamingResampler, :handle_call, 3, [file: ~c\"/tmp/evalfim_401060_2628.ex\", line: 124]}, {:gen_server, :try_handle_call, 4, [file: ~c\"gen_server.erl\", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c\"gen_server.erl\", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c\"proc_lib.erl\", line: 333]}]}","module":"StreamingResamplerTest","test":"test points after flush that map to emitted buckets are late drops"}],"tests_errors":0,"tests_excluded":0,"tests_failed":9,"tests_passed":2,"tests_ran":true,"tests_skipped":0,"tests_total":11,"timestamp":"2026-07-04T03:12:30.406926Z"}
+05:12:30.431 [debug] fim mutation gate: killed
+05:12:30.432 [info] promoted 035_003_streaming_watermark_resampler_04 -> tasks/035_003_streaming_watermark_resampler_04

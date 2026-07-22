@@ -1,0 +1,127 @@
+=== [chain3] stage 1: strengthen retry 100_004 — 2026-07-14T00:56:23+02:00
+strengthening 1 family(ies), sequential, ledger logs/strengthen_harnesses.jsonl
+
+[1/1] 100_004_stateful_totp_vault_genserver_with_replay_protection_01 (ledgered 0.42) ... rejected — new harness compiles with warnings: ["test_harness.exs: line 206: the variable \"offset\" is accessed inside size(...) of a bitstring but it was defined outside of the match. You must precede it with the pin operator"]
+
+=== STRENGTHEN LEDGER (73 row(s)) === %{"already_ok" => 10, "applied" => 18, "rejected" => 45}
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  105_001_genserver_based_debouncer_01: 0.4 → 0.8 (+3 test(s))
+  013_002_timeout_guarded_retry_worker_01: 0.4 → 0.84 (+6 test(s))
+  107_002_keyed_event_aggregator_with_per_key_batching_01: 0.43 → 0.79 (+3 test(s))
+  001_001_rate_limiter_01: 0.47 → 0.87 (+4 test(s))
+  002_002_rolling_window_error_rate_cb_01: 0.47 → 0.75 (+5 test(s))
+  104_004_usage_recycling_connection_pool_01: 0.47 → 0.82 (+9 test(s))
+  041_002_lfu_cache_backed_by_ets_01: 0.48 → 0.78 (+4 test(s))
+  079_001_bloom_filter_01: 0.48 → 1.0 (+6 test(s))
+  075_001_property_based_test_generators_01: 0.49 → 1.0 (+7 test(s))
+  074_001_custom_exunit_assertion_helpers_01: 0.41 → 1.0 (+8 test(s))
+  063_004_bounded_concurrency_concurrent_fetcher_01: 0.47 → 0.94 (+5 test(s))
+  097_004_stateful_password_policy_server_with_reuse_history_01: 0.4 → 0.97 (+8 test(s))
+=== [chain3] stage 1 exit=0 — 2026-07-14T00:59:29+02:00
+=== [chain3] stage 2: T2.3 second-source the 14 entailed keeps — 2026-07-14T00:59:29+02:00
+Blind-solve screen: 14 task(s) to screen (0 already in the ledger; --rescreen to redo) — model=opus, sequential, ~1 call each
+[1/14] 022_004_invitation_accept_decline_nested_membership_workflow_01 ... RED (test GET members returns 200 with active members for a member: key :store not found in:
+
+    []
+)
+[2/14] 024_002_replay_protected_timestamped_webhook_receiver_01 ... GREEN
+[3/14] 024_003_multi_provider_webhook_receiver_with_key_rotation_01 ... GREEN
+[4/14] 025_002_cursor_resumable_gap_free_long_poll_01 ... RED (test buffer retains only the most recent :buffer_size events: failed to start child with the spec {Notifications, [name: :notifications_1154, buffer_size: 3]}.
+Reason: bad child specification, got: {:already_started, #PID<0.252.0>})
+[5/14] 036_002_hierarchical_heading_outline_parser_01 ... GREEN
+[6/14] 045_003_versioned_feature_flag_store_with_rollback_01 ... RED (test enable then read at version 1: :exit: {:noproc, {GenServer, :call, [FeatureFlags, {:put, :f, {:on}}, 5000]}})
+[7/14] 045_004_dependency_aware_feature_flag_store_01 ... RED (test unknown flag defaults to false: errors were found at the given arguments:
+
+  * 1st argument: the table identifier does not refer to an existing ETS table
+)
+[8/14] 074_002_collection_and_structural_assertion_helpers_01 ... RED (test assert_subset/2 fails and lists the missing elements: 
+
+Assertion with =~ failed
+code:  assert result =~ "missing"
+left:  "Expected all elements of the subset to be present in the superset.\n\nMissing elements: [4]\n\nSubset:   [1, 4]\nSuperset: [1, 2, 3)
+[9/14] 079_003_scalable_bloom_filter_01 ... RED (test count tracks distinct insertions: 
+
+Assertion with == failed
+code:  assert ScalableBloomFilter.count(filter) == 200
+left:  197
+right: 200
+)
+[10/14] 100_002_provisioning_uri_driven_multi_algorithm_totp_verifier_01 ... RED (compile: /tmp/screen_4056712_9858.ex: cannot compile module AuthenticatorURI (errors have been logged))
+[11/14] 100_003_counter_based_hotp_with_resynchronization_window_01 ... RED (compile: /tmp/screen_4056712_10050.ex: cannot compile module HOTP (errors have been logged))
+[12/14] 100_004_stateful_totp_vault_genserver_with_replay_protection_01 ... RED (compile: /tmp/screen_4056712_10242.ex: cannot compile module TOTPVault (errors have been logged))
+[13/14] 101_003_weighted_sliding_sum_counter_01 ... RED (test amounts outside the window are not included: 
+
+Assertion with == failed
+code:  assert 0 == SlidingSum.sum(sc, "k", 1000)
+left:  0
+right: 5
+)
+[14/14] 624_002_merge_commit_dag_with_topological_log_and_merge_base_01 ... RED (test log walks a linear chain newest-to-oldest: 
+
+Assertion with == failed
+code:  assert hd(log).hash == c3
+left:  "335b535972ecd0e4232c9d4bce3dd0f40558c089"
+right: "8ab809833d9ea42a6596593e033e9898ed8874c1"
+)
+
+=== BLIND-SOLVE SCREEN SUMMARY ===
+  screened: 14   green: 3   RED: 11   transport errors: 0
+
+  QUARANTINE (prompt under-specified OR solver too weak — human review):
+    - 022_004_invitation_accept_decline_nested_membership_workflow_01: test GET members returns 200 with active members for a member: key :store not found in:
+
+    []
+
+    - 025_002_cursor_resumable_gap_free_long_poll_01: test buffer retains only the most recent :buffer_size events: failed to start child with the spec {Notifications, [name: :notifications_1154, buffer_size: 3]}.
+Reason: bad child specification, got: {:already_started, #PID<0.252.0>}
+    - 045_003_versioned_feature_flag_store_with_rollback_01: test enable then read at version 1: :exit: {:noproc, {GenServer, :call, [FeatureFlags, {:put, :f, {:on}}, 5000]}}
+    - 045_004_dependency_aware_feature_flag_store_01: test unknown flag defaults to false: errors were found at the given arguments:
+
+  * 1st argument: the table identifier does not refer to an existing ETS table
+
+    - 074_002_collection_and_structural_assertion_helpers_01: test assert_subset/2 fails and lists the missing elements: 
+
+Assertion with =~ failed
+code:  assert result =~ "missing"
+left:  "Expected all elements of the subset to be present in the superset.\n\nMissing elements: [4]\n\nSubset:   [1, 4]\nSuperset: [1, 2, 3
+    - 079_003_scalable_bloom_filter_01: test count tracks distinct insertions: 
+
+Assertion with == failed
+code:  assert ScalableBloomFilter.count(filter) == 200
+left:  197
+right: 200
+
+    - 100_002_provisioning_uri_driven_multi_algorithm_totp_verifier_01: compile: /tmp/screen_4056712_9858.ex: cannot compile module AuthenticatorURI (errors have been logged)
+    - 100_003_counter_based_hotp_with_resynchronization_window_01: compile: /tmp/screen_4056712_10050.ex: cannot compile module HOTP (errors have been logged)
+    - 100_004_stateful_totp_vault_genserver_with_replay_protection_01: compile: /tmp/screen_4056712_10242.ex: cannot compile module TOTPVault (errors have been logged)
+    - 101_003_weighted_sliding_sum_counter_01: test amounts outside the window are not included: 
+
+Assertion with == failed
+code:  assert 0 == SlidingSum.sum(sc, "k", 1000)
+left:  0
+right: 5
+
+    - 624_002_merge_commit_dag_with_topological_log_and_merge_base_01: test log walks a linear chain newest-to-oldest: 
+
+Assertion with == failed
+code:  assert hd(log).hash == c3
+left:  "335b535972ecd0e4232c9d4bce3dd0f40558c089"
+right: "8ab809833d9ea42a6596593e033e9898ed8874c1"
+
+=== [chain3] stage 2 exit=0 — 2026-07-14T01:10:33+02:00
+Repaired-accept population: 74 task(s) (written to logs/rescreen_repaired_population.txt)
+
+=== RETRO BLIND SCREEN (repaired accepts, 74 suspects) ===
+  PASS (prompt-sufficient):            63
+  FAIL, triaged entailed (kept as-is): 10
+  FAIL, OPEN (needs triage):           1
+  transport errors:                    0
+  not yet screened:                    0
+
+  FAIL(open) 101_003_weighted_sliding_sum_counter_01
+=== [chain3] CHAIN3 DONE — 2026-07-14T01:10:34+02:00

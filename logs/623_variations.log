@@ -1,0 +1,280 @@
+03:18:43.963 [info] VARIATIONS gen for 623_001_mini_elasticsearch_like_inverted_index_01 (1 slot(s))
+03:18:43.965 [debug] claude -p SYSTEM prompt:
+You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+and rigorous ExUnit test harnesses. You follow the requested output format exactly
+and emit nothing outside the requested file blocks.
+
+03:18:43.965 [debug] claude -p USER prompt:
+I have this SFT task (idea #623 — "Mini Elasticsearch-like Inverted Index"): its prompt, solution, and harness
+are below. I want to multiply the dataset with meaningful variations.
+
+Propose 1 variation(s), each with a meaningful difference so it stands on its
+own as a distinct problem (not a trivial rename), differing from the base and from
+each other along a real axis (data structure, concurrency model, failure semantics,
+…). For each variation produce a full triplet (prompt.md, test_harness.exs,
+solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings;
+process-unique temp paths via `System.pid()` + `System.unique_integer/1`; every
+assertion justified by an explicit statement in that variation's prompt.md — a
+solver reading ONLY the prompt must be able to pass every test, so never assert
+internal state or undocumented option values).
+
+This task ALREADY has these variations — your new ones must be distinct from them too:
+  - boolean phrase query inverted index
+  - bm25 ranked inverted index
+
+Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+format — its `idea.md` file must contain a `### Task 623 - Vn - <Name>` header on
+the first line followed by a one-paragraph description (mirroring the entries in the
+attached catalog).
+
+=== BASE prompt.md ===
+Write me an Elixir module called `InvertedIndex` that implements a full-text search engine with TF-IDF scoring, field-level boosting, and prefix suggestion.
+
+I need these functions in the public API:
+
+- `InvertedIndex.start_link(opts)` to start the process. It should accept a `:name` option for process registration and a `:stop_words` option which is a `MapSet` of words to exclude during tokenization. If `:stop_words` is not provided, default to a built-in set containing at minimum: "the", "a", "an", "is", "are", "was", "were", "in", "on", "at", "to", "of", "and", "or", "it", "this", "that", "for", "with", "as", "by", "not", "be", "has", "had", "have", "do", "does", "did", "but", "if", "from".
+
+- `InvertedIndex.index(server, id, fields, opts \\ [])` which indexes a document. `id` is a string, `fields` is a map of field names to text strings (e.g. `%{title: "Quick brown fox", body: "The fox jumped over the lazy dog"}`). Tokenization must: split on whitespace and punctuation via a regex like `~r/[^a-z0-9]+/`, lowercase everything, then remove stop words. If `opts[:stem]` is `true`, apply a basic suffix-stripping stemmer that at minimum handles "-ing", "-ed", "-s", "-ly", "-tion" → "-t", "-ment". Store enough information per posting to compute TF-IDF scores later. Indexing the same `id` again must replace the previous version of that document cleanly. Return `:ok`.
+
+- `InvertedIndex.remove(server, id)` which removes a document from the index entirely. After removal it must not appear in any search results and the document count used for IDF calculations must decrease. Return `:ok`. Removing a non-existent id must not raise.
+
+- `InvertedIndex.search(server, query, opts \\ [])` which tokenizes the query using the same pipeline as indexing, finds all documents containing at least one query term, and returns them ranked by score descending. The scoring formula must be TF-IDF: `tf(term, doc_field) * idf(term)` where `tf = count_of_term_in_field / total_tokens_in_field` and `idf = :math.log(total_documents / documents_containing_term)`. When a document has multiple fields, the score for a term is the sum of its per-field `tf * idf * boost`. Field boosts are passed via `opts[:boosts]` as a map like `%{title: 3, body: 1}`. Fields not listed default to boost 1. If multiple query terms match, their scores are summed. Return a list of `%{id: id, score: score}` maps sorted by score descending. Support `opts[:limit]` to cap the number of results. Support `opts[:stem]` to stem the query before lookup.
+
+- `InvertedIndex.suggest(server, prefix, limit \\ 10)` which returns term completions from the index vocabulary. The prefix is lowercased before lookup. Return up to `limit` terms that start with the prefix, sorted by document frequency descending (terms appearing in more documents come first). Return a list of strings.
+
+- `InvertedIndex.stats(server)` which returns `%{document_count: integer, term_count: integer}` — the total indexed documents and the total unique terms in the vocabulary.
+
+Additional requirements:
+- Implement this as a GenServer. Use no external dependencies — only standard library and OTP.
+- The stemmer used during search must match the one used during indexing. Stemming is controlled per-call via `opts[:stem]`. The caller is responsible for consistency (indexing with `stem: true` and searching with `stem: true`).
+- All term storage and lookup must be case-insensitive.
+- The module must be in a single file called `inverted_index.ex`.
+
+=== BASE solution.ex ===
+defmodule InvertedIndex do
+  @moduledoc """
+  A full-text search engine backed by a GenServer, supporting TF-IDF scoring,
+  field-level boosting, prefix-based term suggestion, and optional suffix-stripping stemming.
+  """
+
+  use GenServer
+
+  @default_stop_words MapSet.new([
+                        "the",
+                        "a",
+                        "an",
+                        "is",
+                        "are",
+                        "was",
+                        "were",
+                        "in",
+                        "on",
+                        "at",
+                        "to",
+                        "of",
+                        "and",
+                        "or",
+                        "it",
+                        "this",
+                        "that",
+                        "for",
+                        "with",
+                        "as",
+                        "by",
+                        "not",
+                        "be",
+                        "has",
+                        "had",
+                        "have",
+                        "do",
+                        "does",
+                        "did",
+                        "but",
+                        "if",
+                        "from"
+                      ])
+
+  # ── State shape ──────────────────────────────────────────────────────────────
+  #
+  # %{
+  #   stop_words: MapSet.t(),
+  #   docs: %{doc_id => %{field_name => [token, ...]}},       # raw tokens per field
+  #   postings: %{term => %{doc_id => %{field_name => count}}}, # inverted index
+  #   doc_freq: %{term => pos_integer}                          # # docs containing term
+  # }
+
+  # ── Public API ───────────────────────────────────────────────────────────────
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  @doc "Start the InvertedIndex process."
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name)
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, server_opts)
+  end
+
+  @spec index(GenServer.server(), term(), map(), keyword()) :: :ok
+  @doc "Index a document. Re-indexing the same `id` replaces the previous version."
+  def index(server, id, fields, opts \\ []) do
+    GenServer.call(server, {:index, id, fields, opts})
+  end
+
+  @spec remove(GenServer.server(), term()) :: :ok
+  @doc "Remove a document from the index. No-op when `id` is absent."
+  def remove(server, id) do
+    GenServer.call(server, {:remove, id})
+  end
+
+  @spec search(GenServer.server(), String.t(), keyword()) :: [%{id: term(), score: float()}]
+  @doc "Search the index. Returns `[%{id: id, score: score}, ...]` sorted by score descending."
+  def search(server, query, opts \\ []) do
+    GenServer.call(server, {:search, query, opts})
+  end
+
+  @spec suggest(GenServer.server(), String.t(), pos_integer()) :: [String.t()]
+  @doc """
+  Retu (truncated)
+03:23:38.880 [debug] claude -p RESULT (stop="end_turn"):
+<file path="v1/prompt.md">
+Write me an Elixir module called `FuzzyIndex` that implements a small full-text search engine whose distinguishing feature is **approximate (typo-tolerant) matching** based on Levenshtein edit distance. Unlike a plain exact-match index, a query term matches a document when the document contains a vocabulary term that is *close enough* to the query term, and results are ranked by how close the matches are and how often they occur.
+
+Implement this as a `GenServer` using no external dependencies — only the standard library and OTP. Put everything in a single file called `fuzzy_index.ex`.
+
+## Edit distance
+
+Throughout, "edit distance" means the **Levenshtein distance** between two strings: the minimum number of single-character insertions, deletions, and substitutions (each costing 1) needed to turn one string into the other.
+
+## Tokenization
+
+Tokenizing a piece of text must, in this order:
+
+1. lowercase the whole string,
+2. split it on runs of non-alphanumeric characters via the regex `~r/[^a-z0-9]+/` (dropping empty tokens),
+3. remove stop words.
+
+The default stop-word set must contain at minimum: "the", "a", "an", "is", "are", "was", "were", "in", "on", "at", "to", "of", "and", "or", "it", "this", "that", "for", "with", "as", "by", "not", "be", "has", "had", "have", "do", "does", "did", "but", "if", "from". A caller may replace this set entirely via the `:stop_words` option.
+
+All storage and lookup is case-insensitive.
+
+## Public API
+
+- `FuzzyIndex.start_link(opts)` — start the process. Accept a `:name` option for process registration and a `:stop_words` option (a `MapSet` of words to exclude during tokenization). If `:stop_words` is not given, use the built-in default set above.
+
+- `FuzzyIndex.index(server, id, text)` — index a document. `id` is a string and `text` is a single text string. Tokenize `text` and store, per document, how many times each surviving token occurs. Indexing the same `id` again must cleanly replace the previous version of that document (its old tokens must no longer contribute to anything). Return `:ok`.
+
+- `FuzzyIndex.remove(server, id)` — remove a document entirely. After removal it must not appear in any search results, the document count must decrease, and any vocabulary term that no longer appears in *any* document must disappear from the vocabulary. Removing an id that is not present must not raise and must return `:ok`.
+
+- `FuzzyIndex.search(server, query, opts \\ [])` — tokenize `query` with the same pipeline used for indexing, then rank documents. Options:
+  - `:max_distance` — the maximum edit distance for a fuzzy match. Defaults to `1`.
+  - `:limit` — cap the number of returned results.
+
+  Scoring is defined as follows. Duplicate query terms are considered once. For each unique query term `q`:
+  - A vocabulary term `t` is a **match** for `q` when `edit_distance(q, t) <= max_distance`. Its **similarity** is `max_distance + 1 - edit_distance(q, t)` (so an exact match, distance `0`, has similarity `max_distance + 1`, and a match at the maximum allowed distance has similarity `1`).
+  - A document's **contribution** for query term `q` is the **maximum**, over every matching vocabulary term `t` that is present in that document, of `similarity(q, t) * (number of times t occurs in the document)`. If the document contains no matching term for `q`, its contribution for `q` is `0`.
+  - A document's **score** is the sum of its contributions across all unique query terms.
+
+  Return a list of `%{id: id, score: score}` maps for every document whose score is greater than `0`, sorted by score descending. Apply `:limit` (if given) after sorting. If the index is empty or the query has no surviving tokens, return `[]`.
+
+  Because an exact match has strictly higher similarity than any inexact match, a document containing the exact query term contributes more, per occurrence, than one that only contains a near-miss variant.
+
+- `FuzzyIndex.terms_like(server, term, max_distance \\ 1)` — return the vocabulary terms within `max_distance` edit distance of `term`. Lowercase `term` before comparing (do not split it). Return the matching terms sorted by edit distance ascending, breaking ties alphabetically ascending. Return a list of strings. `max_distance` defaults to `1`.
+
+- `FuzzyIndex.stats(server)` — return `%{document_count: integer, term_count: integer}`, where `document_count` is the number of indexed documents and `term_count` is the number of distinct terms currently in the vocabulary.
+</file>
+
+<file path="v1/test_harness.exs">
+defmodule FuzzyIndexTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    {:ok, pid} = FuzzyIndex.start_link([])
+    %{idx: pid}
+  end
+
+  # -------------------------------------------------------
+  # Exact keyword search
+  # -------------------------------------------------------
+
+  test "indexes documents and finds them by exact keyword", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "the quick brown fox")
+    :ok = FuzzyIndex.index(idx, "doc2", "the lazy dog")
+
+    results = FuzzyIndex.search(idx, "fox")
+    assert length(results) == 1
+    assert hd(results).id == "doc1"
+  end
+
+  # -------------------------------------------------------
+  # Fuzzy matching within the default distance
+  # -------------------------------------------------------
+
+  test "a typo within edit distance 1 still matches by default", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "quick brown fox")
+    :ok = FuzzyIndex.index(idx, "doc2", "slow green turtle")
+
+    # "quik" is edit distance 1 from "quick" and far from every other term
+    results = FuzzyIndex.search(idx, "quik")
+    assert Enum.map(results, & &1.id) == ["doc1"]
+  end
+
+  test "max_distance option widens or narrows fuzzy matching", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "banana")
+
+    # "banan" is distance 1 from "banana" → matches by default
+    assert Enum.map(FuzzyIndex.search(idx, "banan"), & &1.id) == ["doc1"]
+
+    # "bana" is distance 2 from "banana" → no match at the default max_distance of 1
+    assert FuzzyIndex.search(idx, "bana") == []
+
+    # ... but matches when max_distance is raised to 2
+    assert Enum.map(FuzzyIndex.search(idx, "bana", max_distance: 2), & &1.id) == ["doc1"]
+  end
+
+  # -------------------------------------------------------
+  # Scoring: exact beats fuzzy, frequency matters
+  # -------------------------------------------------------
+
+  test "exact matches outrank near-miss matches", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "color color")
+    :ok = FuzzyIndex.index(idx, "doc2", "colour")
+
+    results = FuzzyIndex.search(idx, "color")
+    assert Enum.map(results, & &1.id) == ["doc1", "doc2"]
+
+    # doc1: exact "color" (similarity 2) occurring twice → 2 * 2 = 4
+    # doc2: near "colour" at distance 1 (similarity 1) occurring once → 1 * 1 = 1
+    assert Enum.find(results, &(&1.id == "doc1")).score == 4
+    assert Enum.find(results, &(&1.id == "doc2")).score == 1
+  end
+
+  test "higher term frequency yields a higher score", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "data data data")
+    :ok = FuzzyIndex.index(idx, "doc2", "data")
+
+    results = FuzzyIndex.search(idx, "data")
+    assert Enum.map(results, & &1.id) == ["doc1", "doc2"]
+    # doc1: similarity 2 * count 3 = 6 ; doc2: similarity 2 * count 1 = 2
+    assert Enum.find(results, &(&1.id == "doc1")).score == 6
+    assert Enum.find(results, &(&1.id == "doc2")).score == 2
+  end
+
+  test "multiple query terms sum their contributions", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "quick brown fox")
+
+    [result] = FuzzyIndex.search(idx, "quick fox")
+    assert result.id == "doc1"
+    # each exact term contributes similarity 2 * count 1; 2 + 2 = 4
+    assert result.score == 4
+  end
+
+  # -------------------------------------------------------
+  # Stop words
+  # -------------------------------------------------------
+
+  test "stop words are not searchable", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "the cat sat")
+
+    assert  (truncated)
+03:23:38.881 [debug] claude -p usage: %{"cache_creation" => %{"ephemeral_1h_input_tokens" => 36922, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 36922, "cache_read_input_tokens" => 14898, "inference_geo" => "not_available", "input_tokens" => 2, "iterations" => [%{"cache_creation" => %{"ephemeral_1h_input_tokens" => 36922, "ephemeral_5m_input_tokens" => 0}, "cache_creation_input_tokens" => 36922, "cache_read_input_tokens" => 14898, "input_tokens" => 2, "output_tokens" => 23897, "type" => "message"}], "output_tokens" => 23897, "server_tool_use" => %{"web_fetch_requests" => 0, "web_search_requests" => 0}, "service_tier" => "standard", "speed" => "standard"}
