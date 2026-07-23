@@ -204,7 +204,52 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
        GEN_SKIP_DEDOC=1 GEN_SKIP_SFIM=1 GEN_SKIP_TDD=1 GEN_SKIP_SPECFIM=1
        GEN_SKIP_BUNDLEFIM=1; mix run scripts/generate.exs 91; mix run
        scripts/generate.exs 65'
-   Relaunch idempotent (both variations add-only; a done b=5 is skipped).
+   PROBE RESULT (2026-07-23 15:31): idea 65 → 065_005_timeboxed_isolated_step_saga
+   ACCEPTED, all 12 gates green (semantic floor 0.75, promise audit 18→20, blind
+   re-screen). Idea 91 → 091_005_async_guarded_concurrent_workflow_instance
+   REJECTED at the semantic-floor gate (0/16 kill, 3 attempts exhausted — the
+   co-authored harness didn't assert return values; the gate CORRECTLY refused
+   weak data, nothing shipped). logs/attempts restored (1101; merged 3 fresh probe
+   chains); no stray repair dir (the 1 probe candidate came out unverified,
+   ledgered to repair_unverified.jsonl, not promoted).
+   HAND REVIEW (rule 9) of 065_005: GOLD — distinct problem (process-isolated +
+   timeboxed saga, "change request" register), solution matches spec exactly
+   (4-key error map, kill-on-deadline + flush late-reply guard, reverse-order
+   best-effort compensation with {:raised, exception}), moduledoc/@doc/@type all
+   truthful (no G5-class drift), harness pins every behavior incl. process
+   isolation + timeout-kill + late-reply suppression (20 tests, async:false, no
+   S9 anti-patterns). Zero triage-grade defects by hand.
+   065_005 §5.5 CONFIRMED GOLD (2026-07-23 15:42, logs/g8_judge_065.log):
+   semantic_review confirmed=[] (one harness_gap raised — default-timeout test
+   doesn't pin the exact 5000ms — REFUTED: pinning needs a ~5s flaky test and the
+   prompt bolds the value, so S6 holds); rubric_judge BOTH families (opus+sonnet)
+   5/5/5 on all axes, full agreement, issues=[]. Four independent checks agree.
+   PROBE2 (2026-07-23 16:11) FOUND A GENERATOR BUG — exactly the §0 case. Both
+   091_005_deadline_driven_order_workflow_server AND 034_005_concurrent_multi_
+   source_reconciliation_coordinator (both GenServers) CRASHED with
+   FunctionClauseError in Evaluator.repair_report/1: the spec-truth gate emits a
+   {:dialyzer, detail} reject reason (cycle.ex:250/310) that repair_report/1 had no
+   clause for → the whole variation cycle crashed to ERROR (not a clean reject) and
+   silently lost the unit. Trigger: the narrow start_link/1 spec ({:ok,pid}|{:error,
+   term}) whose success typing also carries :ignore. 065_005 dodged it (pure
+   functions, no start_link). This would bite EVERY GenServer mint in the extension
+   loop / Phase 3.
+   FIXED (Task B, committed 67499d55b): repair_report({:dialyzer, detail}) tailored
+   clause (scar #4 — names the fix: use GenServer.on_start(), the corpus idiom) +
+   defensive catch-all so no future reject shape can ever crash the cycle again;
+   @spec widened; 2 tests (dialyzer clause + totality/regression); 75 evaluator
+   tests green. Gate calibration CONFIRMED CORRECT: ~395 corpus golds already spec
+   start_link :: GenServer.on_start() (dialyzer-clean, includes :ignore); only 6
+   use the narrow form → the gate rightly flags it, repair points at the idiom.
+   RE-PROBE (regenerate 091+34; attempts held aside; logs/g8_probe3.log) to confirm
+   the repair path now lands them. AFTER: restore attempts; hand-review +
+   instruments on each accepted b=5 root; then commit new gold + close G8.
+   Relaunch idempotent (accepted b=5 add-only; rejected/errored leaves slot free).
+
+   4d. **[ ] Minor existing-data note (found 2026-07-23):** 6 corpus golds spec
+   start_link with the narrow {:ok,pid}|{:error,term} form (vs ~395 using
+   GenServer.on_start()). Benign overspec; would flag under a full-corpus dialyzer
+   pass. Low priority — fold into any future corpus dialyzer audit, not urgent.
    AFTER the two b=5 dirs land: restore logs/attempts; run the SAME debt-finding
    instruments on the two new roots — semantic_review.exs --single <dir> and
    rubric_judge.exs --single <dir>; acceptance = ZERO triage-grade findings
