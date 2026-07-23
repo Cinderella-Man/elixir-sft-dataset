@@ -310,6 +310,13 @@ defmodule GenTask.Prompts do
     For each variation produce a full triplet (prompt.md, test_harness.exs,
     solution.ex).
 
+    Vary each variation's rhetorical register too — do not copy the base
+    prompt's voice (many older bases open with "Write me…"; yours need not).
+    A titled specification document, a maintainer's change request, a design
+    brief with numbered requirements are all good registers, and different
+    variations should read differently. What must never vary is precision:
+    every behavior the harness checks must be stated in that prompt.
+
     #{@harness_rules}
     NOTE: the BASE triplet below may itself violate these rules (grandfathered debt).
     Do NOT imitate its violations — your triplets are held to the rules above.#{already}#{taken_apis}
