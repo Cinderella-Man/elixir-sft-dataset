@@ -28,17 +28,15 @@ I need these functions in the public API:
 
 - `ConcurrentPriorityQueue.enqueue(server, task, priority)` where priority is one of `:critical`, `:normal`, or `:low`. This adds a task to the queue and triggers processing if there is an available concurrency slot. Return `:ok`.
 
-- `ConcurrentPriorityQueue.status(server)` returning a map of pending task counts per priority level, the number of currently active (in-progress) tasks, and the max concurrency setting. Example: `%{critical: 0, normal: 2, low: 1, active: 3, max_concurrency: 5}`. Pending counts should only include tasks that have not yet started processing.
+- `ConcurrentPriorityQueue.status(server)` returning a map with exactly the keys `:critical`, `:normal`, `:low`, `:active`, and `:max_concurrency` — the pending task counts per priority level, the number of currently active (in-progress) tasks, and the max concurrency setting. Example: `%{critical: 0, normal: 2, low: 1, active: 3, max_concurrency: 5}`. Pending counts should only include tasks that have not yet started processing.
 
-- `ConcurrentPriorityQueue.drain(server)` which blocks until all currently enqueued tasks have been processed and the queue is empty and no tasks are actively being processed. Return `:ok`.
+- `ConcurrentPriorityQueue.drain(server)` which blocks until all currently enqueued tasks have been processed and the queue is empty and no tasks are actively being processed. Return `:ok`. Calling `drain/1` on an already-empty, idle queue must return `:ok` immediately.
 
-- `ConcurrentPriorityQueue.processed(server)` which returns a list of `{task, result}` tuples in the order tasks finished processing. Note: with concurrency > 1, the completion order may differ from the start order.
+- `ConcurrentPriorityQueue.processed(server)` which returns a list of `{task, result}` tuples in the order tasks finished processing (an empty list when nothing has been processed). Note: with concurrency > 1, the completion order may differ from the start order.
 
 The priority ordering is `:critical` > `:normal` > `:low`. The GenServer must always pick the highest priority task available next when a slot opens up. Within the same priority level, tasks must be started in FIFO order (the order they were enqueued).
 
-Processing should happen via internal message passing. When a task is enqueued and there are available slots (`active_count < max_concurrency`), the GenServer sends itself a `:process_next` message. The processor function runs inside a spawned+monitored process. When a worker finishes (detected via `{:DOWN, ...}` message), if more tasks remain and a slot is available, the GenServer sends itself another `:process_next` message.
-
-The GenServer should track active workers in a map of `{pid, monitor_ref} => task` so it can associate finished workers with their tasks. When a worker sends back its result and then exits, the GenServer records the `{task, result}` pair.
+Each task's `:processor` function must run inside its own separate spawned process (one process per task), and that process must terminate once the task's processing completes. The number of these worker processes running at once must never exceed `:max_concurrency`. The GenServer records the `{task, result}` pair once a task finishes, where `result` is the value the processor returned — including when the processor returns `nil` (that is still recorded as `{task, nil}`).
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
 

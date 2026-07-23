@@ -23,11 +23,13 @@ I need these functions in the public API:
 - `RejectingRingBuffer.new(capacity)` — creates a new empty buffer with the given fixed capacity.
 - `RejectingRingBuffer.push(buffer, item)` — attempts to insert an item at the back. Returns `{:ok, new_buffer}` on success, or `{:error, :full}` (and does NOT mutate) when the buffer is already at capacity.
 - `RejectingRingBuffer.pop(buffer)` — removes and returns the oldest item. Returns `{:ok, item, new_buffer}`, or `:empty` if the buffer holds no items.
-- `RejectingRingBuffer.to_list(buffer)` — returns all current items in insertion order (oldest to newest).
+- `RejectingRingBuffer.to_list(buffer)` — returns all current items in insertion order (oldest to newest); returns `[]` when empty.
 - `RejectingRingBuffer.size(buffer)` — returns the number of items currently stored (0 to capacity).
 - `RejectingRingBuffer.full?(buffer)` — returns `true` when `size == capacity`, else `false`.
 - `RejectingRingBuffer.peek_oldest(buffer)` — returns `{:ok, item}` for the oldest item, or `:error` if empty.
 - `RejectingRingBuffer.peek_newest(buffer)` — returns `{:ok, item}` for the most recently pushed item, or `:error` if empty.
+
+Items may be any Elixir term, including `nil`. Store every pushed value verbatim: duplicates and `nil` are real stored entries (not empty slots), so `peek_oldest`/`peek_newest` on a stored `nil` must return `{:ok, nil}`, and only `size`/`read`/`write` bookkeeping — never a `nil` check — determines emptiness.
 
 The internal representation must use a fixed-size tuple (pre-allocated to `capacity` slots) as the backing store, with integer read/write head indices that wrap around using `rem/2`. Interleaving `push` and `pop` must correctly reuse freed slots via wraparound. Do not use a list or an `Enum`-grown structure as the primary store.
 

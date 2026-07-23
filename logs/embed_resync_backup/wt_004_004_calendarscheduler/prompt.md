@@ -115,6 +115,7 @@ defmodule CalendarScheduler do
     GenServer.start_link(__MODULE__, opts, server_opts)
   end
 
+  @doc "Registers `job_name` to run `mfa` on the calendar `rule`. Returns `:ok` or error."
   @spec register(GenServer.server(), term(), tuple(), {module(), atom(), list()}) ::
           :ok | {:error, :invalid_rule | :already_exists}
   def register(server, job_name, rule, {mod, fun, args} = mfa)

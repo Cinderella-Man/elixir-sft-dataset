@@ -24,11 +24,11 @@ The production implementation `Clock.Real` should implement `now/0` by delegatin
 The test implementation `Clock.Fake` should be a `GenServer` with the following public API:
 - `Clock.Fake.start_link(opts)` — starts the process. Accepts:
   - `:script` — a non-empty list of `DateTime`s to hand out, one per `now/1` call (defaults to `[~U[2024-01-01 00:00:00Z]]`).
-  - `:on_exhaust` — the policy applied once the script is consumed. One of `:repeat_last` (default — keep returning the final value), `:cycle` (wrap around to the start), or `:raise` (raise a `RuntimeError`).
+  - `:on_exhaust` — the policy applied once the script is consumed. One of `:repeat_last` (default — keep returning the final value), `:cycle` (wrap around to the start), or `:raise` — every further `now/1` call raises a `RuntimeError` **in the process calling `now/1`**. Implement `:raise` by having the server reply that the script is exhausted and letting the `now/1` client function raise: a raise inside the GenServer callback would crash the clock and turn the caller's call into an exit rather than a catchable raise.
   - `:name` — an optional registration name.
-  - Starting with an empty script, a non-`DateTime` element, or an unknown policy must fail to start.
+  - Starting must fail (`start_link` returns an `{:error, reason}` tuple) when validation fails: an empty script returns `{:error, :empty_script}`, a script containing a non-`DateTime` element returns `{:error, :invalid_script}`, and an unknown `:on_exhaust` policy returns `{:error, :invalid_policy}`.
 - `Clock.Fake.now(server)` — returns the next scripted `DateTime`, advancing the internal cursor. Behaviour after the script is exhausted follows `:on_exhaust`.
-- `Clock.Fake.remaining(server)` — returns how many scripted values have not yet been consumed.
+- `Clock.Fake.remaining(server)` — returns how many scripted values have not yet been consumed (never negative; `0` once exhausted).
 - `Clock.Fake.reset(server)` — rewinds the cursor to the beginning of the script.
 - `Clock.Fake.push(server, datetimes)` — appends more `DateTime`s to the end of the script.
 

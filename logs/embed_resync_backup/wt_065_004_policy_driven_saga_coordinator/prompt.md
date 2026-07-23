@@ -33,7 +33,7 @@ complete module in a single file.
 ```elixir
 PolicySaga.new()
 |> PolicySaga.step(:reserve, &reserve/1, &cancel/1, on_error: :abort)
-|> PolicySaga.step(:charge, &charge/1, &refund/1)
+|> PolicySaga.step(:charge,  &charge/1,  &refund/1)
 |> PolicySaga.execute(%{order_id: 42})
 ```
 

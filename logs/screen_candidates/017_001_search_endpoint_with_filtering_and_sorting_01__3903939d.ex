@@ -3,10 +3,10 @@ defmodule MyApp.Products do
   @moduledoc """
   The Products context.
 
-  Builds a single composable Ecto query for listing products with optional
-  case-insensitive name search, exact category filtering, inclusive price
-  bounds, and an allowlisted sort field/direction. All filtering and sorting
-  is performed at the database level in one round-trip.
+  Builds and runs a single composable Ecto query for listing products with
+  optional case-insensitive name search, exact category filtering, inclusive
+  price bounds, and allowlisted sorting. All filtering and ordering happens at
+  the database level in one round-trip.
   """
 
   import Ecto.Query, warn: false
@@ -14,84 +14,61 @@ defmodule MyApp.Products do
   alias MyApp.Products.Product
   alias MyApp.Repo
 
-  @allowed_sort_fields ~w(name price category)
+  @sort_fields ~w(name price category)
 
   @doc """
-  Lists products matching the given string-keyed `params` map.
+  Lists products, applying every supported filter and sort present in `params`.
 
-  Supported params: `"name"` (partial, case-insensitive `ILIKE`), `"category"`
-  (exact match), `"min_price"`/`"max_price"` (inclusive bounds), `"sort"` (one
-  of `"name"`, `"price"`, `"category"`) and `"order"` (`"asc"`/`"desc"`,
-  defaulting to `"asc"`).
-
-  Returns `{:ok, products}` on success, or `{:error, :invalid_sort}` when a
-  `"sort"` value outside the allowlist is supplied.
+  Recognised string keys: `"name"` (partial, case-insensitive `ILIKE`),
+  `"category"` (exact match), `"min_price"`/`"max_price"` (inclusive bounds),
+  `"sort"` (one of `name`, `price`, `category`), and `"order"` (`asc`/`desc`,
+  defaulting to `asc`). Unknown or blank values are ignored. An unrecognised
+  sort field is silently dropped here; callers should reject it beforehand.
   """
-  @spec list_products(map()) :: {:ok, [Product.t()]} | {:error, :invalid_sort}
+  @spec list_products(map()) :: [Product.t()]
   def list_products(params) do
-    case validate_sort(params) do
-      :ok ->
-        query =
-          Product
-          |> filter_by_name(params)
-          |> filter_by_category(params)
-          |> filter_by_min_price(params)
-          |> filter_by_max_price(params)
-          |> sort_products(params)
-
-        {:ok, Repo.all(query)}
-
-      {:error, :invalid_sort} = error ->
-        error
-    end
+    Product
+    |> filter_name(params)
+    |> filter_category(params)
+    |> filter_min_price(params)
+    |> filter_max_price(params)
+    |> sort_products(params)
+    |> Repo.all()
   end
 
-  @spec validate_sort(map()) :: :ok | {:error, :invalid_sort}
-  defp validate_sort(%{"sort" => sort}) when sort in @allowed_sort_fields, do: :ok
-  defp validate_sort(%{"sort" => sort}) when is_binary(sort), do: {:error, :invalid_sort}
-  defp validate_sort(_params), do: :ok
-
-  @spec filter_by_name(Ecto.Queryable.t(), map()) :: Ecto.Queryable.t()
-  defp filter_by_name(query, %{"name" => name}) when is_binary(name) and name != "" do
+  defp filter_name(query, %{"name" => name}) when is_binary(name) and name != "" do
     pattern = "%#{name}%"
     from p in query, where: ilike(p.name, ^pattern)
   end
 
-  defp filter_by_name(query, _params), do: query
+  defp filter_name(query, _params), do: query
 
-  @spec filter_by_category(Ecto.Queryable.t(), map()) :: Ecto.Queryable.t()
-  defp filter_by_category(query, %{"category" => category})
+  defp filter_category(query, %{"category" => category})
        when is_binary(category) and category != "" do
     from p in query, where: p.category == ^category
   end
 
-  defp filter_by_category(query, _params), do: query
+  defp filter_category(query, _params), do: query
 
-  @spec filter_by_min_price(Ecto.Queryable.t(), map()) :: Ecto.Queryable.t()
-  defp filter_by_min_price(query, %{"min_price" => value})
-       when is_binary(value) and value != "" do
-    case Decimal.parse(value) do
-      {decimal, _rest} -> from p in query, where: p.price >= ^decimal
+  defp filter_min_price(query, %{"min_price" => value}) do
+    case parse_decimal(value) do
+      {:ok, decimal} -> from p in query, where: p.price >= ^decimal
       :error -> query
     end
   end
 
-  defp filter_by_min_price(query, _params), do: query
+  defp filter_min_price(query, _params), do: query
 
-  @spec filter_by_max_price(Ecto.Queryable.t(), map()) :: Ecto.Queryable.t()
-  defp filter_by_max_price(query, %{"max_price" => value})
-       when is_binary(value) and value != "" do
-    case Decimal.parse(value) do
-      {decimal, _rest} -> from p in query, where: p.price <= ^decimal
+  defp filter_max_price(query, %{"max_price" => value}) do
+    case parse_decimal(value) do
+      {:ok, decimal} -> from p in query, where: p.price <= ^decimal
       :error -> query
     end
   end
 
-  defp filter_by_max_price(query, _params), do: query
+  defp filter_max_price(query, _params), do: query
 
-  @spec sort_products(Ecto.Queryable.t(), map()) :: Ecto.Queryable.t()
-  defp sort_products(query, %{"sort" => sort} = params)
-       when sort in @allowed_sort_fields do
+  defp sort_products(query, %{"sort" => sort} = params) when sort in @sort_fields do
     field = String.to_existing_atom(sort)
     direction = sort_direction(params)
     from p in query, order_by: [{^direction, ^field}]
@@ -99,9 +76,20 @@ defmodule MyApp.Products do
 
   defp sort_products(query, _params), do: query
 
-  @spec sort_direction(map()) :: :asc | :desc
   defp sort_direction(%{"order" => "desc"}), do: :desc
   defp sort_direction(_params), do: :asc
+
+  defp parse_decimal(%Decimal{} = value), do: {:ok, value}
+  defp parse_decimal(value) when is_integer(value), do: {:ok, Decimal.new(value)}
+
+  defp parse_decimal(value) when is_binary(value) do
+    case Decimal.parse(value) do
+      {decimal, ""} -> {:ok, decimal}
+      _other -> :error
+    end
+  end
+
+  defp parse_decimal(_value), do: :error
 end
 </file>
 <file path="lib/my_app/products/product.ex">
@@ -109,9 +97,9 @@ defmodule MyApp.Products.Product do
   @moduledoc """
   Ecto schema for a product.
 
-  A product has a human-readable `name`, a `category` used for exact-match
-  filtering, and a `price` stored as an arbitrary-precision decimal so that
-  monetary values keep their exact representation.
+  A product has a `name`, a `category`, and a `price`. The price is stored as a
+  PostgreSQL `numeric`/`decimal` column and represented in Elixir as a
+  `Decimal` struct so that monetary precision is never lost to float rounding.
   """
 
   use Ecto.Schema
@@ -136,12 +124,12 @@ defmodule MyApp.Products.Product do
   end
 
   @doc """
-  Builds a changeset casting and validating `:name`, `:category` and `:price`.
+  Builds a changeset for a product from the given attributes.
 
-  All three fields are required. `attrs` is expected to be a map keyed by the
-  atoms `:name`, `:category` and `:price` (string keys are also accepted).
+  Casts and requires `:name`, `:category`, and `:price`. Accepts an attribute
+  map keyed by those atoms, matching how test fixtures are inserted.
   """
-  @spec changeset(t(), map()) :: Ecto.Changeset.t()
+  @spec changeset(t() | Ecto.Schema.t(), map()) :: Ecto.Changeset.t()
   def changeset(product, attrs) do
     product
     |> cast(attrs, [:name, :category, :price])
@@ -152,60 +140,67 @@ end
 <file path="lib/my_app_web/controllers/product_controller.ex">
 defmodule MyAppWeb.ProductController do
   @moduledoc """
-  JSON controller exposing `GET /api/products`.
+  Controller for the products JSON API.
 
-  Delegates query building to `MyApp.Products` and renders results through
-  `MyAppWeb.ProductJSON`. Returns HTTP 400 with `{"error": "invalid sort
-  field"}` when an unsupported sort field is requested.
+  Exposes `index/2`, which validates the optional `sort` parameter against an
+  allowlist, delegates query building to `MyApp.Products`, and renders results
+  through `MyAppWeb.ProductJSON`. An invalid sort field yields HTTP 400.
   """
 
-  use Phoenix.Controller
+  use Phoenix.Controller, formats: [:json]
 
   alias MyApp.Products
+  alias MyAppWeb.ProductJSON
+
+  plug :put_view, json: ProductJSON
+
+  @valid_sorts ~w(name price category)
 
   @doc """
-  Handles the products index request, applying search/filter/sort `params`.
+  Handles `GET /api/products`.
+
+  When a `sort` parameter is present it must be one of `name`, `price`, or
+  `category`; otherwise the response is HTTP 400 with body
+  `{"error": "invalid sort field"}`. Otherwise responds HTTP 200 with the
+  matching products under a `"data"` key.
   """
   @spec index(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def index(conn, params) do
-    case Products.list_products(params) do
-      {:ok, products} ->
-        conn
-        |> put_status(:ok)
-        |> put_view(json: MyAppWeb.ProductJSON)
-        |> render(:index, products: products)
-
-      {:error, :invalid_sort} ->
-        conn
-        |> put_status(:bad_request)
-        |> json(%{error: "invalid sort field"})
+    if valid_sort?(params) do
+      products = Products.list_products(params)
+      render(conn, :index, products: products)
+    else
+      conn
+      |> put_status(:bad_request)
+      |> json(%{error: "invalid sort field"})
     end
   end
+
+  defp valid_sort?(%{"sort" => sort}), do: sort in @valid_sorts
+  defp valid_sort?(_params), do: true
 end
 </file>
 <file path="lib/my_app_web/controllers/product_json.ex">
 defmodule MyAppWeb.ProductJSON do
   @moduledoc """
-  JSON serialization for products.
+  JSON view for products.
 
-  Prices are serialized as strings to preserve exact decimal precision.
+  Renders a list of `%MyApp.Products.Product{}` structs into the API response
+  shape `%{data: [...]}`, serialising `price` as a string to preserve decimal
+  precision.
   """
 
   alias MyApp.Products.Product
 
   @doc """
-  Renders a list of products as `%{data: [...]}`.
+  Renders the `index` template as a map with a `:data` list of products.
   """
   @spec index(%{products: [Product.t()]}) :: %{data: [map()]}
   def index(%{products: products}) do
     %{data: Enum.map(products, &data/1)}
   end
 
-  @doc """
-  Renders a single product as a plain map with its price as a string.
-  """
-  @spec data(Product.t()) :: map()
-  def data(%Product{} = product) do
+  defp data(%Product{} = product) do
     %{
       id: product.id,
       name: product.name,
@@ -221,11 +216,12 @@ defmodule MyAppWeb.Router do
   Application router.
 
   Defines the `:api` pipeline and routes `GET /api/products` to
-  `MyAppWeb.ProductController`.
+  `MyAppWeb.ProductController.index/2`.
   """
 
   use Phoenix.Router
 
+  import Plug.Conn
   import Phoenix.Controller
 
   pipeline :api do
@@ -242,8 +238,8 @@ end
 <file path="priv/repo/migrations/20260723000000_create_products.exs">
 defmodule MyApp.Repo.Migrations.CreateProducts do
   @moduledoc """
-  Creates the `products` table with name, category, decimal price and
-  standard timestamps.
+  Creates the `products` table with `name`, `category`, a decimal `price`, and
+  standard `inserted_at`/`updated_at` timestamps.
   """
 
   use Ecto.Migration
@@ -251,7 +247,7 @@ defmodule MyApp.Repo.Migrations.CreateProducts do
   @doc """
   Creates the `products` table.
   """
-  @spec change() :: any()
+  @spec change() :: term()
   def change do
     create table(:products) do
       add :name, :string, null: false

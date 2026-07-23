@@ -19,7 +19,7 @@ Write me an Elixir module called `FeatureFlags` that manages feature flags using
 
 I need these functions in the public API:
 
-- `FeatureFlags.start_link(opts)` to start the process. It should accept an optional `:table_name` for the ETS table (default `:feature_flags`), and an optional `:name` for process registration.
+- `FeatureFlags.start_link(opts)` to start the process. It should accept an optional `:table_name` for the ETS table (default `:feature_flags`), and an optional `:name` for process registration (default `FeatureFlags`; pass `nil` to skip registration). Because every other function in the API is module-level (no server argument), `init/1` must publish the started instance for the module to find: put the server pid under `{FeatureFlags, :server}` and the ETS table name under `{FeatureFlags, :table_name}` in `:persistent_term`. Writes route through the published pid and reads through the published table (reads fall back to `:feature_flags` when nothing has been published yet), so the MOST RECENTLY STARTED instance serves the module-level API — regardless of which `:name` or `:table_name` it was started with.
 - `FeatureFlags.enable(flag_name)` — sets the flag to `:on` for everyone. Returns `:ok`.
 - `FeatureFlags.disable(flag_name)` — sets the flag to `:off` for everyone. Returns `:ok`.
 - `FeatureFlags.enable_for_percentage(flag_name, percentage)` — sets the flag to `:percentage` mode with a value between `0` and `100` (integers). Returns `:ok`. Calling with `0` is equivalent to `:off`, and `100` is equivalent to `:on`. Guard the argument so a non-integer or out-of-range `percentage` raises `FunctionClauseError` and stores nothing (the flag stays unknown).

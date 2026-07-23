@@ -94,10 +94,9 @@ the DB write must both happen inside the `handle_call` callback before the reply
 
 Give me all three modules/files in a single code block or clearly separated blocks. Use only
 Ecto (plus its adapters) as the external dependency — no additional libraries.
-
 ## Additional interface contract
 
-- The test environment provides a real, already-configured SQLite Ecto repo as `StateMachine.Repo`, with the bundle's migration applied; tests inject it via `StateMachine.start_link(repo: StateMachine.Repo)` and check out a shared `Ecto.Adapters.SQL.Sandbox` connection per test.
+- The test environment provides a real, already-configured SQLite Ecto repo and injects it into your GenServer via the `repo:` option — do NOT define a repo module or any repo configuration. Your migration file must be at a `priv/repo/migrations/<name>.exs` path: it is executed against that repo before the tests run, so the schema/migration must be valid for SQLite (plain `Ecto.Migration`, no database-specific SQL).
 
 ## Module under test
 
@@ -108,15 +107,15 @@ defmodule Repo.Migrations.CreateEntityTransitions do
 
   def change do
     create table(:entity_transitions) do
-      add :entity_id,   :string,            null: false
-      add :event,       :string,            null: false
-      add :from_state,  :string,            null: false
-      add :to_state,    :string,            null: false
-      add :inserted_at, :utc_datetime_usec, null: false
+      add(:entity_id, :string, null: false)
+      add(:event, :string, null: false)
+      add(:from_state, :string, null: false)
+      add(:to_state, :string, null: false)
+      add(:inserted_at, :utc_datetime_usec, null: false)
     end
 
-    create index(:entity_transitions, [:entity_id])
-    create index(:entity_transitions, [:entity_id, :inserted_at])
+    create(index(:entity_transitions, [:entity_id]))
+    create(index(:entity_transitions, [:entity_id, :inserted_at]))
   end
 end
 </file>
@@ -142,10 +141,10 @@ defmodule EntityTransition do
   @timestamps_opts [type: :utc_datetime_usec, updated_at: false]
 
   schema "entity_transitions" do
-    field :entity_id,  :string
-    field :event,      :string
-    field :from_state, :string
-    field :to_state,   :string
+    field(:entity_id, :string)
+    field(:event, :string)
+    field(:from_state, :string)
+    field(:to_state, :string)
 
     timestamps()
   end
@@ -198,11 +197,11 @@ defmodule StateMachine do
   # ---------------------------------------------------------------------------
 
   @transitions %{
-    {:pending,   :confirm} => :confirmed,
-    {:confirmed, :ship}    => :shipped,
-    {:shipped,   :deliver} => :delivered,
-    {:pending,   :cancel}  => :cancelled,
-    {:confirmed, :cancel}  => :cancelled
+    {:pending, :confirm} => :confirmed,
+    {:confirmed, :ship} => :shipped,
+    {:shipped, :deliver} => :delivered,
+    {:pending, :cancel} => :cancelled,
+    {:confirmed, :cancel} => :cancelled
   }
 
   # All valid state atoms must exist at compile time for String.to_existing_atom/1
@@ -228,7 +227,7 @@ defmodule StateMachine do
   def start_link(opts) do
     {name_opts, server_opts} =
       case Keyword.pop(opts, :name) do
-        {nil,  rest} -> {[], rest}
+        {nil, rest} -> {[], rest}
         {name, rest} -> {[name: name], rest}
       end
 
@@ -293,7 +292,7 @@ defmodule StateMachine do
   # :start — hydrate from DB (or seed with :pending), cache in map
   @impl true
   def handle_call({:start, entity_id}, _from, state) do
-    current     = load_latest_state(state.repo, entity_id)
+    current = load_latest_state(state.repo, entity_id)
     new_entities = Map.put(state.entities, entity_id, current)
     {:reply, {:ok, current}, %{state | entities: new_entities}}
   end
@@ -304,7 +303,7 @@ defmodule StateMachine do
     reply =
       case Map.fetch(state.entities, entity_id) do
         {:ok, current} -> {:ok, current}
-        :error         -> {:error, :not_found}
+        :error -> {:error, :not_found}
       end
 
     {:reply, reply, state}
@@ -313,16 +312,15 @@ defmodule StateMachine do
   # :transition — serialised call; in-memory update only after DB write succeeds
   @impl true
   def handle_call({:transition, entity_id, event}, _from, state) do
-    with {:found,     current}     <- entity_lookup(state.entities, entity_id),
-         {:valid,     next_state}  <- resolve_transition(current, event),
-         {:persisted, _record}     <- persist(state.repo, entity_id, event,
-                                               current, next_state) do
+    with {:found, current} <- entity_lookup(state.entities, entity_id),
+         {:valid, next_state} <- resolve_transition(current, event),
+         {:persisted, _record} <- persist(state.repo, entity_id, event, current, next_state) do
       new_entities = Map.put(state.entities, entity_id, next_state)
       {:reply, {:ok, next_state}, %{state | entities: new_entities}}
     else
-      {:not_found}        -> {:reply, {:error, :not_found},          state}
-      {:invalid}          -> {:reply, {:error, :invalid_transition},  state}
-      {:db_error, reason} -> {:reply, {:error, {:db_error, reason}},  state}
+      {:not_found} -> {:reply, {:error, :not_found}, state}
+      {:invalid} -> {:reply, {:error, :invalid_transition}, state}
+      {:db_error, reason} -> {:reply, {:error, {:db_error, reason}}, state}
     end
   end
 
@@ -330,9 +328,10 @@ defmodule StateMachine do
   @impl true
   def handle_call({:history, entity_id}, _from, state) do
     query =
-      from t in EntityTransition,
-        where:    t.entity_id == ^entity_id,
+      from(t in EntityTransition,
+        where: t.entity_id == ^entity_id,
         order_by: [asc: t.inserted_at]
+      )
 
     result =
       try do
@@ -341,9 +340,9 @@ defmodule StateMachine do
         history =
           Enum.map(rows, fn row ->
             %{
-              event:       String.to_existing_atom(row.event),
-              from_state:  String.to_existing_atom(row.from_state),
-              to_state:    String.to_existing_atom(row.to_state),
+              event: String.to_existing_atom(row.event),
+              from_state: String.to_existing_atom(row.from_state),
+              to_state: String.to_existing_atom(row.to_state),
               inserted_at: row.inserted_at
             }
           end)
@@ -369,13 +368,14 @@ defmodule StateMachine do
   @spec load_latest_state(module(), String.t()) :: atom()
   defp load_latest_state(repo, entity_id) do
     query =
-      from t in EntityTransition,
-        where:    t.entity_id == ^entity_id,
+      from(t in EntityTransition,
+        where: t.entity_id == ^entity_id,
         order_by: [desc: t.inserted_at],
-        limit:    1
+        limit: 1
+      )
 
     case repo.one(query) do
-      nil    -> @initial_state
+      nil -> @initial_state
       record -> String.to_existing_atom(record.to_state)
     end
   end
@@ -384,7 +384,7 @@ defmodule StateMachine do
   defp entity_lookup(entities, entity_id) do
     case Map.fetch(entities, entity_id) do
       {:ok, state} -> {:found, state}
-      :error       -> {:not_found}
+      :error -> {:not_found}
     end
   end
 
@@ -392,7 +392,7 @@ defmodule StateMachine do
   defp resolve_transition(current_state, event) do
     case Map.fetch(@transitions, {current_state, event}) do
       {:ok, next} -> {:valid, next}
-      :error      -> {:invalid}
+      :error -> {:invalid}
     end
   end
 
@@ -402,17 +402,17 @@ defmodule StateMachine do
           {:persisted, EntityTransition.t()} | {:db_error, any()}
   defp persist(repo, entity_id, event, from_state, to_state) do
     attrs = %{
-      entity_id:  entity_id,
-      event:      Atom.to_string(event),
+      entity_id: entity_id,
+      event: Atom.to_string(event),
       from_state: Atom.to_string(from_state),
-      to_state:   Atom.to_string(to_state)
+      to_state: Atom.to_string(to_state)
     }
 
     changeset = EntityTransition.changeset(attrs)
 
     try do
       case repo.insert(changeset) do
-        {:ok, record}       -> {:persisted, record}
+        {:ok, record} -> {:persisted, record}
         {:error, changeset} -> {:db_error, changeset}
       end
     rescue

@@ -23,20 +23,13 @@ Every node is a plain map with exactly these keys:
 
 ```elixir
 %{
-  # positive integer, assigned by the server
-  id: 1,
-  # :folder or :file
-  type: :folder,
-  # non-empty string
-  name: "reports",
-  # id of the containing folder, or nil for a root folder
-  parent_id: nil,
-  # string for files, nil for folders
-  content: nil,
-  # nil when live, a DateTime when archived
-  archived_at: nil,
-  # nil when live, :direct or :cascade when archived
-  archive_origin: nil
+  id: 1,                   # positive integer, assigned by the server
+  type: :folder,           # :folder or :file
+  name: "reports",         # non-empty string
+  parent_id: nil,          # id of the containing folder, or nil for a root folder
+  content: nil,            # string for files, nil for folders
+  archived_at: nil,        # nil when live, a DateTime when archived
+  archive_origin: nil      # nil when live, :direct or :cascade when archived
 }
 ```
 

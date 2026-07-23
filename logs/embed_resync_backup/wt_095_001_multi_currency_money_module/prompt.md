@@ -69,12 +69,14 @@ Money.subtract(Money.new(500, :USD), Money.new(200, :USD))
 Multiplies a money value by a **number** (integer or float). The resulting cent
 amount must be rounded to the nearest whole cent, rounding halves away from zero
 (this is exactly what Elixir's `round/1` does). Returns a new `Money` struct with
-the same currency.
+the same currency. The stored `:amount` is always an integer, even when the
+factor is a float.
 
 ```elixir
 Money.multiply(Money.new(100, :USD), 3)      # => %Money{amount: 300, currency: :USD}
 Money.multiply(Money.new(100, :USD), 0.1)    # => %Money{amount: 10,  currency: :USD}
 Money.multiply(Money.new(101, :USD), 0.5)    # => %Money{amount: 51,  currency: :USD}  (50.5 -> 51)
+Money.multiply(Money.new(-101, :USD), 0.5)   # => %Money{amount: -51, currency: :USD}  (-50.5 -> -51)
 ```
 
 ### `Money.split(money, n)`
@@ -94,10 +96,24 @@ Money.split(Money.new(1000, :USD), 3)
 
 Money.split(Money.new(900, :USD), 3)
 # => [%Money{amount: 300, ...}, %Money{amount: 300, ...}, %Money{amount: 300, ...}]
+
+Money.split(Money.new(2, :USD), 3)
+# => [%Money{amount: 1, ...}, %Money{amount: 1, ...}, %Money{amount: 0, ...}]
+```
+
+For a **negative** amount the remainder is distributed the same way but as a
+negative extra cent, so the shares still **sum back to the original amount** and
+no two shares differ by more than one cent (the exact ordering of shares for
+negative amounts is unspecified):
+
+```elixir
+Money.split(Money.new(-1000, :USD), 3)
+# => three parts summing to -1000, each within one cent of the others
 ```
 
 Every returned struct keeps the original currency. If `n` is not a positive
-integer, raise `ArgumentError`.
+integer (including a float such as `3.0`, or a non-numeric value), raise
+`ArgumentError`.
 
 ## Constraints
 

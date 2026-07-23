@@ -21,11 +21,11 @@ Write me a set of Elixir modules that implement a **multi-channel fan-in long-po
 
 This module manages per-`(user_id, channel)` pub/sub. It should provide:
 
-- `Notifications.start_link(opts)` — starts whatever backing process is needed. Accept a `:name` option for registration (default `Notifications`).
+- `Notifications.start_link(opts)` — starts whatever backing process is needed. Accept a `:name` option for registration (default `Notifications`). The module must also be startable under a supervisor via the `{Notifications, name: ...}` child-spec form (i.e. provide a `child_spec/1`), since the tests bring it up with `start_supervised!({Notifications, name: server})`.
 
 - `Notifications.subscribe(server \\ Notifications, user_id, channel)` — subscribes the calling process to a single `(user_id, channel)` pair. When a notification is published to that pair, the subscribing process should receive a message `{:notification, channel, payload}`. Returns `:ok`.
 
-- `Notifications.publish(server \\ Notifications, user_id, channel, payload)` — publishes `payload` to all processes subscribed to `(user_id, channel)`. Returns `:ok`.
+- `Notifications.publish(server \\ Notifications, user_id, channel, payload)` — publishes `payload` to all processes subscribed to `(user_id, channel)`. Returns `:ok` (including when there are no subscribers).
 
 Use only OTP primitives (e.g., `Registry`, `GenServer`, `Process`). Do not pull in Phoenix.PubSub or any external dependencies. A `Registry` in `:duplicate` mode keyed on `{user_id, channel}` is a fine backing store.
 

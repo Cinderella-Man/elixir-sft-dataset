@@ -150,8 +150,16 @@ defmodule StackablePromoCodes do
 
   # --- public API ---
 
+  @doc "Creates a promo code from `attrs`. Returns `{:ok, code}` or `{:error, reason}`."
+  @spec create(map()) :: {:ok, map()} | {:error, atom()}
   def create(attrs) when is_map(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
 
+  @doc """
+  Applies a list of stackable promo `codes` to `order_total` (in cents), returning
+  `{:ok, result}` with the applied/rejected breakdown, or `{:error, :no_codes}`.
+  """
+  @spec apply_codes([String.t()], non_neg_integer(), keyword()) ::
+          {:ok, map()} | {:error, atom()}
   def apply_codes(codes, order_total, opts \\ [])
       when is_list(codes) and is_integer(order_total) and order_total >= 0 do
     GenServer.call(__MODULE__, {:apply, codes, order_total, opts})
@@ -290,7 +298,9 @@ defmodule StackablePromoCodes do
 
     rejected_all =
       rejected ++
-        Enum.map(extra_pcts, fn {cs, _c} -> %{code: cs, reason: :percentage_already_applied} end) ++
+        Enum.map(extra_pcts, fn {cs, _c} ->
+          %{code: cs, reason: :percentage_already_applied}
+        end) ++
         Enum.map(extra_ships, fn {cs, _c} ->
           %{code: cs, reason: :free_shipping_already_applied}
         end)
@@ -357,7 +367,6 @@ defmodule StackablePromoCodes do
   # --- usage accounting ---
 
   defp total_uses(state, cs), do: Map.get(state.total_uses, cs, 0)
-  defp user_uses(_state, _cs, nil), do: 0
   defp user_uses(state, cs, uid), do: Map.get(state.user_uses, {cs, uid}, 0)
 
   defp record_use(state, cs, user_id) do

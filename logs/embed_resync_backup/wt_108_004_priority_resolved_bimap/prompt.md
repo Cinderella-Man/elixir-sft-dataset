@@ -71,6 +71,7 @@ defmodule PriorityBiMap do
     GenServer.start_link(__MODULE__, :ok, [name: name] ++ opts)
   end
 
+  @doc "Stores the `key`<->`value` pair at `priority`, resolving conflicts by priority."
   @spec put(GenServer.server(), term(), term(), integer()) ::
           {:ok, [{term(), term()}]} | {:error, :rejected}
   def put(name, key, value, priority) do
