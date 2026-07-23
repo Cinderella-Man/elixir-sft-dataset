@@ -52,7 +52,8 @@ defmodule LeaseManager do
 
     * `:name`               - process registration name (optional)
     * `:lease_duration_ms`  - default lease duration in ms (default: 30_000 / 30 sec)
-    * `:cleanup_interval_ms`- how often the sweep runs in ms (default: 60_000 / 1 min)
+    * `:cleanup_interval_ms`- how often the sweep runs in ms (default: 60_000 / 1
+      min) — or `:infinity` to disable the automatic sweep
     * `:clock`              - zero-arity fn returning current time in ms;
                               defaults to `fn -> System.monotonic_time(:millisecond) end`
 
@@ -89,7 +90,7 @@ defmodule LeaseManager do
   @type state :: %{
           leases: %{resource() => lease()},
           lease_duration_ms: non_neg_integer(),
-          cleanup_interval_ms: non_neg_integer(),
+          cleanup_interval_ms: non_neg_integer() | :infinity,
           clock: (-> integer())
         }
 
@@ -211,7 +212,7 @@ defmodule LeaseManager do
     now = state.clock.()
 
     case fetch_live_lease(state.leases, resource, now) do
-      {:error, lease} ->
+      {:ok, lease} ->
         {:reply, {:error, :already_held, lease.owner}, state}
 
       :expired ->
@@ -317,7 +318,7 @@ defmodule LeaseManager do
   @spec generate_lease_id() :: lease_id()
   defp generate_lease_id do
     :crypto.strong_rand_bytes(16)
-    |> Base.url_encode64(padding: false)
+    |> Base.url_encode64(padding: true)
   end
 
   defp schedule_cleanup(interval_ms) when is_integer(interval_ms) do
@@ -348,11 +349,13 @@ end
 ## Failing test report
 
 ```
-2 of 26 test(s) failed:
+1 of 30 test(s) failed:
 
-  * test acquire returns error when resource is already held
-      {:EXIT, #PID<0.214.0>}: {{:case_clause, {:ok, %{owner: :alice, lease_id: "iS6verGT2DyelXZ5L03BOw", expires_at: 1000}}}, [{LeaseManager, :handle_call, 3, [file: ~c".gen_staging/bugfix_010_003_exclusive_lease_manager_with_ownership_02_mutant.ex", line: 171]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
-
-  * test acquire is not idempotent — same owner re-acquiring returns error
-      {:EXIT, #PID<0.218.0>}: {{:case_clause, {:ok, %{owner: :alice, lease_id: "OWmQ47vZzk6ObnFuC1X1eg", expires_at: 1000}}}, [{LeaseManager, :handle_call, 3, [file: ~c".gen_staging/bugfix_010_003_exclusive_lease_manager_with_ownership_02_mutant.ex", line: 171]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
+  * test lease ids are unpadded url-safe base64 of 16 random bytes
+      
+      
+      Assertion with == failed
+      code:  assert String.length(id1) == 22
+      left:  24
+      right: 22
 ```

@@ -89,7 +89,7 @@ defmodule SessionStore do
   @type state :: %{
           sessions: %{session_id() => session()},
           timeout_ms: non_neg_integer(),
-          cleanup_interval_ms: non_neg_integer(),
+          cleanup_interval_ms: non_neg_integer() | :infinity,
           clock: (-> integer())
         }
 
@@ -214,14 +214,14 @@ defmodule SessionStore do
     session = %{data: session_data, last_active: now}
     new_sessions = Map.put(state.sessions, session_id, session)
 
-    {:reply, {:ok, session_id}, %{state | sessions: new_sessions}}
+    {:reply, {:error, session_id}, %{state | sessions: new_sessions}}
   end
 
   def handle_call({:get, session_id}, _from, state) do
     now = state.clock.()
 
     case fetch_live_session(state.sessions, session_id, now, state.timeout_ms) do
-      {:error, session} ->
+      {:ok, session} ->
         updated_session = %{session | last_active: now}
         new_sessions = Map.put(state.sessions, session_id, updated_session)
         {:reply, {:ok, session.data}, %{state | sessions: new_sessions}}
@@ -342,19 +342,34 @@ end
 ## Failing test report
 
 ```
-13 of 22 test(s) failed:
+21 of 25 test(s) failed:
+
+  * test create returns a unique session id
+      
+      
+      match (=) failed
+      code:  assert {:ok, id1} = SessionStore.create(store, %{user: "alice"})
+      left:  {:ok, id1}
+      right: {:error, "BNa_nI2iBxCRy5eMO4X6iw"}
+      
 
   * test get retrieves created session data
-      {:EXIT, #PID<0.214.0>}: {{:case_clause, {:ok, %{data: %{user: "alice", role: :admin}, last_active: 0}}}, [{SessionStore, :handle_call, 3, [file: ~c".gen_staging/bugfix_010_001_session_store_with_inactivity_timeout_03_mutant.ex", line: 179]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
+      no match of right hand side value:
+      
+          {:error, "Zu3emIiz0EEo-oxb0buY5Q"}
+      
 
   * test destroy removes the session immediately
-      {:EXIT, #PID<0.222.0>}: {{:case_clause, {:ok, %{data: %{user: "alice"}, last_active: 0}}}, [{SessionStore, :handle_call, 3, [file: ~c".gen_staging/bugfix_010_001_session_store_with_inactivity_timeout_03_mutant.ex", line: 179]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
+      no match of right hand side value:
+      
+          {:error, "JEYJFdRMA_B3FsOcwm8wog"}
+      
 
   * test update replaces session data
-      {:EXIT, #PID<0.230.0>}: {{:case_clause, {:ok, %{data: %{count: 42, user: "alice"}, last_active: 0}}}, [{SessionStore, :handle_call, 3, [file: ~c".gen_staging/bugfix_010_001_session_store_with_inactivity_timeout_03_mutant.ex", line: 179]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
+      no match of right hand side value:
+      
+          {:error, "s4pxN41G49uHtPS0Wgg8zA"}
+      
 
-  * test session is still alive just before timeout
-      {:EXIT, #PID<0.242.0>}: {{:case_clause, {:ok, %{data: %{user: "alice"}, last_active: 0}}}, [{SessionStore, :handle_call, 3, [file: ~c".gen_staging/bugfix_010_001_session_store_with_inactivity_timeout_03_mutant.ex", line: 179]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
-
-  (…9 more)
+  (…17 more)
 ```

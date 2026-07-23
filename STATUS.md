@@ -62,48 +62,6 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    only the two waived 037 families below 0.6 — ledger sha-current
    for the weekly CI gate.
 
-4b. **[IN PROGRESS 2026-07-23] Nightly-caught: stale bugfix_109_001
-   golds (perfect sweep 3 FAILED).** The 2026-07-22 109_001 cycle-
-   participants fix (77200c9a5) claimed "bugfix re-minted" in its
-   message but touched ZERO bugfix files; the three
-   bugfix_109_001_*_{01,02,03} dirs still carry the pre-fix gold and
-   now fail the parent anchor test (refute :c in involved → [:c,:a,:b],
-   1/16, overall 0.96, consistent at stability=3 — not flake). The
-   pre-push family-scoped validate missed it because the push touched
-   >20 families and 109_001 fell past the hook's head -20 cap; the
-   nightly full sweep (the designed backstop) caught it.
-   - **Task A (109 pilot): DONE 2026-07-23** (commit d8387e9a1) —
-     delete + topup remint, audit_bugfix 3/3, scoped perfect/mutant/
-     fim validate ALL PASS, hand-read clean. REMAINDER: the 33-pair
-     batch below.
-   - **Task B:** DONE (landed 2026-07-23, self-test 6/6 incl. the two
-     new planted-gold checks; --apply REFUSES stale_gold — remediation
-     is always delete+remint): gold-identity in resync_bugfix_embeds
-     dry-run; pre-push bugfix gate now corpus-wide + stale_gold grep +
-     loud 20-family-cap truncation warning; CI grep widened.
-   - **AUDIT FALLOUT (the gate's first corpus run): 33 MORE stale
-     golds in 11 families** — 003_004, 008_004, 009_002, 010_001,
-     010_003, 019_004, 031_001, 035_001, 072_002, 074_001, 101_001
-     (list: scratchpad stale_golds.txt; all verified real divergences:
-     behavior fixes 072_002 ensure_loaded / 074_001 poll started_at /
-     019_004 pid-set / 009_002 batch-gen / 003_004 query purity /
-     031_001 validate_row simplification / 008_004; spec widenings
-     010_001+010_003 :infinity; doc-truthing 035_001 + 101_001).
-     Invisible to the perfect sweep: old golds still PASS current
-     harnesses — only byte-identity catches the class.
-     LAUNCHED 2026-07-23 (109 pilot reviewed clean first, rule 9):
-     33 dirs deleted (git-clean, recoverable), then detached
-     `scripts/run_detached.sh logs/topup_stale_golds_remint.log
-     bash -c 'for i in 3 8 9 10 19 31 35 72 74 101; do
-     GEN_ONLY=topup GEN_SKIP_VARIATIONS=1 GEN_SKIP_FIM=1
-     mix run scripts/generate.exs $i; done'` — deterministic/LLM-free
-     (variations+fim skipped; all other miners are local-eval).
-     Relaunch idempotent. VERIFY AFTER: resync_bugfix_embeds
-     corpus-wide 0 stale_gold, audit_bugfix on all 33 fresh pairs,
-     validate perfect+mutants scoped to the 11 families, embeds+format
-     0/0, hand-read sample. Riders (tfim/sfim/etc. carves the topup
-     mints for these ideas) verified by the same scoped battery.
-
 5. **[ ] Prompt-register variety (G3).** Template rotation for the
    six templated shapes (deterministic, no LLM), then LLM register
    rewrites of monotone seed prompts, each with a mandatory blind

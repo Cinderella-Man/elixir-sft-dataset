@@ -137,12 +137,13 @@ defmodule SlidingCounter do
   ### Counting accuracy vs. bucket width
 
   A bucket covers the closed-open interval `[b * bucket_ms, (b+1) * bucket_ms)`.
-  When answering `count/3` for a window `[now - window_ms, now]`, any bucket
-  whose range *overlaps* that window is included in full.  This means events
-  near the leading edge of the oldest bucket are counted even if they are
-  technically just outside the window.  The error is bounded by at most one
-  bucket width, so choose `:bucket_ms` to be small relative to the smallest
-  window you plan to query.
+  When answering `count/3` for a window `[now - window_ms, now]`, a bucket is
+  included only when its start lies inside the window (a bucket starting exactly
+  at `now - window_ms` counts).  The effective cutoff is therefore quantized to
+  bucket boundaries, and events sitting in the partially-overlapping oldest
+  bucket are *under*-reported.  The error is bounded by at most one bucket
+  width, so choose `:bucket_ms` to be small relative to the smallest window you
+  plan to query.
 
   ## Cleanup
 
@@ -165,7 +166,7 @@ defmodule SlidingCounter do
   # with the default 1 s buckets, and 6 s with the 100 ms test buckets — small
   # enough that cleanup can actually evict data in tests without having to wait
   # hours for the clock to advance past a hardcoded 24 h constant.
-  @default_max_window_buckets 60
+  @default_max_window_buckets 61
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -282,7 +283,7 @@ defmodule SlidingCounter do
       state.keys
       |> Map.get(key, %{})
       |> Enum.reduce(0, fn {b, cnt}, acc ->
-        if b > min_bucket, do: acc + cnt, else: acc
+        if b >= min_bucket, do: acc + cnt, else: acc
       end)
 
     {:reply, total, state}
@@ -357,31 +358,13 @@ end
 ## Failing test report
 
 ```
-3 of 15 test(s) failed:
+1 of 26 test(s) failed:
 
-  * test events exactly at the window boundary are counted
+  * test default retention is exactly 60 buckets of history
       
       
       match (=) failed
-      code:  assert 1 = SlidingCounter.count(sc, "k", 1000)
-      left:  1
-      right: 0
-      
-
-  * test sub-buckets for a key are pruned as the window slides
-      
-      
-      match (=) failed
-      code:  assert 5 = SlidingCounter.count(sc, "k", 1000)
-      left:  5
-      right: 4
-      
-
-  * test window_ms smaller than bucket_ms still works
-      
-      
-      match (=) failed
-      code:  assert 1 = SlidingCounter.count(sc, "k", 50)
-      left:  1
-      right: 0
+      code:  assert 0 = SlidingCounter.count(sc, "old", 100_000)
+      left:  0
+      right: 1
 ```

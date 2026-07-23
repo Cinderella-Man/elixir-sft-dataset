@@ -1,114 +1,100 @@
 defmodule SlidingSum do
   @moduledoc """
-  A `GenServer` that maintains a sliding time-window running **sum of numeric amounts**
-  per key using a fixed-width sub-bucket strategy.
+  A `GenServer` that maintains a sliding time-window running **sum of numeric
+  amounts** per key using a fixed-width sub-bucket strategy.
 
-  Each recorded event carries a numeric amount (bytes transferred, dollars spent, points
-  scored, ...). Queries return the total amount inside the window rather than a count of
-  events.
+  Each recorded event carries a numeric amount (bytes, dollars, points, ...).
+  Time is divided into fixed-width sub-buckets of `:bucket_ms` milliseconds.
+  Every event is placed into the bucket whose index is `div(timestamp,
+  bucket_ms)`, and each bucket accumulates the sum of the amounts placed into
+  it. Queries return the total amount whose bucket start time falls within the
+  requested sliding window.
 
-  ## Design
+  Amounts may be integers or floats and may be negative, so a window sum can be
+  positive, zero, or negative. Different keys are tracked independently.
 
-  Time is divided into fixed-width sub-buckets of `:bucket_ms` milliseconds. An event
-  recorded at time `t` is accumulated into the bucket whose index is `div(t, bucket_ms)`.
-  Each bucket therefore holds the running sum of every amount placed into it.
-
-  A bucket `b` is included in `sum/3` if and only if its start time falls inside the
-  sliding window:
-
-      b * bucket_ms >= now - window_ms
-
-  Buckets that start before the window are discarded from the result.
-
-  Amounts may be integers or floats and may be negative, so a window sum may be positive,
-  zero or negative.
-
-  ## Memory
-
-  Per-key bucket sums live in `state.keys`, a map of `key => %{bucket_index => sum}`. A
-  periodic cleanup (scheduled with `Process.send_after/3` every `:cleanup_interval_ms`)
-  drops every bucket whose start time falls outside the 24 hour retention horizon, using
-  the same inclusive rule as `sum/3`:
-
-      bucket_start >= now - 86_400_000
-
-  Keys left without buckets are removed entirely, so `state.keys` becomes an empty map
-  once all data has expired. A `:cleanup` message may also be sent directly to the
-  process to trigger a cleanup pass synchronously from tests.
+  A periodic cleanup removes buckets — and whole keys — that have fallen outside
+  the maximum retention window of 24 hours, keeping memory bounded.
   """
 
   use GenServer
 
-  @typedoc "A tracked key. Any term may be used."
-  @type key :: term()
-
-  @typedoc "A numeric amount; integers and floats, positive or negative, are allowed."
-  @type amount :: number()
-
   @default_bucket_ms 1_000
   @default_cleanup_interval_ms 60_000
+  @retention_ms 24 * 60 * 60 * 1000
 
-  @max_retention_ms 24 * 60 * 60 * 1000
+  @typep bucket_index :: integer()
+  @typep buckets :: %{optional(bucket_index()) => number()}
+  @typep state :: %{
+           clock: (-> integer()),
+           bucket_ms: pos_integer(),
+           cleanup_interval_ms: pos_integer() | :infinity,
+           keys: %{optional(term()) => buckets()}
+         }
+
+  # Public API
 
   @doc """
-  Starts the sliding-sum server.
+  Starts the `SlidingSum` process.
 
-  ## Options
+  Options:
 
-    * `:clock` — zero-arity function returning the current time in milliseconds.
-      Defaults to `fn -> System.monotonic_time(:millisecond) end`.
-    * `:bucket_ms` — width of each internal sub-bucket in milliseconds. Defaults to
-      `1_000`.
+    * `:clock` — zero-arity function returning the current time in
+      milliseconds. Defaults to `fn -> System.monotonic_time(:millisecond) end`.
+    * `:bucket_ms` — width of each internal sub-bucket in milliseconds.
+      Defaults to `1_000`.
     * `:name` — optional process registration name.
-    * `:cleanup_interval_ms` — how often the periodic cleanup runs, in milliseconds.
-      Defaults to `60_000`. Pass `:infinity` to disable it.
-
+    * `:cleanup_interval_ms` — how often to run the periodic cleanup.
+      Defaults to `60_000`. Pass `:infinity` to disable.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
-  def start_link(opts \\ []) when is_list(opts) do
-    {name, opts} = Keyword.pop(opts, :name)
-    server_opts = if name, do: [name: name], else: []
-    GenServer.start_link(__MODULE__, opts, server_opts)
+  def start_link(opts \\ []) do
+    {name, init_opts} = Keyword.pop(opts, :name)
+
+    case name do
+      nil -> GenServer.start_link(__MODULE__, init_opts)
+      name -> GenServer.start_link(__MODULE__, init_opts, name: name)
+    end
   end
 
   @doc """
   Records `amount` for `key` at the current clock time.
 
-  `amount` may be an integer or a float and may be negative, in which case it subtracts
-  from the window sum. Always returns `:ok`.
+  `amount` may be any number (integer or float, possibly negative). Always
+  returns `:ok`.
   """
-  @spec add(GenServer.server(), key(), amount()) :: :ok
+  @spec add(GenServer.server(), term(), number()) :: :ok
   def add(server, key, amount) when is_number(amount) do
     GenServer.cast(server, {:add, key, amount})
   end
 
   @doc """
-  Returns the total of the amounts recorded for `key` within the last `window_ms`
-  milliseconds relative to the current clock time.
+  Returns the total of all amounts recorded for `key` whose bucket start time
+  falls within the last `window_ms` milliseconds relative to the current clock
+  time.
 
-  A bucket contributes to the result if and only if its start time satisfies
-  `bucket_start >= now - window_ms`. Unknown keys return `0`.
+  A key with no recorded amounts (or whose amounts have all expired) returns `0`.
   """
-  @spec sum(GenServer.server(), key(), non_neg_integer()) :: number()
+  @spec sum(GenServer.server(), term(), non_neg_integer()) :: number()
   def sum(server, key, window_ms) when is_integer(window_ms) and window_ms >= 0 do
     GenServer.call(server, {:sum, key, window_ms})
   end
 
   @doc """
-  Returns the list of keys that currently have at least one stored bucket, in no
-  particular order.
+  Returns the list of keys currently tracked (those that still have at least one
+  stored bucket), in no particular order.
 
-  A server with no data returns `[]`, and a key whose buckets have all been removed by
-  cleanup no longer appears.
+  A server with no data returns `[]`.
   """
-  @spec keys(GenServer.server()) :: [key()]
+  @spec keys(GenServer.server()) :: [term()]
   def keys(server) do
     GenServer.call(server, :keys)
   end
 
-  ## GenServer callbacks
+  # GenServer callbacks
 
-  @impl GenServer
+  @impl true
+  @spec init(keyword()) :: {:ok, state()}
   def init(opts) do
     clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
     bucket_ms = Keyword.get(opts, :bucket_ms, @default_bucket_ms)
@@ -122,24 +108,22 @@ defmodule SlidingSum do
     }
 
     schedule_cleanup(cleanup_interval_ms)
-
     {:ok, state}
   end
 
-  @impl GenServer
+  @impl true
   def handle_cast({:add, key, amount}, state) do
     now = state.clock.()
-    bucket = div(now, state.bucket_ms)
+    index = div(now, state.bucket_ms)
 
-    buckets =
-      state.keys
-      |> Map.get(key, %{})
-      |> Map.update(bucket, amount, &(&1 + amount))
+    buckets = Map.get(state.keys, key, %{})
+    buckets = Map.update(buckets, index, amount, &(&1 + amount))
+    keys = Map.put(state.keys, key, buckets)
 
-    {:noreply, %{state | keys: Map.put(state.keys, key, buckets)}}
+    {:noreply, %{state | keys: keys}}
   end
 
-  @impl GenServer
+  @impl true
   def handle_call({:sum, key, window_ms}, _from, state) do
     now = state.clock.()
     cutoff = now - window_ms
@@ -147,8 +131,8 @@ defmodule SlidingSum do
     total =
       state.keys
       |> Map.get(key, %{})
-      |> Enum.reduce(0, fn {bucket, value}, acc ->
-        if bucket * state.bucket_ms >= cutoff, do: acc + value, else: acc
+      |> Enum.reduce(0, fn {index, amount}, acc ->
+        if index * state.bucket_ms >= cutoff, do: acc + amount, else: acc
       end)
 
     {:reply, total, state}
@@ -158,41 +142,45 @@ defmodule SlidingSum do
     {:reply, Map.keys(state.keys), state}
   end
 
-  @impl GenServer
-  def handle_info(:cleanup, state) do
-    state = purge_expired(state)
+  @impl true
+  def handle_info(:__cleanup_tick, state) do
     schedule_cleanup(state.cleanup_interval_ms)
+    {:noreply, run_cleanup(state)}
+  end
+
+  def handle_info(:cleanup, state) do
+    {:noreply, run_cleanup(state)}
+  end
+
+  def handle_info(_msg, state) do
     {:noreply, state}
   end
 
-  def handle_info(_message, state) do
-    {:noreply, state}
-  end
-
-  ## Internal helpers
-
-  @spec purge_expired(map()) :: map()
-  defp purge_expired(state) do
-    now = state.clock.()
-    cutoff = now - @max_retention_ms
-
-    keys =
-      Enum.reduce(state.keys, %{}, fn {key, buckets}, acc ->
-        kept =
-          Map.filter(buckets, fn {bucket, _value} ->
-            bucket * state.bucket_ms >= cutoff
-          end)
-
-        if map_size(kept) == 0, do: acc, else: Map.put(acc, key, kept)
-      end)
-
-    %{state | keys: keys}
-  end
+  # Internal helpers
 
   @spec schedule_cleanup(pos_integer() | :infinity) :: reference() | :ok
   defp schedule_cleanup(:infinity), do: :ok
 
-  defp schedule_cleanup(interval_ms) when is_integer(interval_ms) and interval_ms > 0 do
-    Process.send_after(self(), :cleanup, interval_ms)
+  defp schedule_cleanup(interval_ms) do
+    Process.send_after(self(), :__cleanup_tick, interval_ms)
+  end
+
+  @spec run_cleanup(state()) :: state()
+  defp run_cleanup(state) do
+    now = state.clock.()
+    cutoff = now - @retention_ms
+
+    keys =
+      state.keys
+      |> Enum.reduce(%{}, fn {key, buckets}, acc ->
+        retained =
+          buckets
+          |> Enum.filter(fn {index, _amount} -> index * state.bucket_ms >= cutoff end)
+          |> Map.new()
+
+        if map_size(retained) == 0, do: acc, else: Map.put(acc, key, retained)
+      end)
+
+    %{state | keys: keys}
   end
 end

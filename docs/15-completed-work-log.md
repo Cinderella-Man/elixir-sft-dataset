@@ -9,6 +9,32 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-23 — STALE BUGFIX GOLDS: nightly catch + gate + 36-pair
+  corpus purge, ALL CLOSED (STATUS 4b).** The nightly perfect sweep
+  caught bugfix_109_001_{01,02,03} failing the parent's new anchor
+  test — the 07-22 fix commit claimed "bugfix re-minted" but touched
+  zero bugfix files, and the >20-family push overflowed the pre-push
+  validate cap (silently) so the family was never validated locally.
+  Task A: delete + deterministic topup re-mint (109 as rule-9 pilot,
+  then the batch). Task B: GOLD-IDENTITY check in
+  resync_bugfix_embeds (child solution.ex must equal the parent
+  reference byte-for-byte; stale_gold NEVER --apply-healed — the
+  buggy module + report are captured mutants of the OLD gold, so the
+  only remediation is re-mint); pre-push bugfix gate corpus-wide +
+  loud cap-truncation warning; CI grep widened; self-test 6/6 with
+  two new planted-gold checks. The gate's FIRST corpus run then found
+  **33 more stale golds across 11 families** (behavior fixes, spec
+  widenings, doc-truthing that never cascaded — invisible to the
+  perfect sweep because the old golds still pass current harnesses).
+  All 36 pairs re-minted deterministically; verification: corpus-wide
+  gate 961 unchanged / 0 stale_gold, audit_bugfix 36/36 six-property
+  PASS, perfect + whole-mutation + fim validate green over all 10
+  ideas' dirs (incl. 57 rider tfim carves + 2 sfim carves the topup
+  minted), embeds 3889 clean / tfim 6623 unchanged, format 0.
+  Hand-reads: 109 pilot 3/3 + 072_002 pairs confirmed embedding the
+  FIXED gold (one even mutates the fixed line itself). Commits
+  d8387e9a1, 2f2ea797a + the batch-close commit.
+
 - **2026-07-23 — G6 FAMILY SPOT-CHECKS CLOSED (STATUS 7).**
   Deterministic sha-ordered stratified sample (seed "g6-2026-07-23"):
   10 accepted units across all 10 shape/era strata, ALL PASS on

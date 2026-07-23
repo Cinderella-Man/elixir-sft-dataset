@@ -232,11 +232,16 @@ defmodule SharedPoolBucket do
         # Never seen — fresh buckets are full.
         {:reply, {:ok, key_cap}, state}
 
-      {:ok, _} ->
+      {:ok, existing} ->
+        # A query never mutates: compute the lazily-refilled level with the
+        # CALLER'S capacity/rate arguments purely, storing nothing back —
+        # the stored bucket keeps its last-acquire capacity, rate, tokens
+        # and timestamp untouched.
         now = state.clock.()
-        {bucket, state} = get_and_refill_bucket(state, name, key_cap, key_rate, now)
-        new_buckets = Map.put(state.buckets, name, bucket)
-        {:reply, {:ok, trunc(bucket.free)}, %{state | buckets: new_buckets}}
+        elapsed = now - existing.last_update_at
+        added = elapsed * key_rate / 1000
+        level = min(key_cap * 1.0, existing.free + added)
+        {:reply, {:ok, trunc(level)}, state}
     end
   end
 
@@ -321,7 +326,7 @@ end
 ## Failing test report
 
 ```
-3 of 12 test(s) failed:
+6 of 25 test(s) failed:
 
   * test per-key exhaustion returns :key_empty
       
@@ -348,4 +353,16 @@ end
       code:  assert {:error, :key_empty, _} = SharedPoolBucket.acquire(sp, "alice", 2, 1.0)
       left:  {:error, :key_empty, _}
       right: {:ok, :key_empty, 1000}
+      
+
+  * test retry_after for :key_empty is ceil(deficit * 1000 / rate), exactly
+      
+      
+      match (=) failed
+      code:  assert {:error, :key_empty, 500} = SharedPoolBucket.acquire(sp, "ra1", 2, 2.0, 2)
+      left:  {:error, :key_empty, 500}
+      right: {:ok, :key_empty, 500}
+      
+
+  (…2 more)
 ```

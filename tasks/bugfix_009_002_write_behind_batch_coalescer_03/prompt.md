@@ -116,7 +116,14 @@ defmodule BatchCollector do
     case Map.fetch(state.batches, key) do
       :error ->
         # Requirement: First submit for a key starts the flush timer
-        timer_ref = Process.send_after(self(), {:flush_timer, key}, state.flush_interval_ms)
+        # The batch generation rides in the message: a stale timer whose batch
+        # already flushed (threshold path) can never fire a SUCCESSOR batch —
+        # key-presence alone cannot tell two generations apart. The send_after
+        # ref is kept separately so threshold flushes still cancel the timer.
+        gen = make_ref()
+
+        timer_ref =
+          Process.send_after(self(), {:flush_timer, key, gen}, state.flush_interval_ms)
 
         batch = %{
           # Prepend is O(1)
@@ -124,7 +131,8 @@ defmodule BatchCollector do
           callers: [from],
           flush_fn: flush_fn,
           max_batch_size: max_batch_size,
-          timer_ref: timer_ref
+          timer_ref: timer_ref,
+          gen: gen
         }
 
         new_state = put_in(state, [:batches, key], batch)
@@ -165,14 +173,16 @@ defmodule BatchCollector do
   end
 
   @impl GenServer
-  def handle_info({:flush_timer, key}, state) do
+  def handle_info({:flush_timer, key, gen}, state) do
     case Map.fetch(state.batches, key) do
-      # Requirement: Flush when timer fires and batch exists
-      {:ok, _batch} ->
+      # Requirement: flush when the timer fires and it is THIS batch's timer.
+      {:ok, %{gen: ^gen}} ->
         {:noreply, do_flush(key, state)}
 
-      # Ignore if already flushed via max_batch_size threshold
-      :error ->
+      # A ref mismatch is a stale timer for an earlier, already-flushed batch
+      # generation; :error means the batch flushed and no successor exists.
+      # Both are ignored harmlessly.
+      _ ->
         {:noreply, state}
     end
   end
@@ -228,13 +238,13 @@ end
 ## Failing test report
 
 ```
-1 of 15 test(s) failed:
+1 of 22 test(s) failed:
 
   * test GenServer is not blocked during flush
       
       
       Assertion with < failed
       code:  assert elapsed < 200_000
-      left:  501029
+      left:  500712
       right: 200000
 ```

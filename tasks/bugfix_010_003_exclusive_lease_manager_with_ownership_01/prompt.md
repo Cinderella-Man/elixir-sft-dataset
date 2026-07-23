@@ -52,7 +52,8 @@ defmodule LeaseManager do
 
     * `:name`               - process registration name (optional)
     * `:lease_duration_ms`  - default lease duration in ms (default: 30_000 / 30 sec)
-    * `:cleanup_interval_ms`- how often the sweep runs in ms (default: 60_000 / 1 min)
+    * `:cleanup_interval_ms`- how often the sweep runs in ms (default: 60_000 / 1
+      min) — or `:infinity` to disable the automatic sweep
     * `:clock`              - zero-arity fn returning current time in ms;
                               defaults to `fn -> System.monotonic_time(:millisecond) end`
 
@@ -89,7 +90,7 @@ defmodule LeaseManager do
   @type state :: %{
           leases: %{resource() => lease()},
           lease_duration_ms: non_neg_integer(),
-          cleanup_interval_ms: non_neg_integer(),
+          cleanup_interval_ms: non_neg_integer() | :infinity,
           clock: (-> integer())
         }
 
@@ -348,7 +349,7 @@ end
 ## Failing test report
 
 ```
-26 of 26 test(s) failed:
+30 of 30 test(s) failed:
 
   * test acquire grants a lease on an available resource
       no match of right hand side value:
@@ -398,5 +399,5 @@ end
            }}
       
 
-  (…22 more)
+  (…26 more)
 ```

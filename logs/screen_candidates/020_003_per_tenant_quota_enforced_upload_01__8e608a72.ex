@@ -1,178 +1,90 @@
-defmodule FileUpload.Validator do
-  @moduledoc """
-  Validation rules for incoming `%Plug.Upload{}` structs.
-
-  Only `.csv` and `.json` files are accepted (case-insensitive extension check).
-  CSV files must look like they carry a header row with multiple columns, and
-  JSON files must parse cleanly with `Jason`.
-  """
-
-  @allowed_extensions [".csv", ".json"]
-
-  @doc """
-  Validates an uploaded file.
-
-  Returns `:ok` when the upload passes every rule, or `{:error, reason}` with a
-  human-readable reason describing the first rule that failed.
-  """
-  @spec validate(Plug.Upload.t()) :: :ok | {:error, String.t()}
-  def validate(%Plug.Upload{filename: filename, path: path}) do
-    case normalized_extension(filename) do
-      ".csv" -> validate_csv(path)
-      ".json" -> validate_json(path)
-      _other -> {:error, "File type not allowed. Only .csv and .json files are accepted"}
-    end
-  end
-
-  @spec normalized_extension(String.t() | nil) :: String.t()
-  defp normalized_extension(nil), do: ""
-
-  defp normalized_extension(filename) do
-    filename
-    |> Path.extname()
-    |> String.downcase()
-  end
-
-  @spec validate_csv(String.t()) :: :ok | {:error, String.t()}
-  defp validate_csv(path) do
-    content = read_file(path)
-
-    lines =
-      content
-      |> String.split(~r/\r\n|\r|\n/)
-      |> Enum.reject(&(String.trim(&1) == ""))
-
-    cond do
-      length(lines) >= 2 -> :ok
-      Enum.any?(lines, &String.contains?(&1, ",")) -> :ok
-      true -> {:error, "Invalid CSV: file must contain a header row with multiple columns"}
-    end
-  end
-
-  @spec validate_json(String.t()) :: :ok | {:error, String.t()}
-  defp validate_json(path) do
-    case Jason.decode(read_file(path)) do
-      {:ok, _decoded} -> :ok
-      {:error, error} -> {:error, "Invalid JSON: " <> Exception.message(error)}
-    end
-  end
-
-  @spec read_file(String.t()) :: String.t()
-  defp read_file(path) do
-    case File.read(path) do
-      {:ok, content} -> content
-      {:error, _reason} -> ""
-    end
-  end
-
-  @spec allowed_extensions() :: [String.t()]
-  @doc """
-  Returns the list of accepted file extensions, lower-cased and dot-prefixed.
-  """
-  def allowed_extensions, do: @allowed_extensions
-end
-
 defmodule FileUpload.Store do
   @moduledoc """
-  A `GenServer` holding upload metadata plus per-account byte usage.
+  A `GenServer` that tracks per-account byte usage and stored file metadata.
 
-  Every account shares the same fixed `:quota_bytes` budget. Saving a record is
-  atomic and all-or-nothing: an upload that would push the account past its
-  budget leaves the state completely untouched and returns
-  `{:error, :quota_exceeded, details}`. Deleting a record releases its bytes
-  back to the owning account.
+  Each account has a fixed total-bytes budget (`:quota_bytes`). Saving a file
+  is atomic and all-or-nothing: a save that would push an account over its
+  budget is rejected without consuming any quota or storing any metadata.
+  Deleting a file releases its bytes back to the owning account's budget.
   """
 
   use GenServer
 
-  @default_quota_bytes 10_000_000
-
+  @type server :: GenServer.server()
   @type account :: String.t()
   @type metadata :: map()
-  @type quota_info :: %{quota: non_neg_integer(), used: non_neg_integer()}
+
+  @default_quota 10_000_000
 
   @doc """
   Starts the store.
 
-  Options:
-
-    * `:name` — optional registered name for the process.
-    * `:quota_bytes` — per-account budget in bytes (default `#{@default_quota_bytes}`).
+  Accepts `:name` (registration name) and `:quota_bytes` (the per-account
+  budget, defaulting to `#{@default_quota}`).
   """
   @spec start_link(keyword()) :: GenServer.on_start()
-  def start_link(opts \\ []) do
-    {name, opts} = Keyword.pop(opts, :name)
+  def start_link(opts) do
+    name = Keyword.get(opts, :name)
+    quota = Keyword.get(opts, :quota_bytes, @default_quota)
     server_opts = if name, do: [name: name], else: []
-    GenServer.start_link(__MODULE__, opts, server_opts)
+    GenServer.start_link(__MODULE__, %{quota: quota}, server_opts)
   end
 
   @doc """
-  Reserves quota for `account` and stores `metadata` atomically.
+  Atomically reserves quota for `account` and stores `metadata`.
 
-  `metadata` must contain a `:size` key. On success returns
-  `{:ok, record, %{quota: q, used: used_after}}` where `record` gained `:id`,
-  `:uploaded_at` and `:account`. When the upload does not fit, returns
-  `{:error, :quota_exceeded, %{quota: q, used: used_before, requested: size}}`
-  and nothing is stored.
+  Returns `{:ok, record, %{quota: q, used: new_used}}` on success, where the
+  record is enriched with `:id`, `:uploaded_at` and `:account`. Returns
+  `{:error, :quota_exceeded, %{quota: q, used: used, requested: size}}` (with
+  no state change) when the account's budget would be exceeded.
   """
-  @spec save(GenServer.server(), account(), metadata()) ::
-          {:ok, metadata(), quota_info()}
-          | {:error, :quota_exceeded, %{quota: non_neg_integer(), used: non_neg_integer(),
-             requested: non_neg_integer()}}
+  @spec save(server(), account(), metadata()) ::
+          {:ok, metadata(), map()} | {:error, :quota_exceeded, map()}
   def save(server, account, metadata) do
     GenServer.call(server, {:save, account, metadata})
   end
 
   @doc """
-  Deletes the record `id` on behalf of `account`, releasing its bytes.
+  Deletes the file `id` on behalf of `account`, releasing its reserved bytes.
 
-  Returns `{:ok, %{record: record, freed: size, used: used_after}}`,
-  `{:error, :forbidden}` when the record belongs to another account, or
-  `{:error, :not_found}`.
+  Returns `{:ok, %{record: record, freed: size, used: new_used}}` on success,
+  `{:error, :forbidden}` if `id` belongs to another account, or
+  `{:error, :not_found}` when unknown.
   """
-  @spec delete(GenServer.server(), account(), String.t()) ::
-          {:ok, %{record: metadata(), freed: non_neg_integer(), used: non_neg_integer()}}
-          | {:error, :forbidden | :not_found}
+  @spec delete(server(), account(), String.t()) ::
+          {:ok, map()} | {:error, :forbidden | :not_found}
   def delete(server, account, id) do
     GenServer.call(server, {:delete, account, id})
   end
 
   @doc """
-  Fetches the metadata stored under `id`.
+  Fetches the stored metadata for `id`.
   """
-  @spec get(GenServer.server(), String.t()) :: {:ok, metadata()} | {:error, :not_found}
+  @spec get(server(), String.t()) :: {:ok, metadata()} | {:error, :not_found}
   def get(server, id) do
     GenServer.call(server, {:get, id})
   end
 
   @doc """
-  Returns the number of bytes currently used by `account` (0 when unknown).
+  Returns the current used bytes for `account` (0 when unknown).
   """
-  @spec usage(GenServer.server(), account()) :: non_neg_integer()
+  @spec usage(server(), account()) :: non_neg_integer()
   def usage(server, account) do
     GenServer.call(server, {:usage, account})
   end
 
   @doc """
-  Returns the per-account quota in bytes.
+  Returns all stored metadata records.
   """
-  @spec quota_bytes(GenServer.server()) :: non_neg_integer()
-  def quota_bytes(server) do
-    GenServer.call(server, :quota_bytes)
-  end
-
-  @doc """
-  Returns every stored metadata record.
-  """
-  @spec list(GenServer.server()) :: [metadata()]
+  @spec list(server()) :: [metadata()]
   def list(server) do
     GenServer.call(server, :list)
   end
 
   @impl GenServer
-  def init(opts) do
-    quota = Keyword.get(opts, :quota_bytes, @default_quota_bytes)
-    {:ok, %{files: %{}, usage: %{}, quota: quota}}
+  @spec init(map()) :: {:ok, map()}
+  def init(state) do
+    {:ok, Map.merge(%{usage: %{}, records: %{}}, state)}
   end
 
   @impl GenServer
@@ -181,21 +93,23 @@ defmodule FileUpload.Store do
     used = Map.get(state.usage, account, 0)
 
     if used + size > state.quota do
-      details = %{quota: state.quota, used: used, requested: size}
-      {:reply, {:error, :quota_exceeded, details}, state}
+      error = {:error, :quota_exceeded, %{quota: state.quota, used: used, requested: size}}
+      {:reply, error, state}
     else
+      id = uuid4()
+
       record =
         metadata
-        |> Map.put(:id, uuid4())
-        |> Map.put(:uploaded_at, DateTime.utc_now() |> DateTime.to_iso8601())
+        |> Map.put(:id, id)
+        |> Map.put(:uploaded_at, now_iso8601())
         |> Map.put(:account, account)
 
       new_used = used + size
 
       new_state = %{
         state
-        | files: Map.put(state.files, record.id, record),
-          usage: Map.put(state.usage, account, new_used)
+        | usage: Map.put(state.usage, account, new_used),
+          records: Map.put(state.records, id, record)
       }
 
       {:reply, {:ok, record, %{quota: state.quota, used: new_used}}, new_state}
@@ -203,29 +117,31 @@ defmodule FileUpload.Store do
   end
 
   def handle_call({:delete, account, id}, _from, state) do
-    case Map.fetch(state.files, id) do
+    case Map.fetch(state.records, id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
       {:ok, %{account: owner}} when owner != account ->
         {:reply, {:error, :forbidden}, state}
 
       {:ok, record} ->
         size = Map.get(record, :size, 0)
-        new_used = max(Map.get(state.usage, account, 0) - size, 0)
+        used = Map.get(state.usage, account, 0)
+        new_used = max(used - size, 0)
 
         new_state = %{
           state
-          | files: Map.delete(state.files, id),
-            usage: Map.put(state.usage, account, new_used)
+          | usage: Map.put(state.usage, account, new_used),
+            records: Map.delete(state.records, id)
         }
 
-        {:reply, {:ok, %{record: record, freed: size, used: new_used}}, new_state}
-
-      :error ->
-        {:reply, {:error, :not_found}, state}
+        reply = {:ok, %{record: record, freed: size, used: new_used}}
+        {:reply, reply, new_state}
     end
   end
 
   def handle_call({:get, id}, _from, state) do
-    case Map.fetch(state.files, id) do
+    case Map.fetch(state.records, id) do
       {:ok, record} -> {:reply, {:ok, record}, state}
       :error -> {:reply, {:error, :not_found}, state}
     end
@@ -235,188 +151,210 @@ defmodule FileUpload.Store do
     {:reply, Map.get(state.usage, account, 0), state}
   end
 
-  def handle_call(:quota_bytes, _from, state) do
-    {:reply, state.quota, state}
+  def handle_call(:list, _from, state) do
+    {:reply, Map.values(state.records), state}
   end
 
-  def handle_call(:list, _from, state) do
-    {:reply, Map.values(state.files), state}
-  end
+  import Bitwise
 
   @spec uuid4() :: String.t()
   defp uuid4 do
-    <<a::32, b::16, _c::4, d::12, _e::2, f::62>> = :crypto.strong_rand_bytes(16)
+    <<a::32, b::16, c::16, d::16, e::48>> = :crypto.strong_rand_bytes(16)
+    c2 = c |> band(0x0FFF) |> bor(0x4000)
+    d2 = d |> band(0x3FFF) |> bor(0x8000)
 
-    <<a::32, b::16, 4::4, d::12, 2::2, f::62>>
-    |> Base.encode16(case: :lower)
-    |> format_uuid()
+    :io_lib.format(
+      "~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b",
+      [a, b, c2, d2, e]
+    )
+    |> IO.iodata_to_binary()
   end
 
-  @spec format_uuid(String.t()) :: String.t()
-  defp format_uuid(<<a::binary-8, b::binary-4, c::binary-4, d::binary-4, e::binary-12>>) do
-    Enum.join([a, b, c, d, e], "-")
+  @spec now_iso8601() :: String.t()
+  defp now_iso8601 do
+    DateTime.utc_now() |> DateTime.to_iso8601()
+  end
+end
+
+defmodule FileUpload.Validator do
+  @moduledoc """
+  Validates uploaded files by extension and content.
+
+  Only `.csv` and `.json` files (case-insensitive) are accepted. CSV files
+  must contain at least two lines or one comma-containing line. JSON files
+  must parse via `Jason.decode/1`.
+  """
+
+  @type reason :: String.t()
+
+  @doc """
+  Validates the given `%Plug.Upload{}`, returning `:ok` or `{:error, reason}`.
+  """
+  @spec validate(Plug.Upload.t()) :: :ok | {:error, reason()}
+  def validate(%Plug.Upload{} = upload) do
+    ext = upload.filename |> to_string() |> Path.extname() |> String.downcase()
+
+    case ext do
+      ".csv" -> validate_csv(upload.path)
+      ".json" -> validate_json(upload.path)
+      _ -> {:error, "File type not allowed. Only .csv and .json files are accepted"}
+    end
+  end
+
+  @spec validate_csv(String.t()) :: :ok | {:error, reason()}
+  defp validate_csv(path) do
+    lines = path |> File.read!() |> String.split(~r/\r?\n/, trim: true)
+
+    cond do
+      length(lines) >= 2 -> :ok
+      Enum.any?(lines, &String.contains?(&1, ",")) -> :ok
+      true -> {:error, "Invalid CSV: file must contain a header row with multiple columns"}
+    end
+  end
+
+  @spec validate_json(String.t()) :: :ok | {:error, reason()}
+  defp validate_json(path) do
+    case path |> File.read!() |> Jason.decode() do
+      {:ok, _decoded} -> :ok
+      {:error, error} -> {:error, "Invalid JSON: " <> Exception.message(error)}
+    end
   end
 end
 
 defmodule FileUpload.Router do
   @moduledoc """
-  A `Plug.Router` exposing a multi-tenant, quota-enforced upload endpoint.
+  A `Plug.Router` exposing a multi-tenant, quota-enforced file upload API.
 
-  Every request must carry an `x-account-id` header identifying the account the
-  request is attributed to. Uploads consume the account's byte budget and are
-  rejected with HTTP 507 when they would exceed it — without writing anything
-  to disk or consuming any quota. Deletes release bytes back to the account.
+  Every request is attributed to an account via the `x-account-id` header.
+  `POST /api/uploads` validates and stores a single `"file"` field, rejecting
+  oversized files (413), invalid files (422) and quota-exceeding uploads (507)
+  without side effects. `DELETE /api/uploads/:id` releases quota and removes
+  the file, enforcing that only the owning account may delete it.
 
-  Options accepted by `plug FileUpload.Router, opts`:
+  Options (via `plug FileUpload.Router, opts`):
 
-    * `:store` — PID or registered name of the `FileUpload.Store`.
-    * `:upload_dir` — directory where uploaded files are written.
-    * `:base_url` — URL prefix used to build download URLs.
+    * `:store` — PID or name of the `FileUpload.Store` GenServer.
+    * `:upload_dir` — directory where files are saved.
+    * `:base_url` — URL prefix for download URLs.
   """
 
   use Plug.Router
 
-  @max_file_bytes 5_242_880
+  alias FileUpload.{Store, Validator}
 
-  plug Plug.Parsers,
-    parsers: [:urlencoded, :multipart, :json],
-    pass: ["*/*"],
-    json_decoder: Jason
+  @max_bytes 5_242_880
 
+  plug Plug.Parsers, parsers: [:multipart], pass: ["*/*"], length: 20_000_000
   plug :match
-  plug :dispatch
-
-  @doc """
-  Builds the router options used for every request.
-  """
-  @spec init(keyword()) :: keyword()
-  def init(opts), do: opts
-
-  @doc """
-  Entry point invoked by `Plug` for each request.
-  """
-  @spec call(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
-  def call(conn, opts) do
-    conn
-    |> put_private(:file_upload_opts, opts)
-    |> super(opts)
-  end
-
-  @doc """
-  Returns the maximum accepted size for a single uploaded file, in bytes.
-  """
-  @spec max_file_bytes() :: pos_integer()
-  def max_file_bytes, do: @max_file_bytes
+  plug :dispatch, builder_opts()
 
   post "/api/uploads" do
-    with {:ok, account} <- fetch_account(conn),
-         {:ok, upload} <- fetch_upload(conn),
-         {:ok, size} <- check_size(upload),
-         :ok <- FileUpload.Validator.validate(upload) do
-      store_upload(conn, account, upload, size)
-    else
-      {:error, status, payload} -> send_json(conn, status, payload)
-    end
+    do_post(conn, opts)
   end
 
   delete "/api/uploads/:id" do
-    case fetch_account(conn) do
-      {:ok, account} -> delete_upload(conn, account, id)
-      {:error, status, payload} -> send_json(conn, status, payload)
-    end
+    do_delete(conn, id, opts)
   end
 
   match _ do
     send_json(conn, 404, %{error: "Not found"})
   end
 
-  @spec fetch_account(Plug.Conn.t()) :: {:ok, String.t()} | {:error, 400, map()}
-  defp fetch_account(conn) do
-    value =
-      conn
-      |> get_req_header("x-account-id")
-      |> List.first()
-      |> case do
-        nil -> ""
-        raw -> String.trim(raw)
-      end
-
-    if value == "" do
-      {:error, 400, %{error: "Missing account"}}
-    else
-      {:ok, value}
+  @spec do_post(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
+  defp do_post(conn, opts) do
+    case account_id(conn) do
+      nil -> send_json(conn, 400, %{error: "Missing account"})
+      account -> handle_upload(conn, account, opts)
     end
   end
 
-  @spec fetch_upload(Plug.Conn.t()) :: {:ok, Plug.Upload.t()} | {:error, 422, map()}
-  defp fetch_upload(conn) do
-    case conn.params do
-      %{"file" => %Plug.Upload{} = upload} -> {:ok, upload}
-      _other -> {:error, 422, %{error: "No file provided"}}
+  @spec handle_upload(Plug.Conn.t(), String.t(), keyword()) :: Plug.Conn.t()
+  defp handle_upload(conn, account, opts) do
+    case conn.params["file"] do
+      %Plug.Upload{} = upload -> store_upload(conn, account, upload, opts)
+      _ -> send_json(conn, 422, %{error: "No file provided"})
     end
   end
 
-  @spec check_size(Plug.Upload.t()) :: {:ok, non_neg_integer()} | {:error, 413, map()}
-  defp check_size(%Plug.Upload{path: path}) do
-    size =
-      case File.stat(path) do
-        {:ok, %File.Stat{size: size}} -> size
-        {:error, _reason} -> 0
-      end
-
-    if size > @max_file_bytes do
-      {:error, 413, %{error: "File too large", max_bytes: @max_file_bytes}}
-    else
-      {:ok, size}
-    end
-  end
-
-  @spec store_upload(Plug.Conn.t(), String.t(), Plug.Upload.t(), non_neg_integer()) ::
+  @spec store_upload(Plug.Conn.t(), String.t(), Plug.Upload.t(), keyword()) ::
           Plug.Conn.t()
-  defp store_upload(conn, account, upload, size) do
-    opts = conn.private[:file_upload_opts] || []
+  defp store_upload(conn, account, upload, opts) do
+    size = file_size(upload.path)
+
+    cond do
+      size > @max_bytes ->
+        send_json(conn, 413, %{error: "File too large", max_bytes: @max_bytes})
+
+      match?({:error, _}, Validator.validate(upload)) ->
+        {:error, message} = Validator.validate(upload)
+        send_json(conn, 422, %{error: message})
+
+      true ->
+        persist(conn, account, upload, size, opts)
+    end
+  end
+
+  @spec persist(Plug.Conn.t(), String.t(), Plug.Upload.t(), non_neg_integer(), keyword()) ::
+          Plug.Conn.t()
+  defp persist(conn, account, upload, size, opts) do
     store = Keyword.fetch!(opts, :store)
+    dir = Keyword.fetch!(opts, :upload_dir)
+    base_url = Keyword.fetch!(opts, :base_url)
 
     metadata = %{
-      original_name: upload.filename,
       size: size,
+      original_name: to_string(upload.filename),
       content_type: upload.content_type
     }
 
-    case FileUpload.Store.save(store, account, metadata) do
+    case Store.save(store, account, metadata) do
       {:ok, record, %{quota: quota, used: used}} ->
-        :ok = persist_file(opts, upload, record)
-
-        send_json(conn, 201, %{
-          id: record.id,
-          original_name: record.original_name,
-          size: record.size,
-          content_type: record.content_type,
-          uploaded_at: record.uploaded_at,
-          account_id: record.account,
-          used_bytes: used,
-          quota_bytes: quota,
-          download_url: download_url(opts, record.id)
-        })
+        write_file(dir, record, upload)
+        send_json(conn, 201, upload_body(record, used, quota, base_url))
 
       {:error, :quota_exceeded, %{quota: quota, used: used, requested: requested}} ->
-        send_json(conn, 507, %{
+        body = %{
           error: "Quota exceeded",
           quota_bytes: quota,
           used_bytes: used,
           requested_bytes: requested
-        })
+        }
+
+        send_json(conn, 507, body)
     end
   end
 
-  @spec delete_upload(Plug.Conn.t(), String.t(), String.t()) :: Plug.Conn.t()
-  defp delete_upload(conn, account, id) do
-    opts = conn.private[:file_upload_opts] || []
-    store = Keyword.fetch!(opts, :store)
+  @spec upload_body(map(), non_neg_integer(), non_neg_integer(), String.t()) :: map()
+  defp upload_body(record, used, quota, base_url) do
+    %{
+      id: record.id,
+      original_name: record.original_name,
+      size: record.size,
+      content_type: record.content_type,
+      uploaded_at: record.uploaded_at,
+      account_id: record.account,
+      used_bytes: used,
+      quota_bytes: quota,
+      download_url: "#{base_url}/api/uploads/#{record.id}"
+    }
+  end
 
-    case FileUpload.Store.delete(store, account, id) do
+  @spec do_delete(Plug.Conn.t(), String.t(), keyword()) :: Plug.Conn.t()
+  defp do_delete(conn, id, opts) do
+    case account_id(conn) do
+      nil -> send_json(conn, 400, %{error: "Missing account"})
+      account -> handle_delete(conn, account, id, opts)
+    end
+  end
+
+  @spec handle_delete(Plug.Conn.t(), String.t(), String.t(), keyword()) :: Plug.Conn.t()
+  defp handle_delete(conn, account, id, opts) do
+    store = Keyword.fetch!(opts, :store)
+    dir = Keyword.fetch!(opts, :upload_dir)
+
+    case Store.delete(store, account, id) do
       {:ok, %{record: record, freed: freed, used: used}} ->
-        _ = remove_file(opts, record)
+        remove_file(dir, record)
         send_json(conn, 200, %{id: id, freed_bytes: freed, used_bytes: used})
 
       {:error, :forbidden} ->
@@ -427,53 +365,53 @@ defmodule FileUpload.Router do
     end
   end
 
-  @spec persist_file(keyword(), Plug.Upload.t(), map()) :: :ok
-  defp persist_file(opts, upload, record) do
-    dir = Keyword.fetch!(opts, :upload_dir)
+  @spec write_file(String.t(), map(), Plug.Upload.t()) :: :ok
+  defp write_file(dir, record, upload) do
     File.mkdir_p!(dir)
-    destination = Path.join(dir, stored_name(record))
+    File.cp!(upload.path, disk_path(dir, record))
+    :ok
+  end
 
-    case File.cp(upload.path, destination) do
-      :ok -> :ok
-      {:error, _reason} -> :ok
+  @spec remove_file(String.t(), map()) :: :ok
+  defp remove_file(dir, record) do
+    _ = File.rm(disk_path(dir, record))
+    :ok
+  end
+
+  @spec disk_path(String.t(), map()) :: String.t()
+  defp disk_path(dir, record) do
+    ext = record |> Map.get(:original_name, "") |> Path.extname()
+    Path.join(dir, record.id <> ext)
+  end
+
+  @spec account_id(Plug.Conn.t()) :: String.t() | nil
+  defp account_id(conn) do
+    case get_req_header(conn, "x-account-id") do
+      [value | _] -> normalize(value)
+      [] -> nil
     end
   end
 
-  @spec remove_file(keyword(), map()) :: :ok
-  defp remove_file(opts, record) do
-    case Keyword.fetch(opts, :upload_dir) do
-      {:ok, dir} ->
-        _ = File.rm(Path.join(dir, stored_name(record)))
-        :ok
-
-      :error ->
-        :ok
+  @spec normalize(String.t()) :: String.t() | nil
+  defp normalize(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
     end
   end
 
-  @spec stored_name(map()) :: String.t()
-  defp stored_name(record) do
-    extension =
-      record
-      |> Map.get(:original_name)
-      |> case do
-        nil -> ""
-        name -> Path.extname(name)
-      end
-
-    record.id <> extension
+  @spec file_size(String.t()) :: non_neg_integer()
+  defp file_size(path) do
+    case File.stat(path) do
+      {:ok, %File.Stat{size: size}} -> size
+      _ -> 0
+    end
   end
 
-  @spec download_url(keyword(), String.t()) :: String.t()
-  defp download_url(opts, id) do
-    base = opts |> Keyword.get(:base_url, "") |> String.trim_trailing("/")
-    base <> "/api/uploads/" <> id
-  end
-
-  @spec send_json(Plug.Conn.t(), pos_integer(), map()) :: Plug.Conn.t()
-  defp send_json(conn, status, payload) do
+  @spec send_json(Plug.Conn.t(), non_neg_integer(), map()) :: Plug.Conn.t()
+  defp send_json(conn, status, body) do
     conn
     |> put_resp_content_type("application/json")
-    |> send_resp(status, Jason.encode!(payload))
+    |> send_resp(status, Jason.encode!(body))
   end
 end

@@ -137,12 +137,13 @@ defmodule SlidingCounter do
   ### Counting accuracy vs. bucket width
 
   A bucket covers the closed-open interval `[b * bucket_ms, (b+1) * bucket_ms)`.
-  When answering `count/3` for a window `[now - window_ms, now]`, any bucket
-  whose range *overlaps* that window is included in full.  This means events
-  near the leading edge of the oldest bucket are counted even if they are
-  technically just outside the window.  The error is bounded by at most one
-  bucket width, so choose `:bucket_ms` to be small relative to the smallest
-  window you plan to query.
+  When answering `count/3` for a window `[now - window_ms, now]`, a bucket is
+  included only when its start lies inside the window (a bucket starting exactly
+  at `now - window_ms` counts).  The effective cutoff is therefore quantized to
+  bucket boundaries, and events sitting in the partially-overlapping oldest
+  bucket are *under*-reported.  The error is bounded by at most one bucket
+  width, so choose `:bucket_ms` to be small relative to the smallest window you
+  plan to query.
 
   ## Cleanup
 
@@ -281,8 +282,8 @@ defmodule SlidingCounter do
     total =
       state.keys
       |> Map.get(key, %{})
-      |> Enum.reduce(1, fn {b, cnt}, acc ->
-        if b >= min_bucket, do: acc + cnt, else: acc
+      |> Enum.reduce(0, fn {b, cnt}, acc ->
+        if b > min_bucket, do: acc + cnt, else: acc
       end)
 
     {:reply, total, state}
@@ -357,43 +358,43 @@ end
 ## Failing test report
 
 ```
-14 of 15 test(s) failed:
+7 of 26 test(s) failed:
 
-  * test count is zero for a key that has never been incremented
-      
-      
-      match (=) failed
-      code:  assert 0 = SlidingCounter.count(sc, "new_key", 1000)
-      left:  0
-      right: 1
-      
-
-  * test single increment is counted within the window
+  * test events exactly at the window boundary are counted
       
       
       match (=) failed
       code:  assert 1 = SlidingCounter.count(sc, "k", 1000)
       left:  1
-      right: 2
+      right: 0
       
 
-  * test multiple increments are all counted within the window
+  * test sub-buckets for a key are pruned as the window slides
       
       
       match (=) failed
       code:  assert 5 = SlidingCounter.count(sc, "k", 1000)
       left:  5
-      right: 6
+      right: 4
       
 
-  * test events outside the window are not counted
+  * test window_ms smaller than bucket_ms still works
       
       
       match (=) failed
-      code:  assert 0 = SlidingCounter.count(sc, "k", 1000)
-      left:  0
-      right: 1
+      code:  assert 1 = SlidingCounter.count(sc, "k", 50)
+      left:  1
+      right: 0
       
 
-  (…10 more)
+  * test default bucket_ms is 1000: an event at t=1000 starts a new bucket
+      
+      
+      match (=) failed
+      code:  assert 1 = SlidingCounter.count(pid, "k", 1)
+      left:  1
+      right: 0
+      
+
+  (…3 more)
 ```

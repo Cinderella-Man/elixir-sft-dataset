@@ -89,7 +89,7 @@ defmodule SessionStore do
   @type state :: %{
           sessions: %{session_id() => session()},
           timeout_ms: non_neg_integer(),
-          cleanup_interval_ms: non_neg_integer(),
+          cleanup_interval_ms: non_neg_integer() | :infinity,
           clock: (-> integer())
         }
 
@@ -214,7 +214,7 @@ defmodule SessionStore do
     session = %{data: session_data, last_active: now}
     new_sessions = Map.put(state.sessions, session_id, session)
 
-    {:reply, {:error, session_id}, %{state | sessions: new_sessions}}
+    {:reply, {:ok, session_id}, %{state | sessions: new_sessions}}
   end
 
   def handle_call({:get, session_id}, _from, state) do
@@ -304,7 +304,7 @@ defmodule SessionStore do
   @spec generate_session_id() :: session_id()
   defp generate_session_id do
     :crypto.strong_rand_bytes(16)
-    |> Base.url_encode64(padding: false)
+    |> Base.url_encode64(padding: true)
   end
 
   # Schedules the next periodic sweep.
@@ -342,34 +342,13 @@ end
 ## Failing test report
 
 ```
-18 of 22 test(s) failed:
+1 of 25 test(s) failed:
 
-  * test create returns a unique session id
+  * test session ids are unpadded url-safe base64 of 16 random bytes
       
       
-      match (=) failed
-      code:  assert {:ok, id1} = SessionStore.create(store, %{user: "alice"})
-      left:  {:ok, id1}
-      right: {:error, "KcakQI2U3EkFb4fWtTDdMQ"}
-      
-
-  * test get retrieves created session data
-      no match of right hand side value:
-      
-          {:error, "xtxfQ5QkErtj_4rw1jUAwQ"}
-      
-
-  * test destroy removes the session immediately
-      no match of right hand side value:
-      
-          {:error, "EiawdP0vJ-SFYS6MgW0nyA"}
-      
-
-  * test update replaces session data
-      no match of right hand side value:
-      
-          {:error, "Ep1FrjaN-V3ulIfctl9Nbg"}
-      
-
-  (…14 more)
+      Assertion with == failed
+      code:  assert String.length(id) == 22
+      left:  24
+      right: 22
 ```

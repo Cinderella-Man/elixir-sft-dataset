@@ -52,7 +52,8 @@ defmodule LeaseManager do
 
     * `:name`               - process registration name (optional)
     * `:lease_duration_ms`  - default lease duration in ms (default: 30_000 / 30 sec)
-    * `:cleanup_interval_ms`- how often the sweep runs in ms (default: 60_000 / 1 min)
+    * `:cleanup_interval_ms`- how often the sweep runs in ms (default: 60_000 / 1
+      min) — or `:infinity` to disable the automatic sweep
     * `:clock`              - zero-arity fn returning current time in ms;
                               defaults to `fn -> System.monotonic_time(:millisecond) end`
 
@@ -89,7 +90,7 @@ defmodule LeaseManager do
   @type state :: %{
           leases: %{resource() => lease()},
           lease_duration_ms: non_neg_integer(),
-          cleanup_interval_ms: non_neg_integer(),
+          cleanup_interval_ms: non_neg_integer() | :infinity,
           clock: (-> integer())
         }
 
@@ -212,7 +213,7 @@ defmodule LeaseManager do
 
     case fetch_live_lease(state.leases, resource, now) do
       {:ok, lease} ->
-        {:reply, {:ok, :already_held, lease.owner}, state}
+        {:reply, {:error, :already_held, lease.owner}, state}
 
       :expired ->
         lease_id = generate_lease_id()
@@ -328,7 +329,7 @@ defmodule LeaseManager do
 
   @spec expired?(lease(), integer()) :: boolean()
   defp expired?(lease, now) do
-    now >= lease.expires_at
+    now > lease.expires_at
   end
 
   @spec fetch_live_lease(%{resource() => lease()}, resource(), integer()) ::
@@ -348,22 +349,13 @@ end
 ## Failing test report
 
 ```
-2 of 26 test(s) failed:
+1 of 30 test(s) failed:
 
-  * test acquire returns error when resource is already held
+  * test acquire uses default 30000ms lease duration when unspecified
       
       
       match (=) failed
-      code:  assert {:error, :already_held, :alice} = LeaseManager.acquire(mgr, :printer, :bob)
-      left:  {:error, :already_held, :alice}
-      right: {:ok, :already_held, :alice}
-      
-
-  * test acquire is not idempotent — same owner re-acquiring returns error
-      
-      
-      match (=) failed
-      code:  assert {:error, :already_held, :alice} = LeaseManager.acquire(mgr, :printer, :alice)
-      left:  {:error, :already_held, :alice}
-      right: {:ok, :already_held, :alice}
+      code:  assert {:error, :available} = LeaseManager.holder(dflt, :printer)
+      left:  {:error, :available}
+      right: {:ok, :alice, 30000}
 ```

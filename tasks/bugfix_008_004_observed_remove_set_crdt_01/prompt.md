@@ -233,18 +233,17 @@ defmodule ORSet do
   end
 
   def handle_call({:remove, element}, _from, state) do
+    # `entries` never holds an empty tag set: add always inserts a tag,
+    # remove deletes the whole key, and merge drops empty survivors — so a
+    # fetched entry is removable as-is.
     case Map.fetch(state.entries, element) do
-      {:ok, tags} when tags != %MapSet{} ->
-        if MapSet.size(tags) == 0 do
-          {:reply, {:error, :not_a_member}, state}
-        else
-          # Move all current tags to tombstones
-          new_tombstones = MapSet.union(state.tombstones, tags)
-          new_entries = Map.delete(state.entries, element)
-          {:reply, :ok, %{state | entries: new_entries, tombstones: new_tombstones}}
-        end
+      {:ok, tags} ->
+        # Move all current tags to tombstones
+        new_tombstones = MapSet.union(state.tombstones, tags)
+        new_entries = Map.delete(state.entries, element)
+        {:reply, :ok, %{state | entries: new_entries, tombstones: new_tombstones}}
 
-      _ ->
+      :error ->
         {:reply, {:error, :not_a_member}, state}
     end
   end
@@ -329,7 +328,7 @@ end
 ## Failing test report
 
 ```
-9 of 28 test(s) failed:
+11 of 32 test(s) failed:
 
   * test remove after add removes element
       no case clause matching:
@@ -355,5 +354,5 @@ end
           :ok
       
 
-  (…5 more)
+  (…7 more)
 ```

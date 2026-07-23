@@ -124,7 +124,7 @@ defmodule SharedPoolBucket do
   @spec acquire(GenServer.server(), term(), pos_integer(), number(), pos_integer()) ::
           {:ok, non_neg_integer(), non_neg_integer()}
           | {:error, :key_empty | :global_empty, pos_integer()}
-  def acquire(server, bucket_name, key_capacity, key_refill_rate, tokens \\ 2)
+  def acquire(server, bucket_name, key_capacity, key_refill_rate, tokens \\ 1)
       when is_integer(key_capacity) and key_capacity > 0 and
              is_number(key_refill_rate) and key_refill_rate > 0 and
              is_integer(tokens) and tokens > 0 do
@@ -145,7 +145,7 @@ defmodule SharedPoolBucket do
   @spec key_level(GenServer.server(), term(), pos_integer(), number()) ::
           {:ok, non_neg_integer()}
   def key_level(server, bucket_name, key_capacity, key_refill_rate)
-      when is_integer(key_capacity) and key_capacity > 0 and
+      when is_integer(key_capacity) and key_capacity >= 0 and
              is_number(key_refill_rate) and key_refill_rate > 0 do
     GenServer.call(
       server,
@@ -232,11 +232,16 @@ defmodule SharedPoolBucket do
         # Never seen — fresh buckets are full.
         {:reply, {:ok, key_cap}, state}
 
-      {:ok, _} ->
+      {:ok, existing} ->
+        # A query never mutates: compute the lazily-refilled level with the
+        # CALLER'S capacity/rate arguments purely, storing nothing back —
+        # the stored bucket keeps its last-acquire capacity, rate, tokens
+        # and timestamp untouched.
         now = state.clock.()
-        {bucket, state} = get_and_refill_bucket(state, name, key_cap, key_rate, now)
-        new_buckets = Map.put(state.buckets, name, bucket)
-        {:reply, {:ok, trunc(bucket.free)}, %{state | buckets: new_buckets}}
+        elapsed = now - existing.last_update_at
+        added = elapsed * key_rate / 1000
+        level = min(key_cap * 1.0, existing.free + added)
+        {:reply, {:ok, trunc(level)}, state}
     end
   end
 
@@ -321,31 +326,10 @@ end
 ## Failing test report
 
 ```
-3 of 12 test(s) failed:
+1 of 25 test(s) failed:
 
-  * test both levels drain on a successful acquire
+  * test non-positive capacity, rate or tokens match no clause; capacity 1 is legal
       
       
-      match (=) failed
-      code:  assert {:ok, 4, 9} = SharedPoolBucket.acquire(sp, "alice", 5, 0.5)
-      left:  {:ok, 4, 9}
-      right: {:ok, 3, 8}
-      
-
-  * test per-key exhaustion returns :key_empty
-      
-      
-      match (=) failed
-      code:  assert {:ok, 2, 6} = SharedPoolBucket.acquire(sp, "bob", 3, 1.0)
-      left:  {:ok, 2, 6}
-      right: {:ok, 1, 6}
-      
-
-  * test rejected acquire does not drain either level
-      
-      
-      match (=) failed
-      code:  assert {:ok, 7} = SharedPoolBucket.global_level(sp)
-      left:  {:ok, 7}
-      right: {:ok, 8}
+      Expected exception FunctionClauseError but nothing was raised
 ```

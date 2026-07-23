@@ -43,7 +43,10 @@ defmodule Clock do
   @doc "Dispatches `now/0` to the correct implementation."
   @spec now(module() | GenServer.server()) :: DateTime.t()
   def now(clock) when is_atom(clock) do
-    if function_exported?(clock, :now, 1) do
+    # ensure_loaded?/1 first: function_exported?/3 deliberately does NOT load
+    # the module, so under lazy loading a real clock module's first use would
+    # fall through to the Fake branch and exit :noproc.
+    if Code.ensure_loaded?(clock) and function_exported?(clock, :now, 1) do
       clock.now()
     else
       Clock.Fake.now(clock)
@@ -205,7 +208,7 @@ end
 ## Failing test report
 
 ```
-1 of 15 test(s) failed:
+1 of 21 test(s) failed:
 
   * test Clock.now/1 unified dispatch dispatches to Clock.Real when given the module atom
       :exit: {:noproc, {GenServer, :call, [Clock.Real, :now, 5000]}}

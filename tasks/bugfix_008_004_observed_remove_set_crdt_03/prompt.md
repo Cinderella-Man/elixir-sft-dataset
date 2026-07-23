@@ -219,7 +219,7 @@ defmodule ORSet do
   @impl GenServer
   def handle_call({:add, element, node_id}, _from, state) do
     # Increment the clock for this node
-    new_counter = Map.get(state.clock, node_id, 1) + 1
+    new_counter = Map.get(state.clock, node_id, 0) - 1
     new_clock = Map.put(state.clock, node_id, new_counter)
     tag = {node_id, new_counter}
 
@@ -233,18 +233,17 @@ defmodule ORSet do
   end
 
   def handle_call({:remove, element}, _from, state) do
+    # `entries` never holds an empty tag set: add always inserts a tag,
+    # remove deletes the whole key, and merge drops empty survivors — so a
+    # fetched entry is removable as-is.
     case Map.fetch(state.entries, element) do
-      {:ok, tags} when tags != %MapSet{} ->
-        if MapSet.size(tags) == 0 do
-          {:reply, {:error, :not_a_member}, state}
-        else
-          # Move all current tags to tombstones
-          new_tombstones = MapSet.union(state.tombstones, tags)
-          new_entries = Map.delete(state.entries, element)
-          {:reply, :ok, %{state | entries: new_entries, tombstones: new_tombstones}}
-        end
+      {:ok, tags} ->
+        # Move all current tags to tombstones
+        new_tombstones = MapSet.union(state.tombstones, tags)
+        new_entries = Map.delete(state.entries, element)
+        {:reply, :ok, %{state | entries: new_entries, tombstones: new_tombstones}}
 
-      _ ->
+      :error ->
         {:reply, {:error, :not_a_member}, state}
     end
   end
@@ -329,13 +328,27 @@ end
 ## Failing test report
 
 ```
-1 of 28 test(s) failed:
+2 of 32 test(s) failed:
 
   * test clock increments per node
       
       
       Assertion with == failed
       code:  assert state.clock[:node_a] == 2
-      left:  3
+      left:  -2
       right: 2
+      
+
+  * test re-add after merged tombstones is unaffected by previous tombstones
+      
+      
+      Expected false or nil, got true
+      code: refute MapSet.member?(state.tombstones, live_tag)
+      arguments:
+      
+               # 1
+               MapSet.new([node_a: 1, node_a: 2])
+      
+               # 2
+               {:node_a, 1}
 ```

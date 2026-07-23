@@ -72,7 +72,7 @@ defmodule TimeSeriesResampler do
 
       iex> data = [{100, 1.0}, {250, 2.0}, {600, 3.0}]
       iex> TimeSeriesResampler.resample(data, 200, agg: :mean, fill: :nil)
-      [{0, 1.5}, {200, nil}, {400, nil}, {600, 3.0}]
+      [{0, 1.0}, {200, 2.0}, {400, nil}, {600, 3.0}]
   """
 
   @type timestamp_ms :: integer()
@@ -229,7 +229,7 @@ end
 ## Failing test report
 
 ```
-19 of 23 test(s) failed:
+20 of 24 test(s) failed:
 
   * test :last picks the value with the highest timestamp in each bucket
       
@@ -267,5 +267,5 @@ end
       right: nil
       
 
-  (…15 more)
+  (…16 more)
 ```

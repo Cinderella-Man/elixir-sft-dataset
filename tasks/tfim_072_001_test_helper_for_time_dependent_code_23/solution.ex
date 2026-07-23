@@ -1,0 +1,4 @@
+    test "start_link without :initial starts frozen at 2024-01-01 00:00:00Z" do
+      {:ok, clock} = Clock.Fake.start_link([])
+      assert Clock.Fake.now(clock) == ~U[2024-01-01 00:00:00Z]
+    end

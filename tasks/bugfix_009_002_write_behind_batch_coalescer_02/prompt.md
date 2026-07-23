@@ -116,7 +116,14 @@ defmodule BatchCollector do
     case Map.fetch(state.batches, key) do
       :error ->
         # Requirement: First submit for a key starts the flush timer
-        timer_ref = Process.send_after(self(), {:flush_timer, key}, state.flush_interval_ms)
+        # The batch generation rides in the message: a stale timer whose batch
+        # already flushed (threshold path) can never fire a SUCCESSOR batch —
+        # key-presence alone cannot tell two generations apart. The send_after
+        # ref is kept separately so threshold flushes still cancel the timer.
+        gen = make_ref()
+
+        timer_ref =
+          Process.send_after(self(), {:flush_timer, key, gen}, state.flush_interval_ms)
 
         batch = %{
           # Prepend is O(1)
@@ -124,7 +131,8 @@ defmodule BatchCollector do
           callers: [from],
           flush_fn: flush_fn,
           max_batch_size: max_batch_size,
-          timer_ref: timer_ref
+          timer_ref: timer_ref,
+          gen: gen
         }
 
         new_state = put_in(state, [:batches, key], batch)
@@ -165,14 +173,16 @@ defmodule BatchCollector do
   end
 
   @impl GenServer
-  def handle_info({:flush_timer, key}, state) do
+  def handle_info({:flush_timer, key, gen}, state) do
     case Map.fetch(state.batches, key) do
-      # Requirement: Flush when timer fires and batch exists
-      {:ok, _batch} ->
+      # Requirement: flush when the timer fires and it is THIS batch's timer.
+      {:ok, %{gen: ^gen}} ->
         {:noreply, do_flush(key, state)}
 
-      # Ignore if already flushed via max_batch_size threshold
-      :error ->
+      # A ref mismatch is a stale timer for an earlier, already-flushed batch
+      # generation; :error means the batch flushed and no successor exists.
+      # Both are ignored harmlessly.
+      _ ->
         {:noreply, state}
     end
   end
@@ -228,7 +238,7 @@ end
 ## Failing test report
 
 ```
-14 of 15 test(s) failed:
+21 of 22 test(s) failed:
 
   * test single item flushes after timer
       no function clause matching in BatchCollector.submit/5
@@ -240,7 +250,7 @@ end
       no function clause matching in BatchCollector.submit/5
 
   * test concurrent submitters are batched together
-      {:EXIT, #PID<0.213.0>}: {:function_clause, [{BatchCollector, :submit, [#PID<0.214.0>, :sum, 1, #Function<6.119259636/1 in BatchCollectorTest."test concurrent submitters are batched together"/1>, []], [file: ~c".gen_staging/bugfix_009_002_write_behind_batch_coalescer_02_mutant.ex", line: 58]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c"lib/task/supervised.ex", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c"lib/task/supervised.ex", line: 40]}]}
+      {:EXIT, #PID<0.213.0>}: {:function_clause, [{BatchCollector, :submit, [#PID<0.214.0>, :sum, 1, #Function<13.70918796/1 in BatchCollectorTest."test concurrent submitters are batched together"/1>, []], [file: ~c".gen_staging/bugfix_009_002_write_behind_batch_coalescer_02_mutant.ex", line: 58]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c"lib/task/supervised.ex", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c"lib/task/supervised.ex", line: 40]}]}
 
-  (…10 more)
+  (…17 more)
 ```

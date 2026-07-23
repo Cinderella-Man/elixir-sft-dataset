@@ -89,7 +89,7 @@ defmodule SessionStore do
   @type state :: %{
           sessions: %{session_id() => session()},
           timeout_ms: non_neg_integer(),
-          cleanup_interval_ms: non_neg_integer(),
+          cleanup_interval_ms: non_neg_integer() | :infinity,
           clock: (-> integer())
         }
 
@@ -342,7 +342,7 @@ end
 ## Failing test report
 
 ```
-22 of 22 test(s) failed:
+25 of 25 test(s) failed:
 
   * test create returns a unique session id
       no match of right hand side value:
@@ -392,5 +392,5 @@ end
            }}
       
 
-  (…18 more)
+  (…21 more)
 ```
