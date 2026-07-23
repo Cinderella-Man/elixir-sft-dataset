@@ -181,11 +181,22 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    defects. Ledger: logs/g6_spotchecks.jsonl (14 rows). Standing
    practice (rule 8) continues at every future accept/reject tool.
 
-8. **[ ] Screen depth (G9) — decide by probe.** Run 3-solve
-   consistency on 10 of the ~50 keep/hard roots; if the 3-solve
-   verdict diverges from the recorded single-solve verdict on ≥2 of
-   10, run all 50 and update the difficulty metadata; otherwise close
-   the item with the probe evidence.
+8. **[IN PROGRESS 2026-07-23] Screen depth (G9) — probe LAUNCHED.**
+   Current standing hard-keep set is 27 roots (not ~50 — the rest
+   were fixed + re-screened green since): red latest screen row at
+   the CURRENT prompt sha AND entailed-keep in screen_triage.
+   Deterministic 10-root sample (seed "g9-2026-07-23", list in
+   scratchpad g9_sample.txt): 041_004, 007_002, 100_003, 013_002,
+   020_004, 101_003, 020_002, 020_003, 017_001, 108_003.
+   Probe = 3 fresh blind solves each (screen_blind_solve --rescreen,
+   3 sequential passes, solver=opus, same instrument+ledger as the
+   originals — probe rows are legitimate screen evidence; S6 stays
+   sha-fresh). Detached: logs/g9_probe.log; relaunch idempotent
+   (each pass appends; count last-3 rows per root at analysis).
+   DECISION RULE: a root DIVERGES if ≥2 of its 3 fresh solves go
+   green (single-solve red was luck/solver weakness); ≥2 of 10
+   divergent roots → run all 27 and update difficulty metadata;
+   else close on probe evidence.
 
 9. **[ ] Extension headroom (G8) — DECIDED in scope** (the goal
    literally says "extended"; deciding by probe, not by asking).
