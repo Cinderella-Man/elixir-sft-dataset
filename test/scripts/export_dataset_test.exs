@@ -21,6 +21,66 @@ defmodule Scripts.ExportDatasetTest do
     end
   end
 
+  describe "screen_difficulty/1 (majority-of-recent tier, G9 2026-07-23)" do
+    defp difficulty_from(rows) do
+      dir = Path.join(System.tmp_dir!(), "exp_diff_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+      path = Path.join(dir, "screen_blind.jsonl")
+      File.write!(path, Enum.map_join(rows, "", &(Jason.encode!(&1) <> "\n")))
+      on_exit(fn -> File.rm_rf!(dir) end)
+      ExportDataset.screen_difficulty(path)
+    end
+
+    test "a single red row stays keep_class; a single green row is blind_solvable" do
+      d =
+        difficulty_from([
+          %{task: "001_001_x_01", green: false},
+          %{task: "002_001_x_01", green: true}
+        ])
+
+      assert d["001_001"].tier == "keep_class"
+      assert d["002_001"].tier == "blind_solvable"
+    end
+
+    test "an old red followed by 2 fresh greens flips to blind_solvable (the probe class)" do
+      d =
+        difficulty_from([
+          %{task: "003_001_x_01", green: false},
+          %{task: "003_001_x_01", green: true},
+          %{task: "003_001_x_01", green: true}
+        ])
+
+      assert d["003_001"] == %{tier: "blind_solvable", attempts: 3, greens: 2}
+    end
+
+    test "a lucky last green does NOT flip a 1-of-3 history (the old last-row bug)" do
+      d =
+        difficulty_from([
+          %{task: "004_001_x_01", green: false},
+          %{task: "004_001_x_01", green: false},
+          %{task: "004_001_x_01", green: true}
+        ])
+
+      assert d["004_001"].tier == "keep_class"
+    end
+
+    test "a 2-row split reads keep_class (hard until a majority proves otherwise)" do
+      d =
+        difficulty_from([
+          %{task: "005_001_x_01", green: false},
+          %{task: "005_001_x_01", green: true}
+        ])
+
+      assert d["005_001"].tier == "keep_class"
+    end
+
+    test "only the last 3 verdicts vote; counts keep the full history" do
+      rows = for g <- [true, true, false, false, false], do: %{task: "006_001_x_01", green: g}
+      d = difficulty_from(rows)
+      assert d["006_001"] == %{tier: "keep_class", attempts: 5, greens: 2}
+    end
+  end
+
   describe "split_of/1 (deterministic, content-free, docs/16 §3)" do
     test "the four measured val families stay val; a known train family stays train" do
       # These four ARE the current val split (docs/15, 2026-07-14). If this

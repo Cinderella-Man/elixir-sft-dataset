@@ -66,11 +66,15 @@ One JSONL row per task directory, chat-shaped:
 
 The three difficulty fields (T1.4 sliver d, 2026-07-19) are ADVISORY,
 ledger-derived (`logs/screen_blind.jsonl` aggregated per `a_b` root):
-`difficulty_tier` is `blind_solvable` (the root's latest blind verdict is
-green), `keep_class` (latest red — the judged-keep hard-task family), or
-`unscreened`; `screen_attempts`/`screen_greens` are the raw counts. Derived
-shapes inherit their owner root's tier — a training run can curriculum-sort
-or re-weight by tier without re-deriving anything.
+`difficulty_tier` is `blind_solvable`, `keep_class` (the judged-keep
+hard-task family), or `unscreened`; `screen_attempts`/`screen_greens` are
+the raw counts. Since 2026-07-23 (the G9 probe: 5 of 10 sampled "hard"
+roots solved ≥2 of 3 fresh blind attempts — single verdicts are
+luck-contaminated) the tier is the MAJORITY of the root's last up-to-3
+verdicts: one row keeps its verdict, a 2-row split reads `keep_class`
+(hard until a majority proves otherwise). Derived shapes inherit their
+owner root's tier — a training run can curriculum-sort or re-weight by
+tier without re-deriving anything.
 
 - **`user` is `prompt.md` verbatim.** Every prompt in this corpus is already a
   complete, self-describing request (the blind-solve screen, S6, is precisely

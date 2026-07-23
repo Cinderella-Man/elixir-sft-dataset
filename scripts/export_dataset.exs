@@ -156,9 +156,18 @@ defmodule ExportDataset do
         end)
         |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
         |> Map.new(fn {ab, greens} ->
+          # Tier by MAJORITY of the last (up to) 3 verdicts, not the single
+          # latest row: the 2026-07-23 G9 probe proved single-solve verdicts
+          # are luck-contaminated (5 of 10 sampled "hard" roots went green on
+          # ≥2 of 3 fresh solves). A 1-row history keeps its row's verdict; a
+          # 2-row split reads keep_class (hard until a majority proves
+          # otherwise). Counts stay full-history — the fields are advisory.
+          recent = Enum.take(greens, -3)
+          solvable? = Enum.count(recent, & &1) * 2 > length(recent)
+
           {ab,
            %{
-             tier: if(List.last(greens), do: "blind_solvable", else: "keep_class"),
+             tier: if(solvable?, do: "blind_solvable", else: "keep_class"),
              attempts: length(greens),
              greens: Enum.count(greens, & &1)
            }}
