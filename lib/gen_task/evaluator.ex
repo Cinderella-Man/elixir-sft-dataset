@@ -715,8 +715,10 @@ defmodule GenTask.Evaluator do
           | {:warnings, non_neg_integer()}
           | {:warnings, non_neg_integer(), [String.t()]}
           | {:flaky, integer()}
+          | {:dialyzer, String.t()}
           | {:semantic_floor, float(), [String.t()]}
           | {:failed, grade()}
+          | term()
         ) :: String.t()
   def repair_report(:timeout_or_crash) do
     "The evaluation timed out or crashed (likely an infinite loop or a process that " <>
@@ -778,9 +780,38 @@ defmodule GenTask.Evaluator do
       "fake clock instead of real sleeps, unique names/ids) so the harness passes at any seed."
   end
 
+  # Scar #4 (docs/14 §6): the spec-truth gate's criterion must be stated in the
+  # repair prompt. `detail` is the dialyzer warning text (it names the exact
+  # @spec/line); the dominant case is a GenServer `start_link` spec that omits
+  # `:ignore` / `{:error, {:already_started, pid}}`.
+  def repair_report({:dialyzer, detail}) do
+    "The files graded green, but the module's @spec contracts fail dialyzer against " <>
+      "the deps PLT — a shipped @spec that disagrees with what the code can actually " <>
+      "return is a lie, and a lying spec must never become a training target. Correct " <>
+      "the @spec(s) so they tell the truth about every value each function can return. " <>
+      "For a GenServer/Agent `start_link`, spec the return as `GenServer.on_start()` " <>
+      "(the idiom in this corpus) rather than a narrower `{:ok, pid} | {:error, term}` " <>
+      "— the success typing also includes `:ignore` and `{:error, {:already_started, " <>
+      "pid}}`; a helper's spec must likewise cover every branch it returns. Fix only " <>
+      "the specs (or the code, if the spec states the intended contract) — do NOT " <>
+      "weaken test_harness.exs or change behavior. The warning(s):\n" <>
+      detail
+  end
+
   def repair_report({:failed, :timeout_or_crash}), do: repair_report(:timeout_or_crash)
 
   def repair_report({:failed, {:ok, json}}), do: report_from_json(json)
+
+  # Defensive catch-all: a reject reason with no tailored clause must degrade to a
+  # generic repair instruction, NEVER a FunctionClauseError that crashes the whole
+  # cycle and silently loses the unit (the 2026-07-23 G8-probe bug: the then-new
+  # `{:dialyzer, _}` shape reached here unhandled). Known shapes keep their tailored
+  # messages above (enforced by the totality test); this only guards future additions.
+  def repair_report(other) do
+    "The files did not pass a generation gate (#{inspect(other)}). Fix solution.ex " <>
+      "and/or test_harness.exs to satisfy it without weakening the tests or changing " <>
+      "the module's documented behavior."
+  end
 
   defp report_from_json(json) do
     compile_errors = json["compile_errors"] || []

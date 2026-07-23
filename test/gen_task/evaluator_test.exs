@@ -373,6 +373,54 @@ defmodule GenTask.EvaluatorTest do
       assert report =~ "order"
     end
 
+    test "describes a dialyzer spec-truth failure and names the fix (G8 2026-07-23)" do
+      detail =
+        "solution.ex:65: The success typing for start_link/1 implies :ignore but the " <>
+          "specification return is {:error, _} | {:ok, pid()}"
+
+      report = Evaluator.repair_report({:dialyzer, detail})
+      assert report =~ "@spec"
+      assert report =~ "dialyzer"
+      assert report =~ ":ignore"
+      # points at the corpus idiom (395 golds use it) rather than an ad-hoc widening
+      assert report =~ "GenServer.on_start()"
+      # the criterion is named (scar #4) — the exact warning is carried through
+      assert report =~ detail
+      assert report =~ "test_harness.exs"
+    end
+
+    # Regression guard for the 2026-07-23 G8-probe crash: the then-new
+    # `{:dialyzer, _}` reject shape reached repair_report/1 with no clause and
+    # raised FunctionClauseError, killing the whole variation cycle (ERROR, not a
+    # clean reject) and silently losing the unit. Every reject reason accept?/4 can
+    # produce must yield a repair string, and an unknown shape must degrade — never
+    # crash.
+    test "every reject reason yields a repair report; unknown shapes degrade, none crash" do
+      green_json = %{"compiled" => true, "test_failures" => [], "compile_errors" => []}
+
+      reasons = [
+        :timeout_or_crash,
+        {:failed, :timeout_or_crash},
+        {:failed, {:ok, green_json}},
+        {:quality, "no @spec on any public function"},
+        {:dialyzer, "solution.ex:1: the spec disagrees with the success typing"},
+        {:vacuous, "the raise-mutant of split/2 still passes"},
+        {:semantic_floor, 0.3, ["L1 s1: true -> false"]},
+        {:flaky, 42}
+      ]
+
+      for reason <- reasons do
+        report = Evaluator.repair_report(reason)
+        assert is_binary(report) and report != "", "no repair report for #{inspect(reason)}"
+      end
+
+      # A future gate's unrecognized shape must NOT raise — it degrades to a generic
+      # (but still actionable) instruction that names the reason.
+      fallback = Evaluator.repair_report({:some_future_gate, "detail"})
+      assert is_binary(fallback)
+      assert fallback =~ "some_future_gate"
+    end
+
     test "shapes compile errors from the json" do
       json = %{
         "compiled" => false,
