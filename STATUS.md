@@ -90,11 +90,19 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
      031_001 validate_row simplification / 008_004; spec widenings
      010_001+010_003 :infinity; doc-truthing 035_001 + 101_001).
      Invisible to the perfect sweep: old golds still PASS current
-     harnesses — only byte-identity catches the class. Treatment:
-     delete + topup remint per idea (ideas 3, 8, 9, 10, 19, 31, 35,
-     72, 74, 101), AFTER the 109 pilot is reviewed in detail (rule 9).
-     Run with GEN_SKIP_VARIATIONS=1 GEN_SKIP_FIM=1 (provably
-     LLM-free; registry keeps tracking those separately).
+     harnesses — only byte-identity catches the class.
+     LAUNCHED 2026-07-23 (109 pilot reviewed clean first, rule 9):
+     33 dirs deleted (git-clean, recoverable), then detached
+     `scripts/run_detached.sh logs/topup_stale_golds_remint.log
+     bash -c 'for i in 3 8 9 10 19 31 35 72 74 101; do
+     GEN_ONLY=topup GEN_SKIP_VARIATIONS=1 GEN_SKIP_FIM=1
+     mix run scripts/generate.exs $i; done'` — deterministic/LLM-free
+     (variations+fim skipped; all other miners are local-eval).
+     Relaunch idempotent. VERIFY AFTER: resync_bugfix_embeds
+     corpus-wide 0 stale_gold, audit_bugfix on all 33 fresh pairs,
+     validate perfect+mutants scoped to the 11 families, embeds+format
+     0/0, hand-read sample. Riders (tfim/sfim/etc. carves the topup
+     mints for these ideas) verified by the same scoped battery.
 
 5. **[ ] Prompt-register variety (G3).** Template rotation for the
    six templated shapes (deterministic, no LLM), then LLM register
@@ -113,7 +121,19 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    so rotation lands there and both paths inherit it; (d) fim/tfim
    "# TODO" blank markers and the fence layout are carver contracts —
    frozen; (e) after rotation, the full resync battery regenerates
-   derivative prompts and check_embeds/format gates must stay 0/0.
+   derivative prompts and check_embeds/format gates must stay 0/0;
+   (f) DISCOVERED 2026-07-23 pre-implementation: THREE MORE frozen
+   anchor classes — specfim's resync recovers name/arity from the
+   PROSE SENTENCE "the `@spec` for `X` has been removed" (regex with
+   \n? wrap tolerance); the numbered-namespace shapes are sniffed by
+   H1 TITLE LINES ("# Implement the missing function"/"...file" in
+   format_corpus.exs shape pairs + resync_sfim/bundlefim sniffers)
+   alongside their interpolated headings ("## The module with `X`
+   missing" / "## The bundle with `X` missing"); and rotated prose
+   in contract_text scope (wt/tfim/dedoc BEFORE-marker prose; whole
+   prompt for bugfix/tdd) must never add Process.send_after or
+   :interval/:period vocabulary (S9 timer-scan tokens). Full frozen
+   inventory + variant design: docs/20-register-rotation-design.md.
 
 6. **[ ] @doc prose truth on existing golds (G5).** Sweep @doc claims
    vs prompt contract; un-promised claims get prompt sentences +
