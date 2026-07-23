@@ -76,10 +76,24 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    modules' md5 bump auto-reopens their reject ledgers (docs/12
    §5.1.12) — next topup visits re-converge them at identical
    verdicts, bounded local-eval cost.
-   REMAINING (the LLM half): register rewrites of the ~305 monotone
-   seed prompts (301/332 open "Write me an Elixir", census
-   2026-07-23), each with a mandatory blind re-screen + full family
-   embed cascade; detached + sha-ledgered.
+   REMAINING (the LLM half): TOOL BUILT + COMMITTED 2026-07-23
+   (scripts/rewrite_seed_registers.exs — self-test 6/6, census 232
+   eligible single-module monotone roots; per-root: deterministic
+   register target, no-drift rewrite contract, token/number vet,
+   MANDATORY blind re-screen, land + cascade + S6-fresh row;
+   sha-ledgered logs/register_rewrites.jsonl, resumable).
+   EXECUTION QUEUE (transport is serial — one LLM sweep at a time):
+   1. after the G9 full sweep exits → rule-9 PILOT: `mix run
+      scripts/rewrite_seed_registers.exs -- --limit 3`, hand-read
+      all three rewrites in full + their cascades before trusting;
+   2. G8 probe (short) next — see item 9;
+   3. then the full 232-root sweep DETACHED overnight:
+      `scripts/run_detached.sh logs/register_rewrites.log mix run
+      scripts/rewrite_seed_registers.exs`; relaunch idempotent.
+   ALSO QUEUED (lib edit, land when no generate.exs alive): the
+   variations meta-prompt lacks the register-variety directive the
+   base_task meta-prompt already carries — add it so G8's new
+   variation mints vary their register too.
    DESIGN CONSTRAINTS (verified 2026-07-23 before implementing):
    (a) the machinery PARSES structural markers inside these prompts —
    "## New specification" (adapt: resync + lint + evaluator
