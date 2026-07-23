@@ -183,22 +183,46 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    itself at the next export refresh from these very rows. Full
    record → docs/15.
 
-9. **[ ] Extension headroom (G8) — DECIDED in scope** (the goal
-   literally says "extended"; deciding by probe, not by asking).
-   Probe first: 2 strong base families × 1 new variation each through
-   the full loop, then the SAME instruments that found this month's
-   debt (semantic_review on the new roots + a rubric spot-judge);
-   acceptance = zero triage-grade findings (the docs/12 §5.5 bar).
-   Pass → size and run the extension loop as the LAST activity before
-   the finish line (so new mints carry every gate from the items
-   above, incl. the varied register). Findings → fix the generator,
-   regenerate, re-probe. Probe earliest after item 5 (G3).
-   FAMILIES SELECTED 2026-07-23 on ledger evidence: ideas 91 + 65 —
-   both at 1.00 MIN semantic-kill across every measured root (the
-   only ideas at a perfect floor besides 34), 4 variations each on
-   disk, domain-diverse (91 data-driven FSM engine / 65 saga
-   orchestration). Probe = one new variation each (next free b)
-   through the standing loop.
+9. **[IN PROGRESS 2026-07-23] Extension headroom (G8) — PROBE LAUNCHING.**
+   Lever LANDED (commit 4e1fe704a): variation slot count is Config-tunable
+   (GEN_VARIATION_SLOTS, default 3); raising to 4 opens b=5 for an
+   already-converged idea. ONE source of truth across Work/Variations/Catalog
+   (all derive b in 2..(slots+1)); 359 gen_task tests green.
+   FAMILIES: ideas 91 (data-driven FSM) + 65 (saga orchestration) — both at
+   1.00 MIN semantic-kill on ledger evidence, base+3 variations on disk (b=1..4),
+   no b>=5 anywhere in the corpus (verified). Dry plan (GenTask.CLI.plan, no LLM):
+   at slots=4 ONLY the base 091_001/065_001 seed carries needs_variations?=true
+   (missing = 4-3 = 1) → exactly one new variation each into slot b=5.
+   PROBE = VARIATIONS-ONLY (all derived stages skipped so it mints only the two
+   _01 roots being judged; Work.derived(cfg)=[] confirmed with the full skip set
+   incl. GEN_SKIP_TDD). LAUNCH (detached, logs/g8_probe.log):
+     mv logs/attempts aside first (surgical: keeps the corpus-wide
+     maybe_mint_repairs step — 223 mintable/89 exist/134 candidate-new — OUT of
+     the probe; restore + resolve the 134 separately after, see item 4c).
+     bash -c 'export GEN_ONLY=topup GEN_VARIATION_SLOTS=4 GEN_SKIP_FIM=1
+       GEN_SKIP_WRITE_TEST=1 GEN_SKIP_TEST_FIM=1 GEN_SKIP_BUGFIX=1 GEN_SKIP_ADAPT=1
+       GEN_SKIP_DEDOC=1 GEN_SKIP_SFIM=1 GEN_SKIP_TDD=1 GEN_SKIP_SPECFIM=1
+       GEN_SKIP_BUNDLEFIM=1; mix run scripts/generate.exs 91; mix run
+       scripts/generate.exs 65'
+   Relaunch idempotent (both variations add-only; a done b=5 is skipped).
+   AFTER the two b=5 dirs land: restore logs/attempts; run the SAME debt-finding
+   instruments on the two new roots — semantic_review.exs --single <dir> and
+   rubric_judge.exs --single <dir>; acceptance = ZERO triage-grade findings
+   (docs/12 §5.5 bar). Read both variations in FULL (rule 9). PASS → the
+   generator produces gold NEW data; size + run the full extension loop as the
+   LAST activity (mints every derivative + varied register). FAIL → fix the
+   GENERATOR, regenerate, re-probe (never hand-fix the probe data).
+
+   4c. **[ ] Pending repair-mint (found 2026-07-23 during G8 prep).**
+   mint_repairs.exs --dry-run: 1098 attempt chains, 223 mintable (rejected→
+   accepted) pairs, 89 already on disk (=~90 repair_ dirs), 134 candidate-new
+   never minted. Likely most fail real verification (a "rejected" attempt that
+   actually grades green teaches nothing → correctly skipped), but unconfirmed.
+   RESOLVE after the G8 probe: run mint_repairs.exs (real, DETACHED — up to ~268
+   evaluator grades) to definitively mint the truly-mintable ones + close the
+   rest as correctly-skipped. Deterministic, add-only, idempotent, self-verifying
+   (broken grades non-green AND fix grades green, both real evaluator). Review a
+   sample (rule 9) + commit new repair_ dirs on their own.
 
 10. **[ ] Finish line.** Full sweeps (perfect + fim + mutants +
     decontam), export refresh, README — then this file becomes the
