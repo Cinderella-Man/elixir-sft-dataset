@@ -91,12 +91,12 @@ defmodule GenTask.Variations do
   # Public (@doc false) for the same testability reason as `duplicate_public_fn_set?/2`.
   @doc false
   @spec taken_public_fn_sets(map(), Config.t()) :: [MapSet.t()]
-  def taken_public_fn_sets(base, %Config{tasks_dir: tasks_dir}) do
+  def taken_public_fn_sets(base, %Config{tasks_dir: tasks_dir, variation_slots: slots}) do
     base_set = public_fn_set(base.files["solution.ex"])
     a = Catalog.pad3(base.num)
 
     sibling_sets =
-      for b <- 2..4,
+      for b <- 2..(slots + 1),
           dir <- Path.wildcard("#{tasks_dir}/#{a}_#{Catalog.pad3(b)}_*_01"),
           File.dir?(dir),
           sol = Path.join(dir, "solution.ex"),
@@ -130,17 +130,20 @@ defmodule GenTask.Variations do
 
   # Which of the V1/V2/V3 slots (b = 2/3/4) are still free, and the display names of
   # the variations that already exist (for the distinctness hint).
-  defp variation_gaps(base, %Config{tasks_dir: tasks_dir}) do
+  defp variation_gaps(base, %Config{tasks_dir: tasks_dir} = cfg) do
     a = Catalog.pad3(base.num)
+    # b range derives from Config.variation_slots (the G8 extension lever) —
+    # must agree with Work.missing_variations/Catalog.count_variations.
+    bs = 2..(cfg.variation_slots + 1)
 
     occupied =
-      for b <- 2..4,
+      for b <- bs,
           dir <- Path.wildcard("#{tasks_dir}/#{a}_#{Catalog.pad3(b)}_*_01"),
           File.dir?(dir),
           into: %{},
           do: {b, dir_display_name(dir)}
 
-    free = Enum.reject(2..4, &Map.has_key?(occupied, &1))
+    free = Enum.reject(bs, &Map.has_key?(occupied, &1))
     {free, Map.values(occupied)}
   end
 

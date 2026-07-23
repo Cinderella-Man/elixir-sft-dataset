@@ -254,12 +254,17 @@ defmodule GenTask.Work do
   # Per-type missing/2 — the ONE place these rules live
   # ---------------------------------------------------------------------------
 
-  @variation_slots 3
-
   defp missing_variations(%Catalog.Seed{base?: false}, _cfg), do: 0
 
+  # Slots are Config-tunable (GEN_VARIATION_SLOTS, default 3 = b 002..004):
+  # raising it is the G8 extension lever — every counter below derives its b
+  # range from the same field, so the loop, the registry, and work_status
+  # agree on what "converged" means.
   defp missing_variations(%Catalog.Seed{} = seed, cfg) do
-    max(@variation_slots - Catalog.count_variations(cfg.tasks_dir, a(seed)), 0)
+    max(
+      cfg.variation_slots - Catalog.count_variations(cfg.tasks_dir, a(seed), cfg.variation_slots),
+      0
+    )
   end
 
   # FIM/wtest/tfim all grade against the parent harness; a gradable-skip

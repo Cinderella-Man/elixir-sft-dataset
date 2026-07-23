@@ -43,6 +43,7 @@ defmodule GenTask.Config do
           promise_audit: boolean(),
           audit_max_tests: pos_integer(),
           tfim_max_per_task: pos_integer(),
+          variation_slots: pos_integer(),
           max_turns: pos_integer(),
           limit: pos_integer() | nil,
           from: pos_integer() | nil,
@@ -108,6 +109,7 @@ defmodule GenTask.Config do
             # and the docs/16 §4 weight (0.25) is the near-duplication
             # counterweight. Phase-3 seeds mint at the same bound (Task B).
             tfim_max_per_task: 30,
+            variation_slots: 3,
             max_turns: 2,
             limit: nil,
             from: nil,
@@ -174,6 +176,7 @@ defmodule GenTask.Config do
       promise_audit: env_bool_default(env_fun, "GEN_PROMISE_AUDIT", true),
       audit_max_tests: env_int(env_fun, "GEN_AUDIT_MAX_TESTS", 6),
       tfim_max_per_task: env_int(env_fun, "GEN_TFIM_MAX_PER_TASK", 30),
+      variation_slots: env_int(env_fun, "GEN_VARIATION_SLOTS", 3),
       max_turns: env_int(env_fun, "GEN_MAX_TURNS", 2),
       limit: env_int(env_fun, "GEN_LIMIT", nil),
       from: env_int(env_fun, "GEN_FROM", nil),

@@ -257,9 +257,9 @@ defmodule GenTask.Catalog do
   end
 
   @doc "Number of variation `_01` dirs (V1..V3 → `_002`.._004`) present for idea `a`."
-  @spec count_variations(String.t(), String.t()) :: non_neg_integer()
-  def count_variations(tasks_dir, a) do
-    Enum.count(2..4, fn b ->
+  @spec count_variations(String.t(), String.t(), pos_integer()) :: non_neg_integer()
+  def count_variations(tasks_dir, a, slots \\ 3) do
+    Enum.count(2..(slots + 1), fn b ->
       "#{tasks_dir}/#{a}_#{pad3(b)}_*_01"
       |> Path.wildcard()
       |> Enum.any?(&File.dir?/1)
@@ -376,7 +376,7 @@ defmodule GenTask.Catalog do
     "#{cfg.tasks_dir}/*_01"
     |> Path.wildcard()
     |> Enum.filter(&File.dir?/1)
-    |> Enum.map(&variation_ref/1)
+    |> Enum.map(&variation_ref(&1, cfg.variation_slots))
     |> Enum.reject(&is_nil/1)
     |> Enum.reduce(0, fn %{num: num, vnum: vnum, name: name, desc: desc}, count ->
       case insert_variation!(cfg, num, vnum, name, desc) do
@@ -386,15 +386,15 @@ defmodule GenTask.Catalog do
     end)
   end
 
-  # A variation `_01` dir (b in 2..4) → the fields needed to (re)catalog it, or nil.
-  defp variation_ref(dir) do
+  # A variation `_01` dir (b in 2..(slots+1)) → the fields needed to (re)catalog it, or nil.
+  defp variation_ref(dir, slots) do
     parts = dir |> Path.basename() |> String.split("_")
 
     with [a, b | rest] when rest != [] <- parts,
          "01" <- List.last(parts),
          {num, ""} <- Integer.parse(a),
          {bnum, ""} <- Integer.parse(b),
-         true <- bnum in 2..4 do
+         true <- bnum in 2..(slots + 1) do
       slug = rest |> Enum.drop(-1) |> Enum.join("_")
 
       %{
