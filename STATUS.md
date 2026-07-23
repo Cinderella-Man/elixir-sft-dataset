@@ -109,20 +109,22 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    is a contradiction [probe_count only increments, never decremented on
    completion + handle_call serializes → it bounds CUMULATIVE probes],
    spot-verified against code lines 29/138/141/175/179). Census: 335 roots.
-   FULL SWEEP LAUNCHED 2026-07-24 (logs/doc_truth.log, resumes past the 5
-   piloted rows in logs/doc_truth.jsonl → 330 remaining):
-     scripts/run_detached.sh logs/doc_truth.log mix run \
-       scripts/doc_truth_review.exs
-   Report-only (writes findings, changes NOTHING). Relaunch idempotent
-   (rows keyed by prompt+solution+judge shas).
-   AFTER: --report to summarize; then the FIX LANE — each finding is a
-   HYPOTHESIS verified per-artifact-read before any edit (rule 10 / standing
-   lesson; the register rewrite preserved all content so contracts are
-   unchanged). Real contradictions → fix the doc; unpromised claims → soften/
-   cut or add a prompt sentence + anchored test; over-reads → refute + skip.
-   Each doc/gold edit cascades (embeds + fim golds + bugfix pairs) per the
-   standing lesson. Two-tier (rule 7): if a class is generator-preventable,
-   add the accept-time gate.
+   FULL SWEEP DONE 2026-07-24 01:48 (335 roots, logs/doc_truth.jsonl):
+   273 clean, 62 roots with findings, **74 findings total** = 42 contradiction
+   + 31 unpromised + 1 phantom_api. Report-only (changed nothing).
+   FIX LANE (IN PROGRESS) — each finding is a single-pass judge HYPOTHESIS
+   (no adversarial verify in this tool), so VERIFY per-artifact before any
+   edit (rule 10 / the 101_003 near-miss). Read the ledger for all 74:
+     python3 -c "import json;[print(r['task'],f['class'],f['why'][:80]) for l in
+       open('logs/doc_truth.jsonl') for r in [json.loads(l)] for f in r.get('findings',[])]"
+   Fix types: contradiction → align the @doc/@moduledoc to the harness-validated
+   CODE (doc drifted); unpromised → soften/cut the claim OR add a prompt sentence
+   + anchored test; phantom_api (103_001 purge/4→purge/3) → fix the doc arity;
+   over-reads → skip. Doc edits don't change behavior (perfect score unaffected)
+   but DO change solution.ex → cascade the embed resync battery (--apply) per
+   batch + re-verify (check_embeds 0, perfect on touched, S6 fresh if any prompt
+   touched). Batch-commit. Two-tier (rule 7): a generator-preventable class gets
+   an accept-time doc-truth gate. TRACK progress: mark fixed/skipped per finding.
 
 7. **[DONE 2026-07-23] Family spot-checks (G6, CONTEXT rule 8) —
    CLOSED.** Deterministic sha-ordered stratified sample (seed string
