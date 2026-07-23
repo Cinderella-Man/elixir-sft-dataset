@@ -83,17 +83,19 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    MANDATORY blind re-screen, land + cascade + S6-fresh row;
    sha-ledgered logs/register_rewrites.jsonl, resumable).
    EXECUTION QUEUE (transport is serial — one LLM sweep at a time):
-   1. after the G9 full sweep exits → rule-9 PILOT: `mix run
-      scripts/rewrite_seed_registers.exs -- --limit 3`, hand-read
-      all three rewrites in full + their cascades before trusting;
-   2. G8 probe (short) next — see item 9;
-   3. then the full 232-root sweep DETACHED overnight:
-      `scripts/run_detached.sh logs/register_rewrites.log mix run
-      scripts/rewrite_seed_registers.exs`; relaunch idempotent.
-   ALSO QUEUED (lib edit, land when no generate.exs alive): the
-   variations meta-prompt lacks the register-variety directive the
-   base_task meta-prompt already carries — add it so G8's new
-   variation mints vary their register too.
+   PILOT ✓ (9ec28fda3, 3/3 verified). G8 probe ✓ (item 9). Meta-prompt
+   lib edit ✓ (d8afb60a9). NOW: the full sweep is the CURRENT job.
+   FULL SWEEP LAUNCHED 2026-07-23 (logs/register_rewrites.log, resumes
+   from the 3 pilot rows in logs/register_rewrites.jsonl → ~229 remaining):
+     scripts/run_detached.sh logs/register_rewrites.log mix run \
+       scripts/rewrite_seed_registers.exs
+   Per root: deterministic register, no-drift rewrite (every backtick token
+   + number survives, len 0.6-1.8x), machine vet, MANDATORY blind re-screen
+   (reject → old prompt stands), land + cascade resync + S6-fresh row.
+   Relaunch idempotent (ledger keyed by old prompt sha; done roots skipped).
+   AFTER exit: verify a sample of landed rewrites in full (rule 9); confirm
+   the cascade gates (check_embeds 3889/0, resync dry 0, format 0, S6 fresh);
+   commit + push; then this item is DONE (→ docs/15).
    DESIGN CONSTRAINTS (verified 2026-07-23 before implementing):
    (a) the machinery PARSES structural markers inside these prompts —
    "## New specification" (adapt: resync + lint + evaluator
