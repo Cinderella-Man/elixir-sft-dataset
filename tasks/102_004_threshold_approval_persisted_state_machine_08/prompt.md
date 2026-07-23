@@ -1,11 +1,8 @@
 # Implement the missing function
 
-Below is the complete specification of a task, followed by a working,
-fully tested module that solves it — except that `get_state` has been
-removed: every clause body is blanked to `# TODO`. Implement exactly that
-function so the whole module passes the task's full test suite again.
-Change nothing else — every other function, attribute, and clause must
-stay exactly as shown.
+The specification below is followed by its complete, tested solution —
+minus `get_state`, whose clause bodies are all `# TODO`. Supply that one
+function; the rest of the module is fixed and must stay exactly as shown.
 
 ## The task
 
@@ -457,6 +454,5 @@ defmodule StateMachine do
 end
 ```
 
-Give me only the complete implementation of `get_state` (including any
-`@doc`/`@spec`/`@impl` lines that belong directly above it) — the
-function alone, not the whole module.
+Output only `get_state` (with any `@doc`/`@spec`/`@impl` lines that belong
+directly above it) — the single function, not the module.

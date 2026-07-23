@@ -16,9 +16,28 @@ defmodule GenTask.SpecFimTemplate do
   @spec marker() :: String.t()
   def marker, do: "# TODO: @spec"
 
-  @doc "The full prompt.md body for a spec-FIM dir."
-  @spec prompt(String.t(), pos_integer(), String.t()) :: String.t()
-  def prompt(name, arity, skeleton) do
+  @doc """
+  The full prompt.md body for a spec-FIM dir.
+
+  The register rotates by `unit_id` (`GenTask.Register`, docs/20). FROZEN
+  across variants: the recovery SENTENCE — `the `@spec` for` at line end
+  followed by the backticked `name/arity` at the next line start, then
+  ` has been removed` (the resync regex allows only an optional newline
+  between "for" and the backtick — a space breaks recovery) — plus the
+  "## The module with the `@spec` for `name/arity` missing" heading, the
+  fence layout, and the `# TODO: @spec` marker.
+  """
+  @spec prompt(String.t(), pos_integer(), String.t(), String.t()) :: String.t()
+  def prompt(name, arity, skeleton, unit_id) do
+    render(
+      GenTask.Register.variant(unit_id),
+      name,
+      arity,
+      String.trim_trailing(skeleton, "\n")
+    )
+  end
+
+  defp render(0, name, arity, skeleton) do
     """
     # Write the missing @spec
 
@@ -31,11 +50,51 @@ defmodule GenTask.SpecFimTemplate do
     ## The module with the `@spec` for `#{name}/#{arity}` missing
 
     ```elixir
-    #{String.trim_trailing(skeleton, "\n")}
+    #{skeleton}
     ```
 
     Give me only the `@spec` attribute — the attribute alone (however many
     lines it spans), not the whole module.
+    """
+  end
+
+  defp render(1, name, arity, skeleton) do
+    """
+    # Reconstruct the missing typespec
+
+    In the otherwise-complete module below, the `@spec` for
+    `#{name}/#{arity}` has been removed; `# TODO: @spec` holds its place.
+    Write that one attribute — a `@spec` for `#{name}/#{arity}` faithful to
+    the arguments, guards, and every return shape the code can actually
+    produce. Nothing else changes.
+
+    ## The module with the `@spec` for `#{name}/#{arity}` missing
+
+    ```elixir
+    #{skeleton}
+    ```
+
+    Reply with the `@spec` attribute alone, however many lines it needs —
+    not the module.
+    """
+  end
+
+  defp render(2, name, arity, skeleton) do
+    """
+    # Fill in one @spec
+
+    Below: a working module where the `@spec` for
+    `#{name}/#{arity}` has been removed (see the `# TODO: @spec` marker).
+    Provide exactly that typespec, consistent with the implementation's
+    arguments, guards, and all reachable return shapes. No other edits.
+
+    ## The module with the `@spec` for `#{name}/#{arity}` missing
+
+    ```elixir
+    #{skeleton}
+    ```
+
+    The `@spec` attribute only — nothing more.
     """
   end
 end

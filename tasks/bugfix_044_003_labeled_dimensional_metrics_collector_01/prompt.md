@@ -1,11 +1,12 @@
-# Fix the bug
+# Debug and repair this module
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+A colleague shipped the module below for the task described next, and one
+behavior bug made it through review. The test suite (not shown here)
+produces the failure report at the bottom. Track the bug down and repair
+it — keep the diff minimal and leave working code exactly as it is. Reply
+with the complete corrected module.
 
-## The task the module implements
+## What the module is supposed to do
 
 Write me an Elixir module called `Metrics` that collects **dimensional (labeled) metrics** using ETS for fast, concurrent-safe storage. Unlike a flat counter collector, each metric is identified by a name *plus a set of labels* (a map, e.g. `%{method: "GET", status: 200}`), so the same metric name can carry many independent label combinations — exactly like Prometheus time series.
 

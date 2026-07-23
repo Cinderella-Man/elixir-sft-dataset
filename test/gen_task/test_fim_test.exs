@@ -106,7 +106,9 @@ defmodule GenTask.TestFimTest do
       md =
         TestFim.prompt_md(
           "defmodule Mod do\n  def go, do: :ok\nend",
-          "defmodule T do\n  # TODO\nend"
+          "defmodule T do\n  # TODO\nend",
+          "test",
+          "tfim_x_01"
         )
 
       assert length(Regex.scan(~r/```elixir/, md)) == 2

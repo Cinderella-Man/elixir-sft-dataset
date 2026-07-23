@@ -1,11 +1,11 @@
-# Fix the bug
+# One bug. Find it. Fix it.
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+The module below implements the task that follows, except for a single
+behavior bug. The bottom of this prompt shows the real failure report from
+its (hidden) test suite. Deliver the full corrected module: smallest
+possible change, no restructuring, nothing else touched.
 
-## The task the module implements
+## Target behavior
 
 Write me an Elixir Plug-based API module called `PathVersionApi.Router` that serves `GET /api/:version/users/:id` where the version lives in the **URL path** (e.g. `/api/v1/users/1`), and where older representations are produced by a **downgrade migration chain** applied to a single canonical latest document rather than by hand-written per-version render functions.
 

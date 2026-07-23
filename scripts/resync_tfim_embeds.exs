@@ -78,7 +78,8 @@ defmodule ResyncTfimEmbeds do
         TestFim.prompt_md(
           module_src,
           TestFim.skeletonize(harness, block),
-          TestFim.kind_of(harness, block)
+          TestFim.kind_of(harness, block),
+          Path.basename(dir)
         )
 
       prompt_path = Path.join(dir, "prompt.md")

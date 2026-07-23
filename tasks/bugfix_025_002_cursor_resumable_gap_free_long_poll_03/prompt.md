@@ -1,11 +1,11 @@
-# Fix the bug
+# One bug. Find it. Fix it.
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+The module below implements the task that follows, except for a single
+behavior bug. The bottom of this prompt shows the real failure report from
+its (hidden) test suite. Deliver the full corrected module: smallest
+possible change, no restructuring, nothing else touched.
 
-## The task the module implements
+## Target behavior
 
 Write me a set of Elixir modules that implement a **cursor-resumable, gap-free** long-polling notifications endpoint. Unlike a naive long poll (which silently drops any notification published in the window between two polls), this variant hands every response a monotonic **cursor** and keeps a short per-user replay buffer, so a client that echoes its last cursor back never misses an event — even one published while it was not connected.
 

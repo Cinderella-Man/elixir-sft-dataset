@@ -61,7 +61,7 @@ defmodule ResyncTddEmbeds do
          {:ok, p_sol} <- File.read(Path.join(parent, "solution.ex")),
          {:ok, p_harness} <- File.read(Path.join(parent, "test_harness.exs")) do
       expected = %{
-        "prompt.md" => GenTask.TddTemplate.prompt(p_harness),
+        "prompt.md" => GenTask.TddTemplate.prompt(p_harness, Path.basename(dir)),
         "solution.ex" => p_sol,
         "test_harness.exs" => p_harness
       }
@@ -136,7 +136,7 @@ defmodule ResyncTddEmbeds do
           File.read!(Path.join(sb_child, "test_harness.exs")) ==
             File.read!(sb_parent_harness) and
             File.read!(Path.join(sb_child, "prompt.md")) ==
-              GenTask.TddTemplate.prompt(File.read!(sb_parent_harness))
+              GenTask.TddTemplate.prompt(File.read!(sb_parent_harness), Path.basename(sb_child))
 
         [
           {"a clean copied family passes", clean},

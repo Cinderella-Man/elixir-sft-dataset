@@ -182,7 +182,7 @@ defmodule ResyncEmbeds do
     files = %{
       "solution.ex" => sol,
       "test_harness.exs" => harness,
-      "prompt.md" => GenTask.WriteTest.prompt_md(sol, spec)
+      "prompt.md" => GenTask.WriteTest.prompt_md(sol, spec, Path.basename(dir))
     }
 
     manifest = Path.join(parent, "manifest.exs")

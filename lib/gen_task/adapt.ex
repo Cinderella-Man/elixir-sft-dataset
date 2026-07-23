@@ -30,7 +30,7 @@ defmodule GenTask.Adapt do
 
   require Logger
 
-  alias GenTask.{Catalog, Config, Cycle, CycleLog, Evaluator, GateLog}
+  alias GenTask.{Catalog, Config, Cycle, CycleLog, Evaluator, GateLog, Register}
 
   @ledger "adapt_redgate.jsonl"
 
@@ -212,7 +212,11 @@ defmodule GenTask.Adapt do
       "solution.ex" => seed.files["solution.ex"],
       "test_harness.exs" => seed.files["test_harness.exs"],
       "prompt.md" =>
-        prompt_md(File.read!(Path.join(base_dir, "solution.ex")), seed.files["prompt.md"])
+        prompt_md(
+          File.read!(Path.join(base_dir, "solution.ex")),
+          seed.files["prompt.md"],
+          adapt_id(seed.task_id)
+        )
     }
 
     manifest = Path.join(var_dir, "manifest.exs")
@@ -226,9 +230,18 @@ defmodule GenTask.Adapt do
   The `prompt.md` for an adapt task: the family base's `module_src` presented as the
   code to modify, followed by the variation's `spec`. Deterministic — the resync gate
   (`scripts/resync_adapt_embeds.exs`) re-derives prompts through this same function.
+
+  The register rotates by `unit_id` (`GenTask.Register`, docs/20). FROZEN across
+  variants: the `## Existing code (your starting point)` and `## New
+  specification` headings (the latter is the contract_text split marker — the
+  evaluator scopes the contract to everything AFTER it) and the fence layout.
   """
-  @spec prompt_md(String.t(), String.t()) :: String.t()
-  def prompt_md(module_src, spec) do
+  @spec prompt_md(String.t(), String.t(), String.t()) :: String.t()
+  def prompt_md(module_src, spec, unit_id) do
+    render(Register.variant(unit_id), String.trim_trailing(module_src), String.trim(spec))
+  end
+
+  defp render(0, module_src, spec) do
     """
     # Adapt existing code to a new specification
 
@@ -244,12 +257,57 @@ defmodule GenTask.Adapt do
     ## Existing code (your starting point)
 
     ```elixir
-    #{String.trim_trailing(module_src)}
+    #{module_src}
     ```
 
     ## New specification
 
-    #{String.trim(spec)}
+    #{spec}
+    """
+  end
+
+  defp render(1, module_src, spec) do
+    """
+    # Rework this solution for a changed brief
+
+    The module below is a complete, tested solution to a neighboring task. Treat
+    it as your starting codebase, not as a suggestion — carry over what still
+    fits and rewrite what the new brief demands. Where old code and the new
+    specification conflict (module name, public API, behavior, constraints,
+    output format), the new specification is authoritative. Return the complete
+    final result.
+
+    ## Existing code (your starting point)
+
+    ```elixir
+    #{module_src}
+    ```
+
+    ## New specification
+
+    #{spec}
+    """
+  end
+
+  defp render(2, module_src, spec) do
+    """
+    # Migrate existing code to a new spec
+
+    Starting point: the working, tested solution below, from a related task.
+    Change it — no ground-up rewrite — until it satisfies the specification
+    that follows. On any disagreement between the two (module name, public API,
+    behavior, constraints, output format), the new specification wins. Output
+    the complete updated code.
+
+    ## Existing code (your starting point)
+
+    ```elixir
+    #{module_src}
+    ```
+
+    ## New specification
+
+    #{spec}
     """
   end
 

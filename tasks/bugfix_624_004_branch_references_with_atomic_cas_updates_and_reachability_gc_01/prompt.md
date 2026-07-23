@@ -1,11 +1,11 @@
-# Fix the bug
+# One bug. Find it. Fix it.
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+The module below implements the task that follows, except for a single
+behavior bug. The bottom of this prompt shows the real failure report from
+its (hidden) test suite. Deliver the full corrected module: smallest
+possible change, no restructuring, nothing else touched.
 
-## The task the module implements
+## Target behavior
 
 Write me an Elixir GenServer module called `ObjectStore` that implements a content-addressable object store with a layer of **mutable named branch references** on top of the immutable objects, plus **reachability-based garbage collection** — like Git's refs (branches) and `git gc`. Objects are immutable and content-addressed; branches are mutable pointers to commit hashes, updated with an atomic compare-and-swap, and unreferenced objects can be swept away.
 

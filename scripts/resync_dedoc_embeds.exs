@@ -82,7 +82,7 @@ defmodule ResyncDedocEmbeds do
     File.write!(Path.join(parent, "solution.ex"), gold)
     File.write!(Path.join(parent, "test_harness.exs"), "defmodule WTest do\nend\n")
 
-    File.write!(Path.join(dedoc, "prompt.md"), Dedoc.prompt_md(Dedoc.strip(gold)))
+    File.write!(Path.join(dedoc, "prompt.md"), Dedoc.prompt_md(Dedoc.strip(gold), Path.basename(dedoc)))
     File.cp!(Path.join(parent, "solution.ex"), Path.join(dedoc, "solution.ex"))
     File.cp!(Path.join(parent, "test_harness.exs"), Path.join(dedoc, "test_harness.exs"))
 
@@ -160,7 +160,7 @@ defmodule ResyncDedocEmbeds do
       gold = File.read!(Path.join(parent_dir, "solution.ex"))
 
       expected = %{
-        "prompt.md" => Dedoc.prompt_md(Dedoc.strip(gold)),
+        "prompt.md" => Dedoc.prompt_md(Dedoc.strip(gold), Path.basename(dir)),
         "solution.ex" => gold,
         "test_harness.exs" => File.read!(Path.join(parent_dir, "test_harness.exs"))
       }

@@ -66,7 +66,15 @@ defmodule GenTask.DeriveMiners do
         apply(mod, :main, [["--only", seed.task_id]])
         after_n = family_units(kind, seed)
 
-        [outcome(id, kind, seed, :accepted, "#{after_n - before_n} new unit(s), #{after_n} total")]
+        [
+          outcome(
+            id,
+            kind,
+            seed,
+            :accepted,
+            "#{after_n - before_n} new unit(s), #{after_n} total"
+          )
+        ]
     end
   rescue
     e ->

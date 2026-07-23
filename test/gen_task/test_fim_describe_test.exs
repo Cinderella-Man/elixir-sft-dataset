@@ -83,7 +83,7 @@ defmodule GenTask.TestFimDescribeTest do
     for cand <- TestFim.carvable_blocks(@harness) do
       gold = @harness |> String.split("\n") |> Enum.slice(cand.s..cand.e) |> Enum.join("\n")
       skeleton = TestFim.skeletonize(@harness, cand)
-      prompt = TestFim.prompt_md("defmodule Calc do\nend", skeleton)
+      prompt = TestFim.prompt_md("defmodule Calc do\nend", skeleton, "test", "tfim_x_01")
 
       assert EvalTask.Fim.reconstruct(prompt, gold, true) == String.trim_trailing(@harness),
              "round-trip failed for #{TestFim.qual(cand)}"
@@ -117,12 +117,27 @@ defmodule GenTask.TestFimDescribeTest do
 
   test "qual_from_prompt reads the describe context back from a child prompt" do
     [_, mul | _] = TestFim.carvable_blocks(@harness)
-    prompt = TestFim.prompt_md("defmodule Calc do\nend", TestFim.skeletonize(@harness, mul))
+
+    prompt =
+      TestFim.prompt_md(
+        "defmodule Calc do\nend",
+        TestFim.skeletonize(@harness, mul),
+        "test",
+        "t_01"
+      )
 
     assert TestFim.qual_from_prompt(prompt, "multiplies") == "scaling multiplies"
 
     [top | _] = TestFim.carvable_blocks(@harness)
-    top_prompt = TestFim.prompt_md("defmodule Calc do\nend", TestFim.skeletonize(@harness, top))
+
+    top_prompt =
+      TestFim.prompt_md(
+        "defmodule Calc do\nend",
+        TestFim.skeletonize(@harness, top),
+        "test",
+        "t_01"
+      )
+
     assert TestFim.qual_from_prompt(top_prompt, "top-level addition") == "top-level addition"
   end
 end

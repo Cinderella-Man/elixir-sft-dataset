@@ -1,11 +1,12 @@
-# Fix the bug
+# Debug and repair this module
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+A colleague shipped the module below for the task described next, and one
+behavior bug made it through review. The test suite (not shown here)
+produces the failure report at the bottom. Track the bug down and repair
+it — keep the diff minimal and leave working code exactly as it is. Reply
+with the complete corrected module.
 
-## The task the module implements
+## What the module is supposed to do
 
 Write me an Elixir GenServer module called `CounterTSDB` that implements a time-series storage engine specialized for **monotonic counters** (values that normally only increase, like `http_requests_total`). Unlike a plain gauge store, its range queries must be **reset-aware**: when a counter is observed to drop, that drop is interpreted as a counter reset (the process restarted and the counter went back toward zero), not as a negative change.
 

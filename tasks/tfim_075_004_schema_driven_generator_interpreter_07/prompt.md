@@ -1,8 +1,9 @@
-# Fill in the middle: implement the blanked property
+# Complete the blanked property
 
-Below is a module and its ExUnit test harness with the body of ONE `property` removed
-(marked `# TODO`). The property's name states what it must verify. Implement just that one
-property so the harness passes for a correct implementation of the module.
+You get a module and its ExUnit harness, minus the body of ONE `property` —
+the `# TODO` marks the spot, and its name says what it must prove. Write
+exactly that property so the harness passes against a correct implementation
+of the module.
 
 ## Module under test
 

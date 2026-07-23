@@ -1,11 +1,11 @@
-# Fix the bug
+# One bug. Find it. Fix it.
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+The module below implements the task that follows, except for a single
+behavior bug. The bottom of this prompt shows the real failure report from
+its (hidden) test suite. Deliver the full corrected module: smallest
+possible change, no restructuring, nothing else touched.
 
-## The task the module implements
+## Target behavior
 
 Build me a **weighted autocomplete trie** in an Elixir module called `AutocompleteTrie`. This isn't just a set-membership trie — every stored word carries an accumulated frequency **weight**, and the headline feature is ranked prefix suggestions: given a prefix, return the top-K matching words ordered by weight.
 

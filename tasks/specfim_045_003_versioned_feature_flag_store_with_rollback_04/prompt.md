@@ -1,10 +1,9 @@
-# Write the missing @spec
+# Fill in one @spec
 
-Below is a complete, working module — except that the `@spec` for
-`disable/1` has been removed; its place is marked `# TODO: @spec`.
-Write exactly that typespec: one `@spec` attribute for `disable/1`,
-consistent with the function's arguments, guards, and every return shape
-the implementation can produce. Change nothing else.
+Below: a working module where the `@spec` for
+`disable/1` has been removed (see the `# TODO: @spec` marker).
+Provide exactly that typespec, consistent with the implementation's
+arguments, guards, and all reachable return shapes. No other edits.
 
 ## The module with the `@spec` for `disable/1` missing
 
@@ -217,5 +216,4 @@ defmodule FeatureFlags do
 end
 ```
 
-Give me only the `@spec` attribute — the attribute alone (however many
-lines it spans), not the whole module.
+The `@spec` attribute only — nothing more.

@@ -1,11 +1,11 @@
-# Fix the bug
+# One bug. Find it. Fix it.
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+The module below implements the task that follows, except for a single
+behavior bug. The bottom of this prompt shows the real failure report from
+its (hidden) test suite. Deliver the full corrected module: smallest
+possible change, no restructuring, nothing else touched.
 
-## The task the module implements
+## Target behavior
 
 Write me an Elixir module called `WorkStealQueue` that distributes work across N worker processes using a work-stealing algorithm and **reports instrumentation metrics** about the stealing that actually happened. On top of the results, I want to see how many steal operations each worker performed, how many items it stole, and how many it ultimately processed — plus I want to be able to tune the steal batch size.
 

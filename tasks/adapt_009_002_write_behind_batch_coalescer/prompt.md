@@ -1,13 +1,11 @@
-# Adapt existing code to a new specification
+# Rework this solution for a changed brief
 
-Below is a complete, working, tested Elixir solution to a related task. Do not
-start from scratch: treat it as the codebase you have been asked to change.
-Modify it to satisfy the new specification that follows — keep whatever carries
-over, and change, add, or remove whatever the new specification requires.
-
-Where the existing code and the new specification disagree (module name, public
-API, behavior, constraints, output format), the new specification wins. Give me
-the complete final result.
+The module below is a complete, tested solution to a neighboring task. Treat
+it as your starting codebase, not as a suggestion — carry over what still
+fits and rewrite what the new brief demands. Where old code and the new
+specification conflict (module name, public API, behavior, constraints,
+output format), the new specification is authoritative. Return the complete
+final result.
 
 ## Existing code (your starting point)
 

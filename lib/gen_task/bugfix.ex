@@ -39,7 +39,7 @@ defmodule GenTask.Bugfix do
 
   require Logger
 
-  alias GenTask.{Config, Cycle, CycleLog, Evaluator, GateLog, Mutation}
+  alias GenTask.{Config, Cycle, CycleLog, Evaluator, GateLog, Mutation, Register}
 
   @bugfix_max 3
   @rejected_ledger "bugfix_rejected.jsonl"
@@ -258,7 +258,7 @@ defmodule GenTask.Bugfix do
   defp promote(seed, solution, label, mutated, report, id, cfg) do
     dir = Path.join(cfg.tasks_dir, id)
     File.mkdir_p!(dir)
-    File.write!(Path.join(dir, "prompt.md"), prompt_md(seed, mutated, report))
+    File.write!(Path.join(dir, "prompt.md"), prompt_md(seed, mutated, report, id))
     File.write!(Path.join(dir, "solution.ex"), solution)
 
     case seed.files["manifest.exs"] do
@@ -269,9 +269,25 @@ defmodule GenTask.Bugfix do
     Logger.info("BUGFIX #{id} minted (#{label})")
   end
 
-  @doc "The bugfix `prompt.md`: task spec + buggy module + the real failing report."
-  @spec prompt_md(map(), String.t(), String.t()) :: String.t()
-  def prompt_md(seed, mutated, report) do
+  @doc """
+  The bugfix `prompt.md`: task spec + buggy module + the real failing report.
+
+  The register (title + prose) rotates deterministically by `unit_id`
+  (`GenTask.Register`, docs/20). The `## The buggy module` and
+  `## Failing test report` heading+fence blocks are FROZEN — the resync and
+  audit capture regexes anchor on them byte-exactly.
+  """
+  @spec prompt_md(map(), String.t(), String.t(), String.t()) :: String.t()
+  def prompt_md(seed, mutated, report, unit_id) do
+    render(
+      Register.variant(unit_id),
+      String.trim_trailing(seed.files["prompt.md"]),
+      String.trim_trailing(mutated),
+      String.trim_trailing(report)
+    )
+  end
+
+  defp render(0, spec, mutated, report) do
     """
     # Fix the bug
 
@@ -282,18 +298,73 @@ defmodule GenTask.Bugfix do
 
     ## The task the module implements
 
-    #{String.trim_trailing(seed.files["prompt.md"])}
+    #{spec}
 
     ## The buggy module
 
     ```elixir
-    #{String.trim_trailing(mutated)}
+    #{mutated}
     ```
 
     ## Failing test report
 
     ```
-    #{String.trim_trailing(report)}
+    #{report}
+    ```
+    """
+  end
+
+  defp render(1, spec, mutated, report) do
+    """
+    # Debug and repair this module
+
+    A colleague shipped the module below for the task described next, and one
+    behavior bug made it through review. The test suite (not shown here)
+    produces the failure report at the bottom. Track the bug down and repair
+    it — keep the diff minimal and leave working code exactly as it is. Reply
+    with the complete corrected module.
+
+    ## What the module is supposed to do
+
+    #{spec}
+
+    ## The buggy module
+
+    ```elixir
+    #{mutated}
+    ```
+
+    ## Failing test report
+
+    ```
+    #{report}
+    ```
+    """
+  end
+
+  defp render(2, spec, mutated, report) do
+    """
+    # One bug. Find it. Fix it.
+
+    The module below implements the task that follows, except for a single
+    behavior bug. The bottom of this prompt shows the real failure report from
+    its (hidden) test suite. Deliver the full corrected module: smallest
+    possible change, no restructuring, nothing else touched.
+
+    ## Target behavior
+
+    #{spec}
+
+    ## The buggy module
+
+    ```elixir
+    #{mutated}
+    ```
+
+    ## Failing test report
+
+    ```
+    #{report}
     ```
     """
   end

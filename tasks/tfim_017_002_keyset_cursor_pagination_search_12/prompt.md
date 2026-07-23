@@ -1,8 +1,9 @@
-# Fill in the middle: implement the blanked test
+# Complete the blanked test
 
-Below is a module and its ExUnit test harness with the body of ONE `test` removed
-(marked `# TODO`). The test's name states what it must verify. Implement just that one
-test so the harness passes for a correct implementation of the module.
+You get a module and its ExUnit harness, minus the body of ONE `test` —
+the `# TODO` marks the spot, and its name says what it must prove. Write
+exactly that test so the harness passes against a correct implementation
+of the module.
 
 ## Module under test
 

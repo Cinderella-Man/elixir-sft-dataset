@@ -73,7 +73,12 @@ defmodule ResyncSpecfimEmbeds do
 
       expected = %{
         "prompt.md" =>
-          SpecFimTemplate.prompt(name, String.to_integer(arity), SpecFim.skeleton(src, site)),
+          SpecFimTemplate.prompt(
+            name,
+            String.to_integer(arity),
+            SpecFim.skeleton(src, site),
+            Path.basename(dir)
+          ),
         "solution.ex" => String.trim_trailing(site.span, "\n")
       }
 

@@ -19,7 +19,7 @@ defmodule GenTask.WriteTest do
 
   require Logger
 
-  alias GenTask.{Config, Cycle, CycleLog, Evaluator, GateLog}
+  alias GenTask.{Config, Cycle, CycleLog, Evaluator, GateLog, Register}
 
   @type seed :: %{
           optional(:name) => String.t(),
@@ -146,7 +146,7 @@ defmodule GenTask.WriteTest do
     base = %{
       "solution.ex" => seed.files["solution.ex"],
       "test_harness.exs" => seed.files["test_harness.exs"],
-      "prompt.md" => prompt_md(seed.files["solution.ex"], seed.files["prompt.md"])
+      "prompt.md" => prompt_md(seed.files["solution.ex"], seed.files["prompt.md"], wt_id(seed))
     }
 
     manifest = Path.join([cfg.tasks_dir, seed.task_id, "manifest.exs"])
@@ -159,9 +159,19 @@ defmodule GenTask.WriteTest do
   @doc """
   The `prompt.md` for a wtest task: the standalone "write tests for this module"
   statement embedding the reference `module_src` and the parent `spec`.
+
+  The register rotates by `unit_id` (`GenTask.Register`, docs/20). FROZEN
+  across variants: the `## Original specification` and `## Module under test`
+  headings (contract_text + lint backfill anchors), the fence layout, the
+  literal requirement tokens, and the timer-vocabulary ban (the intro prose
+  sits INSIDE contract_text scope).
   """
-  @spec prompt_md(String.t(), String.t()) :: String.t()
-  def prompt_md(module_src, spec) do
+  @spec prompt_md(String.t(), String.t(), String.t()) :: String.t()
+  def prompt_md(module_src, spec, unit_id) do
+    render(Register.variant(unit_id), String.trim_trailing(module_src), String.trim(spec))
+  end
+
+  defp render(0, module_src, spec) do
     """
     # Write tests for this module
 
@@ -180,12 +190,70 @@ defmodule GenTask.WriteTest do
 
     ## Original specification
 
-    #{String.trim(spec)}
+    #{spec}
 
     ## Module under test
 
     ```elixir
-    #{String.trim_trailing(module_src)}
+    #{module_src}
+    ```
+    """
+  end
+
+  defp render(1, module_src, spec) do
+    """
+    # Cover this module with tests
+
+    Here is a finished Elixir module together with the specification it was
+    written against. Your job is the harness: write an ExUnit suite that would
+    catch a wrong implementation of this module.
+
+    What the harness must satisfy:
+    - Name the test module `<Module>Test` and `use ExUnit.Case, async: false`.
+    - Skip `ExUnit.start()` — the evaluator calls it.
+    - Keep everything inline: fakes, clock Agents, helpers — the file must stand
+      alone.
+    - Work through the whole public API, including the edge cases the
+      specification calls out.
+    - Zero compile warnings (prefix unused variables with `_`; match float zero
+      as `+0.0`/`-0.0`).
+    - Deliver the complete harness as one file.
+
+    ## Original specification
+
+    #{spec}
+
+    ## Module under test
+
+    ```elixir
+    #{module_src}
+    ```
+    """
+  end
+
+  defp render(2, module_src, spec) do
+    """
+    # Write the test harness
+
+    Module and original specification below. Produce the ExUnit harness that
+    verifies a correct implementation.
+
+    Hard requirements:
+    - Test module: `<Module>Test`, `use ExUnit.Case, async: false`.
+    - No `ExUnit.start()` (the evaluator owns startup).
+    - Self-contained single file: inline any fakes, clock Agents, and helpers.
+    - Full public API coverage plus the specification's edge cases.
+    - Compiles with zero warnings (`_`-prefix unused variables; float zero
+      matches as `+0.0`/`-0.0`).
+
+    ## Original specification
+
+    #{spec}
+
+    ## Module under test
+
+    ```elixir
+    #{module_src}
     ```
     """
   end

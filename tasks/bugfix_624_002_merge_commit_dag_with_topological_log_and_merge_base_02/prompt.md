@@ -1,11 +1,12 @@
-# Fix the bug
+# Debug and repair this module
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+A colleague shipped the module below for the task described next, and one
+behavior bug made it through review. The test suite (not shown here)
+produces the failure report at the bottom. Track the bug down and repair
+it — keep the diff minimal and leave working code exactly as it is. Reply
+with the complete corrected module.
 
-## The task the module implements
+## What the module is supposed to do
 
 Write me an Elixir GenServer module called `ObjectStore` that implements a content-addressable object store whose commit history is a **directed acyclic graph (DAG)** — commits may have any number of parents, including two or more for merge commits. This is the key difference from a plain linear-history store: `log` must walk a graph, not a single chain, and there is a `merge_base` operation for finding a common ancestor of two commits.
 

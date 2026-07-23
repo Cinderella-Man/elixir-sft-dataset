@@ -1,10 +1,10 @@
-# Write the missing @spec
+# Reconstruct the missing typespec
 
-Below is a complete, working module — except that the `@spec` for
-`new/2` has been removed; its place is marked `# TODO: @spec`.
-Write exactly that typespec: one `@spec` attribute for `new/2`,
-consistent with the function's arguments, guards, and every return shape
-the implementation can produce. Change nothing else.
+In the otherwise-complete module below, the `@spec` for
+`new/2` has been removed; `# TODO: @spec` holds its place.
+Write that one attribute — a `@spec` for `new/2` faithful to
+the arguments, guards, and every return shape the code can actually
+produce. Nothing else changes.
 
 ## The module with the `@spec` for `new/2` missing
 
@@ -194,5 +194,5 @@ defmodule BloomFilter do
 end
 ```
 
-Give me only the `@spec` attribute — the attribute alone (however many
-lines it spans), not the whole module.
+Reply with the `@spec` attribute alone, however many lines it needs —
+not the module.

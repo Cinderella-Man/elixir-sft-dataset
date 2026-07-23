@@ -1,11 +1,11 @@
-# Fix the bug
+# One bug. Find it. Fix it.
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+The module below implements the task that follows, except for a single
+behavior bug. The bottom of this prompt shows the real failure report from
+its (hidden) test suite. Deliver the full corrected module: smallest
+possible change, no restructuring, nothing else touched.
 
-## The task the module implements
+## Target behavior
 
 Write me an Elixir GenServer module called `RollupTSDB` that implements a time-series storage engine that **pre-aggregates data on ingest** instead of keeping raw samples. Rather than storing every data point, each series keeps one compact *rollup accumulator* per fixed-width time bucket, so memory use per bucket is constant no matter how many points land in it.
 

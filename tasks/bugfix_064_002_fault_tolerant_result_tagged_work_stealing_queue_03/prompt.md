@@ -1,11 +1,12 @@
-# Fix the bug
+# Debug and repair this module
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+A colleague shipped the module below for the task described next, and one
+behavior bug made it through review. The test suite (not shown here)
+produces the failure report at the bottom. Track the bug down and repair
+it — keep the diff minimal and leave working code exactly as it is. Reply
+with the complete corrected module.
 
-## The task the module implements
+## What the module is supposed to do
 
 Write me an Elixir module called `WorkStealQueue` that distributes work across N worker processes using a work-stealing algorithm, but with **fault-tolerant, result-tagged** semantics: the `process_fn` you hand it is allowed to blow up (raise, throw, or exit) on some items, and a single bad item must never take down a worker or lose any other item.
 

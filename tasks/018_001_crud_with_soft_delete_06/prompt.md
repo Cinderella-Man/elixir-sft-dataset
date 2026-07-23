@@ -1,10 +1,9 @@
 # Implement the missing file
 
-Below is the complete specification of a task, followed by its working,
-fully tested multi-file solution — except that the entire content of
-`lib/soft_crud/documents.ex` has been blanked to `# TODO`. Write that file so the whole
-bundle passes the task's full test suite again. Change nothing else —
-every other file must stay exactly as shown.
+A task's specification is followed by its working multi-file solution —
+with one casualty: the entire content of `lib/soft_crud/documents.ex` is now `# TODO`.
+Write that file so the whole bundle passes the task's suite again; every
+other file stays exactly as printed.
 
 ## The task
 
@@ -265,5 +264,4 @@ defmodule SoftCrud.Repo.Migrations.CreateDocuments do
 end
 ```
 
-Give me only the complete content of `lib/soft_crud/documents.ex` — that one file, nothing
-else.
+Reply with the complete content of `lib/soft_crud/documents.ex` and nothing else.

@@ -1,10 +1,8 @@
 # Implement the missing file
 
-Below is the complete specification of a task, followed by its working,
-fully tested multi-file solution — except that the entire content of
-`lib/state_machine.ex` has been blanked to `# TODO`. Write that file so the whole
-bundle passes the task's full test suite again. Change nothing else —
-every other file must stay exactly as shown.
+Below: the task, then its tested multi-file solution in which the whole
+of `lib/state_machine.ex` has been blanked to `# TODO`. Reconstruct that single file;
+the remaining files are fixed and must stay exactly as shown.
 
 ## The task
 
@@ -153,5 +151,4 @@ end
 # TODO
 ```
 
-Give me only the complete content of `lib/state_machine.ex` — that one file, nothing
-else.
+Output only `lib/state_machine.ex`'s full content — one file, nothing besides.

@@ -1,11 +1,12 @@
-# Fix the bug
+# Debug and repair this module
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+A colleague shipped the module below for the task described next, and one
+behavior bug made it through review. The test suite (not shown here)
+produces the failure report at the bottom. Track the bug down and repair
+it — keep the diff minimal and leave working code exactly as it is. Reply
+with the complete corrected module.
 
-## The task the module implements
+## What the module is supposed to do
 
 Build me a self-contained Elixir in-memory context module for a `Document` resource with soft delete guarded by **optimistic concurrency** (version-checked writes). This is a pure Elixir/OTP task — no Phoenix, no Ecto, no database. State lives in a `GenServer`, which serializes writes so lost updates are provably impossible.
 

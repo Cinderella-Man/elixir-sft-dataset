@@ -1,11 +1,12 @@
-# Fix the bug
+# Debug and repair this module
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+A colleague shipped the module below for the task described next, and one
+behavior bug made it through review. The test suite (not shown here)
+produces the failure report at the bottom. Track the bug down and repair
+it — keep the diff minimal and leave working code exactly as it is. Reply
+with the complete corrected module.
 
-## The task the module implements
+## What the module is supposed to do
 
 Build me an in-memory **hierarchical archive store** as a single Elixir GenServer module named `CascadeCrud.Archive`. There is no database, no Phoenix, and no supervision tree to build — just this one module. It stores a tree of *nodes* (folders and files) and supports **cascading archive** (soft delete that propagates down a subtree) and **origin-aware restore** (an un-archive only brings back what *that* archive operation took down).
 

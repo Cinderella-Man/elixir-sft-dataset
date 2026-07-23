@@ -199,7 +199,7 @@ defmodule MintSfim do
     dir = "tasks/#{cand.prefix}_#{String.pad_leading(to_string(n), 2, "0")}"
 
     File.mkdir_p!(dir)
-    File.write!(Path.join(dir, "prompt.md"), prompt_md(cand, skeleton))
+    File.write!(Path.join(dir, "prompt.md"), prompt_md(cand, skeleton, Path.basename(dir)))
     File.write!(Path.join(dir, "solution.ex"), String.trim_trailing(gold, "\n"))
 
     real = grade(dir, "solution.ex")
@@ -473,9 +473,9 @@ defmodule MintSfim do
   # Single source: GenTask.SfimTemplate — the resync gate re-derives prompts
   # through the same function, so template wording and spec embeds share one
   # drift check.
-  defp prompt_md(cand, skeleton) do
+  defp prompt_md(cand, skeleton, unit_id) do
     spec = File.read!(Path.join(cand.root, "prompt.md"))
-    GenTask.SfimTemplate.prompt(cand.name, spec, skeleton)
+    GenTask.SfimTemplate.prompt(cand.name, spec, skeleton, unit_id)
   end
 
   defp next_index(prefix) do

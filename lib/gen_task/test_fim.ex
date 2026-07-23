@@ -20,7 +20,7 @@ defmodule GenTask.TestFim do
 
   require Logger
 
-  alias GenTask.{Config, Cycle, CycleLog, Evaluator, GateLog, Mutation}
+  alias GenTask.{Config, Cycle, CycleLog, Evaluator, GateLog, Mutation, Register}
 
   @type seed :: %{
           optional(:name) => String.t(),
@@ -134,7 +134,7 @@ defmodule GenTask.TestFim do
         iso_harness = isolate(harness, cand)
 
         files = %{
-          "prompt.md" => prompt_md(module_src, skeleton, kind_of(harness, cand)),
+          "prompt.md" => prompt_md(module_src, skeleton, kind_of(harness, cand), tfim_id),
           "solution.ex" => gold
         }
 
@@ -529,11 +529,25 @@ defmodule GenTask.TestFim do
 
   @doc """
   The tfim `prompt.md`: the module fence + the harness skeleton fence (with the
-  TODO). `kind` is `"test"` (default — byte-identical to every shipped prompt)
-  or `"property"` for property-block units.
+  TODO). `kind` is `"test"` or `"property"` for property-block units.
+
+  The register rotates by `unit_id` (`GenTask.Register`, docs/20). FROZEN
+  across variants: the `## Module under test` heading (contract_text split —
+  the intro prose BEFORE it is contract scope, so the timer-vocabulary ban
+  applies), the "## Test harness — implement the `# TODO` <kind>" heading,
+  the fence layout, and the `# TODO` marker.
   """
-  @spec prompt_md(String.t(), String.t(), String.t()) :: String.t()
-  def prompt_md(module_src, skeleton, kind \\ "test") do
+  @spec prompt_md(String.t(), String.t(), String.t(), String.t()) :: String.t()
+  def prompt_md(module_src, skeleton, kind, unit_id) do
+    render(
+      Register.variant(unit_id),
+      String.trim_trailing(module_src),
+      String.trim_trailing(skeleton),
+      kind
+    )
+  end
+
+  defp render(0, module_src, skeleton, kind) do
     """
     # Fill in the middle: implement the blanked #{kind}
 
@@ -544,13 +558,59 @@ defmodule GenTask.TestFim do
     ## Module under test
 
     ```elixir
-    #{String.trim_trailing(module_src)}
+    #{module_src}
     ```
 
     ## Test harness — implement the `# TODO` #{kind}
 
     ```elixir
-    #{String.trim_trailing(skeleton)}
+    #{skeleton}
+    ```
+    """
+  end
+
+  defp render(1, module_src, skeleton, kind) do
+    """
+    # Complete the blanked #{kind}
+
+    You get a module and its ExUnit harness, minus the body of ONE `#{kind}` —
+    the `# TODO` marks the spot, and its name says what it must prove. Write
+    exactly that #{kind} so the harness passes against a correct implementation
+    of the module.
+
+    ## Module under test
+
+    ```elixir
+    #{module_src}
+    ```
+
+    ## Test harness — implement the `# TODO` #{kind}
+
+    ```elixir
+    #{skeleton}
+    ```
+    """
+  end
+
+  defp render(2, module_src, skeleton, kind) do
+    """
+    # One #{kind} is missing its body
+
+    Module plus harness below; a single `#{kind}` body was replaced with
+    `# TODO`. Reconstruct it from its name and the surrounding suite so the
+    harness passes for a correct implementation of the module. Touch nothing
+    else.
+
+    ## Module under test
+
+    ```elixir
+    #{module_src}
+    ```
+
+    ## Test harness — implement the `# TODO` #{kind}
+
+    ```elixir
+    #{skeleton}
     ```
     """
   end

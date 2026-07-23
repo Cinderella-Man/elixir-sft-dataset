@@ -12,9 +12,27 @@ defmodule GenTask.SfimTemplate do
   so the skeleton no longer shows the attrs of the missing function.
   """
 
-  @doc "The full prompt.md body for a deterministic sfim child."
-  @spec prompt(String.t(), String.t(), String.t()) :: String.t()
-  def prompt(name, spec, skeleton) do
+  @doc """
+  The full prompt.md body for a deterministic sfim child.
+
+  The register rotates by `unit_id` (`GenTask.Register`, docs/20). FROZEN
+  across variants (numbered-namespace shape!): the H1 title
+  `# Implement the missing function` as the FIRST line (format_corpus +
+  resync_sfim sniff it), the exact `## The task` marker, the
+  "## The module with `NAME` missing" heading (resync name recovery), the
+  fence layout, and the `# TODO` blanks.
+  """
+  @spec prompt(String.t(), String.t(), String.t(), String.t()) :: String.t()
+  def prompt(name, spec, skeleton, unit_id) do
+    render(
+      GenTask.Register.variant(unit_id),
+      name,
+      String.trim(spec),
+      String.trim_trailing(skeleton, "\n")
+    )
+  end
+
+  defp render(0, name, spec, skeleton) do
     """
     # Implement the missing function
 
@@ -27,17 +45,65 @@ defmodule GenTask.SfimTemplate do
 
     ## The task
 
-    #{String.trim(spec)}
+    #{spec}
 
     ## The module with `#{name}` missing
 
     ```elixir
-    #{String.trim_trailing(skeleton, "\n")}
+    #{skeleton}
     ```
 
     Give me only the complete implementation of `#{name}` (including any
     `@doc`/`@spec`/`@impl` lines that belong directly above it) — the
     function alone, not the whole module.
+    """
+  end
+
+  defp render(1, name, spec, skeleton) do
+    """
+    # Implement the missing function
+
+    Below you'll find a task's full specification, then a working, tested
+    solution with one gap: `#{name}` — every clause body swapped for
+    `# TODO`. Rebuild exactly that function so the module passes the task's
+    whole suite again, and leave every other line precisely as shown.
+
+    ## The task
+
+    #{spec}
+
+    ## The module with `#{name}` missing
+
+    ```elixir
+    #{skeleton}
+    ```
+
+    Reply with `#{name}` alone (bring along any `@doc`/`@spec`/`@impl` lines
+    that belong directly above it) — just the function, never the whole
+    module.
+    """
+  end
+
+  defp render(2, name, spec, skeleton) do
+    """
+    # Implement the missing function
+
+    The specification below is followed by its complete, tested solution —
+    minus `#{name}`, whose clause bodies are all `# TODO`. Supply that one
+    function; the rest of the module is fixed and must stay exactly as shown.
+
+    ## The task
+
+    #{spec}
+
+    ## The module with `#{name}` missing
+
+    ```elixir
+    #{skeleton}
+    ```
+
+    Output only `#{name}` (with any `@doc`/`@spec`/`@impl` lines that belong
+    directly above it) — the single function, not the module.
     """
   end
 end

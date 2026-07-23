@@ -1,11 +1,9 @@
 # Implement the missing function
 
-Below is the complete specification of a task, followed by a working,
-fully tested module that solves it — except that `can?` has been
-removed: every clause body is blanked to `# TODO`. Implement exactly that
-function so the whole module passes the task's full test suite again.
-Change nothing else — every other function, attribute, and clause must
-stay exactly as shown.
+Below you'll find a task's full specification, then a working, tested
+solution with one gap: `can?` — every clause body swapped for
+`# TODO`. Rebuild exactly that function so the module passes the task's
+whole suite again, and leave every other line precisely as shown.
 
 ## The task
 
@@ -219,6 +217,6 @@ defmodule Workflow do
 end
 ```
 
-Give me only the complete implementation of `can?` (including any
-`@doc`/`@spec`/`@impl` lines that belong directly above it) — the
-function alone, not the whole module.
+Reply with `can?` alone (bring along any `@doc`/`@spec`/`@impl` lines
+that belong directly above it) — just the function, never the whole
+module.

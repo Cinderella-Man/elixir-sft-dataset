@@ -98,7 +98,7 @@ defmodule ResyncBundlefimEmbeds do
           Enum.map_join(files, "\n\n", fn {p, b} -> if p == path, do: "# TODO", else: b end)
 
         expected = %{
-          "prompt.md" => BundleFimTemplate.prompt(path, spec, skeleton),
+          "prompt.md" => BundleFimTemplate.prompt(path, spec, skeleton, Path.basename(dir)),
           "solution.ex" => String.trim_trailing(body, "\n")
         }
 

@@ -1,11 +1,11 @@
-# Make this test suite pass
+# The tests are the spec
 
-Below is a complete, self-contained ExUnit test suite. Treat it as the
-full specification: write the module (or modules) under test so that
-every test passes. Use only what the tests themselves require — the
-standard library and OTP unless the suite references anything else.
-Follow idiomatic Elixir house style (`@moduledoc`, `@doc` + `@spec` on
-the public API, no compiler warnings).
+Below is a complete, self-contained ExUnit suite. It is the only
+specification you get: build the module (or modules) it exercises until
+every test passes. Reach for nothing beyond what the tests themselves
+require — the standard library and OTP unless the suite says otherwise.
+House style applies (`@moduledoc`, `@doc` + `@spec` on the public API,
+no compiler warnings).
 
 ## The test suite
 
@@ -412,5 +412,4 @@ defmodule RollupTSDBTest do
 end
 ```
 
-Give me the complete implementation in a single file — the module(s)
-alone, not the tests.
+Send back the implementation only — one file, no tests.

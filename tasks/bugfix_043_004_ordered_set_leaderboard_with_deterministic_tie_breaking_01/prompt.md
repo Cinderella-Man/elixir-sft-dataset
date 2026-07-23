@@ -1,11 +1,11 @@
-# Fix the bug
+# One bug. Find it. Fix it.
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+The module below implements the task that follows, except for a single
+behavior bug. The bottom of this prompt shows the real failure report from
+its (hidden) test suite. Deliver the full corrected module: smallest
+possible change, no restructuring, nothing else touched.
 
-## The task the module implements
+## Target behavior
 
 Write me an Elixir module called `OrderedLeaderboard` that maintains an all-time-high leaderboard using ETS (Erlang Term Storage), but with **deterministic tie-breaking** and **unique ordinal ranks**: when two players share the same score, whoever reached that score *first* ranks higher, and every player gets a distinct 1-based position (no shared ranks).
 

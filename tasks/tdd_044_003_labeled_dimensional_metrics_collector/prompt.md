@@ -1,11 +1,9 @@
-# Make this test suite pass
+# Implement to green
 
-Below is a complete, self-contained ExUnit test suite. Treat it as the
-full specification: write the module (or modules) under test so that
-every test passes. Use only what the tests themselves require — the
-standard library and OTP unless the suite references anything else.
-Follow idiomatic Elixir house style (`@moduledoc`, `@doc` + `@spec` on
-the public API, no compiler warnings).
+Treat the ExUnit suite below as the full requirements document. Write the
+code under test so the whole suite passes. Dependencies: only what the
+tests already use (the standard library and OTP otherwise). Style:
+`@moduledoc`, `@doc` + `@spec` on the public API, warning-free compile.
 
 ## The test suite
 
@@ -277,5 +275,4 @@ defmodule MetricsTest do
 end
 ```
 
-Give me the complete implementation in a single file — the module(s)
-alone, not the tests.
+Deliverable: the module(s) alone in a single file — not the tests.

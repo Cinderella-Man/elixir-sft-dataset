@@ -54,15 +54,22 @@ defmodule GenTask.AdaptTest do
     )
   end
 
-  describe "prompt_md/2" do
+  describe "prompt_md/3" do
     test "embeds the base gold in a fence and the variation spec verbatim" do
-      prompt = Adapt.prompt_md("defmodule A do\nend\n", "# New spec\n\nDo B instead.\n")
+      prompt =
+        Adapt.prompt_md("defmodule A do\nend\n", "# New spec\n\nDo B instead.\n", "adapt_x")
 
       assert prompt =~ "```elixir\ndefmodule A do\nend\n```"
       assert prompt =~ "# New spec\n\nDo B instead."
-      assert prompt =~ "the new specification wins"
+      assert prompt =~ "## New specification"
+
       # Deterministic: same inputs, same bytes (the resync gate depends on this).
-      assert prompt == Adapt.prompt_md("defmodule A do\nend\n", "# New spec\n\nDo B instead.\n")
+      assert prompt ==
+               Adapt.prompt_md(
+                 "defmodule A do\nend\n",
+                 "# New spec\n\nDo B instead.\n",
+                 "adapt_x"
+               )
     end
   end
 

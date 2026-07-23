@@ -172,7 +172,10 @@ defmodule MintSpecfim do
     dir = "tasks/specfim_#{cand.family}_#{String.pad_leading(to_string(n), 2, "0")}"
 
     File.mkdir_p!(dir)
-    File.write!(Path.join(dir, "prompt.md"), SpecFimTemplate.prompt(name, arity, skeleton))
+    File.write!(
+      Path.join(dir, "prompt.md"),
+      SpecFimTemplate.prompt(name, arity, skeleton, Path.basename(dir))
+    )
     File.write!(Path.join(dir, "solution.ex"), String.trim_trailing(cand.site.span, "\n"))
 
     real = grade(dir, "solution.ex")

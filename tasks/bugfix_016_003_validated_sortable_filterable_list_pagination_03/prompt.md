@@ -1,11 +1,11 @@
-# Fix the bug
+# One bug. Find it. Fix it.
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+The module below implements the task that follows, except for a single
+behavior bug. The bottom of this prompt shows the real failure report from
+its (hidden) test suite. Deliver the full corrected module: smallest
+possible change, no restructuring, nothing else touched.
 
-## The task the module implements
+## Target behavior
 
 Write me a self-contained Elixir module `QueryPaginator` that implements **offset pagination with multi-field sorting, filtering, and strict validation**. This is the query core of a `GET /api/items` list endpoint, implemented as a pure function over an in-memory list so it can be tested without a database. Unlike a plain paginator, this one validates its inputs and returns tagged error tuples on bad requests instead of silently coercing them.
 

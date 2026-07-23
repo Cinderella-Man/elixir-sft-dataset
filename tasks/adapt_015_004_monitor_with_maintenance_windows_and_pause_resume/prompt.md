@@ -1,13 +1,10 @@
-# Adapt existing code to a new specification
+# Migrate existing code to a new spec
 
-Below is a complete, working, tested Elixir solution to a related task. Do not
-start from scratch: treat it as the codebase you have been asked to change.
-Modify it to satisfy the new specification that follows — keep whatever carries
-over, and change, add, or remove whatever the new specification requires.
-
-Where the existing code and the new specification disagree (module name, public
-API, behavior, constraints, output format), the new specification wins. Give me
-the complete final result.
+Starting point: the working, tested solution below, from a related task.
+Change it — no ground-up rewrite — until it satisfies the specification
+that follows. On any disagreement between the two (module name, public API,
+behavior, constraints, output format), the new specification wins. Output
+the complete updated code.
 
 ## Existing code (your starting point)
 

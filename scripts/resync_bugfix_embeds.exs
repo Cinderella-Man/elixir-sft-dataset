@@ -79,7 +79,7 @@ defmodule ResyncBugfix do
          {:ok, report} <- capture(@report, prompt, "failing test report fence"),
          {:ok, spec} <- File.read(Path.join(parent, "prompt.md")) do
       seed = %{files: %{"prompt.md" => spec}}
-      want = Bugfix.prompt_md(seed, buggy, report)
+      want = Bugfix.prompt_md(seed, buggy, report, Path.basename(dir))
 
       cond do
         want == prompt ->

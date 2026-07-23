@@ -148,7 +148,7 @@ defmodule GenTask.DedocTest do
 
   test "prompt_md embeds the stripped module and the documentation contract" do
     stripped = Dedoc.strip(@documented)
-    prompt = Dedoc.prompt_md(stripped)
+    prompt = Dedoc.prompt_md(stripped, "dedoc_x")
 
     assert prompt =~ "# Document this module"
     assert prompt =~ "```elixir"

@@ -1,19 +1,15 @@
-# Document this module
+# Restore the documentation
 
-Below is a complete, working, tested Elixir module. Its behavior is correct
-and must not change — but every piece of documentation has been stripped.
+The module below works and is fully tested — its behavior is final. What it
+lost is every piece of documentation. Put it back:
 
-Add the missing documentation and typespecs:
+- a `@moduledoc` covering purpose and usage,
+- a `@doc` on each public function,
+- a `@spec` on each public function (plus `@type`s where they clarify).
 
-- a `@moduledoc` that explains what the module does and how it is used,
-- a `@doc` for every public function,
-- a `@spec` for every public function (add `@type`s where they make the
-  specs clearer).
-
-Do not change any behavior: every function clause, guard, and expression
-must keep working exactly as it does now. Do not rename anything, do not
-"improve" the code, and do not add or remove functions. Give me the
-complete documented module in a single file.
+And keep your hands off the code itself: no renames, no refactors, no added
+or removed functions, identical behavior everywhere. Return the whole
+documented module in one file.
 
 ## The module
 

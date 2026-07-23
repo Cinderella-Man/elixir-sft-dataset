@@ -1,11 +1,11 @@
-# Fix the bug
+# One bug. Find it. Fix it.
 
-The module below was written for the task that follows, but ONE behavior bug
-slipped in. The test suite (not shown) fails with the report at the bottom.
-Find the bug and fix it — change as little as possible; do not restructure
-working code. Reply with the complete corrected module.
+The module below implements the task that follows, except for a single
+behavior bug. The bottom of this prompt shows the real failure report from
+its (hidden) test suite. Deliver the full corrected module: smallest
+possible change, no restructuring, nothing else touched.
 
-## The task the module implements
+## Target behavior
 
 Write me an Elixir GenServer module called `BoundedIdempotentPayments` that simulates an idempotent payment processing system with in-memory storage where the idempotency store is **capacity-bounded with LRU eviction instead of TTL expiry**. Rather than remembering keys for a fixed time window and sweeping expired ones, the store keeps at most a configured number of idempotency keys; when a brand-new key would overflow that budget, the least-recently-used key is evicted first. There is no clock-based expiry and no periodic cleanup.
 

@@ -78,7 +78,8 @@ defmodule ResyncAdaptEmbeds do
       Path.join(adapt, "prompt.md"),
       GenTask.Adapt.prompt_md(
         File.read!(Path.join(base, "solution.ex")),
-        File.read!(Path.join(var, "prompt.md"))
+        File.read!(Path.join(var, "prompt.md")),
+        Path.basename(adapt)
       )
     )
 
@@ -158,7 +159,7 @@ defmodule ResyncAdaptEmbeds do
       var_prompt = File.read!(Path.join(var_dir, "prompt.md"))
 
       expected = %{
-        "prompt.md" => Adapt.prompt_md(base_gold, var_prompt),
+        "prompt.md" => Adapt.prompt_md(base_gold, var_prompt, Path.basename(dir)),
         "solution.ex" => File.read!(Path.join(var_dir, "solution.ex")),
         "test_harness.exs" => File.read!(Path.join(var_dir, "test_harness.exs"))
       }

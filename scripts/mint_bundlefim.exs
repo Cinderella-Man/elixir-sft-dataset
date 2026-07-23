@@ -180,7 +180,10 @@ defmodule MintBundlefim do
     dir = "tasks/#{cand.family}_#{String.pad_leading(to_string(n), 2, "0")}"
 
     File.mkdir_p!(dir)
-    File.write!(Path.join(dir, "prompt.md"), BundleFimTemplate.prompt(cand.path, spec, skeleton))
+    File.write!(
+      Path.join(dir, "prompt.md"),
+      BundleFimTemplate.prompt(cand.path, spec, skeleton, Path.basename(dir))
+    )
     File.write!(Path.join(dir, "solution.ex"), String.trim_trailing(cand.body, "\n"))
 
     real = grade(dir, "solution.ex")

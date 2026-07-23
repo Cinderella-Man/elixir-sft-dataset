@@ -1,11 +1,8 @@
 # Implement the missing function
 
-Below is the complete specification of a task, followed by a working,
-fully tested module that solves it — except that `redact_string` has been
-removed: every clause body is blanked to `# TODO`. Implement exactly that
-function so the whole module passes the task's full test suite again.
-Change nothing else — every other function, attribute, and clause must
-stay exactly as shown.
+The specification below is followed by its complete, tested solution —
+minus `redact_string`, whose clause bodies are all `# TODO`. Supply that one
+function; the rest of the module is fixed and must stay exactly as shown.
 
 ## The task
 
@@ -254,6 +251,5 @@ defmodule LogRedactor do
 end
 ```
 
-Give me only the complete implementation of `redact_string` (including any
-`@doc`/`@spec`/`@impl` lines that belong directly above it) — the
-function alone, not the whole module.
+Output only `redact_string` (with any `@doc`/`@spec`/`@impl` lines that belong
+directly above it) — the single function, not the module.

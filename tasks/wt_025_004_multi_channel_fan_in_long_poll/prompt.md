@@ -1,17 +1,19 @@
-# Write tests for this module
+# Cover this module with tests
 
-Below is a completed Elixir module and the original specification it was built to
-satisfy. Write a comprehensive ExUnit test harness that verifies a correct
-implementation of this module.
+Here is a finished Elixir module together with the specification it was
+written against. Your job is the harness: write an ExUnit suite that would
+catch a wrong implementation of this module.
 
-Requirements for the harness:
-- Define a module `<Module>Test` that does `use ExUnit.Case, async: false`.
-- Do NOT call `ExUnit.start()` — the evaluator starts ExUnit itself.
-- Make it self-contained: any fakes, clock Agents, or helpers are defined inline.
-- Cover the full public API and the important edge cases described in the spec.
-- It must compile with ZERO warnings (prefix unused variables with `_`; match float
-  zero as `+0.0`/`-0.0`).
-- Give me the complete harness in a single file.
+What the harness must satisfy:
+- Name the test module `<Module>Test` and `use ExUnit.Case, async: false`.
+- Skip `ExUnit.start()` — the evaluator calls it.
+- Keep everything inline: fakes, clock Agents, helpers — the file must stand
+  alone.
+- Work through the whole public API, including the edge cases the
+  specification calls out.
+- Zero compile warnings (prefix unused variables with `_`; match float zero
+  as `+0.0`/`-0.0`).
+- Deliver the complete harness as one file.
 
 ## Original specification
 

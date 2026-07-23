@@ -62,10 +62,24 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    only the two waived 037 families below 0.6 — ledger sha-current
    for the weekly CI gate.
 
-5. **[ ] Prompt-register variety (G3).** Template rotation for the
-   six templated shapes (deterministic, no LLM), then LLM register
-   rewrites of monotone seed prompts, each with a mandatory blind
-   re-screen. Wire rotation into the generator templates too.
+5. **[ ] Prompt-register variety (G3).** DETERMINISTIC HALF DONE
+   2026-07-23: 3-variant register rotation landed in all NINE
+   template modules (bugfix/wt/adapt/dedoc/tdd/tfim/sfim/specfim/
+   bundlefim; single source for mint AND resync), selection =
+   phash2(dir basename, 3) via GenTask.Register; variant 0 = the
+   pre-rotation bytes (golden-fixture-tested). Corpus rotated via
+   the resync battery: 8,735 prompts resynced / 4,472 kept v0;
+   all dry-runs back to 0; all nine self-tests bite (sfim's plant
+   made variant-agnostic); embeds 3889/0/0; format 0; sampled
+   perfect validate 1.0 across every rotated shape; S6 fresh 332;
+   6 new property/golden tests (423 total green). NOTE: the mint
+   modules' md5 bump auto-reopens their reject ledgers (docs/12
+   §5.1.12) — next topup visits re-converge them at identical
+   verdicts, bounded local-eval cost.
+   REMAINING (the LLM half): register rewrites of the ~305 monotone
+   seed prompts (301/332 open "Write me an Elixir", census
+   2026-07-23), each with a mandatory blind re-screen + full family
+   embed cascade; detached + sha-ledgered.
    DESIGN CONSTRAINTS (verified 2026-07-23 before implementing):
    (a) the machinery PARSES structural markers inside these prompts —
    "## New specification" (adapt: resync + lint + evaluator

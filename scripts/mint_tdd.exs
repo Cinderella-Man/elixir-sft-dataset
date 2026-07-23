@@ -91,7 +91,10 @@ defmodule MintTdd do
     harness = File.read!(Path.join(cand.root, "test_harness.exs"))
 
     File.mkdir_p!(cand.dir)
-    File.write!(Path.join(cand.dir, "prompt.md"), GenTask.TddTemplate.prompt(harness))
+    File.write!(
+      Path.join(cand.dir, "prompt.md"),
+      GenTask.TddTemplate.prompt(harness, Path.basename(cand.dir))
+    )
     File.cp!(Path.join(cand.root, "solution.ex"), Path.join(cand.dir, "solution.ex"))
     File.cp!(Path.join(cand.root, "test_harness.exs"), Path.join(cand.dir, "test_harness.exs"))
 

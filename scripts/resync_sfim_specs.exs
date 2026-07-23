@@ -101,7 +101,7 @@ defmodule ResyncSfimSpecs do
          {:ok, prompt} <- File.read(Path.join(dir, "prompt.md")),
          {:parts, {:ok, name}} <- {:parts, target_name(prompt)},
          {:skel, {:ok, skeleton}} <- {:skel, try_extract_skeleton(prompt)} do
-      expected = GenTask.SfimTemplate.prompt(name, spec, skeleton)
+      expected = GenTask.SfimTemplate.prompt(name, spec, skeleton, Path.basename(dir))
 
       cond do
         prompt == expected ->
@@ -187,9 +187,12 @@ defmodule ResyncSfimSpecs do
 
         child_prompt = Path.join(sb_child, "prompt.md")
 
+        # Variant-agnostic plant (the outro wording differs per register
+        # variant, so a phrase replace could silently no-op): appended bytes
+        # drift EVERY variant from its single-source render.
         File.write!(
           child_prompt,
-          String.replace(File.read!(child_prompt), "Give me only", "Provide only")
+          File.read!(child_prompt) <> "\nPLANTED TEMPLATE DRIFT LINE\n"
         )
 
         tdrift = match?({:would_resync, _, _}, resync(sb_child, false))
@@ -200,7 +203,13 @@ defmodule ResyncSfimSpecs do
         {:ok, skel} = try_extract_skeleton(prompt_now)
 
         byte_equal =
-          prompt_now == GenTask.SfimTemplate.prompt(name, File.read!(sb_parent_prompt), skel)
+          prompt_now ==
+            GenTask.SfimTemplate.prompt(
+              name,
+              File.read!(sb_parent_prompt),
+              skel,
+              Path.basename(sb_child)
+            )
 
         [
           {"a clean copied family passes", clean},

@@ -41,7 +41,7 @@ defmodule GenTask.Dedoc do
 
   require Logger
 
-  alias GenTask.{Catalog, Config, Cycle, CycleLog, Evaluator}
+  alias GenTask.{Catalog, Config, Cycle, CycleLog, Evaluator, Register}
 
   @ledger "dedoc_strip.jsonl"
   @dialyzer_ledger "dialyzer_golds.jsonl"
@@ -166,7 +166,7 @@ defmodule GenTask.Dedoc do
 
   defp build_files(seed, src, stripped, harness, cfg) do
     base = %{
-      "prompt.md" => prompt_md(stripped),
+      "prompt.md" => prompt_md(stripped, dedoc_id(seed.task_id)),
       "solution.ex" => src,
       "test_harness.exs" => harness
     }
@@ -182,9 +182,18 @@ defmodule GenTask.Dedoc do
   The `prompt.md` for a dedoc task: the stripped module framed as "document
   this". Deterministic — the resync gate (`scripts/resync_dedoc_embeds.exs`)
   re-derives prompts through this same function.
+
+  The register rotates by `unit_id` (`GenTask.Register`, docs/20). FROZEN
+  across variants: the `## The module` heading (contract_text split marker —
+  the evaluator scopes the contract to everything BEFORE it), the fence
+  layout, and the timer-vocabulary ban (the intro prose IS contract text).
   """
-  @spec prompt_md(String.t()) :: String.t()
-  def prompt_md(stripped_src) do
+  @spec prompt_md(String.t(), String.t()) :: String.t()
+  def prompt_md(stripped_src, unit_id) do
+    render(Register.variant(unit_id), String.trim_trailing(stripped_src))
+  end
+
+  defp render(0, stripped_src) do
     """
     # Document this module
 
@@ -206,7 +215,47 @@ defmodule GenTask.Dedoc do
     ## The module
 
     ```elixir
-    #{String.trim_trailing(stripped_src)}
+    #{stripped_src}
+    ```
+    """
+  end
+
+  defp render(1, stripped_src) do
+    """
+    # Restore the documentation
+
+    The module below works and is fully tested — its behavior is final. What it
+    lost is every piece of documentation. Put it back:
+
+    - a `@moduledoc` covering purpose and usage,
+    - a `@doc` on each public function,
+    - a `@spec` on each public function (plus `@type`s where they clarify).
+
+    And keep your hands off the code itself: no renames, no refactors, no added
+    or removed functions, identical behavior everywhere. Return the whole
+    documented module in one file.
+
+    ## The module
+
+    ```elixir
+    #{stripped_src}
+    ```
+    """
+  end
+
+  defp render(2, stripped_src) do
+    """
+    # Add moduledoc, docs, and specs
+
+    Below: a correct, tested, undocumented module. Deliver the same module
+    fully documented — a `@moduledoc`, a per-public-function `@doc` and
+    `@spec`, and supporting `@type`s where useful. Behavior, names, structure:
+    unchanged. One file.
+
+    ## The module
+
+    ```elixir
+    #{stripped_src}
     ```
     """
   end
