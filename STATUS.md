@@ -102,6 +102,27 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
      chunk-carried-counter pipeline (Stream.chunk_while + bounded
      async_stream), results identical, memory bounded. Largest of
      the five.
+   FULL SWEEP: TOOL PILOT VALIDATED 2026-07-24 (--limit 5: 3 clean, 2
+   real grounded findings — 001_002 moduledoc "O(1) state per key" is
+   unpromised+false [stale {key,window} entries accumulate unbounded when
+   cleanup :infinity]; 002_001 @doc ":half_open_max_probes = concurrent"
+   is a contradiction [probe_count only increments, never decremented on
+   completion + handle_call serializes → it bounds CUMULATIVE probes],
+   spot-verified against code lines 29/138/141/175/179). Census: 335 roots.
+   FULL SWEEP LAUNCHED 2026-07-24 (logs/doc_truth.log, resumes past the 5
+   piloted rows in logs/doc_truth.jsonl → 330 remaining):
+     scripts/run_detached.sh logs/doc_truth.log mix run \
+       scripts/doc_truth_review.exs
+   Report-only (writes findings, changes NOTHING). Relaunch idempotent
+   (rows keyed by prompt+solution+judge shas).
+   AFTER: --report to summarize; then the FIX LANE — each finding is a
+   HYPOTHESIS verified per-artifact-read before any edit (rule 10 / standing
+   lesson; the register rewrite preserved all content so contracts are
+   unchanged). Real contradictions → fix the doc; unpromised claims → soften/
+   cut or add a prompt sentence + anchored test; over-reads → refute + skip.
+   Each doc/gold edit cascades (embeds + fim golds + bugfix pairs) per the
+   standing lesson. Two-tier (rule 7): if a class is generator-preventable,
+   add the accept-time gate.
 
 7. **[DONE 2026-07-23] Family spot-checks (G6, CONTEXT rule 8) —
    CLOSED.** Deterministic sha-ordered stratified sample (seed string
