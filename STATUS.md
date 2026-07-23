@@ -208,6 +208,12 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    the finish line (so new mints carry every gate from the items
    above, incl. the varied register). Findings → fix the generator,
    regenerate, re-probe. Probe earliest after item 5 (G3).
+   FAMILIES SELECTED 2026-07-23 on ledger evidence: ideas 91 + 65 —
+   both at 1.00 MIN semantic-kill across every measured root (the
+   only ideas at a perfect floor besides 34), 4 variations each on
+   disk, domain-diverse (91 data-driven FSM engine / 65 saga
+   orchestration). Probe = one new variation each (next free b)
+   through the standing loop.
 
 10. **[ ] Finish line.** Full sweeps (perfect + fim + mutants +
     decontam), export refresh, README — then this file becomes the
