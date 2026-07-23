@@ -62,6 +62,57 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    only the two waived 037 families below 0.6 — ledger sha-current
    for the weekly CI gate.
 
+4b. **[IN PROGRESS 2026-07-23] Nightly-caught: stale bugfix_109_001
+   golds (perfect sweep 3 FAILED).** The 2026-07-22 109_001 cycle-
+   participants fix (77200c9a5) claimed "bugfix re-minted" in its
+   message but touched ZERO bugfix files; the three
+   bugfix_109_001_*_{01,02,03} dirs still carry the pre-fix gold and
+   now fail the parent anchor test (refute :c in involved → [:c,:a,:b],
+   1/16, overall 0.96, consistent at stability=3 — not flake). The
+   pre-push family-scoped validate missed it because the push touched
+   >20 families and 109_001 fell past the hook's head -20 cap; the
+   nightly full sweep (the designed backstop) caught it.
+   - **Task A (109 pilot): DONE 2026-07-23** (commit d8387e9a1) —
+     delete + topup remint, audit_bugfix 3/3, scoped perfect/mutant/
+     fim validate ALL PASS, hand-read clean. REMAINDER: the 33-pair
+     batch below.
+   - **Task B:** DONE (landed 2026-07-23, self-test 6/6 incl. the two
+     new planted-gold checks; --apply REFUSES stale_gold — remediation
+     is always delete+remint): gold-identity in resync_bugfix_embeds
+     dry-run; pre-push bugfix gate now corpus-wide + stale_gold grep +
+     loud 20-family-cap truncation warning; CI grep widened.
+   - **AUDIT FALLOUT (the gate's first corpus run): 33 MORE stale
+     golds in 11 families** — 003_004, 008_004, 009_002, 010_001,
+     010_003, 019_004, 031_001, 035_001, 072_002, 074_001, 101_001
+     (list: scratchpad stale_golds.txt; all verified real divergences:
+     behavior fixes 072_002 ensure_loaded / 074_001 poll started_at /
+     019_004 pid-set / 009_002 batch-gen / 003_004 query purity /
+     031_001 validate_row simplification / 008_004; spec widenings
+     010_001+010_003 :infinity; doc-truthing 035_001 + 101_001).
+     Invisible to the perfect sweep: old golds still PASS current
+     harnesses — only byte-identity catches the class. Treatment:
+     delete + topup remint per idea (ideas 3, 8, 9, 10, 19, 31, 35,
+     72, 74, 101), AFTER the 109 pilot is reviewed in detail (rule 9).
+     Run with GEN_SKIP_VARIATIONS=1 GEN_SKIP_FIM=1 (provably
+     LLM-free; registry keeps tracking those separately).
+
+4c. **[IN PROGRESS 2026-07-23] GEN_DRY_RUN leak in DeriveMiners.**
+   Found live: `GEN_ONLY=topup GEN_DRY_RUN=1 generate.exs 109` MINTED
+   tasks/109_001_..._14 + _15 (sfim carves of the new cycle_members/
+   trim_feeders functions). Root cause: DeriveMiners.run/3 drives the
+   standalone miner scripts (mint_sfim/tdd/specfim/bundlefim) via
+   their --only CLI and never consults cfg.dry_run; the in-lib miners
+   (fim/tfim/bugfix/wt) honor it via Cycle.promote. The two leaked
+   units are standing-gate-passed and identical to what the real run
+   would mint — KEEP, verify with the family battery, fold into the
+   remint commit.
+   - **Task A:** none beyond verifying the two kept units (they are
+     valid mints; nothing to un-write elsewhere — tdd/specfim/
+     bundlefim found 0 candidates so wrote nothing).
+   - **Task B:** dry_run guard in DeriveMiners.run/3 (explicit
+     skipped outcome, mirroring the tasks_dir guard) — LAND AFTER the
+     topup sweep exits (gate_sha edit trap).
+
 5. **[ ] Prompt-register variety (G3).** Template rotation for the
    six templated shapes (deterministic, no LLM), then LLM register
    rewrites of monotone seed prompts, each with a mandatory blind

@@ -31,6 +31,19 @@ all_families=$(git diff --name-only "$range" -- tasks/ 2>/dev/null |
 # through here (found live 2026-07-19, hook died silently with rc=141).
 families=$(head -20 <<< "$all_families")
 
+# The cap keeps the hook <2min, but it must never truncate SILENTLY: a
+# >20-family push left bugfix_109_001's failing children unvalidated on
+# 2026-07-22 (caught by the nightly backstop the next morning).
+if [ -n "$all_families" ]; then
+  total=$(wc -l <<< "$all_families")
+  capped=$(wc -l <<< "$families")
+  if [ "$total" -gt "$capped" ]; then
+    echo "[pre-push] WARNING: $total families touched — perfect/mutant validate" \
+      "covers only the first $capped; $((total - capped)) families ride on the" \
+      "nightly full sweep as their only backstop"
+  fi
+fi
+
 if [ -n "$families" ]; then
   globs=$(echo "$families" | sed 's/.*/*&*/' | paste -sd, -)
   echo "[pre-push] validate touched families: $globs"
@@ -54,12 +67,18 @@ if [ -n "$families" ]; then
       "see the scripts/resync_embeds.exs header for the scoped remediation flow"
     exit 1
   fi
-  echo "[pre-push] bugfix embed staleness check on touched families"
-  bugfix_out=$(mix run scripts/resync_bugfix_embeds.exs -- --only "$globs")
+  # Corpus-wide, matching CI (same reasoning as the format/embeds gates):
+  # the dry run is pure file reads, and the --only scope inherits the
+  # 20-family cap above — exactly how the stale bugfix_109_001 golds slipped
+  # through on 2026-07-22. Also checks GOLD IDENTITY (child solution.ex ==
+  # parent reference); stale_gold is never --apply-healable — re-mint.
+  echo "[pre-push] bugfix embed staleness + gold-identity check (corpus-wide, matching CI)"
+  bugfix_out=$(mix run scripts/resync_bugfix_embeds.exs || true)
   echo "$bugfix_out" | tail -1
-  if echo "$bugfix_out" | grep -q "would_resync\|error"; then
-    echo "[pre-push] FAIL: bugfix prompts embed a stale parent spec —" \
-      "run: mix run scripts/resync_bugfix_embeds.exs -- --only \"$globs\" --apply"
+  if echo "$bugfix_out" | grep -q "would_resync\|stale_gold\|error"; then
+    echo "[pre-push] FAIL: bugfix prompts embed a stale parent spec or a stale gold —"
+    echo "  spec drift: mix run scripts/resync_bugfix_embeds.exs -- --apply"
+    echo "  stale gold: delete the pair + re-mint (GEN_ONLY=topup mix run scripts/generate.exs <idea>)"
     exit 1
   fi
 

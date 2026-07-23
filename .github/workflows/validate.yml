@@ -64,12 +64,15 @@ jobs:
           echo "$out" | grep -q "would_resync\|error" && exit 1 || true
       # bugfix_ prompts embed the parent task spec verbatim (docs/13 §1.1): a
       # parent-prompt edit must propagate, or 959 debugging tasks teach a stale
-      # spec alongside a real bug.
+      # spec alongside a real bug. The dry run also checks GOLD IDENTITY
+      # (child solution.ex == parent reference): a parent-gold behavior edit
+      # without a bugfix re-mint is stale_gold — never --apply-healable, the
+      # remediation is delete + re-mint (found live 2026-07-23, bugfix_109_001).
       - run: mix run scripts/resync_bugfix_embeds.exs -- --self-test
       - run: |
-          out=$(mix run scripts/resync_bugfix_embeds.exs)
+          out=$(mix run scripts/resync_bugfix_embeds.exs || true)
           echo "$out"
-          echo "$out" | grep -q "would_resync\|error" && exit 1 || true
+          echo "$out" | grep -q "would_resync\|stale_gold\|error" && exit 1 || true
       # adapt_ dirs are deterministic projections of (base gold, variation
       # prompt/gold/harness) — docs/13 §2.1. Editing any parent must propagate,
       # or the pair teaches a stale starting point or grades against a stale gate.

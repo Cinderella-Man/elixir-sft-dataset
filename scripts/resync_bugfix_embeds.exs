@@ -12,6 +12,15 @@
 # gate: a dry run must report 0 would_resync in CI / pre-push, else a parent
 # prompt was edited and its bugfix children now teach a stale spec.
 #
+# It ALSO verifies gold identity: the child's solution.ex must be byte-identical
+# to the parent reference (audit_bugfix property 4). A parent-gold behavior edit
+# without a bugfix re-mint leaves the child failing the parent harness while
+# its buggy module + failing report stay captured mutants OF THE OLD GOLD —
+# so `stale_gold` is NEVER healed by --apply (a gold copy would break the
+# one-line-bug property); the only remediation is delete + deterministic
+# re-mint (GEN_ONLY=topup). Found live 2026-07-23: bugfix_109_001_{01,02,03}
+# reached main when a >20-family push overflowed the pre-push validate cap.
+#
 #   mix run scripts/resync_bugfix_embeds.exs                    # dry (gate)
 #   mix run scripts/resync_bugfix_embeds.exs -- --apply
 #   mix run scripts/resync_bugfix_embeds.exs -- --only "013_*"  # glob
@@ -58,14 +67,15 @@ defmodule ResyncBugfix do
         if(apply?, do: " — APPLIED", else: " (report only)")
     )
 
-    if freq[:error], do: System.halt(1)
+    if freq[:error] || freq[:stale_gold], do: System.halt(1)
   end
 
   defp resync(dir, apply?) do
     prompt = File.read!(Path.join(dir, "prompt.md"))
     parent = EvalTask.Runner.bugfix_parent_dir(dir)
 
-    with {:ok, buggy} <- capture(@buggy, prompt, "buggy module fence"),
+    with :ok <- gold_identity(dir, parent),
+         {:ok, buggy} <- capture(@buggy, prompt, "buggy module fence"),
          {:ok, report} <- capture(@report, prompt, "failing test report fence"),
          {:ok, spec} <- File.read(Path.join(parent, "prompt.md")) do
       seed = %{files: %{"prompt.md" => spec}}
@@ -84,9 +94,33 @@ defmodule ResyncBugfix do
           :would_resync
       end
     else
+      {:stale_gold, why} ->
+        IO.puts("  STALE GOLD #{dir}: #{why}")
+        :stale_gold
+
       {:error, why} ->
         IO.puts("  ERROR #{dir}: #{why}")
         :error
+    end
+  end
+
+  # Gold identity is checked in BOTH modes and never healed here: the buggy
+  # module and report are immutable captures of the OLD gold, so copying the
+  # new gold over solution.ex would leave a multi-line buggy→gold diff and
+  # break the shape's one-line-bug teaching contract.
+  defp gold_identity(dir, parent) do
+    with {:ok, child_gold} <- File.read(Path.join(dir, "solution.ex")),
+         {:ok, parent_gold} <- File.read(Path.join(parent, "solution.ex")) do
+      if child_gold == parent_gold do
+        :ok
+      else
+        {:stale_gold,
+         "solution.ex differs from the parent reference — delete the pair and " <>
+           "re-mint (GEN_ONLY=topup mix run scripts/generate.exs <idea>); " <>
+           "do NOT copy the gold over"}
+      end
+    else
+      {:error, why} -> {:error, "solution.ex unreadable: #{inspect(why)}"}
     end
   end
 
@@ -149,7 +183,14 @@ defmodule ResyncBugfix do
              resync(sandbox_child, false) == :would_resync
            )},
           {"--apply heals it byte-for-byte", resync(sandbox_child, true) == :resynced},
-          {"the healed dir passes again", resync(sandbox_child, false) == :unchanged}
+          {"the healed dir passes again", resync(sandbox_child, false) == :unchanged},
+          {"a planted PARENT gold edit is detected as stale_gold",
+           (
+             gold_path = Path.join(sandbox_parent, "solution.ex")
+             File.write!(gold_path, File.read!(gold_path) <> "\n# EDITED GOLD LINE\n")
+             resync(sandbox_child, false) == :stale_gold
+           )},
+          {"--apply REFUSES to heal a stale gold", resync(sandbox_child, true) == :stale_gold}
         ]
       after
         File.rm_rf!(root)
