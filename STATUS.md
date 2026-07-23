@@ -140,6 +140,35 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    anchored tests (promise-audit machinery) or get cut. (The hand
    queue in item 2 fixes many @doc-contradiction findings — check
    what the sweep still owes after it.)
+   SIZED 2026-07-23 (sha cross-check of semantic_review latest rows):
+   5 roots have doc-claim findings measured on CURRENT bytes; 14 more
+   rows are stale (solution sha changed since review — presumed fixed
+   by the docs/19 doc-truth batch; confirm per-finding on artifact
+   reads, standing lesson). The full sweep is a NEW dedicated
+   @doc-truth pass over all roots (semantic_review was not
+   doc-focused), detached + sha-ledgered, after G3.
+   PILOT VERIFIED 2026-07-23, all 5 CONFIRMED on artifact reads —
+   fixes queued (land after the stale-gold batch; every gold edit
+   cascades + re-mints bugfix children under the new identity gate):
+   - 099_004: moduledoc says stats/0, API is stats(server)/1 —
+     one-token doc fix.
+   - 062_001: @doc on run/2 claims failed-stage timing recorded;
+     prompt says error tuple "carries no metadata list"; code agrees
+     with prompt — rewrite the @doc sentence.
+   - 097_002: prompt promises a SINGLE public function; gold exports
+     public levenshtein/2 with @doc false (harness never calls it) —
+     make defp.
+   - 005_003: fresh Process.monitor ref per subscribe makes the
+     Map.update merge fn + the remaining!=[] branch UNREACHABLE;
+     moduledoc advertises %{ref => {pid, [topic, ...]}} multi-topic
+     shape that is always a singleton — simplify to singular shape,
+     both handlers + moduledoc.
+   - 032_003: prompt MANDATES a streaming pipeline; gold Enum.reduces
+     all parsed records into memory then chunk_every's (moduledoc
+     "never loads the full file" is false) — real fix: lazy
+     chunk-carried-counter pipeline (Stream.chunk_while + bounded
+     async_stream), results identical, memory bounded. Largest of
+     the five.
 
 7. **[ ] Family spot-checks (G6, CONTEXT rule 8).** Structured hand
    READS of sampled families across eras/shapes, both accepted and
