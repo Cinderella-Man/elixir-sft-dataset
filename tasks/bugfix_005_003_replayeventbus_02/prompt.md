@@ -8,11 +8,19 @@ with the complete corrected module.
 
 ## What the module is supposed to do
 
-Write me an Elixir GenServer module called `ReplayEventBus` that implements an in-process pub/sub event system where new subscribers can optionally receive the **last N events** published on a topic before starting to receive live events.
+# ReplayEventBus — Specification
 
-The motivation: in many systems a subscriber that joins mid-stream needs to catch up on what it missed — a state-sync layer needs the most recent snapshot, a late-arriving monitor needs to see recent errors. Standard pub/sub forces every subscriber to bootstrap from an external snapshot. This module gives the bus itself a bounded per-topic history.
+## Overview
 
-I need these functions in the public API:
+This document specifies an Elixir GenServer module named `ReplayEventBus` that implements an in-process pub/sub event system in which new subscribers can optionally receive the **last N events** published on a topic before beginning to receive live events.
+
+The motivation: in many systems a subscriber that joins mid-stream needs to catch up on what it missed — a state-sync layer needs the most recent snapshot, and a late-arriving monitor needs to see recent errors. Standard pub/sub forces every subscriber to bootstrap from an external snapshot. This module gives the bus itself a bounded per-topic history.
+
+The complete module is to be delivered in a single file. It must use only the OTP standard library, with no external dependencies.
+
+## API
+
+The public API is required to expose the following functions.
 
 - `ReplayEventBus.start_link(opts)` accepts:
   - `:name` — optional process registration
@@ -40,7 +48,11 @@ I need these functions in the public API:
 
 - `ReplayEventBus.set_history_size(server, topic, size)` — override the per-topic history size. `size` must be a non-negative integer; `0` disables history for that topic (existing entries are dropped). Returns `:ok`. Enforce the non-negative requirement with a function guard, so passing a negative `size` raises `FunctionClauseError`.
 
-**Important semantics for replay-then-live**: replay must be atomic with the subscription becoming active. That is, between the last replayed event and the first live event the subscriber sees, no event can be missed or duplicated. Concretely:
+Events are sent to subscribers in the shape `{:event, topic, event}` (same shape for replay and live — the subscriber can't distinguish them from the message alone).
+
+## Edge cases
+
+**Replay-then-live semantics.** Replay must be atomic with the subscription becoming active. That is, between the last replayed event and the first live event the subscriber sees, no event can be missed or duplicated. Concretely:
 
 1. Acquire a snapshot of the topic's history (after TTL eviction).
 2. Select the last N events (or all, based on the replay option).
@@ -49,13 +61,9 @@ I need these functions in the public API:
 
 Because the whole subscribe handler runs inside a single GenServer call, steps 1–4 are atomic with respect to other publishes — an in-flight publish either precedes the replay (gets into history, so the subscriber sees it in step 3) or follows registration (delivered live in step 4). There's no window for missed or duplicated delivery, but a subscriber that subscribes *during* a publish might see the event twice in the worst case (once in replay, once live) — actually no: the subscribe call is serialized by the GenServer, so it either runs to completion before the publish starts or after it finishes.
 
-Events are sent to subscribers in the shape `{:event, topic, event}` (same shape for replay and live — the subscriber can't distinguish them from the message alone).
+**Subscriber death.** When a monitored subscriber dies (`:DOWN` message), remove all its subscriptions across all topics. Do not purge the topic's history — history is per-topic, not per-subscriber.
 
-When a monitored subscriber dies (`:DOWN` message), remove all its subscriptions across all topics. Do not purge the topic's history — history is per-topic, not per-subscriber.
-
-Periodic cleanup via `Process.send_after(self(), :cleanup, cleanup_interval_ms)` evicts events older than the TTL across all topics. Topics whose history becomes empty AND who have zero subscribers are dropped entirely (indistinguishable from a never-seen topic).
-
-Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+**Periodic cleanup.** Periodic cleanup via `Process.send_after(self(), :cleanup, cleanup_interval_ms)` evicts events older than the TTL across all topics. Topics whose history becomes empty AND who have zero subscribers are dropped entirely (indistinguishable from a never-seen topic).
 
 ## The buggy module
 

@@ -7,25 +7,17 @@ whole suite again, and leave every other line precisely as shown.
 
 ## The task
 
-Write me an Elixir module called `Saga` that implements the Saga pattern **with a pivot boundary and forward recovery**. Unlike a plain saga where every failure rolls everything back, this coordinator distinguishes two kinds of steps:
+I need you to write me an Elixir module called `Saga` — it implements the Saga pattern, but with a pivot boundary and forward recovery rather than the plain version where any failure unwinds everything. The whole point is that this coordinator treats two kinds of steps differently.
 
-- **Compensable steps** — added with `Saga.step(saga, name, action_fn, compensate_fn)`. These come *before* the commit point and can be rolled back.
-- **Retriable steps** — added with `Saga.retriable(saga, name, action_fn, max_attempts)`. These come *after* the commit point. They have no compensating action; instead, if the action fails it is retried (re-invoked with the same context) up to `max_attempts` total attempts. Retriable steps model post-commit work that must be driven *forward* to completion, not undone.
+The first kind is compensable steps, which I add with `Saga.step(saga, name, action_fn, compensate_fn)`. Those live *before* the commit point, so they can be rolled back. The second kind is retriable steps, added via `Saga.retriable(saga, name, action_fn, max_attempts)`. Those live *after* the commit point. They have no compensating action at all — instead, when the action fails, we retry it (re-invoking it with the same context) up to `max_attempts` total attempts. Retriable steps are how I model post-commit work that has to be driven *forward* to completion instead of undone.
 
-Public API:
-- `Saga.new()` — creates a new, empty saga struct.
-- `Saga.step(saga, name, action_fn, compensate_fn)` — appends a compensable step. `action_fn` is a 1-arity function receiving the context map and returning `{:ok, result}` or `{:error, reason}`. `compensate_fn` is a 1-arity function receiving the context; its return value is recorded but never fails the compensation chain.
-- `Saga.retriable(saga, name, action_fn, max_attempts)` — appends a retriable step. `max_attempts` is a positive integer; reject a non-positive value with a guard clause, so passing `0` or a negative number raises `FunctionClauseError`.
-- `Saga.execute(saga, context)` — runs all steps in order, threading the context map (a successful step's result is merged under its name). On success, returns `{:ok, final_context}` — the accumulated context map (the original context for an empty saga).
+For the public surface: `Saga.new()` creates a new, empty saga struct. `Saga.step(saga, name, action_fn, compensate_fn)` appends a compensable step, where `action_fn` is a 1-arity function that receives the context map and returns either `{:ok, result}` or `{:error, reason}`, and `compensate_fn` is a 1-arity function receiving the context — its return value gets recorded, but it never fails the compensation chain. `Saga.retriable(saga, name, action_fn, max_attempts)` appends a retriable step; `max_attempts` has to be a positive integer, and I want a non-positive value rejected with a guard clause, so that passing `0` or a negative number raises `FunctionClauseError`. Finally, `Saga.execute(saga, context)` runs all the steps in order, threading the context map through (a successful step's result gets merged under its name), and on success returns `{:ok, final_context}` — the accumulated context map, which for an empty saga is just the original context.
 
-Failure semantics:
-- If a **compensable** step returns `{:error, reason}`, forward execution stops and the compensating actions of all previously completed **compensable** steps run in **reverse order**. Return `{:error, failed_step_name, reason, compensation_results}`, where `compensation_results` is a keyword list of `[step_name: compensate_return_value]` in reverse call order. Retriable steps are never compensated (they are post-commit).
-- A **retriable** step that returns `{:error, reason}` is retried, re-invoking its action with the same context, until it returns `{:ok, result}` or `max_attempts` attempts have been made. On exhaustion, return `{:error, failed_step_name, {:retries_exhausted, last_reason}, []}` — note the empty compensation list, because committed compensable steps are **not** rolled back once the pivot has been crossed. `last_reason` is the reason from the final attempt.
+Now the failure side, which is the part I care most about. If a compensable step returns `{:error, reason}`, forward execution stops and the compensating actions of all previously completed compensable steps run in reverse order. The return is `{:error, failed_step_name, reason, compensation_results}`, where `compensation_results` is a keyword list of `[step_name: compensate_return_value]` in reverse call order. Retriable steps are never compensated — they're post-commit.
 
-Other behaviours to preserve:
-- Steps run strictly in the order added; each action/compensation sees the accumulated context.
-- A raising compensating function must not abort the remaining compensations; catch and record it (its recorded value may be any term).
-- Plain module with a struct — no GenServer, no processes, no external dependencies.
+A retriable step that returns `{:error, reason}` gets retried, re-invoking its action with the same context, until either it returns `{:ok, result}` or `max_attempts` attempts have been made. If it exhausts them, return `{:error, failed_step_name, {:retries_exhausted, last_reason}, []}` — note that compensation list is empty, because committed compensable steps are not rolled back once we've crossed the pivot. `last_reason` is the reason from the final attempt.
+
+A few other behaviours I need preserved: steps run strictly in the order they were added, and each action and each compensation sees the accumulated context. A compensating function that raises must not abort the remaining compensations — catch it and record it (the recorded value may be any term). And keep it a plain module with a struct: no GenServer, no processes, no external dependencies.
 
 Give me the complete implementation in a single file.
 

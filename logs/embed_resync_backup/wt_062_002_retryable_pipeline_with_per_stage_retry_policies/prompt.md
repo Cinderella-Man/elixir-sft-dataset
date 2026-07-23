@@ -19,11 +19,11 @@ Write me an Elixir module called `Pipeline` that lets callers build and run line
 
 I need these functions in the public API:
 - `Pipeline.new()` — returns a fresh, empty pipeline struct.
-- `Pipeline.stage(pipeline, name, fun, opts \\ [])` — appends a named stage to the pipeline. `name` is an atom, `fun` is a one-arity function that receives the current value and returns either `{:ok, result}` or `{:error, reason}`. `opts` may contain:
+- `Pipeline.stage(pipeline, name, fun, opts \\ [])` — appends a named stage to the pipeline. `name` is an atom, `fun` is a one-arity function that receives the current value and returns either `{:ok, result}` or `{:error, reason}`. Enforce these with guard clauses: calling `stage/4` with a non-atom `name`, or with a `fun` whose arity is not 1, must raise `FunctionClauseError`. `opts` may contain:
   - `:retries` — a non-negative integer, the number of *additional* attempts allowed after the first attempt fails (default `0`, i.e. no retries).
   - `:backoff_ms` — a non-negative integer number of milliseconds to sleep between attempts (default `0`).
-  Stages must be stored in insertion order.
-- `Pipeline.run(pipeline, input)` — executes all stages in order, threading the result of each successful stage as the input to the next.
+  Stages must be stored in insertion order. The same `name` may be used more than once; each such stage is kept and executed as its own step, in insertion order.
+- `Pipeline.run(pipeline, input)` — executes all stages in order, threading the result of each successful stage as the input to the next. Running an empty pipeline returns `{:ok, input, []}` (the input unchanged, with empty metadata).
   - When a stage returns `{:error, reason}` and it still has retries remaining, re-invoke the same stage on the **same input** (after sleeping `:backoff_ms`), up to its retry budget.
   - If a stage eventually succeeds within its budget, continue with the next stage.
   - If a stage exhausts its retry budget, immediately halt and return `{:error, failed_stage_name, reason, attempts}` where `attempts` is the total number of times that stage was invoked (initial try + retries used). Do not execute any subsequent stages.

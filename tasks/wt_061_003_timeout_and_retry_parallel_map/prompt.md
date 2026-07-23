@@ -13,47 +13,17 @@ Hard requirements:
 
 ## Original specification
 
-Write me an Elixir module called `RetryMap` that applies a function to a collection in
-parallel, enforcing a maximum concurrency limit **and** giving each element a per-attempt
-timeout with bounded retries.
+Hey — I need you to write me a module called `RetryMap` for us. The job it does is map a function over a collection in parallel, but with two things bolted on that we keep hand-rolling everywhere: a hard cap on how many things run at once, and a per-attempt timeout with a bounded number of retries.
 
-I need one public function:
-- `RetryMap.pmap(collection, func, opts)` where `opts` is a keyword list accepting:
-  - `:max_concurrency` — the maximum number of tasks alive at once (default `5`)
-  - `:timeout` — the per-attempt timeout in milliseconds (default `5000`)
-  - `:max_attempts` — the maximum number of attempts per element (default `1`)
+The only public entry point I want is `RetryMap.pmap(collection, func, opts)`. `opts` is a keyword list and it should accept `:max_concurrency`, the maximum number of tasks alive at once, defaulting to `5`; `:timeout`, the per-attempt timeout in milliseconds, defaulting to `5000`; and `:max_attempts`, the maximum number of attempts per element, defaulting to `1`. It applies `func` to each element in parallel with at most `max_concurrency` tasks alive simultaneously, and hands me back a list of tagged results, one per element, in the same order as the input — order of results has to match input order regardless of what finishes when.
 
-It applies `func` to each element in parallel with at most `max_concurrency` tasks alive
-simultaneously, and returns a list — in the **same order** as the input — of tagged
-results, one per element.
+Here's the per-element behaviour I'm after. If an attempt returns a value within `:timeout`, that element's result is `{:ok, value}`. If an attempt does not finish within `:timeout`, kill that attempt and retry it, up to a total of `:max_attempts` attempts; if every attempt times out, the result for that element is `{:error, :timeout}`. If `func` raises, or the task exits abnormally, treat that as a permanent failure — no retry at all — and the result is `{:error, {:exception, reason}}`, or a similarly tagged error if the failure wasn't an exception. One element crashing or timing out must not disturb any other element.
 
-Per-element semantics:
-- If an attempt returns a value within `:timeout`, that element's result is `{:ok, value}`.
-- If an attempt does **not** finish within `:timeout`, kill that attempt and retry, up to a
-  total of `:max_attempts` attempts. If all attempts time out, the result is
-  `{:error, :timeout}`.
-- If `func` raises (or the task exits abnormally), that is a **permanent** failure — do
-  **not** retry — and the result is `{:error, {:exception, reason}}` (or a similarly tagged
-  error for a non-exception failure). A crash or timeout for one element must not affect any
-  other element.
+On the concurrency side, I want an actual pool/semaphore approach, so that at no point are there more than `max_concurrency` tasks alive simultaneously. When an element reaches a terminal result its slot frees up and gets filled from the queue; a retry of a timed-out element reuses that same element's slot rather than grabbing a new one.
 
-For concurrency enforcement: use a pool/semaphore approach so that at no point are more than
-`max_concurrency` tasks alive simultaneously. A freed slot is filled from the queue once an
-element reaches a terminal result; a retry of a timed-out element reuses that element's slot.
+I also need a small helper GenServer in the same file called `ConcurrencyCounter`. It should expose `ConcurrencyCounter.start_link(opts)` to start the process, accepting `:name`; `ConcurrencyCounter.increment(server)`, which increments the active count and returns the new value; `ConcurrencyCounter.decrement(server)`, which decrements the active count and returns the new value; and `ConcurrencyCounter.peak(server)`, which returns the highest value the counter has ever reached. That one exists purely so our tests can verify the concurrency limit is genuinely respected at runtime — your `pmap` implementation itself doesn't have to use it.
 
-You will also need to write a helper GenServer called `ConcurrencyCounter` in the same file.
-It must expose:
-- `ConcurrencyCounter.start_link(opts)` — starts the process, accepts `:name`
-- `ConcurrencyCounter.increment(server)` — increments the active count, returns the new value
-- `ConcurrencyCounter.decrement(server)` — decrements the active count, returns the new value
-- `ConcurrencyCounter.peak(server)` — returns the highest value the counter has ever reached
-
-`ConcurrencyCounter` is intended for use in tests to verify the concurrency limit is actually
-respected at runtime; your `pmap` implementation itself does not need to use it.
-
-Give me the complete implementation in a single file. Use only OTP and the standard library —
-no external dependencies. Do not use `Task.async_stream`; implement the scheduling, timeout,
-and retry logic yourself using `spawn_monitor`, `Process.send_after`, and `Process.exit`.
+Send it back as a complete implementation in a single file. Stick to OTP and the standard library, no external dependencies. And please don't reach for `Task.async_stream` — I want the scheduling, timeout, and retry logic written out yourself with `spawn_monitor`, `Process.send_after`, and `Process.exit`.
 
 ## Module under test
 

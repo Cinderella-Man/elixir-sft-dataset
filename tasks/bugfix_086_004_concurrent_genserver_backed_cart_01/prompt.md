@@ -8,22 +8,23 @@ with the complete corrected module.
 
 ## What the module is supposed to do
 
-Write me an Elixir module called `CartServer` that implements a shopping cart as a **GenServer** — one process per cart — so that concurrent updates from many callers are serialized safely.
+I need a shopping cart backed by a GenServer and I'd like you to write it for me. Call the module `CartServer`. The idea is one process per cart, so that when a bunch of callers hammer the same cart concurrently, the updates get serialized safely instead of stepping on each other.
 
-I need this public API (all client functions take the cart's `pid`):
-- `CartServer.start_link(opts \\ [])` — starts a cart process and returns `{:ok, pid}`. Accepts a `:tax_rate` option (a float, e.g. `0.08`), defaulting to `0.0`.
-- `CartServer.add_item(pid, product_id, quantity, unit_price)` — adds the quantity of a product at the unit price. If the product already exists, increase its quantity. Returns `:ok`, or `{:error, :invalid_quantity}` if quantity is not a positive integer. When it returns `{:error, :invalid_quantity}` the cart is left unchanged.
-- `CartServer.remove_item(pid, product_id)` — removes a product entirely and returns `:ok` (a no-op if absent).
-- `CartServer.update_quantity(pid, product_id, quantity)` — sets the quantity of an existing item. If quantity is 0, remove the item and return `:ok`. If the product is not present, return `{:error, :not_found}`. If quantity is negative, return `{:error, :invalid_quantity}`. Otherwise return `:ok`.
-- `CartServer.totals(pid)` — returns a map with:
-  - `:subtotal` — sum of each item's `unit_price * quantity` after per-item discounts
-  - `:tax` — `subtotal * tax_rate`
-  - `:grand_total` — `subtotal + tax`
-  - `:items` — a list of maps, one per cart item, each with `:product_id`, `:quantity`, `:unit_price`, `:discount_rate`, and `:line_total`. `:discount_rate` is the discount expressed as a fraction — `0.1` when the bulk discount applies, otherwise `0.0`. An empty cart yields `:items` `[]` and `0.0` for `:subtotal`, `:tax`, and `:grand_total`.
+Here's the public API I'm after — every client function takes the cart's `pid`:
 
-Discount rule: a line item with quantity ≥ 10 gets a 10% discount on its unit price before its line total. Items below 10 receive no discount.
+`CartServer.start_link(opts \\ [])` starts a cart process and hands back `{:ok, pid}`. It should accept a `:tax_rate` option (a float, e.g. `0.08`), and when nobody passes one it defaults to `0.0`.
 
-Because all state changes flow through the GenServer, concurrent `add_item` calls to the same product from many processes must accumulate correctly with no lost updates. All monetary values are floats. Give me the complete module in a single file with no external dependencies beyond OTP's `GenServer`.
+`CartServer.add_item(pid, product_id, quantity, unit_price)` adds the given quantity of a product at the given unit price. If that product is already in the cart, bump its quantity rather than duplicating the line. It returns `:ok`, or `{:error, :invalid_quantity}` when quantity isn't a positive integer — and in that error case I want the cart left exactly as it was, no partial mutation.
+
+`CartServer.remove_item(pid, product_id)` drops a product entirely and returns `:ok`. If the product isn't there, it's just a no-op (still `:ok`).
+
+`CartServer.update_quantity(pid, product_id, quantity)` sets the quantity of an item that already exists. A quantity of 0 means remove the item and return `:ok`. If the product isn't present at all, return `{:error, :not_found}`. If the quantity is negative, return `{:error, :invalid_quantity}`. Anything else, return `:ok`.
+
+`CartServer.totals(pid)` gives me back a map containing `:subtotal` — the sum over items of `unit_price * quantity` after per-item discounts are applied; `:tax` — that's `subtotal * tax_rate`; `:grand_total` — `subtotal + tax`; and `:items` — a list of maps, one per cart item, each carrying `:product_id`, `:quantity`, `:unit_price`, `:discount_rate`, and `:line_total`. I want `:discount_rate` expressed as a fraction: `0.1` when the bulk discount kicks in, otherwise `0.0`. For an empty cart, `:items` should come back as `[]` and `:subtotal`, `:tax`, and `:grand_total` should each be `0.0`.
+
+The discount rule itself: any line item with quantity ≥ 10 gets a 10% discount applied to its unit price before the line total is computed. Items under 10 get no discount.
+
+Since every state change funnels through the GenServer, concurrent `add_item` calls against the same product from many processes have to accumulate correctly with zero lost updates — that's really the point of the exercise. All monetary values are floats. Please give me the complete module in a single file, with no external dependencies beyond OTP's `GenServer`.
 
 ## The buggy module
 

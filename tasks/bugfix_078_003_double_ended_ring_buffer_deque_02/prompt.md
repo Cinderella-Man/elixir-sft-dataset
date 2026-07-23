@@ -7,11 +7,12 @@ working code. Reply with the complete corrected module.
 
 ## The task the module implements
 
-Write me an Elixir module called `RingDeque` that implements a fixed-size, double-ended ring buffer (a bounded deque) as a pure data structure (no GenServer — just a plain struct with functions).
+I need a bounded deque for one of our hot paths, and I'd like it as a plain Elixir module called `RingDeque` — a fixed-size, double-ended ring buffer implemented as a pure data structure. No GenServer, please; just a plain struct with functions.
 
-Items can be pushed onto either end. When the deque is full, pushing to one end silently overwrites the element at the OPPOSITE end (push to the back drops the front; push to the front drops the back).
+The behavior I'm after: items can be pushed onto either end, and when the deque is full, pushing to one end silently overwrites the element at the OPPOSITE end. So a push to the back drops the front, and a push to the front drops the back.
 
-I need these functions in the public API:
+Here's the public API I need:
+
 - `RingDeque.new(capacity)` — creates a new empty deque with the given fixed capacity.
 - `RingDeque.push_back(deque, item)` — appends at the back. When full, overwrites (drops) the current front.
 - `RingDeque.push_front(deque, item)` — prepends at the front. When full, overwrites (drops) the current back.
@@ -22,9 +23,9 @@ I need these functions in the public API:
 - `RingDeque.peek_front(deque)` — returns `{:ok, item}` for the front item, or `:error` if empty.
 - `RingDeque.peek_back(deque)` — returns `{:ok, item}` for the back item, or `:error` if empty.
 
-The internal representation must use a fixed-size tuple (pre-allocated to `capacity` slots) as the backing store, with an integer head index and a live-count, both advancing with `rem/2` so all four operations wrap around the tuple in O(1). Do not use a list or an `Enum`-grown structure as the primary store.
+On the internals, I'm particular here: the representation must use a fixed-size tuple (pre-allocated to `capacity` slots) as the backing store, with an integer head index and a live-count, both advancing with `rem/2` so all four operations wrap around the tuple in O(1). Don't reach for a list or an `Enum`-grown structure as the primary store.
 
-Give me the complete module in a single file. Use only the Elixir standard library — no external dependencies.
+Send me the complete module in a single file, using only the Elixir standard library — no external dependencies.
 
 ## The buggy module
 

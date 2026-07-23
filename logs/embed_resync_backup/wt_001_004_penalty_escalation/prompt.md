@@ -26,7 +26,7 @@ I need these functions in the public API:
 - `PenaltyLimiter.check(server, key, max_requests, window_ms, penalty_ladder)` which evaluates a request. `penalty_ladder` is a list of cooldown durations in milliseconds indexed by strike count, e.g. `[1_000, 5_000, 30_000, 300_000]` means "first strike = 1s cooldown, second = 5s, third = 30s, fourth and beyond = 5min". Strikes persist across window boundaries and only decay with time — specifically, a key's strike count drops by one for every `window_ms * 10` that passes with no new strikes (configurable via a fifth argument would overcomplicate the signature; use the `window_ms * 10` rule).
 
   Possible return values:
-  - `{:ok, remaining}` — request allowed under the normal sliding-window limit, where `remaining` is the remaining allowance in the current window.
+  - `{:ok, remaining}` — request allowed under the normal sliding-window limit, where `remaining` is the number of further requests still allowed in the current window *after* this one — i.e. `max_requests` minus the number of window slots now occupied (so the first of three allowed requests returns `{:ok, 2}`, then `{:ok, 1}`, then `{:ok, 0}`).
   - `{:error, :rate_limited, retry_after_ms, strike_count}` — request rejected because the normal limit is exceeded. A strike has been recorded. `retry_after_ms` is the larger of (time until the oldest window entry expires) and (the new strike's cooldown from the ladder).
   - `{:error, :cooling_down, retry_after_ms, strike_count}` — request rejected because an active cooldown from a previous strike is still in effect. No new strike is recorded (you don't compound penalties for retrying during a cooldown). `retry_after_ms` is the remaining cooldown.
 

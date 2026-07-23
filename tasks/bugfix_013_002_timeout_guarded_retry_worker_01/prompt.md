@@ -7,30 +7,45 @@ working code. Reply with the complete corrected module.
 
 ## The task the module implements
 
-Write me an Elixir GenServer module called `TimeoutRetryWorker` that executes a function with exponential backoff, jitter, and per-attempt timeouts on failure.
+# Design brief: `TimeoutRetryWorker`
 
-I need these functions in the public API:
+## Problem
 
-- `TimeoutRetryWorker.start_link(opts)` to start the process. It should accept a `:clock` option which is a zero-arity function returning the current time in milliseconds. If not provided, default to `fn -> System.monotonic_time(:millisecond) end`. It should also accept a `:random` option which is a one-arity function that takes a max integer and returns a random integer in `0..max-1`. If not provided, default to `fn max -> :rand.uniform(max) - 1 end`. It should also accept a `:name` option for process registration.
+We need an Elixir GenServer module called `TimeoutRetryWorker` that executes a function with exponential backoff, jitter, and per-attempt timeouts on failure. Each attempt runs inside a spawned `Task` with a timeout enforced via `Task.yield/2` + `Task.shutdown/2`. The GenServer must support multiple concurrent `execute` calls — each tracked independently so that one caller's retry schedule doesn't block another caller's work.
 
-- `TimeoutRetryWorker.execute(server, func, opts)` which attempts to run the zero-arity function `func`. Each attempt must be run inside a spawned `Task` with a timeout enforced via `Task.yield/2` + `Task.shutdown/2`. If the task completes and returns `{:ok, result}`, return `{:ok, result}` immediately. If the task completes and returns `{:error, reason}`, schedule a retry with exponential backoff. If the task times out (yield returns nil), shut it down and treat it as an `{:error, :timeout}` failure for retry purposes. The opts keyword list must support: `:max_retries` (integer, default 3), `:base_delay_ms` (integer, default 100), `:max_delay_ms` (integer, default 10_000), and `:attempt_timeout_ms` (integer, default 5_000). The call should block the caller until the function eventually succeeds or all retries are exhausted. When all retries are exhausted return `{:error, :max_retries_exceeded, reason}` where reason is the last error reason (or `:timeout` if the last attempt timed out).
+## Constraints
 
-The backoff delay for attempt N (0-indexed, so first retry is attempt 1) should be calculated as `min(base_delay_ms * 2^N, max_delay_ms)`. Then add random jitter in the range `0..delay-1` on top, so the actual wait is `delay + jitter` where jitter is obtained by calling the injected `:random` function with `delay` as the argument. Retries must be scheduled using `Process.send_after` so the GenServer doesn't block other callers while waiting.
+- Deliver the complete module in a single file.
+- Use only the OTP standard library, no external dependencies.
+- The function passed to execute is called inside a `Task` process spawned from within the GenServer's `handle_info`. Each retry spawns a fresh `Task` and applies the timeout again.
+- Retries must be scheduled using `Process.send_after` so the GenServer doesn't block other callers while waiting.
+- Use `GenServer.reply/2` to respond asynchronously once a given execution completes or exhausts retries.
 
-The GenServer should support multiple concurrent `execute` calls — each tracked independently so that one caller's retry schedule doesn't block another caller's work. Use `GenServer.reply/2` to respond asynchronously once a given execution completes or exhausts retries.
+## Required interface
 
-The function passed to execute will be called inside a Task process spawned from within the GenServer's `handle_info`. Each retry should spawn a fresh Task and apply the timeout again.
+1. `TimeoutRetryWorker.start_link(opts)` — starts the process. It accepts:
+   - a `:clock` option, a zero-arity function returning the current time in milliseconds; if not provided, default to `fn -> System.monotonic_time(:millisecond) end`;
+   - a `:random` option, a one-arity function taking a max integer and returning a random integer in `0..max-1`; if not provided, default to `fn max -> :rand.uniform(max) - 1 end`;
+   - a `:name` option for process registration.
 
-## Behavior contract to pin down
+2. `TimeoutRetryWorker.execute(server, func, opts)` — attempts to run the zero-arity function `func`. Each attempt is run inside a spawned `Task` with a timeout enforced via `Task.yield/2` + `Task.shutdown/2`.
+   - If the task completes and returns `{:ok, result}`, return `{:ok, result}` immediately.
+   - If the task completes and returns `{:error, reason}`, schedule a retry with exponential backoff.
+   - If the task times out (yield returns nil), shut it down and treat it as an `{:error, :timeout}` failure for retry purposes.
+   - The opts keyword list must support: `:max_retries` (integer, default 3), `:base_delay_ms` (integer, default 100), `:max_delay_ms` (integer, default 10_000), and `:attempt_timeout_ms` (integer, default 5_000).
+   - The call blocks the caller until the function eventually succeeds or all retries are exhausted.
+   - When all retries are exhausted, return `{:error, :max_retries_exceeded, reason}` where reason is the last error reason (or `:timeout` if the last attempt timed out).
 
-Please make the following observable details exact, since I want to depend on them:
+3. Backoff delay for attempt N (0-indexed, so the first retry is attempt 1) is `min(base_delay_ms * 2^N, max_delay_ms)`. Then add random jitter in the range `0..delay-1` on top, so the actual wait is `delay + jitter`, where jitter is obtained by calling the injected `:random` function with `delay` as the argument.
+
+## Acceptance criteria
 
 ### `start_link/1`
 
-- `opts` is a keyword list and should default to `[]`, so `start_link()` works with no arguments.
+- `opts` is a keyword list and defaults to `[]`, so `start_link()` works with no arguments.
 - Return whatever `GenServer.start_link/3` returns (`{:ok, pid}` etc.).
 - When `:name` is present, register under that name; when absent, start unregistered. Passing `:name` must not break anything else — the rest of `opts` is just configuration.
-- The module must double as a supervisable child: starting it as `{TimeoutRetryWorker, opts}` (for example via `start_supervised!/1` or under any supervisor) must launch the worker, handing `opts` straight through to `start_link/1`. Using `use GenServer` gives you this child spec for free.
+- The module doubles as a supervisable child: starting it as `{TimeoutRetryWorker, opts}` (for example via `start_supervised!/1` or under any supervisor) must launch the worker, handing `opts` straight through to `start_link/1`. Using `use GenServer` gives you this child spec for free.
 - `:clock` and `:random` are resolved once at init and held for the lifetime of the process. `:random` is the only source of jitter: whenever jitter is applied, it is obtained by calling the injected function, never by calling `:rand` directly. `:clock` is accepted, defaulted, and retained, but must not be used to implement the retry delay itself (`Process.send_after` does the waiting).
 - Any other keys in `opts` are ignored.
 
@@ -68,8 +83,6 @@ Please make the following observable details exact, since I want to depend on th
 - The server keeps one independent record per in-flight execution, keyed so that results and monitor messages are routed back to the right caller. A stray result or `:DOWN` message for an execution the server no longer tracks is ignored — it must not crash the server and must not produce a duplicate reply.
 - Each caller receives exactly one reply, delivered via `GenServer.reply/2`. Replies come back in completion order, not call order: an execution that succeeds on attempt 0 replies before one that is still waiting out a backoff, even if the latter was called first. No caller's backoff wait may delay another caller's reply — the waiting happens through `Process.send_after`, never by sleeping in a callback.
 - The server is stateless with respect to completed executions: calling `execute/3` again on the same server behaves identically to the first call, with attempt counters and backoff starting over from zero.
-
-Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
 
 ## The buggy module
 

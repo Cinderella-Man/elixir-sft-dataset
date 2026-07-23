@@ -9,31 +9,25 @@ stay exactly as shown.
 
 ## The task
 
-Write me an Elixir module called `FeatureFlags` that manages **multivariate** feature flags (A/B/C-style experiments) using ETS for fast reads, backed by a GenServer for writes.
+Hey — I need you to write a module for us called `FeatureFlags`. It's a **multivariate** feature flag store (A/B/C-style experiments), reading out of ETS so lookups are fast, with a GenServer sitting behind it to handle the writes.
 
-Unlike a plain on/off flag, a multivariate flag deterministically assigns each user to one of several named **variants** according to a weighted split, so you can run experiments where (say) 50% of users see variant `:a`, 30% see `:b`, and 20% see `:c`.
+The thing that makes it different from a plain on/off flag is that a multivariate flag deterministically assigns each user to one of several named **variants** according to a weighted split, so we can run experiments where (say) 50% of users see variant `:a`, 30% see `:b`, and 20% see `:c`.
 
-I need these functions in the public API:
+Here's the public API I'm after:
 
-- `FeatureFlags.start_link(opts)` to start the process. It should accept an optional `:table_name` for the ETS table (default `:feature_flags`), and an optional `:name` for process registration (pass `nil` to skip registration). Because every other function in the API is module-level (no server argument), `init/1` must publish the started instance for the module to find: put the server pid under `{FeatureFlags, :server}` and the ETS table under `{FeatureFlags, :table_name}` in `:persistent_term`. Writes route through the published pid and reads through the published table, so the MOST RECENTLY STARTED instance serves the module-level API — regardless of whether it was started with a `:name`, a different `:table_name`, or `name: nil`.
-- `FeatureFlags.enable(flag_name)` — sets the flag globally on (`:on`).
-- `FeatureFlags.disable(flag_name)` — sets the flag globally off (`:off`).
-- `FeatureFlags.set_variants(flag_name, variants)` — puts the flag into multivariate mode. `variants` is a list of `{variant_name, weight}` tuples, where `variant_name` is an atom and `weight` is a non-negative integer. Raise an `ArgumentError` if the weights do not sum to exactly `100` (an empty list sums to `0` and is therefore rejected), or if any weight is negative — even when the remaining weights would otherwise total `100`. When `set_variants` raises, the flag is left unchanged: a flag that was never set stays unknown, so `variant_for/2` returns `:off` and `enabled_for?/2` returns `false` for it. A variant with weight `0` receives no users.
-- `FeatureFlags.enabled?(flag_name)` — returns `true` only when the flag is globally `:on`. Variant flags and `:off`/unknown flags return `false`.
-- `FeatureFlags.variant_for(flag_name, user_id)` — returns the atom the user is assigned to:
-  - `:on` flags return `:on`.
-  - `:off` and unknown flags return `:off`.
-  - variant flags return the assigned variant atom. The assignment must be **deterministic**: the same `{flag_name, user_id}` pair always yields the same variant. Compute `bucket = :erlang.phash2({flag_name, user_id}, 100)` (a 0–99 value) and walk the variants in the order given, accumulating weights, returning the variant whose cumulative range contains the bucket (variant 1 owns `0..w1-1`, variant 2 owns `w1..w1+w2-1`, etc.). Each range is inclusive of its lower cumulative bound and exclusive of its upper one, so a variant with weight `0` (including a leading one) owns no bucket at all.
-- `FeatureFlags.enabled_for?(flag_name, user_id)` — returns `true` when `variant_for/2` is anything other than `:off`.
+- `FeatureFlags.start_link(opts)` to start the process. I want it to accept an optional `:table_name` for the ETS table (defaulting to `:feature_flags`), and an optional `:name` for process registration (passing `nil` should skip registration entirely). Since every other function in the API is module-level and takes no server argument, `init/1` has to publish the started instance somewhere the module can find it: stash the server pid under `{FeatureFlags, :server}` and the ETS table under `{FeatureFlags, :table_name}` in `:persistent_term`. Writes then route through the published pid and reads through the published table, which means the MOST RECENTLY STARTED instance is the one serving the module-level API — doesn't matter whether it was started with a `:name`, with a different `:table_name`, or with `name: nil`.
+- `FeatureFlags.enable(flag_name)` — turns the flag globally on (`:on`).
+- `FeatureFlags.disable(flag_name)` — turns the flag globally off (`:off`).
+- `FeatureFlags.set_variants(flag_name, variants)` — flips the flag into multivariate mode. `variants` comes in as a list of `{variant_name, weight}` tuples, where `variant_name` is an atom and `weight` is a non-negative integer. I want it to raise an `ArgumentError` if the weights don't sum to exactly `100` (an empty list sums to `0`, so that gets rejected too), or if any weight is negative — and yes, still raise in the negative case even when the remaining weights would otherwise add up to `100`. Important: when `set_variants` raises, the flag must be left exactly as it was, so a flag that was never set stays unknown and `variant_for/2` returns `:off` and `enabled_for?/2` returns `false` for it. And a variant with weight `0` should receive no users.
+- `FeatureFlags.enabled?(flag_name)` — `true` only when the flag is globally `:on`. Variant flags, `:off` flags, and unknown flags all come back `false`.
+- `FeatureFlags.variant_for(flag_name, user_id)` — gives back the atom the user landed on. `:on` flags return `:on`. `:off` flags and unknown flags return `:off`. Variant flags return the assigned variant atom, and that assignment has to be **deterministic** — the same `{flag_name, user_id}` pair always yields the same variant. Compute `bucket = :erlang.phash2({flag_name, user_id}, 100)` (so a 0–99 value), then walk the variants in the order they were given, accumulating weights, and return the variant whose cumulative range contains the bucket: variant 1 owns `0..w1-1`, variant 2 owns `w1..w1+w2-1`, and so on. Each range is inclusive of its lower cumulative bound and exclusive of its upper one, which is what makes a variant with weight `0` (including a leading one) own no bucket at all.
+- `FeatureFlags.enabled_for?(flag_name, user_id)` — `true` whenever `variant_for/2` is anything other than `:off`.
 
-Note that `enable`, `disable`, and `set_variants` each overwrite whatever state the flag was previously in, so a flag can move freely between `:on`, `:off`, and variant modes.
+One more behavioral note: `enable`, `disable`, and `set_variants` each overwrite whatever state the flag was previously in, so a flag can move freely between `:on`, `:off`, and variant modes.
 
-Implementation requirements:
-- ETS table should be of type `:set`, with `read_concurrency: true`, owned by the GenServer, and named so any process can read directly (for `enabled?`, `variant_for`, `enabled_for?`) without going through the GenServer.
-- All writes (`enable`, `disable`, `set_variants`) must go through the GenServer via `call` to serialise updates.
-- The ETS table must be created in `init/1`.
+On the implementation side, a few things I care about. The ETS table should be type `:set`, with `read_concurrency: true`, owned by the GenServer, and named so that any process can read it directly for `enabled?`, `variant_for`, and `enabled_for?` without going through the GenServer at all. All the writes (`enable`, `disable`, `set_variants`) must go through the GenServer via `call` so updates are serialised. And the ETS table has to be created in `init/1`.
 
-Give me the complete module in a single file. Use only the OTP standard library, no external dependencies.
+Give me the complete module in a single file, please. OTP standard library only, no external dependencies.
 
 ## The module with `server` missing
 

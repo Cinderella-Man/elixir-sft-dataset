@@ -6,11 +6,12 @@ function; the rest of the module is fixed and must stay exactly as shown.
 
 ## The task
 
-Write me an Elixir module called `ConcurrentRingBuffer` that implements a fixed-size overwriting ring buffer as a **GenServer**, so it can be shared safely across many concurrent processes (e.g. as a live log tail or a metrics sink).
+I need a module from you — `ConcurrentRingBuffer` — a fixed-size overwriting ring buffer implemented as a **GenServer** so we can share one instance safely across a bunch of concurrent processes (I'm thinking live log tail, or a metrics sink).
 
-Push semantics match a classic ring buffer: when the buffer is full, the oldest item is silently overwritten. All operations are serialized through the GenServer so concurrent writers never corrupt the buffer.
+Push semantics are the classic ring buffer ones: once the buffer is full, the oldest item gets silently overwritten. Everything goes through the GenServer, so all operations are serialized and concurrent writers can never corrupt the buffer.
 
-I need this public API (each function takes the server pid or registered name as its first argument):
+Here's the public API I need. Every function takes the server pid or registered name as its first argument:
+
 - `ConcurrentRingBuffer.start_link(opts)` — starts the server. `opts` is a keyword list that MUST include `:capacity` (a positive integer) and MAY include `:name` for registration. Returns `{:ok, pid}`.
 - `ConcurrentRingBuffer.push(server, item)` — inserts an item, overwriting the oldest when full. Returns `:ok`.
 - `ConcurrentRingBuffer.to_list(server)` — returns all current items in insertion order (oldest to newest).
@@ -19,9 +20,9 @@ I need this public API (each function takes the server pid or registered name as
 - `ConcurrentRingBuffer.peek_newest(server)` — returns `{:ok, item}` for the newest item, or `:error` if empty.
 - `ConcurrentRingBuffer.flush(server)` — atomically returns all current items (oldest to newest) AND empties the buffer in a single operation, so a draining consumer never loses or double-reads items.
 
-Internally the server state must store items in a fixed-size tuple (pre-allocated to `capacity` slots) with integer read/write head indices that wrap around using `rem/2`. Do not use a list or an `Enum`-grown structure as the primary store.
+On the internals, I'm particular here: the server state must store items in a fixed-size tuple, pre-allocated to `capacity` slots, with integer read/write head indices that wrap around using `rem/2`. Please don't use a list or an `Enum`-grown structure as the primary store.
 
-Give me the complete module in a single file. Use only the Elixir standard library (and OTP's `GenServer`) — no external dependencies.
+Send me the complete module in a single file. Stick to the Elixir standard library (plus OTP's `GenServer`) — no external dependencies.
 
 ## The module with `do_peek_oldest` missing
 

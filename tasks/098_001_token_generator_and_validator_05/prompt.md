@@ -6,59 +6,21 @@ function; the rest of the module is fixed and must stay exactly as shown.
 
 ## The task
 
-Write me an Elixir module called `SecureToken` that generates and validates
-signed, expiring tokens without any database or persistent state.
+I'm picking up the token piece of our auth work and I'd rather hand it to you than half-do it myself, so here's what I need.
 
-I need these two functions in the public API:
+Write me an Elixir module called `SecureToken` that generates and validates signed, expiring tokens without any database or persistent state. Two functions in the public API, please.
 
-- `SecureToken.generate(payload, secret, ttl_seconds, opts \\ [])` where
-  `payload` is any Elixir term, `secret` is a binary signing key, and
-  `ttl_seconds` is a positive integer. It must return a URL-safe binary
-  token (no padding issues, safe to embed in URLs or headers) that
-  encodes the payload, the issue timestamp, the expiration timestamp,
-  and an HMAC-SHA256 signature over all of that data.
+The first is `SecureToken.generate(payload, secret, ttl_seconds, opts \\ [])`, where `payload` is any Elixir term, `secret` is a binary signing key, and `ttl_seconds` is a positive integer. It has to return a URL-safe binary token — no padding issues, safe to drop straight into a URL or a header — that encodes the payload, the issue timestamp, the expiration timestamp, and an HMAC-SHA256 signature over all of that data.
 
-- `SecureToken.verify(token, secret, opts \\ [])` which decodes and
-  validates the token. Return `{:ok, payload}` if the signature is valid
-  and the token has not expired. Return `{:error, :expired}` if the
-  signature is valid but the current time is at or past the expiration.
-  Return `{:error, :invalid_signature}` if the token structure parses
-  cleanly but the HMAC does not match. Return `{:error, :malformed}` for
-  anything that cannot be decoded at all: bad base64, too short to
-  contain an HMAC, a header that doesn't match the remaining bytes,
-  non-binary input, and so on.
+The second is `SecureToken.verify(token, secret, opts \\ [])`, which decodes and validates the token. I want `{:ok, payload}` back when the signature is valid and the token hasn't expired. Give me `{:error, :expired}` when the signature is valid but the current time is at or past the expiration. Give me `{:error, :invalid_signature}` when the token structure parses cleanly but the HMAC doesn't match. And `{:error, :malformed}` for anything that can't be decoded at all — bad base64, too short to contain an HMAC, a header that doesn't match the remaining bytes, non-binary input, that whole category.
 
-Both functions take an optional `opts` keyword. The only recognized key
-is `:clock`, a zero-arity function returning a Unix epoch second. When
-omitted, the current time is read from `System.os_time(:second)`. This
-is purely a test seam for deterministic expiry testing — in production
-the default applies.
+Both functions take an optional `opts` keyword list. The only key I want recognized is `:clock`, a zero-arity function returning a Unix epoch second. When it's omitted, read the current time from `System.os_time(:second)`. That option exists purely as a test seam so we can test expiry deterministically — in production the default applies.
 
-The check order inside `verify` is exactly: base64 decode → split off
-the trailing 32-byte MAC → structural parse of the header and payload
-→ HMAC verification → expiry check → payload deserialization. Any
-failure before HMAC verification yields `:malformed`. HMAC mismatch
-yields `:invalid_signature`. A post-HMAC expiry failure yields
-`:expired`. A post-HMAC deserialization failure yields `:malformed`.
-A token whose `expires_at` equals the current time is already expired
-(use strict `<` on the validity check, not `<=`).
+I care about the check order inside `verify`, and it's exactly this: base64 decode → split off the trailing 32-byte MAC → structural parse of the header and payload → HMAC verification → expiry check → payload deserialization. Any failure before HMAC verification yields `:malformed`. An HMAC mismatch yields `:invalid_signature`. An expiry failure after the HMAC passes yields `:expired`. A deserialization failure after the HMAC passes yields `:malformed`. One more detail I don't want lost: a token whose `expires_at` equals the current time is already expired, so use a strict `<` on the validity check, not `<=`.
 
-Implementation requirements:
+On implementation, a few things are non-negotiable for me. Sign with `:crypto.mac/4` using SHA-256. Encode with `Base.url_encode64/2` and `padding: false`, so the output is URL-safe with no `=` characters. The signed region must cover all the fields — payload bytes plus issue time plus expiry time, plus whatever length prefix you include for framing — so that none of them can be tampered with independently. Compare MACs in constant time; don't short-circuit on the first differing byte. Deserialize the payload with `:erlang.binary_to_term/2` passing the `[:safe]` option. And no external dependencies at all — Elixir standard library and OTP only.
 
-- Use `:crypto.mac/4` with SHA-256 for signing.
-- Use `Base.url_encode64/2` with `padding: false` so the output is
-  URL-safe without `=` characters.
-- The signed region must cover all fields (payload bytes + issue time
-  + expiry time, plus any length prefix you include for framing) so
-  that none of them can be tampered with independently.
-- Compare MACs in constant time — don't short-circuit on the first
-  differing byte.
-- Deserialize the payload with `:erlang.binary_to_term/2` using the
-  `[:safe]` option.
-- Do not use any external dependencies — only the Elixir standard
-  library and OTP.
-
-Give me the complete module in a single file.
+Send it back as the complete module in a single file.
 
 ## The module with `now` missing
 

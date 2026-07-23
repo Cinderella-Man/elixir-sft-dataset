@@ -1,6 +1,10 @@
-Write me an Elixir module called `MarkdownReport` that parses a Markdown document into structured categories **and reports every line it could not interpret**, with line numbers.
+# MarkdownReport: Diagnostic Markdown Category Parser — Specification
 
-This is a strict, diagnostic variant: rather than silently ignoring malformed content, it collects errors so a caller can surface them.
+## Overview
+
+This document specifies an Elixir module named `MarkdownReport` that parses a Markdown document into structured categories **and reports every line it could not interpret**, with line numbers.
+
+It defines a strict, diagnostic variant: rather than silently ignoring malformed content, it collects errors so a caller can surface them.
 
 The document format follows the same conventions as a flat category parser:
 - `## Heading` lines (exactly two `#`) define category names.
@@ -8,7 +12,11 @@ The document format follows the same conventions as a flat category parser:
 - Tags are optional — an item may end without parentheses (then `tags: []`).
 - Blank lines and arbitrary prose are silently ignored (they are not errors).
 
-The single public function should be:
+The module must be delivered as a complete module in a single file. It must use only the Elixir standard library — no external dependencies.
+
+## API
+
+The single public function is:
 - `MarkdownReport.parse(markdown_string)` which accepts a binary and returns a map:
   ```elixir
   %{
@@ -20,6 +28,8 @@ The single public function should be:
     ]
   }
   ```
+
+## Edge cases
 
 Diagnostic rules to implement (line numbers are 1-indexed against the original document, before any splitting on the next heading):
 - **`:unsupported_heading`** — a heading with one `#` (H1) or three-plus `#` (H3+). It is reported and does **not** open a category, but it also does **not** close the currently open category (a following item still attaches to that category).
@@ -33,5 +43,3 @@ Additional requirements:
 - Input may use `\n` or `\r\n` line endings; each line's trailing whitespace (including a trailing carriage return) is stripped before it is classified, so CRLF documents parse identically to LF ones.
 - Tags are trimmed individually and empty tags dropped; category titles are trimmed.
 - The empty string returns `%{categories: [], errors: []}`.
-
-Give me the complete module in a single file. Use only the Elixir standard library — no external dependencies.

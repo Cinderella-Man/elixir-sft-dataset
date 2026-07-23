@@ -6,39 +6,21 @@ function; the rest of the module is fixed and must stay exactly as shown.
 
 ## The task
 
-Write me an Elixir module called `CsvImporter` that reads a CSV file, validates each row against a provided schema, and returns a structured result splitting valid rows from errors.
+Hey — could you put together an Elixir module for me called `CsvImporter`? What I need it to do is read a CSV file, validate each row against a schema I hand it, and give me back a structured result that splits the valid rows from the errors.
 
-I need these functions in the public API:
+For the public API, I need two functions. The first is `CsvImporter.import_file(file_path, schema)`, which reads the CSV file at the given path and validates every data row against the schema. It should return `{:ok, valid_rows, error_report}`, where `valid_rows` is a list of maps (field name => string value) for the rows that passed all validations — and each of those maps should contain **only the schema fields that appear in the CSV headers** (so header columns not defined in the schema get dropped, and schema fields that aren't in the headers are just omitted). The `error_report` piece is a list of `{row_number, field_name, error_message}` tuples describing every validation failure. Row numbers are 1-based counting only data rows — the header row is row 0 / not counted. If the file doesn't exist, return `{:error, :file_not_found}`. If the file is empty (zero bytes), return `{:error, :empty_file}`.
 
-- `CsvImporter.import_file(file_path, schema)` which reads the CSV file at the given path and validates every data row against the schema. It should return `{:ok, valid_rows, error_report}` where `valid_rows` is a list of maps (field name => string value) for rows that passed all validations — each map contains **only the schema fields that appear in the CSV headers** (header columns not defined in the schema are dropped, and schema fields absent from the headers are omitted) — and `error_report` is a list of `{row_number, field_name, error_message}` tuples describing every validation failure. Row numbers should be 1-based counting only data rows (the header row is row 0 / not counted). If the file doesn't exist, return `{:error, :file_not_found}`. If the file is empty (zero bytes), return `{:error, :empty_file}`.
+The second is `CsvImporter.import_string(csv_string, schema)`, which does exactly the same thing but takes the CSV content as a binary string instead of a file path — handy for testing.
 
-- `CsvImporter.import_string(csv_string, schema)` which does the same thing but accepts the CSV content as a binary string instead of a file path. This is useful for testing.
+About the schema: it's a list of field definitions, and each field is a map with these keys. `:name` (required) is the column header name as a string. `:required` (optional, default `true`) means, when true, the field must be present and non-empty. `:type` (optional, default `:string`) is one of `:string`, `:integer`, `:float`, `:boolean`. And `:format` (optional) is a regex the field value must match — and for convenience, please also accept the atom `:email`, which should use a reasonable email regex pattern.
 
-The schema should be a list of field definitions, where each field is a map with these keys:
-- `:name` (required) — the column header name as a string
-- `:required` (optional, default `true`) — if true, the field must be present and non-empty
-- `:type` (optional, default `:string`) — one of `:string`, `:integer`, `:float`, `:boolean`
-- `:format` (optional) — a regex that the field value must match. For convenience, also accept the atom `:email` which should use a reasonable email regex pattern.
+For the validation rules I'm after: required fields that are empty or whitespace-only should produce the error `"is required"`. For type checks, `:integer` values must be parseable by `String.to_integer/1`, `:float` by `String.to_float/1` (but also accept integer-formatted strings like `"42"` as valid floats), and `:boolean` must be one of `"true"`, `"false"`, `"1"`, `"0"` (case-insensitive). Type errors should read `"must be a valid <type>"`. Format checks should produce `"does not match expected format"`. Note that a single field can have multiple errors — report all of them, not just the first. And on column counts: if a row has more columns than the header, ignore the extras silently; if a row has fewer columns than the header, treat the missing columns as empty strings.
 
-Validation rules:
-- Required fields that are empty or whitespace-only should produce an error `"is required"`.
-- Type checks: `:integer` values must be parseable by `String.to_integer/1`, `:float` by `String.to_float/1` (also accept integer-formatted strings like `"42"` as valid floats), `:boolean` must be one of `"true"`, `"false"`, `"1"`, `"0"` (case-insensitive). Type errors should read `"must be a valid <type>"`.
-- Format checks should produce `"does not match expected format"`.
-- A single field can have multiple errors — report all of them, not just the first.
-- If a row has more columns than the header, ignore the extras silently. If a row has fewer columns than the header, treat the missing columns as empty strings.
+A few edge cases I want handled: a UTF-8 BOM (`\xEF\xBB\xBF`) at the start of the file should be stripped before parsing. A file with only a header row and no data rows should return `{:ok, [], []}`. You'll also need to cope with completely empty fields (adjacent commas) and fields wrapped in double quotes that have commas or newlines inside them. And whitespace around field values should be trimmed.
 
-Edge cases to handle:
-- UTF-8 BOM (`\xEF\xBB\xBF`) at the start of the file — strip it before parsing.
-- File with only a header row and no data rows — return `{:ok, [], []}`.
-- Completely empty fields (adjacent commas) and fields wrapped in double quotes with commas or newlines inside them.
-- Whitespace around field values should be trimmed.
+For parsing, use the NimbleCSV library (the `:nimble_csv` hex package), and please don't pull in any other external dependencies. Give me the complete module in a single file.
 
-Use the NimbleCSV library for parsing (`:nimble_csv` hex package). Do not use any other external dependencies. Give me the complete module in a single file.
-
-## Additional interface contract
-
-- `import_string/2` mirrors the zero-byte-file case: called with an empty
-  string, `import_string("", schema)` returns `{:error, :empty_file}`.
+One more bit of the interface contract to nail down: `import_string/2` mirrors the zero-byte-file case — called with an empty string, `import_string("", schema)` returns `{:error, :empty_file}`.
 
 ## The module with `parse_csv` missing
 

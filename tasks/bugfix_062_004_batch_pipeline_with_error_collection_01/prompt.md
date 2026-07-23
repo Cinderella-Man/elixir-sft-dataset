@@ -8,19 +8,17 @@ with the complete corrected module.
 
 ## What the module is supposed to do
 
-Write me an Elixir module called `Pipeline` that builds linear stage pipelines and runs them over a **batch** of inputs, collecting successes and failures independently instead of halting the whole run on the first error.
+I need a module from you called `Pipeline` — the idea is that it builds linear stage pipelines and then runs them over a **batch** of inputs, collecting successes and failures independently rather than halting the whole run the moment one input errors out.
 
-I need these functions in the public API:
-- `Pipeline.new()` — returns a fresh, empty pipeline struct.
-- `Pipeline.stage(pipeline, name, fun)` — appends a named stage. `name` is an atom; `fun` is a one-arity function that receives the current value and returns `{:ok, result}` or `{:error, reason}`. Stages are stored in insertion order. Reject invalid arguments — a non-atom `name`, or a `fun` whose arity is not one — with a `FunctionClauseError` (enforce this with guard clauses).
-- `Pipeline.run(pipeline, inputs)` — `inputs` is a **list** of items; a non-list `inputs` must raise a `FunctionClauseError` (enforce with a guard). Each item is threaded **independently** through all stages in order. If an item's stage returns `{:error, reason}`, that item halts (its later stages are skipped) and is recorded as a failure, but the batch continues processing the remaining items. Return `{:ok, report}` where `report` is a map:
-  - `:successes` — a list of `%{index: non_neg_integer, result: term}` for items that completed every stage, ordered by input index.
-  - `:failures` — a list of `%{index: non_neg_integer, stage: atom, reason: term}` for items that halted, ordered by input index.
-  - `:stage_stats` — a list, in pipeline stage order with **one entry per stage position** (so two stages that share a `name` keep independent counters), of `%{stage: atom, executions: non_neg_integer, total_duration_us: non_neg_integer}` where `executions` counts how many items actually ran that stage (items that halted earlier never reach it) and `total_duration_us` is the summed `:timer.tc/1` microseconds across those executions.
+Here's the public API I'm after. `Pipeline.new()` just hands back a fresh, empty pipeline struct. `Pipeline.stage(pipeline, name, fun)` appends a named stage to it, where `name` is an atom and `fun` is a one-arity function that receives the current value and returns either `{:ok, result}` or `{:error, reason}`; keep the stages in insertion order. I want invalid arguments rejected outright — a non-atom `name`, or a `fun` whose arity is not one, should blow up with a `FunctionClauseError`, and I'd like that enforced with guard clauses rather than manual checks.
 
-An empty pipeline treats every item as an immediate success whose `result` is the input itself, and produces an empty `:stage_stats`. An empty `inputs` list yields empty `:successes` and `:failures`, with each stage's `executions` at `0` and `total_duration_us` at `0`.
+Then `Pipeline.run(pipeline, inputs)` does the work. `inputs` is a **list** of items, and a non-list `inputs` has to raise a `FunctionClauseError` too (again, enforce it with a guard). Each item gets threaded **independently** through all the stages in order. If a stage returns `{:error, reason}` for some item, that item halts right there — its later stages are skipped — and it's recorded as a failure, but the batch keeps right on processing the remaining items. The return value is `{:ok, report}` where `report` is a map with three keys.
 
-The module must not use a GenServer or any global state — it is a plain Elixir module working in the caller's process. Timing must use `:timer.tc/1` (microsecond resolution). Use only the standard library, no external dependencies. Give me the complete implementation in a single file.
+`:successes` is a list of `%{index: non_neg_integer, result: term}` covering the items that made it through every stage, ordered by input index. `:failures` is a list of `%{index: non_neg_integer, stage: atom, reason: term}` for the items that halted, also ordered by input index. And `:stage_stats` is a list in pipeline stage order with **one entry per stage position** — so if two stages happen to share a `name`, they still keep independent counters — each entry looking like `%{stage: atom, executions: non_neg_integer, total_duration_us: non_neg_integer}`, where `executions` counts how many items actually ran that stage (items that halted earlier never reach it) and `total_duration_us` is the summed `:timer.tc/1` microseconds across those executions.
+
+A couple of edge cases I care about: an empty pipeline should treat every item as an immediate success whose `result` is the input itself, and produce an empty `:stage_stats`. An empty `inputs` list should yield empty `:successes` and `:failures`, with each stage's `executions` at `0` and `total_duration_us` at `0`.
+
+One more thing — no GenServer, no global state of any kind. This is a plain Elixir module doing its work in the caller's process. Timing has to go through `:timer.tc/1` (microsecond resolution). Standard library only, no external dependencies. Send me the complete implementation in a single file.
 
 ## The buggy module
 

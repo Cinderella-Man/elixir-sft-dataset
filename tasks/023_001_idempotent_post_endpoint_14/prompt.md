@@ -9,31 +9,44 @@ stay exactly as shown.
 
 ## The task
 
-Write me an Elixir GenServer module called `IdempotentPayments` that simulates an idempotent payment processing system with in-memory storage.
+# `IdempotentPayments` — idempotent in-memory payment GenServer
 
-I need these functions in the public API:
+Implement an Elixir GenServer module `IdempotentPayments` simulating an idempotent payment processing system with in-memory storage. Single file, complete module. No external dependencies — OTP standard library only.
 
-- `IdempotentPayments.start_link(opts)` to start the process. It should accept a `:clock` option which is a zero-arity function returning the current time in milliseconds (default to `fn -> System.monotonic_time(:millisecond) end`). It should also accept `:ttl_ms` for how long idempotency keys are remembered (default 86,400,000 — 24 hours), and `:cleanup_interval_ms` (default 60,000) controlling how often expired idempotency entries are purged via `Process.send_after`. Pass `:infinity` to disable automatic cleanup.
+**`IdempotentPayments.start_link(opts)`**
+- Starts the process.
+- Accepts `:clock` — a zero-arity function returning the current time in milliseconds; default `fn -> System.monotonic_time(:millisecond) end`.
+- Accepts `:ttl_ms` — how long idempotency keys are remembered; default 86,400,000 (24 hours).
+- Accepts `:cleanup_interval_ms` — how often expired idempotency entries are purged via `Process.send_after`; default 60,000. Pass `:infinity` to disable automatic cleanup.
 
-- `IdempotentPayments.process_payment(server, params, idempotency_key \\ nil)` where `params` is a map containing `:amount` (integer, cents), `:currency` (string), and `:recipient` (string). The function must:
+**`IdempotentPayments.process_payment(server, params, idempotency_key \\ nil)`**
+- `params` is a map containing `:amount` (integer, cents), `:currency` (string), and `:recipient` (string).
+- Behavior:
   1. If `idempotency_key` is `nil`, always create a new payment record and return `{:ok, response}`.
-  2. If `idempotency_key` is provided and has been seen before and has not yet expired, return `{:ok, response}` with the exact same response map that was returned the first time, without creating a duplicate payment record. This holds even if the replay carries different `params`.
-  3. If `idempotency_key` is provided but has expired or has never been seen, process the payment normally, cache the response keyed by the idempotency key with a fresh TTL, and return `{:ok, response}`.
-  4. If required fields are missing from `params`, return `{:error, :invalid_params}` — and if an idempotency key was provided, cache this error response too so that replaying the same key returns the same error (even if the replay carries valid `params`), and no payment record is created.
+  2. If `idempotency_key` is provided, seen before, and not yet expired, return `{:ok, response}` with the exact same response map returned the first time, without creating a duplicate payment record. This holds even if the replay carries different `params`.
+  3. If `idempotency_key` is provided but has expired or was never seen, process the payment normally, cache the response keyed by the idempotency key with a fresh TTL, and return `{:ok, response}`.
+  4. If required fields are missing from `params`, return `{:error, :invalid_params}`. If an idempotency key was provided, cache this error response too so replaying the same key returns the same error (even if the replay carries valid `params`), and no payment record is created.
+- **Expiry:** an entry cached at clock time `T` expires at `T + ttl_ms`. It counts as a cache hit only while the current clock time is strictly less than that expiry; at exactly the expiry timestamp and after, the key is treated as expired. With `ttl_ms` of 10,000, a key cached at `t = 0` is still a hit at `t = 9_999` but is expired at `t = 10_000`.
+- **`response` map fields:** `:id` (unique payment id string — see ID rule), `:amount`, `:currency`, `:recipient`, `:status` (always `"completed"`), and `:created_at` (the timestamp read from the clock at the moment the payment is processed).
 
-  An entry cached at clock time `T` expires at `T + ttl_ms`. It counts as a cache hit only while the current clock time is strictly less than that expiry; at exactly the expiry timestamp, and after it, the key is treated as expired. So with `ttl_ms` of 10,000 a key cached at `t = 0` is still a hit at `t = 9_999` but is expired at `t = 10_000`.
+**`IdempotentPayments.get_payments(server)`**
+- Returns a list of all payment records stored, in creation order (oldest first), for test assertions about how many records were actually created.
 
-  The `response` map must contain: `:id` (a unique payment id string — see the ID rule below), `:amount`, `:currency`, `:recipient`, `:status` (always `"completed"`), and `:created_at` (the timestamp read from the clock at the moment the payment is processed).
+**`IdempotentPayments.get_payment(server, id)`**
+- Returns `{:ok, payment}` or `{:error, :not_found}`.
 
-- `IdempotentPayments.get_payments(server)` returns a list of all payment records stored, in creation order (oldest first), for test assertions about how many records were actually created.
+**Internal state**
+- Each idempotency key entry stores the full response and the expiry timestamp.
 
-- `IdempotentPayments.get_payment(server, id)` returns `{:ok, payment}` or `{:error, :not_found}`.
+**Cleanup**
+- Periodic cleanup is triggered by a `:cleanup` message handled via `handle_info`.
+- Removes only expired idempotency entries: an entry whose expiry timestamp is less than or equal to the current clock time counts as expired and is removed; one whose expiry is still strictly greater than the current time is kept.
+- Payment records themselves are never cleaned up.
 
-Each idempotency key entry in internal state should store the full response and the expiry timestamp. The periodic cleanup (triggered by a `:cleanup` message handled via `handle_info`) must remove only expired idempotency entries — an entry whose expiry timestamp is less than or equal to the current clock time counts as expired and is removed, while one whose expiry is still strictly greater than the current time is kept. Payment records themselves are never cleaned up.
-
-Generate payment IDs as sequential counter-based strings: `"pay_1"`, `"pay_2"`, `"pay_3"`, and so on. The first payment record created is `"pay_1"`, and the counter increments by exactly one per record in creation order. The counter is consumed only when a new payment record is actually created — idempotent cache hits and cached errors must not consume a number. Do not pull in any external dependencies; use only OTP standard library.
-
-Give me the complete module in a single file.
+**Payment IDs**
+- Sequential counter-based strings: `"pay_1"`, `"pay_2"`, `"pay_3"`, and so on.
+- First payment record created is `"pay_1"`; the counter increments by exactly one per record in creation order.
+- The counter is consumed only when a new payment record is actually created — idempotent cache hits and cached errors must not consume a number.
 
 ## The module with `start_link` missing
 

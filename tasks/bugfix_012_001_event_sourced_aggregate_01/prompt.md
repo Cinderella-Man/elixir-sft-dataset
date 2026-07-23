@@ -8,28 +8,56 @@ with the complete corrected module.
 
 ## What the module is supposed to do
 
-Write me an Elixir GenServer module called `Aggregate` that maintains state through event sourcing for a simple bank account domain.
+# Ticket: `Aggregate` — event-sourced bank account GenServer
 
-I need these functions in the public API:
+Implement an Elixir GenServer module named `Aggregate` that maintains state via event sourcing for a simple bank account domain. Single file. OTP standard library only, no external dependencies.
 
-- `Aggregate.start_link(opts)` to start the process. It should accept a `:name` option for process registration.
+**Public API**
 
-- `Aggregate.execute(server, id, command)` which validates the command against the current state of the aggregate identified by `id`, produces zero or more events, applies them to the state, and persists them to an in-memory list. Commands are tuples: `{:open, account_name}`, `{:deposit, amount}`, `{:withdraw, amount}`. If the command succeeds, return `{:ok, events}` where `events` is the list of new events produced by that command. If the command fails validation, return `{:error, reason}`.
+- `Aggregate.start_link(opts)` — starts the process; must accept a `:name` option for process registration.
+- `Aggregate.execute(server, id, command)` — validates `command` against the current state of the aggregate identified by `id`, produces zero or more events, applies them to the state, and persists them to an in-memory list. Returns `{:ok, events}` on success, where `events` is the list of new events produced by that command. Returns `{:error, reason}` on validation failure.
+- `Aggregate.state(server, id)` — returns the current state of the aggregate. Returns `nil` if the aggregate has never received a command. Otherwise returns a map with at least `:name`, `:balance`, and `:status` keys (`:status` is `:open` after opening).
+- `Aggregate.events(server, id)` — returns the full ordered list of events for that aggregate, oldest first. Returns an empty list if the aggregate has never received a command.
 
-- `Aggregate.state(server, id)` which returns the current state of the aggregate. If the aggregate has never received a command, return `nil`. Otherwise return a map with at least `:name`, `:balance`, and `:status` keys (`:status` is `:open` after opening).
+**Commands** (tuples)
 
-- `Aggregate.events(server, id)` which returns the full ordered list of events for that aggregate, oldest first. If the aggregate has never received a command, return an empty list.
+- `{:open, account_name}`
+- `{:deposit, amount}`
+- `{:withdraw, amount}`
 
-The event sourcing logic should work as follows: each command is first validated against the current state, then zero or more event structs/maps are produced, then those events are applied one by one to the state, then they are appended to the event history. Events should be maps with at least a `:type` key. Use types like `:account_opened`, `:amount_deposited`, `:amount_withdrawn`. Events should also carry their relevant data: the `:account_opened` event must include the account name under a `:name` (or `:account_name`) key, and the `:amount_deposited` and `:amount_withdrawn` events must include the amount under an `:amount` key.
+**Event-sourcing flow** (per command)
 
-Validation rules:
-- `:open` must fail with `{:error, :already_open}` if the account is already open.
-- `:deposit` must fail with `{:error, :account_not_open}` if the account hasn't been opened yet. Amount must be positive or fail with `{:error, :invalid_amount}`.
-- `:withdraw` must fail with `{:error, :account_not_open}` if the account hasn't been opened. Amount must be positive or fail with `{:error, :invalid_amount}`. Must fail with `{:error, :insufficient_balance}` if the balance is less than the withdrawal amount. Withdrawing exactly the current balance succeeds and leaves the balance at zero.
+- Validate the command against the current state.
+- Produce zero or more event structs/maps.
+- Apply the events one by one to the state.
+- Append the events to the event history.
 
-Each aggregate `id` must be tracked independently — commands on `"acct:1"` should have no effect on `"acct:2"`.
+**Events**
 
-Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+- Events are maps with at least a `:type` key.
+- Use types `:account_opened`, `:amount_deposited`, `:amount_withdrawn`.
+- `:account_opened` must include the account name under a `:name` (or `:account_name`) key.
+- `:amount_deposited` and `:amount_withdrawn` must include the amount under an `:amount` key.
+
+**Validation — `:open`**
+
+- Fail with `{:error, :already_open}` if the account is already open.
+
+**Validation — `:deposit`**
+
+- Fail with `{:error, :account_not_open}` if the account hasn't been opened yet.
+- Amount must be positive, else `{:error, :invalid_amount}`.
+
+**Validation — `:withdraw`**
+
+- Fail with `{:error, :account_not_open}` if the account hasn't been opened.
+- Amount must be positive, else `{:error, :invalid_amount}`.
+- Fail with `{:error, :insufficient_balance}` if the balance is less than the withdrawal amount.
+- Withdrawing exactly the current balance succeeds and leaves the balance at zero.
+
+**Isolation**
+
+- Each aggregate `id` is tracked independently — commands on `"acct:1"` must have no effect on `"acct:2"`.
 
 ## The buggy module
 

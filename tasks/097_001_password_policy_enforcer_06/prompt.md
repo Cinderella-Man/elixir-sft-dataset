@@ -7,28 +7,19 @@ whole suite again, and leave every other line precisely as shown.
 
 ## The task
 
-Write me an Elixir module called `PasswordPolicy` that validates passwords against a configurable set of rules.
+I'm picking up the account-settings work and I need a password checker I can drop in, so could you write me a module called `PasswordPolicy` that validates passwords against a configurable set of rules? Keep the surface small — one public function, `PasswordPolicy.validate(password, context)`. It should hand back `:ok` when the password passes all the active rules, and `{:error, violations}` otherwise, where `violations` is a list of atoms naming every rule that failed. That last part matters to me: I want all of the violations reported, not just the first one we trip over, because the UI shows them together.
 
-I need a single public function:
-- `PasswordPolicy.validate(password, context)` which returns `:ok` if the password passes all active rules, or `{:error, violations}` where `violations` is a list of atoms describing every rule that failed (all violations must be reported, not just the first one).
+The `context` argument is a map, and it's doing double duty — it carries both the configuration and the per-user data. Here's what I need it to support. `:username` is required; it's the username the password is being set for. `:min_length` is optional and defaults to `8` — the minimum number of characters. `:max_length` is optional, defaults to `128`. `:require_uppercase` is optional, defaults to `true`, and means the password must contain at least one uppercase ASCII letter. `:require_lowercase` is the same shape, optional, default `true`, at least one lowercase ASCII letter. `:require_digit`, optional, default `true`, at least one digit. `:require_special`, optional, default `true`, meaning at least one character that is not alphanumeric.
 
-The `context` argument is a map that drives both configuration and per-user data. It supports the following keys:
-- `:username` (required) — the username the password is being set for.
-- `:min_length` (optional, default `8`) — minimum number of characters.
-- `:max_length` (optional, default `128`) — maximum number of characters.
-- `:require_uppercase` (optional, default `true`) — must contain at least one uppercase ASCII letter.
-- `:require_lowercase` (optional, default `true`) — must contain at least one lowercase ASCII letter.
-- `:require_digit` (optional, default `true`) — must contain at least one digit.
-- `:require_special` (optional, default `true`) — must contain at least one character that is not alphanumeric.
-- `:common_passwords` (optional, default `[]`) — a list of plaintext strings considered too common; the password must not appear in this list (case-insensitive comparison).
-- `:previous_passwords` (optional, default `[]`) — a list of previously used plaintext passwords; the new password must not match any of them exactly.
-- `:max_username_similarity` (optional, default `3`) — the password is rejected if its Levenshtein distance from the username is less than or equal to this value (i.e. distance must be strictly greater than this threshold). The distance is computed on the literal password and username, case-sensitively, with no case folding applied to either side.
+Then two list-shaped ones. `:common_passwords` is optional and defaults to `[]`; it's a list of plaintext strings we consider too common, and the password must not appear in that list — compare case-insensitively there. `:previous_passwords` is also optional with default `[]`; it's a list of previously used plaintext passwords, and the new password must not match any of them exactly.
 
-The violation atoms to use are: `:too_short`, `:too_long`, `:no_uppercase`, `:no_lowercase`, `:no_digit`, `:no_special`, `:common_password`, `:reused_password`, `:too_similar_to_username`.
+Last one is the fiddly one: `:max_username_similarity`, optional, default `3`. Reject the password if its Levenshtein distance from the username is less than or equal to that value — i.e. the distance has to be strictly greater than the threshold to pass. Compute the distance on the literal password and username, case-sensitively, with no case folding applied to either side.
 
-Implement Levenshtein distance yourself using dynamic programming — do not use any external library. All other logic must also use only the Elixir/OTP standard library with no external dependencies.
+For the atoms themselves, please use exactly these: `:too_short`, `:too_long`, `:no_uppercase`, `:no_lowercase`, `:no_digit`, `:no_special`, `:common_password`, `:reused_password`, `:too_similar_to_username`.
 
-Give me the complete module in a single file.
+One implementation constraint — write the Levenshtein distance yourself with dynamic programming, don't pull in an external library for it. Same goes for everything else in there: Elixir/OTP standard library only, no external dependencies.
+
+Send it over as the complete module in a single file.
 
 ## The module with `check_min_length` missing
 

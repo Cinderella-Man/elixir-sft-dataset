@@ -7,70 +7,19 @@ whole suite again, and leave every other line precisely as shown.
 
 ## The task
 
-Write me an Elixir module called `CsvIngestion` that reads a CSV file, validates
-each row through an Ecto changeset, and inserts valid rows in batches into a
-database table via Ecto.
+Hey, could you write me an Elixir module called `CsvIngestion`? I need something that reads a CSV file, validates each row through an Ecto changeset, and inserts the valid rows in batches into a database table via Ecto. Give me the complete module in a single file, and assume NimbleCSV, Jason, and Ecto are already available as dependencies — please don't pull in anything else.
 
-I need these functions in the public API:
+Here's the public API I'm after. The main entry point is `CsvIngestion.ingest(repo, schema, file_path, opts \\ [])`. It should read the CSV file at `file_path` using `NimbleCSV`, validate each parsed row by building an Ecto changeset from the schema module, collect the valid rows, split them into batches, and call `repo.insert_all/3` for each batch. It needs to return `{:ok, stats}` on success or `{:error, reason}` on failure.
 
-- `CsvIngestion.ingest(repo, schema, file_path, opts \\ [])` — the main entry
-  point. It reads the CSV file at `file_path` using `NimbleCSV`, validates each
-  parsed row by building an Ecto changeset from the schema module, collects
-  valid rows, splits them into batches, and calls `repo.insert_all/3` for each
-  batch. It must return `{:ok, stats}` on success or `{:error, reason}` on
-  failure.
-  `stats` is a map with these integer keys:
-    - `:total`       — total data rows read from the file (excluding header)
-    - `:inserted`    — rows successfully inserted into the database
-    - `:invalid`     — rows that failed changeset validation
-    - `:failed`      — rows in batches where `insert_all` raised an error
+That `stats` value is a map with these integer keys: `:total` — the total data rows read from the file (excluding header); `:inserted` — rows successfully inserted into the database; `:invalid` — rows that failed changeset validation; and `:failed` — rows in batches where `insert_all` raised an error. On top of those, `stats` must also include `:validation_errors`, a list of `{line_number, errors}` tuples where `line_number` is the 1-based line number in the CSV (so the header is line 1 and the first data row is line 2) and `errors` is the keyword list from `changeset.errors`. When every row is valid, that list is empty (`[]`).
 
-  Additionally, `stats` must include:
-    - `:validation_errors` — a list of `{line_number, errors}` tuples where
-      `line_number` is the 1-based line number in the CSV (header is line 1,
-      first data row is line 2) and `errors` is the keyword list from
-      `changeset.errors`. When every row is valid, this list is empty (`[]`).
+For the accepted `opts`, I need `:batch_size` (integer, default 500) controlling how many valid records go per `insert_all` call. Then `:on_conflict` (atom or keyword, default `:nothing`) which gets passed directly to `Repo.insert_all` as the `on_conflict:` option. Then `:conflict_target` (atom or list, default `[]`) which is passed as `conflict_target:` when it's non-empty and omitted entirely when it's `[]` — Ecto rejects an empty target as an unknown column, so a default-opts ingest must still insert. One exception there: when `:on_conflict` is `:raise`, do NOT pass `conflict_target:` at all, because Ecto forbids that combination and would raise on every batch. In that case pass only `on_conflict: :raise` and let conflicting rows surface as a normal insert error (caught and counted against that batch's `:failed`). Finally `:field_mapping` (map, default `nil`) — an optional map from CSV header names (strings) to schema field names (atoms), e.g. `%{"Product ID" => :external_id, "Product Name" => :name}`. When it's `nil`, headers should be converted to snake_case atoms directly.
 
-- Accepted `opts`:
-    - `:batch_size` (integer, default 500) — how many valid records per
-      `insert_all` call
-    - `:on_conflict` (atom or keyword, default `:nothing`) — passed
-      directly to `Repo.insert_all` as the `on_conflict:` option
-    - `:conflict_target` (atom or list, default `[]`) — passed as
-      `conflict_target:` when non-empty and omitted entirely when `[]`
-      (Ecto rejects an empty target as an unknown column, so a default-opts
-      ingest must still insert). Exception: when `:on_conflict` is `:raise`,
-      do NOT pass `conflict_target:` at all — Ecto forbids that combination
-      and would raise on every batch. In that case pass only `on_conflict: :raise` and
-      let conflicting rows surface as a normal insert error (caught and counted
-      against that batch's `:failed`).
-    - `:field_mapping` (map, default `nil`) — an optional map from CSV
-      header names (strings) to schema field names (atoms), e.g.
-      `%{"Product ID" => :external_id, "Product Name" => :name}`.
-      When `nil`, headers are converted to snake_case atoms directly.
+For the row validation itself: for each parsed CSV row, build a changeset using `schema.changeset(struct(schema), attrs)`. If the changeset is valid, include the row in the insertion batch (extract the changes as a plain map). If it's invalid, record the line number and errors, and skip the row. And before insertion, inject `inserted_at` and `updated_at` timestamps into each row map if those fields exist on the schema.
 
-Row validation: for each parsed CSV row, build a changeset using
-`schema.changeset(struct(schema), attrs)`. If the changeset is valid, include
-the row in the insertion batch (extract the changes as a plain map). If
-invalid, record the line number and errors, skip the row.
+I also need the module to handle these error conditions gracefully — it must never raise. File not found → `{:error, :file_not_found}`. File is empty (0 bytes) → `{:error, :empty_file}`. A file that has a header row but zero data rows is valid — return `{:ok, stats}` with all zeroes. And if a batch `insert_all` call fails, log the error, add the batch size to `:failed`, and carry on with the remaining batches.
 
-Before insertion, inject `inserted_at` and `updated_at` timestamps into each
-row map if those fields exist on the schema.
-
-The module must handle these error conditions gracefully — never raise:
-- File not found → `{:error, :file_not_found}`
-- File is empty (0 bytes) → `{:error, :empty_file}`
-- File has a header row but zero data rows → this is valid, return
-  `{:ok, stats}` with all zeroes
-- A batch `insert_all` call fails → log the error, add the batch size to
-  `:failed`, and continue with the remaining batches
-
-Use `File.exists?/1` and `NimbleCSV` for I/O and parsing. Use
-`Enum.chunk_every/2` for batching. Use `require Logger` and emit a
-`Logger.info/1` line after every batch with the running totals.
-
-Give me the complete module in a single file. Assume NimbleCSV, Jason, and
-Ecto are available as dependencies; do not add anything else.
+For the implementation, please use `File.exists?/1` and `NimbleCSV` for I/O and parsing, `Enum.chunk_every/2` for batching, and `require Logger` with a `Logger.info/1` line emitted after every batch reporting the running totals.
 
 ## The module with `schema_field_set` missing
 

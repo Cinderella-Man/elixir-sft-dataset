@@ -1,13 +1,46 @@
-Write me an Elixir module called `CacheLayer` that is a **true write-through cache**: reads are served from an ETS cache with read-through fill, and writes and deletes are propagated to a backing store *before* the cache is updated, so the cache is never ahead of the store.
+# `CacheLayer` — True Write-Through Cache with Backing-Store Propagation
 
-I need these functions in the public API:
-- `CacheLayer.start_link(opts)` to start the process as a GenServer. It should accept a `:name` option for process registration and own the lifecycle of all ETS tables it creates.
-- `CacheLayer.fetch(server, table, key, loader_fn)` — read-through. If `{table, key}` is cached, return `{:ok, value}` (read directly from ETS). On a miss, call `loader_fn.()` (a zero-arity function that loads from the store and returns the value) **at most once**, cache the result, and return `{:ok, value}`.
-- `CacheLayer.put(server, table, key, value, writer_fn)` — write-through. `writer_fn` is a zero-arity function that persists the value to the backing store and returns `:ok`, `{:ok, term}`, or `{:error, reason}`. Call `writer_fn.()` first; **only if it succeeds** update the cache to `value` and return `{:ok, value}`. If it returns `{:error, reason}`, leave the cache untouched and return `{:error, reason}`.
-- `CacheLayer.delete(server, table, key, deleter_fn)` — delete-through. `deleter_fn` is a zero-arity function that removes the key from the backing store and returns `:ok`, `{:ok, term}`, or `{:error, reason}`. Call it first; **only if it succeeds** remove the entry from the cache and return `:ok`. On `{:error, reason}`, leave the cache untouched and return `{:error, reason}`.
-- `CacheLayer.invalidate(server, table, key)` — cache-only eviction. Removes the cached entry **without touching the backing store**. Returns `:ok`.
-- `CacheLayer.invalidate_all(server, table)` — cache-only eviction of **all** entries for the table (store untouched). Returns `:ok`.
+## Overview
 
-Each `table` is an atom mapping to a separate `:set`, `:public` ETS table owned by the GenServer, created lazily on first use. Cached reads must be servable directly from ETS without a GenServer round-trip; all loads, writes, and deletes are serialised through the GenServer so the store functions and the cache never race. The key consistency rule: the cache is only mutated on a *successful* store operation — a failed `put`/`delete` must leave the previously cached value exactly as it was. Because cached reads bypass the GenServer, callers must be able to locate a table's ETS tid without a GenServer call; if you register anything process-global for that lookup (for example `:persistent_term` entries), the server must trap exits and its `terminate/2` must erase every such registration when it stops — including a supervised shutdown — so a cleanly stopped server leaves nothing behind (the ETS tables themselves die with their owner).
+`CacheLayer` is a single Elixir module implementing a **true write-through cache**. Reads are served from an ETS cache with read-through fill. Writes and deletes are propagated to a backing store *before* the cache is updated, so the cache is never ahead of the store.
 
-Give me the complete module in a single file. Use only OTP and the standard library, no external dependencies.
+The deliverable is the complete module in a single file, built on OTP and the standard library only, with no external dependencies.
+
+## API
+
+The module exposes the following public functions.
+
+### `CacheLayer.start_link(opts)`
+
+Starts the process as a GenServer. It accepts a `:name` option for process registration and owns the lifecycle of all ETS tables it creates.
+
+### `CacheLayer.fetch(server, table, key, loader_fn)`
+
+Read-through. If `{table, key}` is cached, the function returns `{:ok, value}`, read directly from ETS. On a miss it calls `loader_fn.()` — a zero-arity function that loads from the store and returns the value — **at most once**, caches the result, and returns `{:ok, value}`.
+
+### `CacheLayer.put(server, table, key, value, writer_fn)`
+
+Write-through. `writer_fn` is a zero-arity function that persists the value to the backing store and returns `:ok`, `{:ok, term}`, or `{:error, reason}`. `writer_fn.()` is called first; **only if it succeeds** is the cache updated to `value` and `{:ok, value}` returned. If it returns `{:error, reason}`, the cache is left untouched and `{:error, reason}` is returned.
+
+### `CacheLayer.delete(server, table, key, deleter_fn)`
+
+Delete-through. `deleter_fn` is a zero-arity function that removes the key from the backing store and returns `:ok`, `{:ok, term}`, or `{:error, reason}`. It is called first; **only if it succeeds** is the entry removed from the cache and `:ok` returned. On `{:error, reason}`, the cache is left untouched and `{:error, reason}` is returned.
+
+### `CacheLayer.invalidate(server, table, key)`
+
+Cache-only eviction. Removes the cached entry **without touching the backing store**. Returns `:ok`.
+
+### `CacheLayer.invalidate_all(server, table)`
+
+Cache-only eviction of **all** entries for the table, leaving the store untouched. Returns `:ok`.
+
+## Storage and concurrency model
+
+Each `table` is an atom mapping to a separate `:set`, `:public` ETS table owned by the GenServer, created lazily on first use. Cached reads must be servable directly from ETS without a GenServer round-trip. All loads, writes, and deletes are serialised through the GenServer so that the store functions and the cache never race.
+
+## Edge cases and consistency guarantees
+
+- The key consistency rule: the cache is only mutated on a *successful* store operation — a failed `put`/`delete` must leave the previously cached value exactly as it was.
+- `loader_fn.()` must be invoked at most once per cache miss.
+- Because cached reads bypass the GenServer, callers must be able to locate a table's ETS tid without a GenServer call.
+- If anything process-global is registered for that lookup (for example `:persistent_term` entries), the server must trap exits, and its `terminate/2` must erase every such registration when it stops — including a supervised shutdown — so that a cleanly stopped server leaves nothing behind. The ETS tables themselves die with their owner.

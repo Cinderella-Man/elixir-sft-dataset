@@ -7,9 +7,15 @@ whole suite again, and leave every other line precisely as shown.
 
 ## The task
 
-Write me an Elixir GenServer module called `CoalescingPayments` that simulates an idempotent payment processing system with in-memory storage **and in-flight request coalescing**. Unlike a plain idempotent endpoint, the defining property here is the concurrency model: when several callers hit the same idempotency key *while the first one is still being processed*, only ONE payment is processed and all the concurrent waiters receive that single shared result.
+# CoalescingPayments — Specification for an Idempotent Payment System with In-Flight Request Coalescing
 
-## Public API
+## Overview
+
+This document specifies an Elixir GenServer module named `CoalescingPayments` that simulates an idempotent payment processing system backed by in-memory storage **and in-flight request coalescing**. Unlike a plain idempotent endpoint, the defining property here is the concurrency model: when several callers hit the same idempotency key *while the first one is still being processed*, only ONE payment is processed and all the concurrent waiters receive that single shared result.
+
+The implementation must use only the OTP standard library; no external dependencies. The complete module must be delivered in a single file.
+
+## API
 
 ### `CoalescingPayments.start_link(opts)`
 
@@ -40,7 +46,7 @@ Returns `{:ok, response}` or `{:error, reason}`.
 2. **Pending (in flight)** — another caller triggered processing for this key and it has not finished: the caller blocks (no reply yet) and is added to the waiter list for that key. When the work finishes, every waiter — including the original caller — receives the same result via `GenServer.reply/2`. The processor runs **exactly once** for the whole group, and only **one** payment record is created. Note that a pending entry short-circuits before validation: a later caller joining a pending key gets the group's result regardless of the `params` it passed, and those params are discarded.
 3. **Unseen key, or completed-but-expired key** — validate the params and start fresh processing; an expired entry is simply overwritten.
 
-**Non-blocking requirement.** The GenServer must never block inside the processor. Run the processor in a spawned process, which sends the outcome back to the server; the server then replies to all waiting callers with `GenServer.reply/2`. While work is in flight, the server must keep serving other calls (`get_payments/1`, `in_flight_count/1`, other keys, etc.).
+**Non-blocking requirement.** The GenServer must never block inside the processor. The processor is to be run in a spawned process, which sends the outcome back to the server; the server then replies to all waiting callers with `GenServer.reply/2`. While work is in flight, the server must keep serving other calls (`get_payments/1`, `in_flight_count/1`, other keys, etc.).
 
 **Processor exceptions.** If the processor raises, the spawned worker rescues it and the outcome becomes `{:error, {:exception, message}}` where `message` is `Exception.message/1` of the raised exception. The caller (and any coalesced waiters) get that error tuple; it is cached like any other result when a key was given. The server does not crash.
 
@@ -67,11 +73,11 @@ Returns `{:ok, payment}` for a matching `:id`, or `{:error, :not_found}` for any
 
 Returns a non-negative integer: the number of payment requests currently being processed and not yet replied to. This counts both keyed requests in the pending state and nil-key requests still awaiting their worker. A coalesced group of N waiters on one key counts as **1**. The count drops back as each unit of work is finalized, so once everything settles it returns `0`. Requests rejected as `:invalid_params` never enter this count.
 
-## Cleanup
+## Edge cases
+
+### Cleanup
 
 Payment records are **never** removed — neither by TTL nor by cleanup. The `:cleanup` message only purges idempotency entries that are *completed and expired* (expiry not strictly greater than the current clock). Pending entries are always kept, no matter how long they have been in flight. Cleanup is purely an optimization: an expired entry that has not yet been purged must still behave as expired when a call hits it. Unknown/unexpected messages sent to the server must be ignored without crashing.
-
-Use only the OTP standard library; no external dependencies. Give me the complete module in a single file.
 
 ## The module with `get_payments` missing
 

@@ -7,47 +7,21 @@ whole suite again, and leave every other line precisely as shown.
 
 ## The task
 
-Write me an Elixir module called `CsvLoader` that reads a CSV file, validates each row against a provided schema, coerces values to their declared Elixir types, and returns a structured result splitting valid rows from errors.
+Hey, could you write me an Elixir module called `CsvLoader`? What I need it to do is read a CSV file, validate each row against a schema I hand it, coerce the values into their declared Elixir types, and give me back a structured result that separates the valid rows from the errors.
 
-I need these functions in the public API:
+For the public API, I need two functions. First there's `CsvLoader.load_file(file_path, schema)`, which reads the CSV file at the path I give it and validates and coerces every data row against the schema. I want it to return `{:ok, valid_rows, error_report}`, where `valid_rows` is a list of maps whose keys are the field names as atoms and whose values are properly typed Elixir values — not raw strings — and where `error_report` is a list of `{row_number, field_name, error_message}` tuples describing every validation failure. The valid rows need to come back in the same order they appear in the CSV. Row numbers are 1-based and count only data rows — don't count the header row. If the file doesn't exist, return `{:error, :file_not_found}`, and if the file is empty (zero bytes), return `{:error, :empty_file}`.
 
-- `CsvLoader.load_file(file_path, schema)` which reads the CSV file at the given path, validates and coerces every data row against the schema. It should return `{:ok, valid_rows, error_report}` where `valid_rows` is a list of maps with field names as atom keys and properly typed Elixir values (not raw strings), and `error_report` is a list of `{row_number, field_name, error_message}` tuples describing every validation failure. Valid rows appear in the same order they occur in the CSV. Row numbers should be 1-based counting only data rows (the header row is not counted). If the file doesn't exist, return `{:error, :file_not_found}`. If the file is empty (zero bytes), return `{:error, :empty_file}`.
+Then I need `CsvLoader.load_string(csv_string, schema)`, which does exactly the same thing but takes the CSV content as a binary string instead of a file path — handy for testing. If that content is empty after stripping any BOM (i.e. it trims to an empty string), return `{:error, :empty_file}`.
 
-- `CsvLoader.load_string(csv_string, schema)` which does the same thing but accepts the CSV content as a binary string instead of a file path. This is useful for testing. If the content is empty (after stripping any BOM, trims to an empty string), return `{:error, :empty_file}`.
+The schema itself should be a list of field definitions, and each field is a map with these keys: `:name` (required) is the column header name as a string; `:key` (optional) is the atom to use as the map key in the result, and it defaults to the `:name` string converted to an atom via `String.to_atom/1`; `:required` (optional, default `true`) means that when it's true the field has to be present and non-empty; `:type` (optional, default `:string`) is one of `:string`, `:integer`, `:float`, `:boolean`, `:date`, `:enum`; `:values` (required when the type is `:enum`) is a list of allowed string values; `:default` (optional) is a default value to use when the field is empty and not required, and it must already be the correct Elixir type; and `:format` (optional) is a regex that the raw string field value has to match before type coercion.
 
-The schema should be a list of field definitions, where each field is a map with these keys:
-- `:name` (required) — the column header name as a string
-- `:key` (optional) — the atom to use as the map key in the result; defaults to the `:name` string converted to an atom via `String.to_atom/1`
-- `:required` (optional, default `true`) — if true, the field must be present and non-empty
-- `:type` (optional, default `:string`) — one of `:string`, `:integer`, `:float`, `:boolean`, `:date`, `:enum`
-- `:values` (required when type is `:enum`) — a list of allowed string values
-- `:default` (optional) — a default value to use when the field is empty and not required; must already be the correct Elixir type
-- `:format` (optional) — a regex that the raw string field value must match before type coercion
+On the type coercion — this all happens after validation passes. For `:string`, keep the value as a trimmed string. For `:integer`, parse via `String.to_integer/1`, and on failure the error message is `"must be a valid integer"`. For `:float`, parse via `String.to_float/1`, but also accept integer-formatted strings like `"42"` (coerce that to `42.0`); the error message is `"must be a valid float"`. For `:boolean`, `"true"` and `"1"` (case-insensitive) coerce to `true`, and `"false"` and `"0"` coerce to `false`, while anything else gives `"must be a valid boolean"`. For `:date`, it must be ISO 8601 format (`YYYY-MM-DD`) and parseable by `Date.from_iso8601/1`, with the error message `"must be a valid date"`. For `:enum`, the trimmed value must be one of the strings in the `:values` list, case-sensitive, and the error message is `"must be one of: <comma-separated values>"`.
 
-Type coercion rules (applied after validation passes):
-- `:string` — value is kept as a trimmed string.
-- `:integer` — parsed via `String.to_integer/1`. Error message: `"must be a valid integer"`.
-- `:float` — parsed via `String.to_float/1`; also accept integer-formatted strings like `"42"` (coerce to `42.0`). Error message: `"must be a valid float"`.
-- `:boolean` — `"true"` and `"1"` (case-insensitive) coerce to `true`, `"false"` and `"0"` to `false`. Anything else: `"must be a valid boolean"`.
-- `:date` — must be in ISO 8601 format (`YYYY-MM-DD`) and parseable by `Date.from_iso8601/1`. Error message: `"must be a valid date"`.
-- `:enum` — the trimmed value must be one of the strings in the `:values` list (case-sensitive). Error message: `"must be one of: <comma-separated values>"`.
+For the validation rules: only process schema fields whose `:name` matches a column in the header row — a schema field whose name doesn't appear in the header gets skipped entirely, so it's neither validated nor included in the result maps, and its key never appears even if it defines a `:default`. Required fields that are empty or whitespace-only should produce an error `"is required"`. Type coercion errors produce the messages I listed above. Format checks produce `"does not match expected format"` and are evaluated before type coercion. A single field can have multiple errors, so report all of them, not just the first. If a row has more columns than the header, silently ignore the extras; if a row has fewer columns than the header, treat the missing ones as empty strings. When a non-required field is empty, use the `:default` value if one is provided, otherwise use `nil`.
 
-Validation rules:
-- Only schema fields whose `:name` matches a column in the header row are processed. A schema field whose name does not appear in the header is skipped entirely — it is neither validated nor included in the result maps, and its key never appears even if it defines a `:default`.
-- Required fields that are empty or whitespace-only should produce an error `"is required"`.
-- Type coercion errors produce the messages listed above.
-- Format checks should produce `"does not match expected format"` and are evaluated before type coercion.
-- A single field can have multiple errors — report all of them, not just the first.
-- If a row has more columns than the header, ignore the extras silently. If a row has fewer columns than the header, treat the missing columns as empty strings.
-- When a non-required field is empty: if `:default` is provided, use the default value; otherwise use `nil`.
+There are a few edge cases I want handled too. Strip a UTF-8 BOM (`\xEF\xBB\xBF`) at the start of the file before parsing. A file with only a header row and no data rows should return `{:ok, [], []}`. Handle completely empty fields (adjacent commas) as well as fields wrapped in double quotes that contain commas or newlines inside them. And trim whitespace around field values before validation and coercion.
 
-Edge cases to handle:
-- UTF-8 BOM (`\xEF\xBB\xBF`) at the start of the file — strip it before parsing.
-- File with only a header row and no data rows — return `{:ok, [], []}`.
-- Completely empty fields (adjacent commas) and fields wrapped in double quotes with commas or newlines inside them.
-- Whitespace around field values should be trimmed before validation and coercion.
-
-Use the NimbleCSV library for parsing (`:nimble_csv` hex package). Do not use any other external dependencies. Give me the complete module in a single file.
+For parsing, use the NimbleCSV library (the `:nimble_csv` hex package), and please don't pull in any other external dependencies. Give me the complete module in a single file.
 
 ## The module with `strip_bom` missing
 

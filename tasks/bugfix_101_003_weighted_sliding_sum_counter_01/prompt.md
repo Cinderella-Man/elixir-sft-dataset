@@ -8,59 +8,42 @@ with the complete corrected module.
 
 ## What the module is supposed to do
 
-Write me an Elixir GenServer module called `SlidingSum` that maintains a sliding
-time-window running **sum of numeric amounts** per key, using a sub-bucket
-strategy.
+# `SlidingSum` — sliding-window sum-of-amounts GenServer
 
-Unlike a plain event counter, each recorded event carries a numeric amount
-(think bytes transferred, dollars spent, or points scored), and queries return
-the total amount within the window rather than a count of events.
+Implement an Elixir GenServer module `SlidingSum` that maintains a sliding time-window running **sum of numeric amounts** per key, using a sub-bucket strategy. Unlike a plain event counter, each recorded event carries a numeric amount (bytes transferred, dollars spent, points scored), and queries return the total amount within the window rather than a count of events.
 
-I need these functions in the public API:
-- `SlidingSum.start_link(opts)` to start the process. It should accept:
-  - `:clock` — a zero-arity function returning the current time in milliseconds.
-    Defaults to `fn -> System.monotonic_time(:millisecond) end`.
-  - `:bucket_ms` — the width of each internal sub-bucket in milliseconds.
-    Defaults to `1_000` (1 second).
-  - `:name` — optional process registration name.
-  - `:cleanup_interval_ms` — how often to run the periodic cleanup.
-    Defaults to `60_000`. Pass `:infinity` to disable.
-- `SlidingSum.add(server, key, amount)` — records `amount` (any number: it may be
-  an integer or a float, and it may be negative) for the given key at the current
-  clock time. Returns `:ok`.
-- `SlidingSum.sum(server, key, window_ms)` — returns the total of all amounts
-  recorded for `key` that fall within the last `window_ms` milliseconds relative
-  to the current clock time. Amounts outside that window must not be included.
-- `SlidingSum.keys(server)` — returns the list of keys currently tracked (those
-  that still have at least one stored bucket), in no particular order. A server
-  with no data returns `[]`, and once cleanup has removed every bucket of a key,
-  that key no longer appears.
+**Public API — startup**
+- `SlidingSum.start_link(opts)` starts the process.
+- `:clock` — a zero-arity function returning the current time in milliseconds. Defaults to `fn -> System.monotonic_time(:millisecond) end`.
+- `:bucket_ms` — width of each internal sub-bucket in milliseconds. Defaults to `1_000` (1 second).
+- `:name` — optional process registration name.
+- `:cleanup_interval_ms` — how often the periodic cleanup runs. Defaults to `60_000`. Pass `:infinity` to disable.
 
-Semantics and internal design requirements:
+**Public API — operations**
+- `SlidingSum.add(server, key, amount)` — records `amount` for the given key at the current clock time. Returns `:ok`. `amount` may be any number: integer or float, and it may be negative.
+- `SlidingSum.sum(server, key, window_ms)` — returns the total of all amounts recorded for `key` that fall within the last `window_ms` milliseconds relative to the current clock time. Amounts outside that window must not be included.
+- `SlidingSum.keys(server)` — returns the list of keys currently tracked (those that still have at least one stored bucket), in no particular order. A server with no data returns `[]`; once cleanup has removed every bucket of a key, that key no longer appears.
+
+**Bucketing semantics**
+- Time is divided into fixed-width sub-buckets of `:bucket_ms` each.
+- Every event is placed into the bucket whose index is `div(timestamp, bucket_ms)`; each bucket accumulates the sum of the amounts placed into it.
+- For `sum/3`, include a bucket iff its start time falls within the sliding window — i.e. include bucket `b` iff `b * bucket_ms >= now - window_ms`. Discard (do not include) any bucket that starts before the window.
+
+**Value and isolation semantics**
 - A key that has had no amounts added returns a sum of `0`.
-- Divide time into fixed-width sub-buckets of `:bucket_ms` each. Every event is
-  placed into the bucket whose index is `div(timestamp, bucket_ms)`, and each
-  bucket accumulates the sum of the amounts placed into it.
-- When answering `sum/3`, include a bucket iff its start time falls within the
-  sliding window — that is, include bucket `b` iff `b * bucket_ms >= now - window_ms`.
-  Discard (do not include) any bucket that starts before the window.
-- Negative amounts subtract from the running window sum; a sum may therefore be
-  negative or zero.
-- Different keys must be tracked independently — adding to `"conn:a"` must not
-  affect `"conn:b"`.
-- Memory must not leak: the GenServer state must store per-key bucket sums under
-  `state.keys`. Run a periodic cleanup (via `Process.send_after`) that removes
-  buckets — and whole keys — that have fallen outside the maximum retention
-  window of **24 hours** (`24 * 60 * 60 * 1000` ms): a bucket is retained by
-  cleanup exactly when its start time satisfies the same inclusive rule as
-  `sum/3`, i.e. `bucket_start >= now - 86_400_000` — a bucket starting exactly
-  on that horizon survives. Also handle a `:cleanup` message sent directly to
-  the process so tests can trigger cleanup synchronously. After cleanup,
-  `state.keys` must be an empty
-  map when all data has expired.
+- Negative amounts subtract from the running window sum; a sum may therefore be negative or zero.
+- Keys are tracked independently — adding to `"conn:a"` must not affect `"conn:b"`.
 
-Give me the complete module in a single file. Use only the OTP standard library,
-no external dependencies.
+**Retention / cleanup**
+- No memory leaks: GenServer state stores per-key bucket sums under `state.keys`.
+- A periodic cleanup (scheduled via `Process.send_after`) removes buckets — and whole keys — that have fallen outside the maximum retention window of **24 hours** (`24 * 60 * 60 * 1000` ms).
+- Cleanup retains a bucket exactly when its start time satisfies the same inclusive rule as `sum/3`, i.e. `bucket_start >= now - 86_400_000`; a bucket starting exactly on that horizon survives.
+- Handle a `:cleanup` message sent directly to the process so tests can trigger cleanup synchronously.
+- After cleanup, `state.keys` must be an empty map when all data has expired.
+
+**Delivery**
+- Complete module in a single file.
+- OTP standard library only, no external dependencies.
 
 ## The buggy module
 

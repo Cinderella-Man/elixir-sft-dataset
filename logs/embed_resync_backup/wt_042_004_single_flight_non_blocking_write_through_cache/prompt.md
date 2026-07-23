@@ -24,7 +24,7 @@ The naive design serialises *every* cache miss through the GenServer and runs th
 
 I need these functions in the public API:
 - `CacheLayer.start_link(opts)` to start the process as a GenServer. It should accept a `:name` option for process registration and own the lifecycle of all ETS tables it creates.
-- `CacheLayer.fetch(server, table, key, fallback_fn)` which returns `{:ok, value}`. On a cache hit it reads directly from ETS (no GenServer round-trip). On a miss it participates in the single-flight protocol described above and returns `{:ok, value}`.
+- `CacheLayer.fetch(server, table, key, fallback_fn)` which returns `{:ok, value}`. On a cache hit it reads directly from ETS (no GenServer round-trip). On a miss it participates in the single-flight protocol described above and returns `{:ok, value}`. Any term `fallback_fn` produces — including `nil` — is stored and treated as a genuine cached value, so a later fetch of the same key is a hit that does not re-run `fallback_fn`.
 - `CacheLayer.invalidate(server, table, key)` which removes the entry for `{table, key}`. Returns `:ok`.
 - `CacheLayer.invalidate_all(server, table)` which removes **all** cached entries for the given `table`. Returns `:ok`.
 

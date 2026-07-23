@@ -8,11 +8,11 @@ with the complete corrected module.
 
 ## What the module is supposed to do
 
-Write me an Elixir module called `SchemaGenerators` that turns a **declarative schema description** into a `StreamData` generator at runtime, for use with property-based testing via `StreamData` and `ExUnitProperties`.
+I've got a pile of property tests where every new data shape means hand-writing yet another generator, and I'd like to stop doing that. Can you build me an Elixir module called `SchemaGenerators` that takes a **declarative schema description** and turns it into a `StreamData` generator at runtime? The consumers are property-based tests written with `StreamData` and `ExUnitProperties`.
 
-Instead of hand-writing a fixed generator per type, I want one interpreter, `SchemaGenerators.from_schema/1`, that recursively walks a schema term and returns a `%StreamData{}` generator whose produced values conform to that schema. This lets tests describe the data they want as plain data.
+The idea is one interpreter instead of one generator per type: `SchemaGenerators.from_schema/1` walks a schema term recursively and hands back a `%StreamData{}` generator whose produced values conform to that schema. That way a test can just describe the data it wants as plain data.
 
-`from_schema/1` must support exactly this schema grammar:
+Here's the exact grammar I need `from_schema/1` to handle — nothing more, nothing less:
 
 - `:integer` — any integer.
 - `{:integer, min, max}` — an integer in `min..max` (require `min <= max`).
@@ -26,9 +26,9 @@ Instead of hand-writing a fixed generator per type, I want one interpreter, `Sch
 - `{:optional, schema}` — either `nil` or a value conforming to `schema`.
 - `{:one_of, schemas}` — a value conforming to one of the given non-empty list of `schemas`.
 
-The interpreter must recurse so that nested schemas (e.g. a list of maps, a map with optional list-valued fields) produce correctly nested generators. All constraints come from the returned generator itself — consumers never filter. The result of `from_schema/1` must be a `%StreamData{}` struct that composes with the standard `StreamData` combinators.
+The recursion matters to me: nested schemas — say a list of maps, or a map with optional list-valued fields — have to come out as correctly nested generators. And every constraint needs to live in the returned generator itself; I don't want callers filtering anything downstream. Whatever `from_schema/1` returns has to be a `%StreamData{}` struct so it composes with the standard `StreamData` combinators.
 
-Give me the complete module in a single file. Use only `stream_data` as an external dependency, no others.
+Please send the whole module as a single file, and keep `stream_data` as the only external dependency — no others.
 
 ## The buggy module
 

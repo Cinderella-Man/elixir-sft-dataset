@@ -244,11 +244,20 @@ end
 
 ## New specification
 
-Write me an Elixir GenServer module called `CusumAnomaly` that maintains multiple named numeric streams and detects **change points** using a CUSUM (cumulative sum) algorithm combined with online mean/variance via Welford's algorithm.
+# Design brief: `CusumAnomaly` change-point detector
 
-The motivation: moving averages smooth a signal but don't tell you when its statistical character has **shifted** — a new equilibrium has been reached that's different from the previous one. CUSUM is a classic sequential change-detection algorithm designed for exactly that. This module is the inverse of a moving average: instead of returning the current average, it returns whether the stream is currently exhibiting an anomalous shift.
+## Problem
 
-**Welford's online algorithm** for mean and variance avoids needing to store history:
+Moving averages smooth a signal but don't tell you when its statistical character has **shifted** — a new equilibrium has been reached that's different from the previous one. CUSUM (cumulative sum) is a classic sequential change-detection algorithm designed for exactly that. We need a module that is the inverse of a moving average: instead of returning the current average, it returns whether a stream is currently exhibiting an anomalous shift.
+
+Build an Elixir GenServer module called `CusumAnomaly` that maintains multiple named numeric streams and detects **change points** using a CUSUM algorithm combined with online mean/variance via Welford's algorithm. Different stream names are independent.
+
+## Constraints
+
+- Deliver the complete module in a single file.
+- Use only the OTP standard library — no external dependencies.
+
+### Algorithm 1 — Welford's online mean and variance (avoids storing history)
 
     n = 0, mean = 0.0, M2 = 0.0
     for each new value x:
@@ -260,7 +269,9 @@ The motivation: moving averages smooth a signal but don't tell you when its stat
     variance = M2 / n             # population variance
     stddev = sqrt(variance)
 
-**Two-sided CUSUM.** Maintain two cumulative sums `s_high` and `s_low` per stream, both starting at 0. On each push with value `x`:
+### Algorithm 2 — Two-sided CUSUM
+
+Maintain two cumulative sums `s_high` and `s_low` per stream, both starting at 0. On each push with value `x`:
 
 1. Compute a **normalized deviation** `z = (x - mean_before_update) / max(stddev_before_update, epsilon)`. If fewer than `warmup_samples` values have been pushed, skip CUSUM entirely (return `:warming_up` on a check); there's not enough data for z-scoring to be meaningful.
 2. If the stream's stddev *before* this update is below `slack`, skip the CUSUM update for this push — just update Welford's accumulators with `x` and return `:ok` (z-scoring against a near-zero stddev is meaningless and would cause false alerts on a flat signal). Otherwise update `s_high = max(0.0, s_high + z - slack)` and `s_low = max(0.0, s_low - z - slack)`. The `slack` (default `0.5`) is a small positive constant that makes CUSUM ignore small deviations around the mean.
@@ -270,32 +281,28 @@ The motivation: moving averages smooth a signal but don't tell you when its stat
 
 Each push records whether an alert fired; subsequent `check/2` queries can return the latest status.
 
-I need these functions in the public API:
+## Required interface
 
-- `CusumAnomaly.start_link(opts)` — options:
-  - `:name` — optional process registration
-  - `:threshold` — alert trigger (positive float, default `5.0`)
-  - `:slack` — CUSUM slack constant (non-negative float, default `0.5`)
-  - `:warmup_samples` — minimum samples before detection is active (positive integer, default `10`)
-  - `:epsilon` — minimum stddev floor to avoid division-by-zero (positive float, default `1.0e-6`)
+1. `CusumAnomaly.start_link(opts)` — options:
+   - `:name` — optional process registration
+   - `:threshold` — alert trigger (positive float, default `5.0`)
+   - `:slack` — CUSUM slack constant (non-negative float, default `0.5`)
+   - `:warmup_samples` — minimum samples before detection is active (positive integer, default `10`)
+   - `:epsilon` — minimum stddev floor to avoid division-by-zero (positive float, default `1.0e-6`)
 
-- `CusumAnomaly.push(server, name, value)` — appends `value` to the stream and performs the CUSUM/Welford update. Returns one of:
-  - `:ok` — value processed, no alert fired
-  - `{:alert, :upward_shift}` — upper CUSUM breached threshold; both CUSUMs and Welford state are reset
-  - `{:alert, :downward_shift}` — lower CUSUM breached threshold; both CUSUMs and Welford state are reset
-  - `:warming_up` — stream still has fewer than `warmup_samples` values (CUSUM not yet active), or the stream is frozen after a previous alert and is awaiting an explicit `reset/2`
+2. `CusumAnomaly.push(server, name, value)` — appends `value` to the stream and performs the CUSUM/Welford update. Returns one of:
+   - `:ok` — value processed, no alert fired
+   - `{:alert, :upward_shift}` — upper CUSUM breached threshold; both CUSUMs and Welford state are reset
+   - `{:alert, :downward_shift}` — lower CUSUM breached threshold; both CUSUMs and Welford state are reset
+   - `:warming_up` — stream still has fewer than `warmup_samples` values (CUSUM not yet active), or the stream is frozen after a previous alert and is awaiting an explicit `reset/2`
 
-  Only one direction can alert per push (if both simultaneously exceed threshold, `:upward_shift` wins and the stream is reset-and-frozen as above — this is vanishingly rare and not worth special handling).
+   Only one direction can alert per push (if both simultaneously exceed threshold, `:upward_shift` wins and the stream is reset-and-frozen as above — this is vanishingly rare and not worth special handling).
 
-- `CusumAnomaly.check(server, name)` — reports the stream's current status without pushing a value. Returns `{:ok, %{mean: float, stddev: float, s_high: float, s_low: float, samples: non_neg_integer, status: :normal | :warming_up}}` where `status` is `:warming_up` if `samples < warmup_samples`, else `:normal`. Returns `{:error, :no_data}` if the stream is completely unknown.
+3. `CusumAnomaly.check(server, name)` — reports the stream's current status without pushing a value. Returns `{:ok, %{mean: float, stddev: float, s_high: float, s_low: float, samples: non_neg_integer, status: :normal | :warming_up}}` where `status` is `:warming_up` if `samples < warmup_samples`, else `:normal`. Returns `{:error, :no_data}` if the stream is completely unknown.
 
-- `CusumAnomaly.reset(server, name)` — explicitly resets the stream's Welford and CUSUM state to zero and clears any post-alert freeze. Useful when the operator knows a regime change has occurred. Returns `:ok` (does not create a stream if one doesn't exist).
+4. `CusumAnomaly.reset(server, name)` — explicitly resets the stream's Welford and CUSUM state to zero and clears any post-alert freeze. Useful when the operator knows a regime change has occurred. Returns `:ok` (does not create a stream if one doesn't exist).
 
-Different stream names are independent.
-
-Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
-
-## Additional interface contract
+## Acceptance criteria
 
 - `start_link/1` validates its options eagerly in the calling process, before any process is started: out-of-range values raise `ArgumentError` directly from the `start_link/1` call (not an `{:error, _}` return). Specifically, `threshold: 0`, `threshold: -1`, `slack: -0.1`, `warmup_samples: 0`, and `epsilon: 0` must each raise `ArgumentError`.
 - `start_link` must also be callable with no arguments — declare it as `start_link(opts \\ [])` — in which case every option takes its default.

@@ -7,24 +7,42 @@ whole suite again, and leave every other line precisely as shown.
 
 ## The task
 
-Write me an Elixir module called `Metrics` that collects application metrics using ETS tables for fast, concurrent-safe storage.
+# `Metrics` — ETS-Backed Application Metrics Collector
 
-I need these functions in the public API:
-- `Metrics.start_link(opts \\ [])` to start the backing GenServer. It should accept a `:name` option for process registration, defaulting to `__MODULE__`.
-- `Metrics.increment(name, amount \\ 1)` to atomically increment a named counter by `amount`. Counters are monotonically increasing and should never decrease; a negative `amount` is out of contract — guard the function head so it raises `FunctionClauseError` and stores nothing. Use `:ets.update_counter` for atomicity. An `amount` of `0` is valid: it leaves an existing counter unchanged, and it creates a missing counter at `0`.
-- `Metrics.gauge(name, value)` to set a named gauge to an exact value. Gauges can go up or down freely — each call overwrites the previous value. Returns `:ok` on create and on overwrite.
-- `Metrics.get(name)` to return the current value of a metric by name, or `nil` if it doesn't exist.
-- `Metrics.all()` to return all metrics as a map of `%{name => value}`.
-- `Metrics.reset(name)` to set a metric back to `0` regardless of whether it is a counter or gauge. Returns `:ok` — including for a name that does not exist yet, which is created at `0`.
-- `Metrics.snapshot()` to return a point-in-time map of all current metrics, identical in shape to `all/0` but semantically communicating immutability of the returned data.
+## Overview
 
-Counters and gauges can coexist in the same table — there is no need to declare a metric's type upfront; `increment` creates or bumps a counter entry and `gauge` creates or overwrites a gauge entry. The ETS table must be public and registered under the exact name `Metrics` (the module name), created with `read_concurrency: true` and `write_concurrency: true` — callers may verify all of this via `:ets.info/2` — so that `increment` can bypass the GenServer process for maximum throughput (i.e., the hot path for incrementing must not serialize through a GenServer `call`). The GenServer is only needed for initialisation and owning the table.
+This document specifies an Elixir module named `Metrics` that collects application metrics using ETS tables for fast, concurrent-safe storage. The deliverable is the complete implementation in a single file, built on OTP/stdlib only, with no external dependencies.
 
-Give me the complete implementation in a single file. Use only OTP/stdlib — no external dependencies.
+Counters and gauges coexist in the same table. A metric's type need not be declared upfront: `increment` creates or bumps a counter entry, and `gauge` creates or overwrites a gauge entry.
+
+## Storage and process architecture
+
+The ETS table must be public and registered under the exact name `Metrics` (the module name). It must be created with `read_concurrency: true` and `write_concurrency: true`. Callers may verify all of this via `:ets.info/2`.
+
+This arrangement exists so that `increment` can bypass the GenServer process for maximum throughput — that is, the hot path for incrementing must not serialize through a GenServer `call`. The GenServer is needed only for initialisation and for owning the table.
+
+## API
+
+The public API consists of the following functions.
+
+- `Metrics.start_link(opts \\ [])` — starts the backing GenServer. It accepts a `:name` option for process registration, defaulting to `__MODULE__`.
+- `Metrics.increment(name, amount \\ 1)` — atomically increments a named counter by `amount`. Atomicity is achieved with `:ets.update_counter`. Counters are monotonically increasing and never decrease.
+- `Metrics.gauge(name, value)` — sets a named gauge to an exact value. Gauges may go up or down freely; each call overwrites the previous value. It returns `:ok` both on create and on overwrite.
+- `Metrics.get(name)` — returns the current value of a metric by name, or `nil` if that metric does not exist.
+- `Metrics.all()` — returns all metrics as a map of `%{name => value}`.
+- `Metrics.reset(name)` — sets a metric back to `0`, regardless of whether it is a counter or a gauge. It returns `:ok`.
+- `Metrics.snapshot()` — returns a point-in-time map of all current metrics, identical in shape to `all/0`, but semantically communicating immutability of the returned data.
 
 ## Additional interface contract
 
-- `Metrics.increment/2` returns `:ok`, not the counter's new value.
+`Metrics.increment/2` returns `:ok`, not the counter's new value.
+
+## Edge cases
+
+- A negative `amount` passed to `Metrics.increment/2` is out of contract. The function head must be guarded so that such a call raises `FunctionClauseError` and stores nothing.
+- An `amount` of `0` is valid: it leaves an existing counter unchanged, and it creates a missing counter at `0`.
+- `Metrics.reset(name)` returns `:ok` even for a name that does not exist yet; that name is created at `0`.
+- `Metrics.get(name)` yields `nil` for a name that has never been recorded.
 
 ## The module with `reset` missing
 

@@ -7,32 +7,23 @@ whole suite again, and leave every other line precisely as shown.
 
 ## The task
 
-Write me an Elixir module called `MaskingServer` — a `GenServer` that scrubs sensitive data from log-bound maps, keyword lists, and strings for concurrent callers, supports registering **extra masking patterns at runtime**, and tracks cumulative masking statistics.
+I'm about to wire log scrubbing into our pipeline and I need a module from you first — call it `MaskingServer`. It should be a `GenServer` that scrubs sensitive data out of log-bound maps, keyword lists, and strings on behalf of concurrent callers, lets me register **extra masking patterns at runtime**, and keeps a running tally of cumulative masking statistics.
 
-I need these functions in the public API:
+Here's the public API I'm going to call against.
 
-- `MaskingServer.start_link(opts)` — starts the server. `opts` is a keyword list; `opts[:sensitive_keys]` is a list of atoms and/or strings (defaulting to `[]` when absent). Key comparison during masking must be case-insensitive and work for both atom and string keys. Returns `{:ok, pid}`.
+`MaskingServer.start_link(opts)` starts the server. `opts` is a keyword list, and `opts[:sensitive_keys]` is a list of atoms and/or strings, defaulting to `[]` when it isn't there. When masking, key comparison has to be case-insensitive, and it has to work for both atom keys and string keys. It returns `{:ok, pid}`.
 
-- `MaskingServer.mask(server, data)` — a synchronous call that accepts a map, a keyword list, a plain list, or any other term and returns the same shape with sensitive data scrubbed.
-  - Maps and keyword lists are walked recursively. If a key matches a configured sensitive key, its value is replaced with `"[MASKED]"` regardless of the value's type. Non-sensitive keys are preserved and their values continue to be walked.
-  - Plain lists (including lists of maps or keyword lists) are walked element-by-element.
-  - Every **string value** encountered under a non-sensitive key is passed through the same pattern scrubbing as `mask_string/2`. Values replaced with `"[MASKED]"` because of a sensitive key are **not** additionally pattern-scanned.
-  - Structs, numbers, atoms, and other terms are returned unchanged.
+`MaskingServer.mask(server, data)` is a synchronous call. I'll hand it a map, a keyword list, a plain list, or any other term, and I expect the same shape back with the sensitive data scrubbed. Maps and keyword lists get walked recursively: if a key matches one of the configured sensitive keys, its value is replaced with `"[MASKED]"` no matter what type that value is; non-sensitive keys are preserved and their values keep getting walked. Plain lists — including lists of maps or lists of keyword lists — get walked element by element. Every **string value** you hit under a non-sensitive key goes through exactly the same pattern scrubbing as `mask_string/2`. Values that were replaced with `"[MASKED]"` because of a sensitive key must **not** be pattern-scanned on top of that. Structs, numbers, atoms, and anything else come back unchanged.
 
-- `MaskingServer.mask_string(server, string)` — a synchronous call that scans a raw string and masks the built-in patterns plus any registered custom patterns (see `add_pattern/3`), returning the scrubbed string. The built-in patterns are:
-  - **Credit card numbers**: any sequence of 13–19 digits (optionally separated by single spaces or hyphens) — replace every digit except the last 4 with `*`, keeping separators intact. E.g. `"4111-1111-1111-1234"` → `"****-****-****-1234"`.
-  - **Email addresses**: keep only the first character of the local part and replace the rest with `***`. E.g. `"john.doe@example.com"` → `"j***@example.com"`.
-  - **SSN patterns**: sequences matching `\d{3}-\d{2}-\d{4}` — replace with `"***-**-****"`.
+`MaskingServer.mask_string(server, string)` is also a synchronous call: it scans a raw string, masks the built-in patterns plus whatever custom patterns have been registered (see `add_pattern/3`), and returns the scrubbed string. The built-in ones I need are credit card numbers — any sequence of 13–19 digits, optionally separated by single spaces or hyphens, where every digit except the last 4 becomes `*` and the separators stay intact, so `"4111-1111-1111-1234"` comes back as `"****-****-****-1234"`; email addresses — keep only the first character of the local part and replace the rest with `***`, so `"john.doe@example.com"` becomes `"j***@example.com"`; and SSN patterns — anything matching `\d{3}-\d{2}-\d{4}` gets replaced with `"***-**-****"`.
 
-- `MaskingServer.add_pattern(server, regex, replacement)` — registers an additional masking pattern where `regex` is a compiled `Regex` and `replacement` is a string. Returns `:ok`. When scrubbing a string, the built-in patterns are applied first (credit cards, then SSNs, then emails), and then every registered custom pattern is applied in the order it was added, each via a standard regex replace with its replacement string. Registered patterns apply to every subsequent string scrubbed by both `mask_string/2` and `mask/2`.
+`MaskingServer.add_pattern(server, regex, replacement)` registers an additional masking pattern, where `regex` is a compiled `Regex` and `replacement` is a string. It returns `:ok`. Ordering matters to me: when a string is scrubbed, the built-in patterns run first (credit cards, then SSNs, then emails), and after that every registered custom pattern is applied in the order it was added, each one via a standard regex replace with its replacement string. Registered patterns apply to every string scrubbed from then on, by both `mask_string/2` and `mask/2`.
 
-- `MaskingServer.stats(server)` — returns a map `%{keys_masked: k, patterns_applied: p}` describing cumulative work since the server started:
-  - `:keys_masked` — the total number of values replaced with `"[MASKED]"` because their key was sensitive, summed across every `mask/2` call.
-  - `:patterns_applied` — the total number of pattern matches replaced (built-in **and** custom patterns) across every string scrubbed by every `mask/2` and `mask_string/2` call.
+`MaskingServer.stats(server)` returns a map `%{keys_masked: k, patterns_applied: p}` covering cumulative work since the server started. `:keys_masked` is the total number of values replaced with `"[MASKED]"` because their key was sensitive, summed across every `mask/2` call. `:patterns_applied` is the total number of pattern matches replaced — built-in **and** custom patterns — across every string scrubbed by every `mask/2` and `mask_string/2` call.
 
-Because all operations go through the `GenServer`, concurrent callers are serialized and the statistics stay exact under concurrency.
+Since every operation goes through the `GenServer`, concurrent callers end up serialized and the statistics stay exact under concurrency, which is the property I care about most here.
 
-Give me the complete module in a single file. Use only the Elixir standard library and built-in regex support — no external dependencies.
+Send me the complete module in a single file, please. Elixir standard library and built-in regex support only — no external dependencies.
 
 ## The module with `walk` missing
 

@@ -30,7 +30,7 @@ I need these functions in the public API:
   - `fresh_ms` is how long the entry is considered **fresh** (served directly, no revalidation)
   - `stale_ms` is how much additional time past `fresh_until` the entry is served as **stale** while revalidation runs. The entry is hard-deleted at `fresh_until + stale_ms`.
   - `loader` is a zero-arity function invoked asynchronously to produce a new value during revalidation. Its result replaces the entry with a new `fresh_ms` clock.
-  - Both `fresh_ms` and `stale_ms` must be positive integers. If the key already exists, all four — value, fresh_ms, stale_ms, loader — are overwritten.
+  - Both `fresh_ms` and `stale_ms` must be positive integers; enforce this with function-head guards so that a non-positive or non-integer argument raises `FunctionClauseError`. If the key already exists, all four — value, fresh_ms, stale_ms, loader — are overwritten.
 
   Returns `:ok`.
 
@@ -54,7 +54,7 @@ When `get/2` observes that an entry is in the stale window AND no revalidation i
 
 The GenServer handles the result:
 
-- `{:revalidate_complete, key, task_ref, new_value}` — if the key still exists AND the in-flight ref still matches, apply the new value with a **fresh `fresh_ms` and `stale_ms` drawn from the current entry** (revalidation preserves the original tier durations). Clear the in-flight marker. Otherwise discard.
+- `{:revalidate_complete, key, task_ref, new_value}` — if the key still exists AND the in-flight ref still matches, apply the new value with a **fresh `fresh_ms` and `stale_ms` drawn from the current entry** (revalidation preserves the original tier durations) measured from the completion time. Clear the in-flight marker. Otherwise discard.
 
 - `{:revalidate_failed, key, task_ref, reason}` — clear the in-flight marker if it matches. The entry stays in its current state — still stale, which means the next stale read will trigger another revalidation.
 

@@ -6,31 +6,31 @@ function; the rest of the module is fixed and must stay exactly as shown.
 
 ## The task
 
-Write me an Elixir GenServer module called `CalendarScheduler` that accepts job registrations with **calendar-aware rules** (rather than cron expressions) and executes them at the right times.
+Hey — I need you to write me an Elixir GenServer module called `CalendarScheduler`. The idea is that it accepts job registrations with calendar-aware rules (rather than cron expressions) and executes them at the right times.
 
-The motivation: cron can't express rules like "first Monday of every month" or "last weekday of the month" without complex workarounds. This module uses a small set of higher-level tuple-based rules that directly encode these common calendar patterns. Unlike cron, the next-run calculation can't scan minute-by-minute — it has to use calendar math.
+Here's my motivation for wanting it: cron can't express rules like "first Monday of every month" or "last weekday of the month" without complex workarounds. So this module uses a small set of higher-level tuple-based rules that directly encode these common calendar patterns. Unlike cron, the next-run calculation can't scan minute-by-minute — it has to use calendar math.
 
-I need these functions in the public API:
+For the public API, I need these functions:
 
-- `CalendarScheduler.start_link(opts)` to start the process. It should accept a `:clock` option which is a zero-arity function returning a `NaiveDateTime`. If not provided, default to `fn -> NaiveDateTime.utc_now() end`. It should also accept a `:name` option for process registration and a `:tick_interval_ms` option (default `1_000`) for the `Process.send_after(self(), :tick, ...)` period. Setting it to `:infinity` disables auto-ticking.
+I want `CalendarScheduler.start_link(opts)` to start the process. It should accept a `:clock` option which is a zero-arity function returning a `NaiveDateTime`. If that's not provided, default to `fn -> NaiveDateTime.utc_now() end`. It should also accept a `:name` option for process registration and a `:tick_interval_ms` option (default `1_000`) for the `Process.send_after(self(), :tick, ...)` period. Setting it to `:infinity` disables auto-ticking.
 
-- `CalendarScheduler.register(server, name, rule, {mod, fun, args})` registers a job with a calendar rule. Returns `:ok`, `{:error, :invalid_rule}`, or `{:error, :already_exists}`. The supported rule shapes are exactly these four tuples:
+I want `CalendarScheduler.register(server, name, rule, {mod, fun, args})` to register a job with a calendar rule. It returns `:ok`, `{:error, :invalid_rule}`, or `{:error, :already_exists}`. The supported rule shapes are exactly these four tuples:
 
-  1. `{:nth_weekday_of_month, n, weekday, {hour, minute}}` — e.g. `{:nth_weekday_of_month, 1, :monday, {9, 0}}` = first Monday of each month at 09:00. `n` must be an integer in 1..4, `weekday` must be one of `:monday, :tuesday, :wednesday, :thursday, :friday, :saturday, :sunday`, `hour` in 0..23, `minute` in 0..59.
+1. `{:nth_weekday_of_month, n, weekday, {hour, minute}}` — e.g. `{:nth_weekday_of_month, 1, :monday, {9, 0}}` = first Monday of each month at 09:00. `n` must be an integer in 1..4, `weekday` must be one of `:monday, :tuesday, :wednesday, :thursday, :friday, :saturday, :sunday`, `hour` in 0..23, `minute` in 0..59.
 
-  2. `{:last_weekday_of_month, weekday, {hour, minute}}` — e.g. `{:last_weekday_of_month, :friday, {17, 0}}` = last Friday of each month at 17:00.
+2. `{:last_weekday_of_month, weekday, {hour, minute}}` — e.g. `{:last_weekday_of_month, :friday, {17, 0}}` = last Friday of each month at 17:00.
 
-  3. `{:nth_day_of_month, day, {hour, minute}}` — e.g. `{:nth_day_of_month, 15, {12, 0}}` = the 15th of each month at noon. `day` must be in 1..31. If a given month doesn't have that day (e.g. February 31), that month is **skipped** — the next_run will be the next month in which the day exists.
+3. `{:nth_day_of_month, day, {hour, minute}}` — e.g. `{:nth_day_of_month, 15, {12, 0}}` = the 15th of each month at noon. `day` must be in 1..31. If a given month doesn't have that day (e.g. February 31), that month is skipped — the next_run will be the next month in which the day exists.
 
-  4. `{:last_day_of_month, {hour, minute}}` — the last calendar day of each month. Correctly handles 28/29/30/31-day months.
+4. `{:last_day_of_month, {hour, minute}}` — the last calendar day of each month. It correctly handles 28/29/30/31-day months.
 
-- `CalendarScheduler.unregister(server, name)` — removes a job. Returns `:ok` or `{:error, :not_found}`.
+I want `CalendarScheduler.unregister(server, name)` to remove a job. It returns `:ok` or `{:error, :not_found}`.
 
-- `CalendarScheduler.jobs(server)` — returns a list of `{name, rule, next_run}` tuples.
+I want `CalendarScheduler.jobs(server)` to return a list of `{name, rule, next_run}` tuples.
 
-- `CalendarScheduler.next_run(server, name)` — returns `{:ok, next_run_datetime}` or `{:error, :not_found}`.
+I want `CalendarScheduler.next_run(server, name)` to return `{:ok, next_run_datetime}` or `{:error, :not_found}`.
 
-**The next-run algorithm** must be calendar-walking, not minute-scanning:
+The next-run algorithm needs to be calendar-walking, not minute-scanning. Here's how I want it to work:
 
 1. Start with `{year, month}` from the current clock time.
 2. Compute the rule's target datetime within that month (if one exists — `:nth_day_of_month, 31` in February does not). This is a pure calendar computation:
