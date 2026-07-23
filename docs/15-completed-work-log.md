@@ -9,6 +9,35 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-24 — G3 PROMPT-REGISTER VARIETY CLOSED (STATUS 5): the
+  monotone "Write me an Elixir…" opener is retired corpus-wide.** The
+  deterministic half (3-variant rotation in all 9 template modules) landed
+  2026-07-23; this closes the LLM half. `rewrite_seed_registers.exs` ran
+  detached overnight over 229 monotone single-module roots (pilot 3 + 226):
+  **197 landed / 35 rejected** (232 ledger rows,
+  `logs/register_rewrites.jsonl`). Landed registers balanced across the 4
+  targets — 56 titled-spec, 48 change-request, 48 design-brief, 45
+  terse-ticket. Per-root contract: deterministic phash2 register, no-drift
+  rewrite (every backtick token + number must survive, length 0.6–1.8×),
+  machine vet, **mandatory blind re-screen** (independent solver green on
+  the rewritten prompt vs the UNCHANGED harness — red ⇒ reject, old prompt
+  untouched), then land + cascade all resyncs + append the fresh S6 row.
+  - **No drift, no grading change:** 0 `_01` solution/harness files touched
+    (only prompt text + cascaded embeds), so every family still grades
+    perfect. Sampled 102_004 (48/48 backtick tokens preserved, all numbers
+    kept, ratio 1.09, register now a first-person change request).
+  - **35 rejections are SAFE + expected:** they cluster on the corpus's
+    hard tasks (013 backoff, 077 interval tree, the 020 upload family, 064
+    work-stealing, 100 TOTP, 070 saga) — the same noisy-to-blind-solve set
+    G9 flagged, i.e. solver weakness on a hard task, not prompt drift. The
+    rewrite is discarded and the original monotone prompt stands (confirmed
+    unchanged on 013_001). Those keep their original register.
+  - **Cascade integrity GREEN over 2761 changed files:** check_embeds
+    3889/0 drift, format 0 deviating, every resync dry-run unchanged
+    (bugfix 961 / wt_ 331 / adapt 249 / tfim 6652 / dedoc 326 / tdd 326 /
+    specfim 1824 / bundlefim 19 / sfim 2548), S6 freshness OK over 335
+    roots (288 fresh). Commit 3de40c454.
+
 - **2026-07-23 — G8 EXTENSION PROBE PASSED + found & fixed a real
   generator bug (STATUS 9 probe half).** The probe exists to answer "does
   the generator produce gold NEW data, or will Phase 3 need a second month

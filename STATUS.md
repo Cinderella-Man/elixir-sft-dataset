@@ -62,67 +62,6 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    only the two waived 037 families below 0.6 — ledger sha-current
    for the weekly CI gate.
 
-5. **[ ] Prompt-register variety (G3).** DETERMINISTIC HALF DONE
-   2026-07-23: 3-variant register rotation landed in all NINE
-   template modules (bugfix/wt/adapt/dedoc/tdd/tfim/sfim/specfim/
-   bundlefim; single source for mint AND resync), selection =
-   phash2(dir basename, 3) via GenTask.Register; variant 0 = the
-   pre-rotation bytes (golden-fixture-tested). Corpus rotated via
-   the resync battery: 8,735 prompts resynced / 4,472 kept v0;
-   all dry-runs back to 0; all nine self-tests bite (sfim's plant
-   made variant-agnostic); embeds 3889/0/0; format 0; sampled
-   perfect validate 1.0 across every rotated shape; S6 fresh 332;
-   6 new property/golden tests (423 total green). NOTE: the mint
-   modules' md5 bump auto-reopens their reject ledgers (docs/12
-   §5.1.12) — next topup visits re-converge them at identical
-   verdicts, bounded local-eval cost.
-   REMAINING (the LLM half): TOOL BUILT + COMMITTED 2026-07-23
-   (scripts/rewrite_seed_registers.exs — self-test 6/6, census 232
-   eligible single-module monotone roots; per-root: deterministic
-   register target, no-drift rewrite contract, token/number vet,
-   MANDATORY blind re-screen, land + cascade + S6-fresh row;
-   sha-ledgered logs/register_rewrites.jsonl, resumable).
-   EXECUTION QUEUE (transport is serial — one LLM sweep at a time):
-   PILOT ✓ (9ec28fda3, 3/3 verified). G8 probe ✓ (item 9). Meta-prompt
-   lib edit ✓ (d8afb60a9). NOW: the full sweep is the CURRENT job.
-   FULL SWEEP LAUNCHED 2026-07-23 (logs/register_rewrites.log, resumes
-   from the 3 pilot rows in logs/register_rewrites.jsonl → ~229 remaining):
-     scripts/run_detached.sh logs/register_rewrites.log mix run \
-       scripts/rewrite_seed_registers.exs
-   Per root: deterministic register, no-drift rewrite (every backtick token
-   + number survives, len 0.6-1.8x), machine vet, MANDATORY blind re-screen
-   (reject → old prompt stands), land + cascade resync + S6-fresh row.
-   Relaunch idempotent (ledger keyed by old prompt sha; done roots skipped).
-   AFTER exit: verify a sample of landed rewrites in full (rule 9); confirm
-   the cascade gates (check_embeds 3889/0, resync dry 0, format 0, S6 fresh);
-   commit + push; then this item is DONE (→ docs/15).
-   DESIGN CONSTRAINTS (verified 2026-07-23 before implementing):
-   (a) the machinery PARSES structural markers inside these prompts —
-   "## New specification" (adapt: resync + lint + evaluator
-   contract_text), "## Module under test" (wt), "## The module"
-   (dedoc), "## The task" — rotation must vary the PROSE around
-   markers and NEVER the marker lines themselves, or shape detection
-   breaks corpus-wide; (b) variant selection must be DETERMINISTIC
-   from the unit id (id-hash mod N) so resyncs reproduce bytes;
-   (c) generator template modules and the resync tools must share ONE
-   source of truth per shape (the template modules in lib/gen_task/),
-   so rotation lands there and both paths inherit it; (d) fim/tfim
-   "# TODO" blank markers and the fence layout are carver contracts —
-   frozen; (e) after rotation, the full resync battery regenerates
-   derivative prompts and check_embeds/format gates must stay 0/0;
-   (f) DISCOVERED 2026-07-23 pre-implementation: THREE MORE frozen
-   anchor classes — specfim's resync recovers name/arity from the
-   PROSE SENTENCE "the `@spec` for `X` has been removed" (regex with
-   \n? wrap tolerance); the numbered-namespace shapes are sniffed by
-   H1 TITLE LINES ("# Implement the missing function"/"...file" in
-   format_corpus.exs shape pairs + resync_sfim/bundlefim sniffers)
-   alongside their interpolated headings ("## The module with `X`
-   missing" / "## The bundle with `X` missing"); and rotated prose
-   in contract_text scope (wt/tfim/dedoc BEFORE-marker prose; whole
-   prompt for bugfix/tdd) must never add Process.send_after or
-   :interval/:period vocabulary (S9 timer-scan tokens). Full frozen
-   inventory + variant design: docs/20-register-rotation-design.md.
-
 6. **[ ] @doc prose truth on existing golds (G5).** Sweep @doc claims
    vs prompt contract; un-promised claims get prompt sentences +
    anchored tests (promise-audit machinery) or get cut. (The hand
