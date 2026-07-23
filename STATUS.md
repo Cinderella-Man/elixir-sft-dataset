@@ -173,34 +173,15 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    defects. Ledger: logs/g6_spotchecks.jsonl (14 rows). Standing
    practice (rule 8) continues at every future accept/reject tool.
 
-8. **[IN PROGRESS 2026-07-23] Screen depth (G9) — PROBE DIVERGED,
-   full run launched.** Probe result (3 passes × 10 roots, ledgered
-   in screen_blind.jsonl): **5 of 10 roots diverge** (≥2/3 fresh
-   solves GREEN on recorded hard-keeps; 108_003 went G-G-G) — same
-   prompt shas, so single-solve luck, not prompt drift; the recorded
-   difficulty labels are unreliable. Per the pinned rule: 3-solve ALL
-   27 current hard-keeps. Remaining 17 roots (list: scratchpad
-   g9_rest.txt) LAUNCHED detached: logs/g9_full.log — 3 sequential
-   --rescreen passes over the 17-root glob; relaunch idempotent.
-   AFTER: fold last-3 verdicts per root across all 27, update the
-   difficulty metadata (locate its home — export weights / triage
-   ledger) and close with the evidence.
-   (Superseded probe launch record:)
-   Current standing hard-keep set is 27 roots (not ~50 — the rest
-   were fixed + re-screened green since): red latest screen row at
-   the CURRENT prompt sha AND entailed-keep in screen_triage.
-   Deterministic 10-root sample (seed "g9-2026-07-23", list in
-   scratchpad g9_sample.txt): 041_004, 007_002, 100_003, 013_002,
-   020_004, 101_003, 020_002, 020_003, 017_001, 108_003.
-   Probe = 3 fresh blind solves each (screen_blind_solve --rescreen,
-   3 sequential passes, solver=opus, same instrument+ledger as the
-   originals — probe rows are legitimate screen evidence; S6 stays
-   sha-fresh). Detached: logs/g9_probe.log; relaunch idempotent
-   (each pass appends; count last-3 rows per root at analysis).
-   DECISION RULE: a root DIVERGES if ≥2 of its 3 fresh solves go
-   green (single-solve red was luck/solver weakness); ≥2 of 10
-   divergent roots → run all 27 and update difficulty metadata;
-   else close on probe evidence.
+8. **[DONE 2026-07-23] Screen depth (G9) — CLOSED.** All 27 standing
+   hard-keeps 3-solved (probe 10 + full 17, ledgered): **16 flip to
+   blind_solvable** by last-3 majority (7 at G-G-G) and **11 stay
+   keep_class** (8 at R-R-R — 020_002/3/4, 025_002, 040_001, 041_004,
+   045_003, 064_001; 3 at single-green splits correctly kept hard).
+   Task B landed earlier the same day: export difficulty tier =
+   majority of last 3 verdicts (unit-tested), so the metadata updates
+   itself at the next export refresh from these very rows. Full
+   record → docs/15.
 
 9. **[ ] Extension headroom (G8) — DECIDED in scope** (the goal
    literally says "extended"; deciding by probe, not by asking).

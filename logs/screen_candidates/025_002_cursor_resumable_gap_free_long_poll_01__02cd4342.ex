@@ -1,67 +1,51 @@
 defmodule Notifications do
   @moduledoc """
-  Sequenced pub/sub for per-user notifications, backed by a single `GenServer`.
+  Sequenced pub/sub for per-user notifications backed by a single `GenServer`.
 
-  Every published event is assigned a strictly monotonic, per-user sequence
-  number (starting at `1`) and appended to a bounded, per-user replay buffer.
-  Subscribers receive `{:notification, seq, payload}` messages, while late or
-  reconnecting clients can catch up on missed events via `events_since/3`.
+  Every published event is assigned a strictly increasing, per-user sequence
+  number (starting at `1`) and appended to a bounded replay buffer. Subscribers
+  receive `{:notification, seq, payload}` messages, and clients can resume from a
+  known cursor via `events_since/3` — closing the gap a naive long poll leaves
+  open between two consecutive polls.
 
-  This combination — a shared sequence counter plus retained history — is why a
-  plain `Registry` is unsuitable here, so an explicit `GenServer` is used. Only
-  OTP primitives (`GenServer` and `Process`) are involved; there is no external
-  pub/sub dependency.
+  Only OTP primitives are used (`GenServer`, `Process`); no `Registry`, no
+  Phoenix.PubSub, and no external dependencies.
   """
 
   use GenServer
 
-  @default_name __MODULE__
   @default_buffer_size 100
 
-  @typedoc "Opaque identifier of a user (any term)."
+  @typedoc "Identifier for the user a notification belongs to."
   @type user_id :: term()
 
-  @typedoc "A per-user, strictly increasing sequence number."
-  @type seq :: pos_integer()
-
-  @typedoc "An arbitrary, JSON-encodable notification payload."
-  @type payload :: term()
-
   @typedoc "A buffered event: its sequence number paired with its payload."
-  @type event :: {seq(), payload()}
-
-  @typedoc "Internal server state."
-  @type state :: %{
-          buffer_size: non_neg_integer(),
-          users: %{optional(user_id()) => map()},
-          monitors: %{optional(pid()) => reference()}
-        }
-
-  ## Client API
+  @type event :: {pos_integer(), term()}
 
   @doc """
   Starts the notifications server.
 
   Options:
 
-    * `:name` — process registration name (default `#{inspect(@default_name)}`).
-    * `:buffer_size` — max retained events per user (default `#{@default_buffer_size}`).
+    * `:name` — process registration name (default `Notifications`).
+    * `:buffer_size` — maximum retained events per user (default `100`).
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
-    name = Keyword.get(opts, :name, @default_name)
-    GenServer.start_link(__MODULE__, opts, name: name)
+    name = Keyword.get(opts, :name, __MODULE__)
+    buffer_size = Keyword.get(opts, :buffer_size, @default_buffer_size)
+    GenServer.start_link(__MODULE__, buffer_size, name: name)
   end
 
   @doc """
   Subscribes the calling process to notifications for `user_id`.
 
-  The subscribing process will receive `{:notification, seq, payload}` messages
-  as events are published. The server monitors the subscriber and drops it
-  automatically when it exits. Always returns `:ok`.
+  On each publish, the subscribed process receives `{:notification, seq,
+  payload}`. The server monitors the subscriber and drops it automatically when
+  it exits. Returns `:ok`.
   """
   @spec subscribe(GenServer.server(), user_id()) :: :ok
-  def subscribe(server \\ @default_name, user_id) do
+  def subscribe(server \\ __MODULE__, user_id) do
     GenServer.call(server, {:subscribe, user_id})
   end
 
@@ -73,91 +57,77 @@ defmodule Notifications do
   `{:notification, seq, payload}` to all current subscribers, and returns
   `{:ok, seq}`.
   """
-  @spec publish(GenServer.server(), user_id(), payload()) :: {:ok, seq()}
-  def publish(server \\ @default_name, user_id, payload) do
+  @spec publish(GenServer.server(), user_id(), term()) :: {:ok, pos_integer()}
+  def publish(server \\ __MODULE__, user_id, payload) do
     GenServer.call(server, {:publish, user_id, payload})
   end
 
   @doc """
-  Returns the buffered `{seq, payload}` tuples for `user_id` whose sequence
-  number is strictly greater than `cursor`, oldest first.
+  Returns buffered `{seq, payload}` events for `user_id` whose `seq` is strictly
+  greater than `cursor`, oldest first.
   """
   @spec events_since(GenServer.server(), user_id(), non_neg_integer()) :: [event()]
-  def events_since(server \\ @default_name, user_id, cursor) do
+  def events_since(server \\ __MODULE__, user_id, cursor) do
     GenServer.call(server, {:events_since, user_id, cursor})
   end
 
-  ## Server callbacks
-
-  @doc false
   @impl true
-  @spec init(keyword()) :: {:ok, state()}
-  def init(opts) do
-    buffer_size = Keyword.get(opts, :buffer_size, @default_buffer_size)
-    {:ok, %{buffer_size: buffer_size, users: %{}, monitors: %{}}}
+  @spec init(non_neg_integer()) :: {:ok, map()}
+  def init(buffer_size) do
+    state = %{
+      buffer_size: buffer_size,
+      seqs: %{},
+      buffers: %{},
+      subs: %{},
+      monitors: %{}
+    }
+
+    {:ok, state}
   end
 
-  @doc false
   @impl true
-  @spec handle_call(term(), GenServer.from(), state()) :: {:reply, term(), state()}
   def handle_call({:subscribe, user_id}, {pid, _tag}, state) do
-    state = monitor_pid(state, pid)
-    user = get_user(state, user_id)
-    user = %{user | subs: MapSet.put(user.subs, pid)}
-    {:reply, :ok, put_user(state, user_id, user)}
+    ref = Process.monitor(pid)
+    subs = Map.update(state.subs, user_id, %{pid => ref}, &Map.put(&1, pid, ref))
+    monitors = Map.put(state.monitors, ref, {user_id, pid})
+    {:reply, :ok, %{state | subs: subs, monitors: monitors}}
   end
 
   def handle_call({:publish, user_id, payload}, _from, state) do
-    user = get_user(state, user_id)
-    seq = user.next_seq
-    buffer = Enum.take(user.buffer ++ [{seq, payload}], -state.buffer_size)
-    user = %{user | next_seq: seq + 1, buffer: buffer}
+    seq = Map.get(state.seqs, user_id, 0) + 1
+    buffer = Map.get(state.buffers, user_id, []) ++ [{seq, payload}]
+    buffer = Enum.take(buffer, -state.buffer_size)
+    subscribers = Map.get(state.subs, user_id, %{})
+    Enum.each(subscribers, fn {pid, _ref} -> send(pid, {:notification, seq, payload}) end)
 
-    Enum.each(user.subs, fn pid ->
-      send(pid, {:notification, seq, payload})
-    end)
+    state = %{
+      state
+      | seqs: Map.put(state.seqs, user_id, seq),
+        buffers: Map.put(state.buffers, user_id, buffer)
+    }
 
-    {:reply, {:ok, seq}, put_user(state, user_id, user)}
+    {:reply, {:ok, seq}, state}
   end
 
   def handle_call({:events_since, user_id, cursor}, _from, state) do
-    user = get_user(state, user_id)
-    events = Enum.filter(user.buffer, fn {seq, _payload} -> seq > cursor end)
+    buffer = Map.get(state.buffers, user_id, [])
+    events = Enum.filter(buffer, fn {seq, _payload} -> seq > cursor end)
     {:reply, events, state}
   end
 
-  @doc false
   @impl true
-  @spec handle_info(term(), state()) :: {:noreply, state()}
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
-    users =
-      Map.new(state.users, fn {uid, user} ->
-        {uid, %{user | subs: MapSet.delete(user.subs, pid)}}
-      end)
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    case Map.pop(state.monitors, ref) do
+      {nil, _monitors} ->
+        {:noreply, state}
 
-    {:noreply, %{state | users: users, monitors: Map.delete(state.monitors, pid)}}
-  end
-
-  def handle_info(_msg, state), do: {:noreply, state}
-
-  ## Internal helpers
-
-  defp monitor_pid(state, pid) do
-    if Map.has_key?(state.monitors, pid) do
-      state
-    else
-      ref = Process.monitor(pid)
-      %{state | monitors: Map.put(state.monitors, pid, ref)}
+      {{user_id, pid}, monitors} ->
+        subs = Map.update(state.subs, user_id, %{}, &Map.delete(&1, pid))
+        {:noreply, %{state | subs: subs, monitors: monitors}}
     end
   end
 
-  defp get_user(state, user_id) do
-    Map.get(state.users, user_id, %{next_seq: 1, buffer: [], subs: MapSet.new()})
-  end
-
-  defp put_user(state, user_id, user) do
-    %{state | users: Map.put(state.users, user_id, user)}
-  end
+  def handle_info(_message, state), do: {:noreply, state}
 end
 
 defmodule NotificationPoller do
@@ -165,116 +135,130 @@ defmodule NotificationPoller do
   A `Plug` implementing a cursor-resumable, gap-free long-poll endpoint for
   `GET /api/notifications/poll`.
 
-  The gap between two naive long polls is closed by subscribing *before*
-  inspecting the replay buffer: any event published in the meantime is either
-  already present in the buffer (answered immediately) or delivered as a live
-  `{:notification, seq, payload}` message to the blocking `receive`.
+  The plug subscribes the request process *before* inspecting the replay buffer.
+  This ordering guarantees that any event published during the check is either
+  already visible in the buffer or delivered as a live message — so a client that
+  echoes its last cursor via `since` never misses an event.
 
-  Every 200 response carries an `x-notification-cursor` header set to the
-  highest returned sequence number, so a client can echo it back via the `since`
-  query parameter and never miss an event. On timeout a `204 No Content` echoes
-  the request cursor unchanged.
+  Options:
+
+    * `:notifications_server` — the `Notifications` server (default
+      `Notifications`).
+    * `:timeout_ms` — how long to hold the connection open (default `30_000`).
   """
-
-  @behaviour Plug
 
   import Plug.Conn
 
-  @default_timeout 30_000
+  @behaviour Plug
 
-  @doc """
-  Plug initialization. Options are passed through verbatim; `:notifications_server`
-  is required and `:timeout_ms` defaults to `#{@default_timeout}`.
-  """
+  @default_timeout_ms 30_000
+
   @impl true
+  @doc "Plug init callback; returns the option keyword list unchanged."
   @spec init(keyword()) :: keyword()
   def init(opts), do: opts
 
-  @doc """
-  Handles a single long-poll request, blocking until an event is available or
-  the configured timeout elapses.
-  """
   @impl true
+  @doc """
+  Handles a poll request: authenticates, subscribes, and either replies from the
+  buffer, blocks for a live event, or times out with a 204.
+  """
   @spec call(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
   def call(conn, opts) do
-    case conn.assigns[:user_id] do
-      nil ->
-        conn |> send_resp(401, "unauthorized") |> halt()
+    server = Keyword.get(opts, :notifications_server, Notifications)
+    timeout = Keyword.get(opts, :timeout_ms) || @default_timeout_ms
+    conn = fetch_query_params(conn)
 
-      user_id ->
-        handle_poll(conn, opts, user_id)
+    case Map.get(conn.assigns, :user_id) do
+      nil -> send_resp(conn, 401, "unauthorized")
+      user_id -> poll(conn, server, user_id, timeout)
     end
   end
 
-  ## Internal helpers
-
-  defp handle_poll(conn, opts, user_id) do
-    server = Keyword.fetch!(opts, :notifications_server)
-    timeout = Keyword.get(opts, :timeout_ms, @default_timeout)
-    conn = fetch_query_params(conn)
-    since = parse_cursor(conn.query_params["since"])
-
+  @spec poll(Plug.Conn.t(), GenServer.server(), term(), non_neg_integer()) ::
+          Plug.Conn.t()
+  defp poll(conn, server, user_id, timeout) do
+    since = cursor_from(conn.query_params["since"])
     :ok = Notifications.subscribe(server, user_id)
 
     case Notifications.events_since(server, user_id, since) do
-      [] -> await_notification(conn, since, timeout)
+      [] -> wait_for_event(conn, since, timeout)
       events -> respond_events(conn, events)
     end
   end
 
-  defp await_notification(conn, since, timeout) do
+  @spec wait_for_event(Plug.Conn.t(), non_neg_integer(), non_neg_integer()) ::
+          Plug.Conn.t()
+  defp wait_for_event(conn, since, timeout) do
     receive do
-      {:notification, seq, payload} ->
-        json_response(conn, seq, [payload])
+      {:notification, seq, payload} -> respond_live(conn, seq, payload)
     after
-      timeout ->
-        conn
-        |> put_resp_header("x-notification-cursor", Integer.to_string(since))
-        |> send_resp(204, "")
+      timeout -> respond_timeout(conn, since)
     end
   end
 
+  @spec respond_events(Plug.Conn.t(), [Notifications.event()]) :: Plug.Conn.t()
   defp respond_events(conn, events) do
-    {max_seq, _payload} = List.last(events)
+    {cursor, _payload} = List.last(events)
     payloads = Enum.map(events, fn {_seq, payload} -> payload end)
-    json_response(conn, max_seq, payloads)
+    respond_json(conn, cursor, payloads)
   end
 
-  defp json_response(conn, cursor, payloads) do
-    body = Jason.encode!(%{cursor: cursor, events: payloads})
+  @spec respond_live(Plug.Conn.t(), pos_integer(), term()) :: Plug.Conn.t()
+  defp respond_live(conn, seq, payload) do
+    respond_json(conn, seq, [payload])
+  end
+
+  @spec respond_json(Plug.Conn.t(), non_neg_integer(), [term()]) :: Plug.Conn.t()
+  defp respond_json(conn, cursor, payloads) do
+    body = Jason.encode!(%{"cursor" => cursor, "events" => payloads})
 
     conn
-    |> put_resp_header("content-type", "application/json")
+    |> put_resp_content_type("application/json", nil)
     |> put_resp_header("x-notification-cursor", Integer.to_string(cursor))
     |> send_resp(200, body)
   end
 
-  defp parse_cursor(value) when is_binary(value) do
+  @spec respond_timeout(Plug.Conn.t(), non_neg_integer()) :: Plug.Conn.t()
+  defp respond_timeout(conn, since) do
+    conn
+    |> put_resp_header("x-notification-cursor", Integer.to_string(since))
+    |> send_resp(204, "")
+  end
+
+  @spec cursor_from(term()) :: non_neg_integer()
+  defp cursor_from(value) when is_binary(value) do
     case Integer.parse(value) do
       {n, ""} when n >= 0 -> n
-      _ -> 0
+      _other -> 0
     end
   end
 
-  defp parse_cursor(_value), do: 0
+  defp cursor_from(_value), do: 0
 end
 
 defmodule NotificationRouter do
   @moduledoc """
-  A thin `Plug.Router` exposing the long-poll notifications endpoint.
+  A thin `Plug.Router` exposing the notifications long-poll endpoint.
 
-  It forwards `GET /api/notifications/poll` to `NotificationPoller`, threading
-  the router's runtime options (`:notifications_server` and `:timeout_ms`)
-  through via `builder_opts/0`, and answers `404` for every other request.
+  `GET /api/notifications/poll` is forwarded to `NotificationPoller`, passing
+  through the router's `:notifications_server` and `:timeout_ms` options. Any
+  other request returns 404.
   """
 
   use Plug.Router
 
   plug :match
-  plug :dispatch, builder_opts()
+  plug :dispatch
 
   get "/api/notifications/poll" do
-    NotificationPoller.call(conn, NotificationPoller.init(opts))
+    poller_opts =
+      NotificationPoller.init(
+        notifications_server: opts[:notifications_server],
+        timeout_ms: opts[:timeout_ms]
+      )
+
+    NotificationPoller.call(conn, poller_opts)
   end
 
   match _ do

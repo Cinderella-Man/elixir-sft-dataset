@@ -2,54 +2,57 @@ defmodule MutableDAG do
   @moduledoc """
   A mutable Directed Acyclic Graph (DAG) implemented as a pure data structure.
 
-  Every operation takes a `%MutableDAG{}` struct and returns either an updated
-  struct or a result tuple; there is no process or mutable state involved.
+  `MutableDAG` supports incremental construction and mutation (adding and
+  removing vertices and edges), eager cycle detection with diagnostic cycle
+  paths, topological sorting, and grouping of vertices into parallel-execution
+  layers ("waves").
 
-  The structure supports:
+  There is no process or `GenServer` involved: every function takes a
+  `MutableDAG` struct and returns either an updated struct or a result tuple.
+  Vertices may be any term.
 
-    * mutation — adding and removing both vertices and edges;
-    * eager cycle diagnostics — `add_edge/3` refuses edges that would introduce a
-      cycle and reports the actual offending path via a depth-first search;
-    * parallel-execution layers — `topological_layers/1` groups vertices into
-      "waves" that share no ordering constraints and could run concurrently.
+  The struct maintains three fields:
 
-  Vertices may be any Elixir term. Internally the graph keeps a set of vertices
-  plus outgoing and incoming adjacency maps (vertex => `MapSet` of neighbours)
-  so that both directions can be queried and mutated efficiently.
+    * `:vertices` — a `MapSet` of all vertices,
+    * `:outgoing` — a map from a vertex to a `MapSet` of its successors,
+    * `:incoming` — a map from a vertex to a `MapSet` of its predecessors.
+
+  Cycle detection is eager: `add_edge/3` performs a depth-first path search
+  before inserting an edge and refuses any edge that would introduce a cycle.
   """
+
+  @enforce_keys [:vertices, :outgoing, :incoming]
+  defstruct vertices: MapSet.new(), outgoing: %{}, incoming: %{}
 
   @typedoc "A vertex, which may be any term."
   @type vertex :: term()
 
-  @typedoc "An adjacency map from a vertex to its neighbour set."
-  @type adjacency :: %{optional(vertex()) => MapSet.t(vertex())}
-
-  @typedoc "The DAG structure."
+  @typedoc "The MutableDAG structure."
   @type t :: %__MODULE__{
           vertices: MapSet.t(vertex()),
-          outgoing: adjacency(),
-          incoming: adjacency()
+          outgoing: %{optional(vertex()) => MapSet.t(vertex())},
+          incoming: %{optional(vertex()) => MapSet.t(vertex())}
         }
 
-  defstruct vertices: MapSet.new(), outgoing: %{}, incoming: %{}
-
   @doc """
-  Returns a new, empty DAG.
+  Returns a new, empty `MutableDAG`.
   """
   @spec new() :: t()
-  def new, do: %__MODULE__{}
+  def new do
+    %__MODULE__{vertices: MapSet.new(), outgoing: %{}, incoming: %{}}
+  end
 
   @doc """
   Adds `vertex` to `dag`.
 
-  If the vertex already exists, `dag` is returned unchanged.
+  If the vertex already exists, the DAG is returned unchanged.
   """
   @spec add_vertex(t(), vertex()) :: t()
   def add_vertex(%__MODULE__{} = dag, vertex) do
-    if vertex?(dag, vertex) do
+    if MapSet.member?(dag.vertices, vertex) do
       dag
     else
-      %{
+      %__MODULE__{
         dag
         | vertices: MapSet.put(dag.vertices, vertex),
           outgoing: Map.put(dag.outgoing, vertex, MapSet.new()),
@@ -59,42 +62,46 @@ defmodule MutableDAG do
   end
 
   @doc """
-  Adds a directed edge `from -> to`.
+  Adds a directed edge from `from` to `to`.
 
-  Both endpoints must already exist; otherwise `{:error, :vertex_not_found}` is
+  Both vertices must already exist; otherwise `{:error, :vertex_not_found}` is
   returned. If the edge would introduce a cycle, `{:error, {:cycle, path}}` is
-  returned, where `path` is the list of vertices forming the cycle, starting and
-  ending with `from`. A self-loop yields `{:error, {:cycle, [from, from]}}`.
+  returned, where `path` is the list of vertices forming the cycle, starting
+  and ending with `from`. A self-loop yields `{:error, {:cycle, [from, from]}}`.
 
-  On success `{:ok, new_dag}` is returned.
+  If the edge already exists, `{:ok, dag}` is returned unchanged. On success,
+  `{:ok, new_dag}` is returned.
   """
   @spec add_edge(t(), vertex(), vertex()) ::
-          {:ok, t()} | {:error, {:cycle, [vertex()]}} | {:error, :vertex_not_found}
+          {:ok, t()} | {:error, :vertex_not_found} | {:error, {:cycle, [vertex()]}}
   def add_edge(%__MODULE__{} = dag, from, to) do
     cond do
-      not vertex?(dag, from) or not vertex?(dag, to) ->
+      not MapSet.member?(dag.vertices, from) or not MapSet.member?(dag.vertices, to) ->
         {:error, :vertex_not_found}
 
       from == to ->
         {:error, {:cycle, [from, from]}}
 
+      edge?(dag, from, to) ->
+        {:ok, dag}
+
       true ->
         case find_path(dag, to, from) do
-          nil -> {:ok, put_edge(dag, from, to)}
-          path -> {:error, {:cycle, [from | path]}}
+          {:ok, path} -> {:error, {:cycle, [from | path]}}
+          :none -> {:ok, insert_edge(dag, from, to)}
         end
     end
   end
 
   @doc """
-  Removes the directed edge `from -> to` if it is present.
+  Removes the directed edge from `from` to `to`, if present.
 
-  If the edge or either vertex is absent, `dag` is returned unchanged.
+  If the edge or either vertex is absent, the DAG is returned unchanged.
   """
   @spec remove_edge(t(), vertex(), vertex()) :: t()
   def remove_edge(%__MODULE__{} = dag, from, to) do
     if edge?(dag, from, to) do
-      %{
+      %__MODULE__{
         dag
         | outgoing: Map.update!(dag.outgoing, from, &MapSet.delete(&1, to)),
           incoming: Map.update!(dag.incoming, to, &MapSet.delete(&1, from))
@@ -107,57 +114,51 @@ defmodule MutableDAG do
   @doc """
   Removes `vertex` and every edge incident to it (incoming and outgoing).
 
-  If the vertex is absent, `dag` is returned unchanged.
+  If the vertex is absent, the DAG is returned unchanged.
   """
   @spec remove_vertex(t(), vertex()) :: t()
   def remove_vertex(%__MODULE__{} = dag, vertex) do
-    if vertex?(dag, vertex) do
-      successors = Map.fetch!(dag.outgoing, vertex)
-      predecessors = Map.fetch!(dag.incoming, vertex)
-
-      incoming =
-        Enum.reduce(successors, dag.incoming, fn s, acc ->
-          Map.update!(acc, s, &MapSet.delete(&1, vertex))
-        end)
-
-      outgoing =
-        Enum.reduce(predecessors, dag.outgoing, fn p, acc ->
-          Map.update!(acc, p, &MapSet.delete(&1, vertex))
-        end)
-
-      %{
-        dag
-        | vertices: MapSet.delete(dag.vertices, vertex),
-          outgoing: Map.delete(outgoing, vertex),
-          incoming: Map.delete(incoming, vertex)
-      }
+    if MapSet.member?(dag.vertices, vertex) do
+      dag
+      |> detach_successors(vertex)
+      |> detach_predecessors(vertex)
+      |> drop_vertex(vertex)
     else
       dag
     end
   end
 
   @doc """
-  Returns `{:ok, ordering}` — a flat list of every vertex in a valid topological
-  order. Returns `{:ok, []}` for an empty graph.
+  Returns `{:ok, ordering}`, a flat list of all vertices in a valid topological
+  order. An empty graph yields `{:ok, []}`.
   """
   @spec topological_sort(t()) :: {:ok, [vertex()]}
   def topological_sort(%__MODULE__{} = dag) do
-    {:ok, layers} = topological_layers(dag)
-    {:ok, Enum.concat(layers)}
+    indegrees =
+      Map.new(dag.vertices, fn v -> {v, MapSet.size(incoming_set(dag, v))} end)
+
+    available =
+      indegrees
+      |> Enum.filter(fn {_v, deg} -> deg == 0 end)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.sort()
+
+    {:ok, do_topo_sort(dag, available, indegrees, [])}
   end
 
   @doc """
-  Returns `{:ok, layers}`, a list of lists grouping vertices into execution
-  waves.
+  Returns `{:ok, layers}`, a list of lists grouping vertices into parallel
+  "waves".
 
-  Layer 0 holds every vertex with no predecessors; each later layer holds the
-  vertices whose predecessors have all appeared in earlier layers. Vertices
-  within a layer are sorted by term ordering for determinism. Returns
-  `{:ok, []}` for an empty graph.
+  Layer 0 contains every vertex with no predecessors. Each subsequent layer
+  contains the vertices whose predecessors have all appeared in earlier layers.
+  Vertices within each layer are sorted by term ordering. An empty graph yields
+  `{:ok, []}`.
   """
   @spec topological_layers(t()) :: {:ok, [[vertex()]]}
   def topological_layers(%__MODULE__{} = dag) do
-    {:ok, collect_layers(dag, dag.vertices, [])}
+    remaining = MapSet.to_list(dag.vertices)
+    {:ok, do_layers(dag, remaining, MapSet.new(), [])}
   end
 
   @doc """
@@ -166,7 +167,7 @@ defmodule MutableDAG do
   """
   @spec predecessors(t(), vertex()) :: [vertex()]
   def predecessors(%__MODULE__{} = dag, vertex) do
-    dag.incoming |> Map.get(vertex, MapSet.new()) |> Enum.sort()
+    dag |> incoming_set(vertex) |> MapSet.to_list() |> Enum.sort()
   end
 
   @doc """
@@ -175,75 +176,139 @@ defmodule MutableDAG do
   """
   @spec successors(t(), vertex()) :: [vertex()]
   def successors(%__MODULE__{} = dag, vertex) do
-    dag.outgoing |> Map.get(vertex, MapSet.new()) |> Enum.sort()
+    dag |> outgoing_set(vertex) |> MapSet.to_list() |> Enum.sort()
   end
 
-  # -- internal helpers ------------------------------------------------------
-
-  @spec vertex?(t(), vertex()) :: boolean()
-  defp vertex?(dag, vertex), do: MapSet.member?(dag.vertices, vertex)
+  # --- Internal helpers -------------------------------------------------------
 
   @spec edge?(t(), vertex(), vertex()) :: boolean()
   defp edge?(dag, from, to) do
-    vertex?(dag, from) and vertex?(dag, to) and
-      MapSet.member?(Map.fetch!(dag.outgoing, from), to)
+    MapSet.member?(dag.vertices, from) and
+      MapSet.member?(dag.vertices, to) and
+      MapSet.member?(outgoing_set(dag, from), to)
   end
 
-  @spec put_edge(t(), vertex(), vertex()) :: t()
-  defp put_edge(dag, from, to) do
-    %{
+  @spec insert_edge(t(), vertex(), vertex()) :: t()
+  defp insert_edge(dag, from, to) do
+    %__MODULE__{
       dag
       | outgoing: Map.update!(dag.outgoing, from, &MapSet.put(&1, to)),
         incoming: Map.update!(dag.incoming, to, &MapSet.put(&1, from))
     }
   end
 
-  # DFS for a path from `node` to `target` along existing outgoing edges.
-  # Returns the path as a list starting with `node` and ending with `target`,
-  # or `nil` if no such path exists.
-  @spec find_path(t(), vertex(), vertex(), MapSet.t(vertex())) :: [vertex()] | nil
-  defp find_path(dag, node, target, visited \\ MapSet.new()) do
-    cond do
-      node == target ->
-        [node]
-
-      MapSet.member?(visited, node) ->
-        nil
-
-      true ->
-        seen = MapSet.put(visited, node)
-
-        dag.outgoing
-        |> Map.fetch!(node)
-        |> Enum.sort()
-        |> Enum.find_value(fn next ->
-          case find_path(dag, next, target, seen) do
-            nil -> nil
-            path -> [node | path]
-          end
-        end)
-    end
+  @spec detach_successors(t(), vertex()) :: t()
+  defp detach_successors(dag, vertex) do
+    Enum.reduce(outgoing_set(dag, vertex), dag, fn succ, acc ->
+      %__MODULE__{acc | incoming: Map.update!(acc.incoming, succ, &MapSet.delete(&1, vertex))}
+    end)
   end
 
-  @spec collect_layers(t(), MapSet.t(vertex()), [[vertex()]]) :: [[vertex()]]
-  defp collect_layers(dag, remaining, acc) do
-    if MapSet.size(remaining) == 0 do
-      Enum.reverse(acc)
+  @spec detach_predecessors(t(), vertex()) :: t()
+  defp detach_predecessors(dag, vertex) do
+    Enum.reduce(incoming_set(dag, vertex), dag, fn pred, acc ->
+      %__MODULE__{acc | outgoing: Map.update!(acc.outgoing, pred, &MapSet.delete(&1, vertex))}
+    end)
+  end
+
+  @spec drop_vertex(t(), vertex()) :: t()
+  defp drop_vertex(dag, vertex) do
+    %__MODULE__{
+      dag
+      | vertices: MapSet.delete(dag.vertices, vertex),
+        outgoing: Map.delete(dag.outgoing, vertex),
+        incoming: Map.delete(dag.incoming, vertex)
+    }
+  end
+
+  @spec outgoing_set(t(), vertex()) :: MapSet.t(vertex())
+  defp outgoing_set(dag, vertex), do: Map.get(dag.outgoing, vertex, MapSet.new())
+
+  @spec incoming_set(t(), vertex()) :: MapSet.t(vertex())
+  defp incoming_set(dag, vertex), do: Map.get(dag.incoming, vertex, MapSet.new())
+
+  # Depth-first search for a path from `start` to `target` following outgoing
+  # edges. Returns `{:ok, path}` (inclusive of both endpoints) or `:none`.
+  @spec find_path(t(), vertex(), vertex()) :: {:ok, [vertex()]} | :none
+  defp find_path(dag, start, target) do
+    dfs(dag, start, target, MapSet.new())
+  end
+
+  @spec dfs(t(), vertex(), vertex(), MapSet.t(vertex())) :: {:ok, [vertex()]} | :none
+  defp dfs(_dag, node, target, _visited) when node == target do
+    {:ok, [node]}
+  end
+
+  defp dfs(dag, node, target, visited) do
+    if MapSet.member?(visited, node) do
+      :none
     else
-      layer =
-        remaining
-        |> Enum.filter(&ready?(dag, &1, remaining))
-        |> Enum.sort()
+      visited = MapSet.put(visited, node)
 
-      rest = MapSet.difference(remaining, MapSet.new(layer))
-      collect_layers(dag, rest, [layer | acc])
+      dag
+      |> outgoing_set(node)
+      |> MapSet.to_list()
+      |> Enum.sort()
+      |> Enum.reduce_while(:none, fn next, _acc ->
+        case dfs(dag, next, target, visited) do
+          {:ok, path} -> {:halt, {:ok, [node | path]}}
+          :none -> {:cont, :none}
+        end
+      end)
     end
   end
 
-  # A vertex is ready for the current layer when none of its predecessors are
-  # still waiting in `remaining`.
-  @spec ready?(t(), vertex(), MapSet.t(vertex())) :: boolean()
-  defp ready?(dag, vertex, remaining) do
-    MapSet.disjoint?(Map.fetch!(dag.incoming, vertex), remaining)
+  @spec do_topo_sort(t(), [vertex()], %{optional(vertex()) => non_neg_integer()}, [vertex()]) ::
+          [vertex()]
+  defp do_topo_sort(_dag, [], _indegrees, acc), do: Enum.reverse(acc)
+
+  defp do_topo_sort(dag, [vertex | rest], indegrees, acc) do
+    {available, indegrees} =
+      dag
+      |> outgoing_set(vertex)
+      |> MapSet.to_list()
+      |> Enum.sort()
+      |> Enum.reduce({rest, indegrees}, fn succ, {avail, degrees} ->
+        new_degree = Map.fetch!(degrees, succ) - 1
+        degrees = Map.put(degrees, succ, new_degree)
+        avail = if new_degree == 0, do: insert_sorted(avail, succ), else: avail
+        {avail, degrees}
+      end)
+
+    do_topo_sort(dag, available, indegrees, [vertex | acc])
+  end
+
+  @spec do_layers(t(), [vertex()], MapSet.t(vertex()), [[vertex()]]) :: [[vertex()]]
+  defp do_layers(_dag, [], _placed, acc), do: Enum.reverse(acc)
+
+  defp do_layers(dag, remaining, placed, acc) do
+    layer =
+      remaining
+      |> Enum.filter(fn v ->
+        dag |> incoming_set(v) |> Enum.all?(&MapSet.member?(placed, &1))
+      end)
+      |> Enum.sort()
+
+    case layer do
+      [] ->
+        Enum.reverse(acc)
+
+      _ ->
+        placed = Enum.reduce(layer, placed, &MapSet.put(&2, &1))
+        layer_set = MapSet.new(layer)
+        remaining = Enum.reject(remaining, &MapSet.member?(layer_set, &1))
+        do_layers(dag, remaining, placed, [layer | acc])
+    end
+  end
+
+  @spec insert_sorted([vertex()], vertex()) :: [vertex()]
+  defp insert_sorted([], value), do: [value]
+
+  defp insert_sorted([head | tail] = list, value) do
+    if value <= head do
+      [value | list]
+    else
+      [head | insert_sorted(tail, value)]
+    end
   end
 end

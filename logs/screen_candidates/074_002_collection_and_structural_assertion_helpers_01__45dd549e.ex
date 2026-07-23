@@ -1,24 +1,39 @@
 defmodule AssertHelpers do
   @moduledoc """
-  Custom ExUnit assertion macros for collections and structural data.
+  Custom ExUnit assertion macros focused on collections and structural data.
 
-  `use AssertHelpers` inside a test module to import these macros:
+  `use AssertHelpers` inside a test module (typically alongside `use
+  ExUnit.Case`) to import the macros. Every assertion is implemented as a
+  macro so that failures are reported against the caller's file and line
+  number, and every failure message is surfaced through
+  `ExUnit.Assertions.flunk/1` with enough context to diagnose the problem.
 
-    * `assert_subset/2` — every element of one enumerable is a member of another.
-    * `assert_has_keys/2` — a map contains every one of the given keys.
-    * `assert_sorted_by/2` — an enumerable is sorted ascending by a key function.
+  ## Example
 
-  Each helper is a macro so that ExUnit reports the failure at the call site
-  (correct file and line number) rather than inside this module. Failures are
-  surfaced through `ExUnit.Assertions.flunk/1` with a descriptive message.
+      defmodule MyTest do
+        use ExUnit.Case
+        use AssertHelpers
+
+        test "membership" do
+          assert_subset([1, 2], [1, 2, 3])
+        end
+
+        test "keys" do
+          assert_has_keys(%{a: 1, b: 2}, [:a, :b])
+        end
+
+        test "ordering" do
+          assert_sorted_by([%{age: 20}, %{age: 40}], & &1.age)
+        end
+      end
   """
 
   @doc """
-  Sets up the calling module to use the assertion macros in this module.
+  Imports the `AssertHelpers` assertion macros into the calling module.
 
-  Invoked automatically by `use AssertHelpers`.
+  Invoked automatically via `use AssertHelpers`.
   """
-  @spec __using__(Macro.t()) :: Macro.t()
+  @spec __using__(keyword()) :: Macro.t()
   defmacro __using__(_opts) do
     quote do
       import AssertHelpers
@@ -26,16 +41,33 @@ defmodule AssertHelpers do
   end
 
   @doc """
-  Asserts that every element of `subset` is also a member of `superset`.
+  Asserts that every element of `subset` also appears in `superset`.
 
-  Set membership is used, so duplicate elements in `subset` are fine. On
-  failure the message lists exactly which elements are missing and shows both
-  collections.
+  Membership is set-based, so duplicate elements in `subset` are allowed. On
+  failure the message lists the missing elements and both collections.
   """
   @spec assert_subset(Macro.t(), Macro.t()) :: Macro.t()
   defmacro assert_subset(subset, superset) do
     quote do
-      AssertHelpers.__assert_subset__(unquote(subset), unquote(superset))
+      sub = unquote(subset)
+      sup = unquote(superset)
+      sup_set = MapSet.new(sup)
+
+      missing =
+        sub
+        |> Enum.reject(fn element -> MapSet.member?(sup_set, element) end)
+        |> Enum.uniq()
+
+      if missing != [] do
+        ExUnit.Assertions.flunk(
+          "Expected every element of subset to appear in superset.\n" <>
+            "Missing elements: #{inspect(missing)}\n" <>
+            "Subset:   #{inspect(sub)}\n" <>
+            "Superset: #{inspect(sup)}"
+        )
+      end
+
+      :ok
     end
   end
 
@@ -48,102 +80,58 @@ defmodule AssertHelpers do
   @spec assert_has_keys(Macro.t(), Macro.t()) :: Macro.t()
   defmacro assert_has_keys(map, keys) do
     quote do
-      AssertHelpers.__assert_has_keys__(unquote(map), unquote(keys))
+      subject = unquote(map)
+      requested = unquote(keys)
+      expected = if is_list(requested), do: requested, else: [requested]
+      present = Map.keys(subject)
+      missing = Enum.reject(expected, fn key -> Map.has_key?(subject, key) end)
+
+      if missing != [] do
+        ExUnit.Assertions.flunk(
+          "Expected map to contain all required keys.\n" <>
+            "Missing keys:  #{inspect(missing)}\n" <>
+            "Expected keys: #{inspect(expected)}\n" <>
+            "Present keys:  #{inspect(present)}"
+        )
+      end
+
+      :ok
     end
   end
 
   @doc """
   Asserts that `enumerable` is sorted ascending (non-strict) by `key_fun`.
 
-  `key_fun` is a 1-arity function applied to each element to compute its sort
-  key; equal adjacent keys are allowed. On failure the message reports the
-  zero-based index of the first out-of-order pair together with both offending
-  elements and their computed keys.
+  `key_fun` is a 1-arity function applied to each element to compute the sort
+  key; equal adjacent keys are permitted. On failure the message reports the
+  zero-based `index` of the first out-of-order pair together with both
+  offending elements and their computed keys.
   """
   @spec assert_sorted_by(Macro.t(), Macro.t()) :: Macro.t()
   defmacro assert_sorted_by(enumerable, key_fun) do
     quote do
-      AssertHelpers.__assert_sorted_by__(unquote(enumerable), unquote(key_fun))
-    end
-  end
+      list = Enum.to_list(unquote(enumerable))
+      fun = unquote(key_fun)
 
-  @doc false
-  @spec __assert_subset__(Enumerable.t(), Enumerable.t()) :: :ok
-  def __assert_subset__(subset, superset) do
-    super_set = MapSet.new(superset)
+      offending =
+        list
+        |> Enum.map(fn element -> {element, fun.(element)} end)
+        |> Enum.chunk_every(2, 1, :discard)
+        |> Enum.with_index()
+        |> Enum.find(fn {[{_e1, k1}, {_e2, k2}], _idx} -> k1 > k2 end)
 
-    missing =
-      subset
-      |> Enum.filter(fn element -> not MapSet.member?(super_set, element) end)
-      |> Enum.uniq()
+      case offending do
+        nil ->
+          :ok
 
-    if missing == [] do
-      :ok
-    else
-      ExUnit.Assertions.flunk("""
-      Expected all elements of subset to appear in superset.
-
-      Missing elements: #{inspect(missing)}
-      Subset:   #{inspect(Enum.to_list(subset))}
-      Superset: #{inspect(Enum.to_list(superset))}
-      """)
-    end
-  end
-
-  @doc false
-  @spec __assert_has_keys__(map(), term()) :: :ok
-  def __assert_has_keys__(map, keys) do
-    expected = List.wrap(keys)
-    missing = Enum.filter(expected, fn key -> not Map.has_key?(map, key) end)
-
-    if missing == [] do
-      :ok
-    else
-      ExUnit.Assertions.flunk("""
-      Expected map to contain all keys.
-
-      Missing keys:  #{inspect(missing)}
-      Expected keys: #{inspect(expected)}
-      Present keys:  #{inspect(Map.keys(map))}
-      """)
-    end
-  end
-
-  @doc false
-  @spec __assert_sorted_by__(Enumerable.t(), (term() -> term())) :: :ok
-  def __assert_sorted_by__(enumerable, key_fun) do
-    list = Enum.to_list(enumerable)
-
-    case first_out_of_order(list, key_fun) do
-      :ok ->
-        :ok
-
-      {:error, index, left, right} ->
-        ExUnit.Assertions.flunk("""
-        Expected enumerable to be sorted in ascending order by key_fun.
-
-        First out-of-order pair at index #{index}.
-        Element[#{index}]:     #{inspect(left)} (key: #{inspect(key_fun.(left))})
-        Element[#{index + 1}]: #{inspect(right)} (key: #{inspect(key_fun.(right))})
-        """)
-    end
-  end
-
-  @spec first_out_of_order([term()], (term() -> term())) ::
-          :ok | {:error, non_neg_integer(), term(), term()}
-  defp first_out_of_order([], _key_fun), do: :ok
-  defp first_out_of_order([_single], _key_fun), do: :ok
-
-  defp first_out_of_order(list, key_fun) do
-    list
-    |> Enum.chunk_every(2, 1, :discard)
-    |> Enum.with_index()
-    |> Enum.find_value(:ok, fn {[left, right], index} ->
-      if key_fun.(left) <= key_fun.(right) do
-        false
-      else
-        {:error, index, left, right}
+        {[{first, key1}, {second, key2}], idx} ->
+          ExUnit.Assertions.flunk(
+            "Expected enumerable to be sorted ascending by key_fun.\n" <>
+              "First out-of-order pair at index #{idx}.\n" <>
+              "Element #{idx}:     #{inspect(first)} (key: #{inspect(key1)})\n" <>
+              "Element #{idx + 1}: #{inspect(second)} (key: #{inspect(key2)})"
+          )
       end
-    end)
+    end
   end
 end

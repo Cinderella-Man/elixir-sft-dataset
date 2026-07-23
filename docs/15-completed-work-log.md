@@ -9,6 +9,20 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-23 — G9 SCREEN DEPTH CLOSED (STATUS 8): the "hard" tier
+  was 59% luck.** Probe (10 sha-fresh hard-keeps × 3 fresh blind
+  solves) diverged 5/10 → full run over all 27 standing hard-keeps.
+  Verdict by last-3 majority: **16 flip to blind_solvable** (7 at
+  G-G-G — incl. 108_003, 075_001, 080_003, 100_002, 005_003,
+  015_003, 063_003) and **11 stay keep_class** (8 at R-R-R: the 020
+  upload family, 025_002, 040_001, 041_004, 045_003, 064_001; 3
+  single-green splits correctly kept). Task B: export
+  `difficulty_tier` = MAJORITY of the root's last up-to-3 verdicts
+  (docs/16 updated, 5 unit tests incl. the lucky-last-green case) —
+  the metadata self-updates from these rows at the next export.
+  All probe/full rows are ordinary screen_blind.jsonl evidence
+  (sha-fresh, same instrument+model as the originals).
+
 - **2026-07-23 — STALE BUGFIX GOLDS: nightly catch + gate + 36-pair
   corpus purge, ALL CLOSED (STATUS 4b).** The nightly perfect sweep
   caught bugfix_109_001_{01,02,03} failing the parent's new anchor

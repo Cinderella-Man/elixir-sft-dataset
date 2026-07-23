@@ -1,77 +1,72 @@
 defmodule Percentile do
   @moduledoc """
   A `GenServer` that maintains rolling windows of numeric samples across many
-  independent series and computes percentiles on demand using the
-  nearest-rank method.
+  independent series and answers percentile queries on demand.
 
-  A single running process manages any number of series, each identified by an
-  arbitrary `name` term. Series are fully independent: recording, querying, or
-  resetting one series never affects another.
+  Each series is identified by an arbitrary `name` term and is fully independent
+  of every other series. A single running process manages all of them.
 
-  Two optional windowing constraints may be configured (individually or
-  together):
+  Two optional windowing constraints may be applied (individually or together):
 
     * a **time-based** window (`:window_ms`) — a sample recorded at time `t` is
-      live while `now - t < window_ms`, and expires once `now - t >= window_ms`;
-    * a **count-based** window (`:max_samples`) — only the most recently
-      recorded `max_samples` samples per series are retained.
+      live while `now - t < window_ms`;
+    * a **count-based** window (`:max_samples`) — only the most recently recorded
+      `max_samples` samples per series are retained.
 
-  Time is obtained exclusively through the configured `:clock` function so that
-  expiration can be driven deterministically in tests.
+  Percentiles use the **nearest-rank** method for exact reproducibility:
+
+      rank  = max(1, ceil(p * n))
+      value = s_rank
+
+  where `s_1..s_n` are the live samples sorted ascending (1-indexed).
   """
 
   use GenServer
 
-  @typedoc "The identifier of a series; any term is allowed."
   @type name :: term()
+  @type sample :: {integer(), number()}
 
-  @typedoc "A recorded numeric sample."
-  @type value :: number()
+  @default_name Percentile
 
-  @typedoc "Internal representation of a stored sample as `{timestamp_ms, value}`."
-  @type sample :: {integer(), value()}
-
-  # --- Public API ---------------------------------------------------------
+  # ── Public API ────────────────────────────────────────────────────────────
 
   @doc """
-  Starts and registers the percentile server.
+  Starts and registers the rolling-percentile process.
 
   Supported options:
 
-    * `:name` — the name to register the process under. Default: `Percentile`.
+    * `:name` — the registered process name (default: `Percentile`).
     * `:clock` — a zero-arity function returning the current time in
-      milliseconds. Default: `fn -> System.monotonic_time(:millisecond) end`.
+      milliseconds (default: `System.monotonic_time(:millisecond)`).
     * `:window_ms` — a positive integer enabling a time-based window.
     * `:max_samples` — a positive integer enabling a count-based window.
-
-  Both `:window_ms` and `:max_samples` may be supplied together.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
-    {name, opts} = Keyword.pop(opts, :name, __MODULE__)
+    name = Keyword.get(opts, :name, @default_name)
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
   @doc """
-  Records a numeric `value` into the series `name`, timestamped with the
-  current clock time. Always returns `:ok`.
+  Records a numeric `value` into the series `name`, timestamped with the current
+  clock time. Always returns `:ok`.
   """
-  @spec record(name(), value()) :: :ok
+  @spec record(name(), number()) :: :ok
   def record(name, value) when is_number(value) do
-    GenServer.call(__MODULE__, {:record, name, value})
+    GenServer.cast(@default_name, {:record, name, value})
   end
 
   @doc """
-  Computes the `percentile` (a float in `0.0..1.0`) over the currently-live
-  samples of series `name` using the nearest-rank method.
+  Computes the requested `percentile` (a float in `0.0..1.0`) over the currently
+  live samples of series `name` using the nearest-rank method.
 
   Returns `{:ok, value}` where `value` is one of the recorded samples, or
   `{:error, :empty}` when the series has no live samples.
   """
-  @spec query(name(), float()) :: {:ok, value()} | {:error, :empty}
+  @spec query(name(), float()) :: {:ok, number()} | {:error, :empty}
   def query(name, percentile)
       when is_float(percentile) and percentile >= +0.0 and percentile <= 1.0 do
-    GenServer.call(__MODULE__, {:query, name, percentile})
+    GenServer.call(@default_name, {:query, name, percentile})
   end
 
   @doc """
@@ -79,22 +74,20 @@ defmodule Percentile do
   """
   @spec reset(name()) :: :ok
   def reset(name) do
-    GenServer.call(__MODULE__, {:reset, name})
+    GenServer.call(@default_name, {:reset, name})
   end
 
-  # --- GenServer callbacks ------------------------------------------------
+  # ── GenServer callbacks ───────────────────────────────────────────────────
 
   @impl true
   @spec init(keyword()) :: {:ok, map()}
   def init(opts) do
     clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
-    window_ms = Keyword.get(opts, :window_ms)
-    max_samples = Keyword.get(opts, :max_samples)
 
     state = %{
       clock: clock,
-      window_ms: validate_positive(window_ms, :window_ms),
-      max_samples: validate_positive(max_samples, :max_samples),
+      window_ms: Keyword.get(opts, :window_ms),
+      max_samples: Keyword.get(opts, :max_samples),
       series: %{}
     }
 
@@ -102,56 +95,54 @@ defmodule Percentile do
   end
 
   @impl true
-  def handle_call({:record, name, value}, _from, state) do
+  def handle_cast({:record, name, value}, state) do
     now = state.clock.()
-    existing = Map.get(state.series, name, [])
-    updated = trim_count([{now, value} | existing], state.max_samples)
-    {:reply, :ok, %{state | series: Map.put(state.series, name, updated)}}
+    current = Map.get(state.series, name, [])
+    updated = cap([{now, value} | current], state.max_samples)
+    {:noreply, %{state | series: Map.put(state.series, name, updated)}}
   end
 
+  @impl true
   def handle_call({:query, name, percentile}, _from, state) do
     now = state.clock.()
-    samples = Map.get(state.series, name, [])
 
-    live_values =
-      samples
-      |> live(now, state.window_ms)
-      |> Enum.map(fn {_ts, value} -> value end)
-      |> Enum.sort()
+    live =
+      state.series
+      |> Map.get(name, [])
+      |> live_values(now, state.window_ms)
 
-    {:reply, percentile_of(live_values, percentile), state}
+    {:reply, nearest_rank(live, percentile), state}
   end
 
   def handle_call({:reset, name}, _from, state) do
     {:reply, :ok, %{state | series: Map.delete(state.series, name)}}
   end
 
-  # --- Internal helpers ---------------------------------------------------
+  # ── Internal helpers ──────────────────────────────────────────────────────
 
-  @spec validate_positive(term(), atom()) :: pos_integer() | nil
-  defp validate_positive(nil, _key), do: nil
+  # Enforce the count-based window; samples are stored newest-first, so keeping
+  # the first `max_samples` drops the oldest.
+  @spec cap([sample()], pos_integer() | nil) :: [sample()]
+  defp cap(samples, nil), do: samples
+  defp cap(samples, max_samples), do: Enum.take(samples, max_samples)
 
-  defp validate_positive(value, _key) when is_integer(value) and value > 0, do: value
-
-  defp validate_positive(value, key) do
-    raise ArgumentError, "#{inspect(key)} must be a positive integer, got: #{inspect(value)}"
+  # Apply the time-based window (when configured) and project to sorted values.
+  @spec live_values([sample()], integer(), pos_integer() | nil) :: [number()]
+  defp live_values(samples, now, window_ms) do
+    samples
+    |> Enum.filter(fn {ts, _value} -> live?(ts, now, window_ms) end)
+    |> Enum.map(fn {_ts, value} -> value end)
+    |> Enum.sort()
   end
 
-  @spec trim_count([sample()], pos_integer() | nil) :: [sample()]
-  defp trim_count(samples, nil), do: samples
-  defp trim_count(samples, max_samples), do: Enum.take(samples, max_samples)
+  @spec live?(integer(), integer(), pos_integer() | nil) :: boolean()
+  defp live?(_ts, _now, nil), do: true
+  defp live?(ts, now, window_ms), do: now - ts < window_ms
 
-  @spec live([sample()], integer(), pos_integer() | nil) :: [sample()]
-  defp live(samples, _now, nil), do: samples
+  @spec nearest_rank([number()], float()) :: {:ok, number()} | {:error, :empty}
+  defp nearest_rank([], _percentile), do: {:error, :empty}
 
-  defp live(samples, now, window_ms) do
-    Enum.filter(samples, fn {ts, _value} -> now - ts < window_ms end)
-  end
-
-  @spec percentile_of([value()], float()) :: {:ok, value()} | {:error, :empty}
-  defp percentile_of([], _percentile), do: {:error, :empty}
-
-  defp percentile_of(sorted, percentile) do
+  defp nearest_rank(sorted, percentile) do
     n = length(sorted)
     rank = max(1, ceil(percentile * n))
     {:ok, Enum.at(sorted, rank - 1)}
