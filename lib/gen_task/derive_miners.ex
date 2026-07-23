@@ -42,23 +42,31 @@ defmodule GenTask.DeriveMiners do
   defp run(kind, seed, %Config{} = cfg) do
     id = "#{kind}:#{seed.task_id}"
 
-    if Path.expand(cfg.tasks_dir) != Path.expand("tasks") do
-      [
-        outcome(
-          id,
-          kind,
-          seed,
-          :skipped,
-          "#{kind} miner is repo-root-only (tasks_dir=#{cfg.tasks_dir})"
-        )
-      ]
-    else
-      mod = load!(kind)
-      before_n = family_units(kind, seed)
-      apply(mod, :main, [["--only", seed.task_id]])
-      after_n = family_units(kind, seed)
+    cond do
+      # The miner scripts have their own CLIs and write for real — they know
+      # nothing of GEN_DRY_RUN. Guard here or a "dry" topup mints into tasks/
+      # (found live 2026-07-23: sfim carved 109_001_14/_15 under GEN_DRY_RUN=1).
+      cfg.dry_run ->
+        [outcome(id, kind, seed, :skipped, "#{kind} miner skipped — dry-run")]
 
-      [outcome(id, kind, seed, :accepted, "#{after_n - before_n} new unit(s), #{after_n} total")]
+      Path.expand(cfg.tasks_dir) != Path.expand("tasks") ->
+        [
+          outcome(
+            id,
+            kind,
+            seed,
+            :skipped,
+            "#{kind} miner is repo-root-only (tasks_dir=#{cfg.tasks_dir})"
+          )
+        ]
+
+      true ->
+        mod = load!(kind)
+        before_n = family_units(kind, seed)
+        apply(mod, :main, [["--only", seed.task_id]])
+        after_n = family_units(kind, seed)
+
+        [outcome(id, kind, seed, :accepted, "#{after_n - before_n} new unit(s), #{after_n} total")]
     end
   rescue
     e ->

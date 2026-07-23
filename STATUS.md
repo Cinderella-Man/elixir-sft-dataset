@@ -96,23 +96,6 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
      Run with GEN_SKIP_VARIATIONS=1 GEN_SKIP_FIM=1 (provably
      LLM-free; registry keeps tracking those separately).
 
-4c. **[IN PROGRESS 2026-07-23] GEN_DRY_RUN leak in DeriveMiners.**
-   Found live: `GEN_ONLY=topup GEN_DRY_RUN=1 generate.exs 109` MINTED
-   tasks/109_001_..._14 + _15 (sfim carves of the new cycle_members/
-   trim_feeders functions). Root cause: DeriveMiners.run/3 drives the
-   standalone miner scripts (mint_sfim/tdd/specfim/bundlefim) via
-   their --only CLI and never consults cfg.dry_run; the in-lib miners
-   (fim/tfim/bugfix/wt) honor it via Cycle.promote. The two leaked
-   units are standing-gate-passed and identical to what the real run
-   would mint — KEEP, verify with the family battery, fold into the
-   remint commit.
-   - **Task A:** none beyond verifying the two kept units (they are
-     valid mints; nothing to un-write elsewhere — tdd/specfim/
-     bundlefim found 0 candidates so wrote nothing).
-   - **Task B:** dry_run guard in DeriveMiners.run/3 (explicit
-     skipped outcome, mirroring the tasks_dir guard) — LAND AFTER the
-     topup sweep exits (gate_sha edit trap).
-
 5. **[ ] Prompt-register variety (G3).** Template rotation for the
    six templated shapes (deterministic, no LLM), then LLM register
    rewrites of monotone seed prompts, each with a mandatory blind

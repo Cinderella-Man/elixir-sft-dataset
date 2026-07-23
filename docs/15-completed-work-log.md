@@ -9,6 +9,20 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-23 — GEN_DRY_RUN leak in DeriveMiners CLOSED (STATUS 4c).**
+  Found live: `GEN_ONLY=topup GEN_DRY_RUN=1 generate.exs 109` MINTED
+  `tasks/109_001_..._14/_15` — the sfim/tdd/specfim/bundlefim runners
+  drive the standalone miner scripts via their `--only` CLIs, which
+  know nothing of GEN_DRY_RUN (the in-lib miners honor it via
+  `Cycle.promote`). Task A: the two leaked sfim units are standing-
+  gate-passed carves of the new `cycle_members`/`trim_feeders`
+  functions, byte-identical to what the real run would mint — KEPT and
+  verified by the scoped perfect+fim battery (committed with the 109
+  remint, d8387e9a1). Task B: `cfg.dry_run` guard in
+  `DeriveMiners.run/3` (explicit `:skipped` outcome before any script
+  loads), unit-tested both ways (dry_run skip + sandboxed-tasks_dir
+  skip); suite 417 green.
+
 - **2026-07-22 (day+evening) — THE MERGED HAND QUEUE (STATUS activities
   3+4) CLOSED: all 11 rubric-triage roots + every docs/19 finding.**
   One session, ~30 family visits, each landed with bite-proven anchors,
