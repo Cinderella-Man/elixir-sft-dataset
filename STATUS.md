@@ -170,9 +170,16 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
      async_stream), results identical, memory bounded. Largest of
      the five.
 
-7. **[ ] Family spot-checks (G6, CONTEXT rule 8).** Structured hand
-   READS of sampled families across eras/shapes, both accepted and
-   rejected sides; notes ledgered.
+7. **[DONE 2026-07-23] Family spot-checks (G6, CONTEXT rule 8) —
+   CLOSED.** Deterministic sha-ordered stratified sample (seed string
+   "g6-2026-07-23", reproducible): 10 accepted units across all 10
+   strata (manual-era base, generated-era base, wt, tfim, bugfix,
+   repair, adapt, dedoc, tdd, specfim) — ALL PASS on detailed reads;
+   3 rejected verdicts probed SOUND (2 bugfix mutant-survivor rejects
+   verified against harness reality, 1 sfim vacuous-target reject);
+   1 whole-family read (044_002, 32 dirs) coherent. Zero new
+   defects. Ledger: logs/g6_spotchecks.jsonl (14 rows). Standing
+   practice (rule 8) continues at every future accept/reject tool.
 
 8. **[ ] Screen depth (G9) — decide by probe.** Run 3-solve
    consistency on 10 of the ~50 keep/hard roots; if the 3-solve

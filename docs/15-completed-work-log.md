@@ -9,6 +9,15 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-23 — G6 FAMILY SPOT-CHECKS CLOSED (STATUS 7).**
+  Deterministic sha-ordered stratified sample (seed "g6-2026-07-23"):
+  10 accepted units across all 10 shape/era strata, ALL PASS on
+  detailed reads; 3 rejected verdicts probed SOUND against harness
+  reality; whole-family read of 044_002 (32 dirs) coherent. Zero new
+  defects — the first sampled audit since the campaign to find
+  nothing, consistent with the retrofitted bar. Ledger:
+  `logs/g6_spotchecks.jsonl` (14 rows, committed).
+
 - **2026-07-23 — GEN_DRY_RUN leak in DeriveMiners CLOSED (STATUS 4c).**
   Found live: `GEN_ONLY=topup GEN_DRY_RUN=1 generate.exs 109` MINTED
   `tasks/109_001_..._14/_15` — the sfim/tdd/specfim/bundlefim runners
