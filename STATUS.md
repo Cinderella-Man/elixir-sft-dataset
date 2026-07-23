@@ -183,80 +183,23 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    itself at the next export refresh from these very rows. Full
    record → docs/15.
 
-9. **[IN PROGRESS 2026-07-23] Extension headroom (G8) — PROBE LAUNCHING.**
-   Lever LANDED (commit 4e1fe704a): variation slot count is Config-tunable
-   (GEN_VARIATION_SLOTS, default 3); raising to 4 opens b=5 for an
-   already-converged idea. ONE source of truth across Work/Variations/Catalog
-   (all derive b in 2..(slots+1)); 359 gen_task tests green.
-   FAMILIES: ideas 91 (data-driven FSM) + 65 (saga orchestration) — both at
-   1.00 MIN semantic-kill on ledger evidence, base+3 variations on disk (b=1..4),
-   no b>=5 anywhere in the corpus (verified). Dry plan (GenTask.CLI.plan, no LLM):
-   at slots=4 ONLY the base 091_001/065_001 seed carries needs_variations?=true
-   (missing = 4-3 = 1) → exactly one new variation each into slot b=5.
-   PROBE = VARIATIONS-ONLY (all derived stages skipped so it mints only the two
-   _01 roots being judged; Work.derived(cfg)=[] confirmed with the full skip set
-   incl. GEN_SKIP_TDD). LAUNCH (detached, logs/g8_probe.log):
-     mv logs/attempts aside first (surgical: keeps the corpus-wide
-     maybe_mint_repairs step — 223 mintable/89 exist/134 candidate-new — OUT of
-     the probe; restore + resolve the 134 separately after, see item 4c).
-     bash -c 'export GEN_ONLY=topup GEN_VARIATION_SLOTS=4 GEN_SKIP_FIM=1
-       GEN_SKIP_WRITE_TEST=1 GEN_SKIP_TEST_FIM=1 GEN_SKIP_BUGFIX=1 GEN_SKIP_ADAPT=1
-       GEN_SKIP_DEDOC=1 GEN_SKIP_SFIM=1 GEN_SKIP_TDD=1 GEN_SKIP_SPECFIM=1
-       GEN_SKIP_BUNDLEFIM=1; mix run scripts/generate.exs 91; mix run
-       scripts/generate.exs 65'
-   PROBE RESULT (2026-07-23 15:31): idea 65 → 065_005_timeboxed_isolated_step_saga
-   ACCEPTED, all 12 gates green (semantic floor 0.75, promise audit 18→20, blind
-   re-screen). Idea 91 → 091_005_async_guarded_concurrent_workflow_instance
-   REJECTED at the semantic-floor gate (0/16 kill, 3 attempts exhausted — the
-   co-authored harness didn't assert return values; the gate CORRECTLY refused
-   weak data, nothing shipped). logs/attempts restored (1101; merged 3 fresh probe
-   chains); no stray repair dir (the 1 probe candidate came out unverified,
-   ledgered to repair_unverified.jsonl, not promoted).
-   HAND REVIEW (rule 9) of 065_005: GOLD — distinct problem (process-isolated +
-   timeboxed saga, "change request" register), solution matches spec exactly
-   (4-key error map, kill-on-deadline + flush late-reply guard, reverse-order
-   best-effort compensation with {:raised, exception}), moduledoc/@doc/@type all
-   truthful (no G5-class drift), harness pins every behavior incl. process
-   isolation + timeout-kill + late-reply suppression (20 tests, async:false, no
-   S9 anti-patterns). Zero triage-grade defects by hand.
-   065_005 §5.5 CONFIRMED GOLD (2026-07-23 15:42, logs/g8_judge_065.log):
-   semantic_review confirmed=[] (one harness_gap raised — default-timeout test
-   doesn't pin the exact 5000ms — REFUTED: pinning needs a ~5s flaky test and the
-   prompt bolds the value, so S6 holds); rubric_judge BOTH families (opus+sonnet)
-   5/5/5 on all axes, full agreement, issues=[]. Four independent checks agree.
-   PROBE2 (2026-07-23 16:11) FOUND A GENERATOR BUG — exactly the §0 case. Both
-   091_005_deadline_driven_order_workflow_server AND 034_005_concurrent_multi_
-   source_reconciliation_coordinator (both GenServers) CRASHED with
-   FunctionClauseError in Evaluator.repair_report/1: the spec-truth gate emits a
-   {:dialyzer, detail} reject reason (cycle.ex:250/310) that repair_report/1 had no
-   clause for → the whole variation cycle crashed to ERROR (not a clean reject) and
-   silently lost the unit. Trigger: the narrow start_link/1 spec ({:ok,pid}|{:error,
-   term}) whose success typing also carries :ignore. 065_005 dodged it (pure
-   functions, no start_link). This would bite EVERY GenServer mint in the extension
-   loop / Phase 3.
-   FIXED (Task B, committed 67499d55b): repair_report({:dialyzer, detail}) tailored
-   clause (scar #4 — names the fix: use GenServer.on_start(), the corpus idiom) +
-   defensive catch-all so no future reject shape can ever crash the cycle again;
-   @spec widened; 2 tests (dialyzer clause + totality/regression); 75 evaluator
-   tests green. Gate calibration CONFIRMED CORRECT: ~395 corpus golds already spec
-   start_link :: GenServer.on_start() (dialyzer-clean, includes :ignore); only 6
-   use the narrow form → the gate rightly flags it, repair points at the idiom.
-   RE-PROBE (regenerate 091+34; attempts held aside; logs/g8_probe3.log) to confirm
-   the repair path now lands them. AFTER: restore attempts; hand-review +
-   instruments on each accepted b=5 root; then commit new gold + close G8.
-   Relaunch idempotent (accepted b=5 add-only; rejected/errored leaves slot free).
-
-   4d. **[ ] Minor existing-data note (found 2026-07-23):** 6 corpus golds spec
-   start_link with the narrow {:ok,pid}|{:error,term} form (vs ~395 using
-   GenServer.on_start()). Benign overspec; would flag under a full-corpus dialyzer
-   pass. Low priority — fold into any future corpus dialyzer audit, not urgent.
-   AFTER the two b=5 dirs land: restore logs/attempts; run the SAME debt-finding
-   instruments on the two new roots — semantic_review.exs --single <dir> and
-   rubric_judge.exs --single <dir>; acceptance = ZERO triage-grade findings
-   (docs/12 §5.5 bar). Read both variations in FULL (rule 9). PASS → the
-   generator produces gold NEW data; size + run the full extension loop as the
-   LAST activity (mints every derivative + varied register). FAIL → fix the
-   GENERATOR, regenerate, re-probe (never hand-fix the probe data).
+9. **[ ] Extension loop (G8) — PROBE PASSED; full run is the LAST activity.**
+   Probe CLOSED 2026-07-23 (full record → docs/15): lever landed (4e1fe704a,
+   GEN_VARIATION_SLOTS tunable); 3 new b=5 variations minted + confirmed GOLD
+   across diverse families — 065_005 (saga), 091_005 (FSM/GenServer), 034_005
+   (parallel reconciler) — each clean on 12 accept gates + hand review +
+   semantic_review (0 confirmed) + rubric (5/5/5 ×2). The probe FOUND + FIXED a
+   real generator bug (dialyzer repair_report crash, Task B 67499d55b) that would
+   have lost every GenServer mint — exactly the §0 payoff.
+   REMAINING (run LAST, after items 5 + 6 land so new mints carry every gate +
+   varied register): the FULL extension loop — GEN_VARIATION_SLOTS=4 over ALL
+   converged ideas, detached, to give each a distinct 5th variation + its
+   derivatives. Probe yield ≈ 5 repair-attempts/accept; some families saturate at
+   4 (091's 1st mint was a weak-harness reject) — budget retries, don't force.
+   NOTE: the 3 probe roots were minted variations-only, so they still LACK
+   derivatives (fim/wt/tfim/bugfix/adapt/dedoc/sfim/tdd/specfim/bundlefim); the
+   extension loop (or a plain GEN_ONLY=topup run) mints them — they are valid
+   standalone _01 tasks until then (no gate breaks on missing children).
 
    4c. **[ ] Pending repair-mint (found 2026-07-23 during G8 prep).**
    mint_repairs.exs --dry-run: 1098 attempt chains, 223 mintable (rejected→
@@ -268,6 +211,11 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    rest as correctly-skipped. Deterministic, add-only, idempotent, self-verifying
    (broken grades non-green AND fix grades green, both real evaluator). Review a
    sample (rule 9) + commit new repair_ dirs on their own.
+
+   4d. **[ ] Minor existing-data note (found 2026-07-23):** 6 corpus golds spec
+   start_link with the narrow {:ok,pid}|{:error,term} form (vs ~395 using
+   GenServer.on_start()). Benign overspec; would flag under a full-corpus dialyzer
+   pass. Low priority — fold into any future corpus dialyzer audit, not urgent.
 
 10. **[ ] Finish line.** Full sweeps (perfect + fim + mutants +
     decontam), export refresh, README — then this file becomes the

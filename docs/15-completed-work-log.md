@@ -9,6 +9,61 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-23 — G8 EXTENSION PROBE PASSED + found & fixed a real
+  generator bug (STATUS 9 probe half).** The probe exists to answer "does
+  the generator produce gold NEW data, or will Phase 3 need a second month
+  of fixing?" (§0). Answer: it produces gold data, AND the probe earned its
+  keep by catching a live bug.
+  - **Lever (4e1fe704a):** variation slot count is Config-tunable
+    (`GEN_VARIATION_SLOTS`, default 3 = the pre-edit bytes). Raising to 4
+    opens slot b=5 for an already-converged idea. ONE source of truth —
+    `Config.variation_slots` feeds `Work.missing_variations` (via
+    `count_variations/3`), `Variations.variation_gaps`,
+    `Variations.taken_public_fn_sets`, and `Catalog.variation_ref`, all
+    deriving `b in 2..(slots+1)`. 359 gen_task tests green.
+  - **Method:** variations-only mint (all derived stages skip-gated to
+    `Work.derived(cfg)=[]`, incl. `GEN_SKIP_TDD`) scoped by `only_idea`, so
+    the probe minted ONLY the judged `_01` roots. `logs/attempts` held aside
+    each run so the corpus-wide `maybe_mint_repairs` stayed out of the probe.
+    Dry `GenTask.CLI.plan` (no LLM) pre-verified each idea owed exactly one
+    b=5. Every accepted root was hand-read in full (rule 9) AND run through
+    the debt instruments (semantic_review `--go --dir`, rubric_judge
+    `--single`).
+  - **THE BUG (probe2):** both GenServer variations CRASHED with
+    `FunctionClauseError` in `Evaluator.repair_report/1` — the spec-truth
+    (dialyzer) gate emits a `{:dialyzer, detail}` reject reason
+    (cycle.ex:250/310) that `repair_report/1` had no clause for, so instead
+    of feeding a repair the whole variation cycle crashed to ERROR and
+    silently lost the unit. Trigger: the narrow `start_link/1` spec
+    (`{:ok,pid}|{:error,term}`) whose success typing also carries `:ignore`
+    — i.e. EVERY GenServer mint would have hit it in the extension loop /
+    Phase 3. Fixed (Task B, **67499d55b**): a tailored
+    `repair_report({:dialyzer, detail})` clause (scar #4 — names the fix:
+    use `GenServer.on_start()`, the idiom in ~395 corpus golds) + a
+    defensive catch-all so no future reject shape can ever crash the cycle
+    again; @spec widened; 2 tests (dialyzer clause + a totality/regression
+    test over every `accept?/4` reject reason). Gate calibration confirmed
+    CORRECT (only 6 golds use the narrow form; the gate rightly flags it).
+    Re-probe: the repair path now fires (dialyzer fail → repair → the model
+    rewrites the spec to `GenServer.on_start()` → accept).
+  - **RESULT — 3 new roots, all GOLD by four independent checks** (12 accept
+    gates · hand review · semantic_review 0-confirmed · rubric 5/5/5 both
+    families, full agreement): `065_005_timeboxed_isolated_step_saga` (idea
+    65 saga — process-isolated + timeboxed, kill-on-deadline w/ late-reply
+    flush, reverse-order best-effort compensation), `091_005_deadline_
+    escalating_ticket_workflow_server` (idea 91 GenServer FSM — SLA deadline
+    auto-escalation, cancel-on-leave + per-timer make_ref tag for
+    stale-timer suppression, isolated notify), `034_005_sharded_parallel_
+    reconciler_with_per_shard_timeouts` (idea 34 — phash2 sharding,
+    spawn_monitor workers, kill-on-timeout → :timed_out_shards, crash →
+    :failed_shards, shard-count-independent). Registers varied (change
+    request / change request / design brief). The 3 roots lack derivatives
+    (variations-only) — minted by the full extension loop or a topup.
+  - **Remaining (STATUS 9):** the full extension loop runs LAST (after the
+    register sweep + G5), giving every converged idea a distinct 5th
+    variation carrying every gate. Probe yield ≈ 5 repair-attempts/accept;
+    some families saturate at 4.
+
 - **2026-07-23 — G9 SCREEN DEPTH CLOSED (STATUS 8): the "hard" tier
   was 59% luck.** Probe (10 sha-fresh hard-keeps × 3 fresh blind
   solves) diverged 5/10 → full run over all 27 standing hard-keeps.
