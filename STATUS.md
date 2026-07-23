@@ -119,9 +119,17 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    reads, standing lesson). The full sweep is a NEW dedicated
    @doc-truth pass over all roots (semantic_review was not
    doc-focused), detached + sha-ledgered, after G3.
-   PILOT VERIFIED 2026-07-23, all 5 CONFIRMED on artifact reads —
-   fixes queued (land after the stale-gold batch; every gold edit
-   cascades + re-mints bugfix children under the new identity gate):
+   PILOT FIXES APPLIED 2026-07-23 (all 5 golds edited, each re-graded
+   1.0; embeds cascaded: wt 5 / tfim 93 / adapt 4 / dedoc 5 / tdd 5 /
+   specfim 27 resynced, 8 fim-child golds hand-re-carved from the new
+   parents (the fix_child_gold class), one historical stray blank in
+   062_001_03's embed removed — check_embeds 3889/0/0). RIDING: 15
+   bugfix pairs deleted, topup remint launched detached
+   `scripts/run_detached.sh logs/topup_g5_remint.log bash -c 'for i
+   in 5 32 62 97 99; do GEN_ONLY=topup GEN_SKIP_VARIATIONS=1
+   GEN_SKIP_FIM=1 mix run scripts/generate.exs $i; done'` — verify
+   after: gate 0 stale_gold, audit_bugfix 15/15, scoped validate.
+   Original findings:
    - 099_004: moduledoc says stats/0, API is stats(server)/1 —
      one-token doc fix.
    - 062_001: @doc on run/2 claims failed-stage timing recorded;
@@ -153,7 +161,19 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    defects. Ledger: logs/g6_spotchecks.jsonl (14 rows). Standing
    practice (rule 8) continues at every future accept/reject tool.
 
-8. **[IN PROGRESS 2026-07-23] Screen depth (G9) — probe LAUNCHED.**
+8. **[IN PROGRESS 2026-07-23] Screen depth (G9) — PROBE DIVERGED,
+   full run launched.** Probe result (3 passes × 10 roots, ledgered
+   in screen_blind.jsonl): **5 of 10 roots diverge** (≥2/3 fresh
+   solves GREEN on recorded hard-keeps; 108_003 went G-G-G) — same
+   prompt shas, so single-solve luck, not prompt drift; the recorded
+   difficulty labels are unreliable. Per the pinned rule: 3-solve ALL
+   27 current hard-keeps. Remaining 17 roots (list: scratchpad
+   g9_rest.txt) LAUNCHED detached: logs/g9_full.log — 3 sequential
+   --rescreen passes over the 17-root glob; relaunch idempotent.
+   AFTER: fold last-3 verdicts per root across all 27, update the
+   difficulty metadata (locate its home — export weights / triage
+   ledger) and close with the evidence.
+   (Superseded probe launch record:)
    Current standing hard-keep set is 27 roots (not ~50 — the rest
    were fixed + re-screened green since): red latest screen row at
    the CURRENT prompt sha AND entailed-keep in screen_triage.
