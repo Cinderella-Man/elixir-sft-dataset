@@ -65,12 +65,14 @@ defmodule Pipeline do
   - `{:ok, final_result, [%{stage: atom, duration_us: non_neg_integer}]}` — all stages passed.
   - `{:error, failed_stage, reason}` — a stage failed; subsequent stages are skipped.
 
-  Timing is recorded (via `:timer.tc/1`) for every stage that actually ran,
-  including the one that failed.
+  Timing is measured with `:timer.tc/1` around every stage invocation, but
+  metadata travels only in the success tuple — the error result carries no
+  metadata list, so a failed run discards the timings collected so far.
   """
   @spec run(t(), any()) ::
           {:ok, any(), [stage_meta()]}
           | {:error, atom(), any()}
+
   def run(%__MODULE__{stages: stages}, input) do
     # TODO
   end
@@ -93,10 +95,8 @@ defmodule Pipeline do
         execute(rest, next_value, [meta | meta_acc])
 
       {:error, reason} ->
-        # Return accumulated metadata (in execution order) as part of caller
-        # context — exposed via the three-element error tuple if desired, but
-        # the public contract only requires the three-element form below.
-        # We honour the spec strictly here.
+        # The contract's halt result is exactly three elements with no
+        # metadata list — the timings accumulated so far are dropped.
         {:error, name, reason}
 
       other ->

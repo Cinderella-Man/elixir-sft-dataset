@@ -1,25 +1,19 @@
 <file path="lib/entity_transition.ex">
 defmodule EntityTransition do
   @moduledoc """
-  Ecto schema representing a single persisted state-machine transition.
+  Ecto schema for a single persisted state-machine transition.
 
-  Each row records that a given `entity_id` moved from `from_state` to
-  `to_state` in response to `event`, at time `inserted_at`. The atom values
-  for events and states are serialised as strings in the database.
+  Each row records one successful transition of an entity: the event that
+  triggered it, the state it moved from, the state it moved to, and the
+  timestamp at which it was written. Rows are append-only and, read in
+  chronological order, form the complete history of an entity's lifecycle.
   """
 
   use Ecto.Schema
 
   import Ecto.Changeset
 
-  @type t :: %__MODULE__{
-          id: integer() | nil,
-          entity_id: String.t() | nil,
-          event: String.t() | nil,
-          from_state: String.t() | nil,
-          to_state: String.t() | nil,
-          inserted_at: DateTime.t() | nil
-        }
+  @type t :: %__MODULE__{}
 
   schema "entity_transitions" do
     field :entity_id, :string
@@ -29,50 +23,56 @@ defmodule EntityTransition do
     field :inserted_at, :utc_datetime_usec
   end
 
+  @required [:entity_id, :event, :from_state, :to_state, :inserted_at]
+
   @doc """
-  Builds a changeset validating that all transition fields are present.
+  Builds a changeset for inserting a transition row.
+
+  All fields are required and validated for presence.
   """
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
-  def changeset(transition, attrs) do
+  def changeset(%__MODULE__{} = transition, attrs) do
     transition
-    |> cast(attrs, [:entity_id, :event, :from_state, :to_state, :inserted_at])
-    |> validate_required([:entity_id, :event, :from_state, :to_state, :inserted_at])
+    |> cast(attrs, @required)
+    |> validate_required(@required)
   end
 end
 </file>
 <file path="lib/state_machine.ex">
 defmodule StateMachine do
   @moduledoc """
-  A GenServer managing the lifecycle of stateful entities.
+  A `GenServer` that manages the lifecycle of stateful order entities.
 
-  It implements an order-processing state machine, persists every valid
-  transition to a database via an injected Ecto repo, and re-hydrates an
-  entity's current state from the database on demand (e.g. after a restart,
-  when the in-memory map has been reset).
+  The server enforces a fixed order-processing state machine, persists every
+  valid transition to a database via an injected Ecto repo, and re-hydrates an
+  entity's current state from that database whenever it is (re)started.
 
-  ## States
+  In-memory, the server keeps a map of `%{entity_id => current_state}`. This map
+  is empty after a restart; the next `start/2` call for an entity reloads its
+  most recent state from the persisted transition log.
 
-    * `:pending`, `:confirmed`, `:shipped`, `:delivered`, `:cancelled`
+  ## State machine
 
-  ## Valid transitions
+  States: `:pending`, `:confirmed`, `:shipped`, `:delivered`, `:cancelled`.
 
-    * `:pending`   + `:confirm` -> `:confirmed`
-    * `:confirmed` + `:ship`    -> `:shipped`
-    * `:shipped`   + `:deliver` -> `:delivered`
-    * `:pending`   + `:cancel`  -> `:cancelled`
-    * `:confirmed` + `:cancel`  -> `:cancelled`
+  Valid transitions:
 
-  Any other `(state, event)` combination is invalid.
+    * `:pending` + `:confirm` -> `:confirmed`
+    * `:confirmed` + `:ship` -> `:shipped`
+    * `:shipped` + `:deliver` -> `:delivered`
+    * `:pending` + `:cancel` -> `:cancelled`
+    * `:confirmed` + `:cancel` -> `:cancelled`
+
+  Any other `{state, event}` pair is invalid.
   """
 
   use GenServer
 
-  import Ecto.Query
+  import Ecto.Query, only: [from: 2]
 
-  @typedoc "A valid state-machine state."
+  @type server :: GenServer.server()
+  @type entity_id :: String.t()
   @type state :: :pending | :confirmed | :shipped | :delivered | :cancelled
-
-  @typedoc "An event that may drive a transition."
   @type event :: :confirm | :ship | :deliver | :cancel
 
   @transitions %{
@@ -83,7 +83,7 @@ defmodule StateMachine do
     {:confirmed, :cancel} => :cancelled
   }
 
-  # ── Public API ────────────────────────────────────────────────────────────
+  # ── Public API ──────────────────────────────────────────────────────────────
 
   @doc """
   Starts the state-machine server.
@@ -95,27 +95,29 @@ defmodule StateMachine do
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    {name, init_opts} = Keyword.pop(opts, :name)
+    {name, opts} = Keyword.pop(opts, :name)
     gen_opts = if name, do: [name: name], else: []
-    GenServer.start_link(__MODULE__, init_opts, gen_opts)
+    GenServer.start_link(__MODULE__, opts, gen_opts)
   end
 
   @doc """
-  Loads the latest persisted state for `entity_id` into the server.
+  Loads the latest persisted state for `entity_id` into the server session.
 
-  If no record exists, the entity starts in `:pending`. Returns
-  `{:ok, current_state}`.
+  If no transitions exist for the entity, it starts in the `:pending` state.
+  Always returns `{:ok, current_state}`.
   """
-  @spec start(GenServer.server(), String.t()) :: {:ok, state()}
+  @spec start(server(), entity_id()) :: {:ok, state()}
   def start(server, entity_id) do
     GenServer.call(server, {:start, entity_id})
   end
 
   @doc """
-  Returns `{:ok, current_state}` for a previously started entity, or
-  `{:error, :not_found}` if it has never been started in this session.
+  Returns the in-memory current state for a previously started entity.
+
+  Returns `{:error, :not_found}` if the entity has not been started in this
+  server session.
   """
-  @spec get_state(GenServer.server(), String.t()) :: {:ok, state()} | {:error, :not_found}
+  @spec get_state(server(), entity_id()) :: {:ok, state()} | {:error, :not_found}
   def get_state(server, entity_id) do
     GenServer.call(server, {:get_state, entity_id})
   end
@@ -123,11 +125,15 @@ defmodule StateMachine do
   @doc """
   Attempts to transition `entity_id` via `event`.
 
-  Returns `{:ok, new_state}` on success, `{:error, :invalid_transition}` for a
-  disallowed `(state, event)` pair, `{:error, :not_found}` if the entity was
-  never started, or `{:error, {:db_error, reason}}` if persistence fails.
+    * On a valid transition, persists the new state and event, updates in-memory
+      state, and returns `{:ok, new_state}`.
+    * On an invalid `{state, event}` pair, returns `{:error, :invalid_transition}`
+      and writes nothing.
+    * If the entity has not been started, returns `{:error, :not_found}`.
+    * On a database write failure, returns `{:error, {:db_error, reason}}` and
+      leaves the in-memory state unchanged.
   """
-  @spec transition(GenServer.server(), String.t(), event()) ::
+  @spec transition(server(), entity_id(), event()) ::
           {:ok, state()}
           | {:error, :invalid_transition | :not_found | {:db_error, term()}}
   def transition(server, entity_id, event) do
@@ -136,93 +142,92 @@ defmodule StateMachine do
 
   @doc """
   Returns `{:ok, list}` of every recorded transition for `entity_id` in
-  chronological order, each a map with `:event`, `:from_state`, `:to_state`
-  and `:inserted_at`.
+  chronological order.
+
+  Each entry is a map with keys `:event`, `:from_state`, `:to_state`, and
+  `:inserted_at`.
   """
-  @spec history(GenServer.server(), String.t()) :: {:ok, [map()]}
+  @spec history(server(), entity_id()) :: {:ok, [map()]}
   def history(server, entity_id) do
     GenServer.call(server, {:history, entity_id})
   end
 
-  # ── GenServer callbacks ───────────────────────────────────────────────────
+  # ── GenServer callbacks ─────────────────────────────────────────────────────
 
-  @impl true
+  @impl GenServer
   @spec init(keyword()) :: {:ok, map()}
   def init(opts) do
     repo = Keyword.fetch!(opts, :repo)
     {:ok, %{repo: repo, entities: %{}}}
   end
 
-  @impl true
-  def handle_call({:start, entity_id}, _from, %{repo: repo, entities: entities} = state) do
-    current = load_latest_state(repo, entity_id)
-    new_entities = Map.put(entities, entity_id, current)
-    {:reply, {:ok, current}, %{state | entities: new_entities}}
+  @impl GenServer
+  def handle_call({:start, entity_id}, _from, state) do
+    current = load_latest_state(state.repo, entity_id)
+    entities = Map.put(state.entities, entity_id, current)
+    {:reply, {:ok, current}, %{state | entities: entities}}
   end
 
-  def handle_call({:get_state, entity_id}, _from, %{entities: entities} = state) do
-    case Map.fetch(entities, entity_id) do
+  def handle_call({:get_state, entity_id}, _from, state) do
+    case Map.fetch(state.entities, entity_id) do
       {:ok, current} -> {:reply, {:ok, current}, state}
       :error -> {:reply, {:error, :not_found}, state}
     end
   end
 
   def handle_call({:transition, entity_id, event}, _from, state) do
-    %{repo: repo, entities: entities} = state
-
-    case Map.fetch(entities, entity_id) do
+    case Map.fetch(state.entities, entity_id) do
       :error ->
         {:reply, {:error, :not_found}, state}
 
       {:ok, current} ->
-        handle_transition(state, repo, entities, entity_id, current, event)
+        do_transition(entity_id, event, current, state)
     end
   end
 
-  def handle_call({:history, entity_id}, _from, %{repo: repo} = state) do
-    {:reply, {:ok, load_history(repo, entity_id)}, state}
+  def handle_call({:history, entity_id}, _from, state) do
+    query =
+      from t in EntityTransition,
+        where: t.entity_id == ^entity_id,
+        order_by: [asc: t.inserted_at, asc: t.id]
+
+    entries =
+      query
+      |> state.repo.all()
+      |> Enum.map(fn t ->
+        %{
+          event: String.to_existing_atom(t.event),
+          from_state: String.to_existing_atom(t.from_state),
+          to_state: String.to_existing_atom(t.to_state),
+          inserted_at: t.inserted_at
+        }
+      end)
+
+    {:reply, {:ok, entries}, state}
   end
 
-  # ── Internal helpers ──────────────────────────────────────────────────────
+  # ── Internal helpers ────────────────────────────────────────────────────────
 
-  @spec handle_transition(map(), module(), map(), String.t(), state(), event()) ::
+  @spec do_transition(entity_id(), event(), state(), map()) ::
           {:reply, term(), map()}
-  defp handle_transition(state, repo, entities, entity_id, current, event) do
+  defp do_transition(entity_id, event, current, state) do
     case Map.get(@transitions, {current, event}) do
       nil ->
         {:reply, {:error, :invalid_transition}, state}
 
       next ->
-        case persist(repo, entity_id, event, current, next) do
-          {:ok, _record} ->
-            new_entities = Map.put(entities, entity_id, next)
-            {:reply, {:ok, next}, %{state | entities: new_entities}}
+        case persist(state.repo, entity_id, event, current, next) do
+          :ok ->
+            entities = Map.put(state.entities, entity_id, next)
+            {:reply, {:ok, next}, %{state | entities: entities}}
 
           {:error, reason} ->
-            {:reply, {:error, {:db_error, reason}}, state}
+            {:reply, {:error, reason}, state}
         end
     end
   end
 
-  @spec persist(module(), String.t(), event(), state(), state()) ::
-          {:ok, EntityTransition.t()} | {:error, term()}
-  defp persist(repo, entity_id, event, from_state, to_state) do
-    record = %EntityTransition{
-      entity_id: entity_id,
-      event: Atom.to_string(event),
-      from_state: Atom.to_string(from_state),
-      to_state: Atom.to_string(to_state),
-      inserted_at: DateTime.utc_now()
-    }
-
-    try do
-      repo.insert(record)
-    rescue
-      error -> {:error, error}
-    end
-  end
-
-  @spec load_latest_state(module(), String.t()) :: state()
+  @spec load_latest_state(module(), entity_id()) :: state()
   defp load_latest_state(repo, entity_id) do
     query =
       from t in EntityTransition,
@@ -237,36 +242,40 @@ defmodule StateMachine do
     end
   end
 
-  @spec load_history(module(), String.t()) :: [map()]
-  defp load_history(repo, entity_id) do
-    query =
-      from t in EntityTransition,
-        where: t.entity_id == ^entity_id,
-        order_by: [asc: t.inserted_at, asc: t.id]
+  @spec persist(module(), entity_id(), event(), state(), state()) ::
+          :ok | {:error, {:db_error, term()}}
+  defp persist(repo, entity_id, event, from, to) do
+    attrs = %{
+      entity_id: entity_id,
+      event: Atom.to_string(event),
+      from_state: Atom.to_string(from),
+      to_state: Atom.to_string(to),
+      inserted_at: DateTime.utc_now()
+    }
 
-    repo.all(query)
-    |> Enum.map(fn t ->
-      %{
-        event: String.to_existing_atom(t.event),
-        from_state: String.to_existing_atom(t.from_state),
-        to_state: String.to_existing_atom(t.to_state),
-        inserted_at: t.inserted_at
-      }
-    end)
+    changeset = EntityTransition.changeset(%EntityTransition{}, attrs)
+
+    try do
+      case repo.insert(changeset) do
+        {:ok, _record} -> :ok
+        {:error, reason} -> {:error, {:db_error, reason}}
+      end
+    rescue
+      exception -> {:error, {:db_error, exception}}
+    end
   end
 end
 </file>
-<file path="priv/repo/migrations/20260709000000_create_entity_transitions.exs">
+<file path="priv/repo/migrations/20260723000000_create_entity_transitions.exs">
 defmodule Repo.Migrations.CreateEntityTransitions do
   @moduledoc """
-  Creates the `entity_transitions` table backing the `StateMachine` server.
+  Creates the `entity_transitions` table used to persist state-machine
+  transitions, plus an index on `entity_id` for history/latest-state lookups.
   """
 
   use Ecto.Migration
 
-  @doc """
-  Creates the table and its index on `entity_id`.
-  """
+  @spec change() :: any()
   def change do
     create table(:entity_transitions) do
       add :entity_id, :string, null: false

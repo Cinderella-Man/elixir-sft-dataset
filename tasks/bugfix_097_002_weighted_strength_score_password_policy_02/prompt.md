@@ -52,6 +52,13 @@ defmodule PasswordPolicy do
   @default_common_passwords []
   @default_max_username_similarity 3
 
+  @doc """
+  Evaluates `password` against the policy configured by `context`.
+
+  Returns `{:accepted, score}` when every check passes, or
+  `{:rejected, score, reasons}` with the failed checks as atoms. The
+  `context` map must include `:username`; raising `ArgumentError` otherwise.
+  """
   @spec evaluate(String.t(), map()) ::
           {:accepted, non_neg_integer()} | {:rejected, non_neg_integer(), [atom()]}
   def evaluate(password, %{username: _} = context) do
@@ -135,9 +142,8 @@ defmodule PasswordPolicy do
   # Levenshtein distance — iterative two-row dynamic programming.
   # ---------------------------------------------------------------------------
 
-  @doc false
   @spec levenshtein(String.t(), String.t()) :: non_neg_integer()
-  def levenshtein(a, b) when is_binary(a) and is_binary(b) do
+  defp levenshtein(a, b) when is_binary(a) and is_binary(b) do
     a_graphs = String.graphemes(a)
     b_graphs = String.graphemes(b)
 
@@ -184,7 +190,7 @@ end
 ## Failing test report
 
 ```
-2 of 8 test(s) failed:
+5 of 19 test(s) failed:
 
   * test rejects a strong password that is too similar to the username
       
@@ -202,4 +208,26 @@ end
       code:  assert PasswordPolicy.evaluate("Zx9#mQpLwT7$vBn2", %{username: "operator"}) == {:accepted, 92}
       left:  {:accepted, 72}
       right: {:accepted, 92}
+      
+
+  * test rejects when the username distance exactly equals max_username_similarity
+      
+      
+      Assertion with == failed
+      code:  assert PasswordPolicy.evaluate("Zx9#mQpLwT7$vXYZ", %{username: "Zx9#mQpLwT7$vBn2"}) ==
+                    {:rejected, 92, [:too_similar_to_username]}
+      left:  {:rejected, 72, [:too_similar_to_username]}
+      right: {:rejected, 92, [:too_similar_to_username]}
+      
+
+  * test a custom min_length rejects a password that clears the score threshold
+      
+      
+      Assertion with == failed
+      code:  assert result == {:rejected, 92, [:too_short]}
+      left:  {:rejected, 72, [:too_short]}
+      right: {:rejected, 92, [:too_short]}
+      
+
+  (…1 more)
 ```

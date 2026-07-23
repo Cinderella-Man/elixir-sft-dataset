@@ -1,164 +1,100 @@
 defmodule FallbackFetcher do
   @moduledoc """
-  Concurrently fetches data from multiple named sources, where each source carries an
-  ordered chain of fallback functions.
+  Concurrently fetches data from multiple named sources, where each source
+  carries an ordered chain of fallback functions.
 
-  Every source is run in its own process, so sources make progress independently of one
-  another. Within a single source the fallback functions are tried strictly sequentially:
-  the first function is invoked, and only if it fails (by returning `{:error, reason}` or
-  by raising) is the next one tried, and so on until one succeeds or the chain runs out.
+  Every source runs concurrently with every other source. Within a single
+  source, the fallback functions are tried sequentially, in order, until one
+  returns `{:ok, value}` or the chain is exhausted. A raised exception (or a
+  thrown/exited value) is treated as a failure and the next fallback is tried.
 
-  A single global wall-clock budget (`timeout_ms`) is shared by every source. It is *not*
-  a per-source or per-fallback budget: a source whose chain, summed sequentially, overruns
-  the deadline is reported as `{:error, :timeout}` and its process is killed immediately,
-  leaving no zombies behind.
-
-  ## Result shape
-
-  `fetch_all/2` returns a map of `%{name => result}` where `result` is one of:
-
-    * `{:ok, value}` — some fallback in the chain succeeded before the deadline;
-    * `{:error, {:all_failed, reasons}}` — every fallback failed; `reasons` lists the
-      failure reasons in the order the functions were tried (a raised exception is
-      captured as its exception struct);
-    * `{:error, :timeout}` — the global deadline expired while the source was still
-      working through its chain.
-
-  ## Example
-
-      iex> sources = [
-      ...>   {:primary, [fn -> {:error, :down} end, fn -> {:ok, 42} end]},
-      ...>   {:secondary, [fn -> {:error, :nope} end]}
-      ...> ]
-      iex> FallbackFetcher.fetch_all(sources, 1_000)
-      %{primary: {:ok, 42}, secondary: {:error, {:all_failed, [:nope]}}}
+  A single global wall-clock timeout is shared across all sources. When it
+  expires, any source still working through its chain is reported as
+  `{:error, :timeout}` and its process is killed immediately, so no zombie
+  processes remain when `fetch_all/2` returns.
   """
 
-  @typedoc "A zero-arity fallback function returning `{:ok, term}` or `{:error, term}`."
-  @type fetch_fun :: (-> {:ok, term()} | {:error, term()})
+  @typedoc "A zero-arity fallback function."
+  @type fetch_fn :: (-> {:ok, term()} | {:error, term()})
 
-  @typedoc "A source: an arbitrary name paired with its ordered fallback chain."
-  @type source :: {term(), [fetch_fun()]}
+  @typedoc "A single source: a name and its ordered fallback chain."
+  @type source :: {term(), [fetch_fn()]}
 
-  @typedoc "The outcome recorded for a single source."
-  @type result :: {:ok, term()} | {:error, {:all_failed, [term()]}} | {:error, :timeout}
+  @typedoc "The per-source result reported back to the caller."
+  @type result ::
+          {:ok, term()}
+          | {:error, {:all_failed, [term()]}}
+          | {:error, :timeout}
 
   @doc """
-  Fetches every source concurrently under a single shared `timeout_ms` budget.
+  Fetches all `sources` concurrently under a single global `timeout_ms` budget.
 
-  Each `{name, fetch_fns}` entry in `sources` is executed in its own task, started
-  immediately. Inside a task the functions in `fetch_fns` are tried in order until one
-  returns `{:ok, value}`; failures (`{:error, reason}` or a raise) move on to the next
-  function. Exits and throws inside a fallback are also treated as failures and recorded
-  as `{:exit, reason}` / `{:throw, value}` respectively.
+  `sources` is a list of `{name, fetch_fns}` tuples. `name` may be any term and
+  `fetch_fns` is the ordered fallback chain (a list of zero-arity functions).
 
-  Returns a map of `%{name => t:result/0}`. Duplicate names collapse, with the later
-  source in the list winning. An empty `sources` list returns `%{}` without waiting.
+  Returns a map of `%{name => result_tuple}` where each value is one of:
 
-  ## Examples
+    * `{:ok, value}` — some fallback in the chain succeeded within the timeout.
+    * `{:error, {:all_failed, reasons}}` — every fallback failed; `reasons`
+      lists the failure reasons in the order the functions were tried (a raised
+      exception is captured as its exception struct).
+    * `{:error, :timeout}` — the global timeout expired while this source was
+      still working through its chain.
 
-      iex> FallbackFetcher.fetch_all([], 100)
-      %{}
-
-      iex> FallbackFetcher.fetch_all([{"a", [fn -> raise "boom" end]}], 100)
-      %{"a" => {:error, {:all_failed, [%RuntimeError{message: "boom"}]}}}
+  Returns `%{}` immediately when `sources` is empty.
   """
-  @spec fetch_all([source()], timeout()) :: %{optional(term()) => result()}
+  @spec fetch_all([source()], non_neg_integer()) :: %{optional(term()) => result()}
   def fetch_all([], _timeout_ms), do: %{}
 
   def fetch_all(sources, timeout_ms) when is_list(sources) do
-    tasks = Enum.map(sources, &start_source/1)
+    named_tasks =
+      Enum.map(sources, fn {name, fetch_fns} ->
+        {name, Task.async(fn -> run_chain(fetch_fns, []) end)}
+      end)
 
-    tasks
-    |> await_tasks(timeout_ms)
+    tasks = Enum.map(named_tasks, fn {_name, task} -> task end)
+    yielded = Task.yield_many(tasks, timeout_ms)
+
+    named_tasks
+    |> Enum.zip(yielded)
+    |> Enum.map(fn {{name, _task}, {task, outcome}} ->
+      {name, resolve(task, outcome)}
+    end)
     |> Map.new()
   end
 
-  # Spawns one unlinked, monitored task per source and remembers the source name.
-  @spec start_source(source()) :: {term(), Task.t()}
-  defp start_source({name, fetch_fns}) when is_list(fetch_fns) do
-    task =
-      Task.Supervisor.async_nolink(
-        FallbackFetcher.TaskSupervisor,
-        fn -> run_chain(fetch_fns, []) end
-      )
+  @spec resolve(Task.t(), {:ok, result()} | {:exit, term()} | nil) :: result()
+  defp resolve(_task, {:ok, chain_result}), do: chain_result
 
-    {name, task}
+  defp resolve(_task, {:exit, reason}), do: {:error, {:all_failed, [{:exit, reason}]}}
+
+  defp resolve(task, nil) do
+    _ = Task.shutdown(task, :brutal_kill)
+    {:error, :timeout}
   end
 
-  # Collects results under the shared deadline, then shuts down whatever is still running.
-  @spec await_tasks([{term(), Task.t()}], timeout()) :: [{term(), result()}]
-  defp await_tasks(tasks, timeout_ms) do
-    tasks
-    |> Enum.map(fn {_name, task} -> task end)
-    |> Task.yield_many(timeout_ms)
-    |> Enum.zip(tasks)
-    |> Enum.map(fn {{_task, outcome}, {name, task}} ->
-      {name, resolve(outcome, task)}
-    end)
-  end
-
-  # Turns a `Task.yield_many/2` outcome into the public result tuple, killing stragglers.
-  @spec resolve({:ok, term()} | {:exit, term()} | nil, Task.t()) :: result()
-  defp resolve({:ok, result}, _task), do: result
-  defp resolve({:exit, reason}, _task), do: {:error, {:all_failed, [{:exit, reason}]}}
-
-  defp resolve(nil, task) do
-    case Task.shutdown(task, :brutal_kill) do
-      {:ok, result} -> result
-      _other -> {:error, :timeout}
-    end
-  end
-
-  # Tries the fallbacks in order, accumulating failure reasons (reversed) as it goes.
-  @spec run_chain([fetch_fun()], [term()]) :: result()
+  @spec run_chain([fetch_fn()], [term()]) :: result()
   defp run_chain([], reasons), do: {:error, {:all_failed, Enum.reverse(reasons)}}
 
-  defp run_chain([fetch_fun | rest], reasons) do
-    case safe_call(fetch_fun) do
+  defp run_chain([fun | rest], reasons) do
+    case attempt(fun) do
       {:ok, value} -> {:ok, value}
-      {:error, reason} -> run_chain(rest, [reason | reasons])
+      {:failed, reason} -> run_chain(rest, [reason | reasons])
     end
   end
 
-  # Invokes a single fallback, converting raises/throws/exits into `{:error, reason}`.
-  @spec safe_call(fetch_fun()) :: {:ok, term()} | {:error, term()}
-  defp safe_call(fetch_fun) do
-    case fetch_fun.() do
-      {:ok, value} -> {:ok, value}
-      {:error, reason} -> {:error, reason}
-      other -> {:error, {:bad_return, other}}
+  @spec attempt(fetch_fn()) :: {:ok, term()} | {:failed, term()}
+  defp attempt(fun) do
+    try do
+      case fun.() do
+        {:ok, value} -> {:ok, value}
+        {:error, reason} -> {:failed, reason}
+        other -> {:failed, {:unexpected_return, other}}
+      end
+    rescue
+      exception -> {:failed, exception}
+    catch
+      kind, value -> {:failed, {kind, value}}
     end
-  rescue
-    exception -> {:error, exception}
-  catch
-    :throw, value -> {:error, {:throw, value}}
-    :exit, reason -> {:error, {:exit, reason}}
-  end
-end
-
-defmodule FallbackFetcher.Application do
-  @moduledoc """
-  Supervision tree owning the `Task.Supervisor` that `FallbackFetcher` spawns source
-  tasks under.
-
-  Running the tasks under a supervisor (rather than bare `Task.async/1`) guarantees that
-  a killed or crashed source can never leak: the supervisor is the parent, it cleans up
-  children, and `Task.Supervisor.async_nolink/2` keeps a failing source from taking the
-  caller down with it.
-  """
-
-  use Application
-
-  @doc """
-  Starts the supervision tree, booting the task supervisor used by `FallbackFetcher`.
-  """
-  @spec start(Application.start_type(), term()) :: {:ok, pid()} | {:error, term()}
-  def start(_type, _args) do
-    children = [
-      {Task.Supervisor, name: FallbackFetcher.TaskSupervisor}
-    ]
-
-    Supervisor.start_link(children, strategy: :one_for_one, name: FallbackFetcher.Supervisor)
   end
 end

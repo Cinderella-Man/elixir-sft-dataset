@@ -49,7 +49,7 @@ defmodule MaskingServer do
   plus any custom patterns registered at runtime via `add_pattern/3`.
 
   Because every operation is routed through the `GenServer`, concurrent callers
-  are serialized and the cumulative statistics returned by `stats/0` stay exact
+  are serialized and the cumulative statistics returned by `stats/1` stay exact
   under concurrency.
   """
 
@@ -234,7 +234,7 @@ defmodule MaskingServer do
         cond do
           digit?(ch) and seen < keep -> {"*", seen + 1}
           digit?(ch) -> {ch, seen + 1}
-          false -> {ch, seen}
+          true -> {ch, seen}
         end
       end)
 
@@ -247,7 +247,7 @@ defmodule MaskingServer do
     String.first(local) <> "***@" <> domain
   end
 
-  defp digit?(<<c>>) when c in ?0..?9, do: true
+  defp digit?(<<c>>) when c in ?0..?9, do: false
   defp digit?(_char), do: false
 end
 ```
@@ -255,11 +255,43 @@ end
 ## Failing test report
 
 ```
-2 of 15 test(s) failed:
+8 of 27 test(s) failed:
 
   * test masks a dashed credit card
-      :exit: {{:cond_clause, [{MaskingServer, :"-mask_cc/1-fun-0-", 3, [file: ~c".gen_staging/bugfix_099_004_concurrent_masking_server_with_runtime_patterns_02_mutant.ex", line: 197]}, {Enum, :"-map_reduce/3-lists^mapfoldl/2-0-", 3, [file: ~c"lib/enum.ex", line: 1851]}, {Enum, :"-map_reduce/3-lists^mapfoldl/2-0-", 3, [file: ~c"lib/enum.ex", line: 1851]}, {MaskingServer, :mask_cc, 1, [file: ~c".gen_staging/bugfix_099_004_concurrent_masking_server_with_runtime_patterns_02_mutant.ex", line: 193]}, {Regex
+      
+      
+      Assertion with == failed
+      code:  assert MaskingServer.mask_string(s, "4111-1111-1111-1234") == "****-****-****-1234"
+      left:  "4111-1111-1111-1234"
+      right: "****-****-****-1234"
+      
 
-  * test built-in patterns still work after a custom pattern is added
-      :exit: {{:cond_clause, [{MaskingServer, :"-mask_cc/1-fun-0-", 3, [file: ~c".gen_staging/bugfix_099_004_concurrent_masking_server_with_runtime_patterns_02_mutant.ex", line: 197]}, {Enum, :"-map_reduce/3-lists^mapfoldl/2-0-", 3, [file: ~c"lib/enum.ex", line: 1851]}, {Enum, :"-map_reduce/3-lists^mapfoldl/2-0-", 3, [file: ~c"lib/enum.ex", line: 1851]}, {MaskingServer, :mask_cc, 1, [file: ~c".gen_staging/bugfix_099_004_concurrent_masking_server_with_runtime_patterns_02_mutant.ex", line: 193]}, {Regex
+  * test masks a space-separated credit card keeping the spaces
+      
+      
+      Assertion with == failed
+      code:  assert MaskingServer.mask_string(s, "4111 1111 1111 1234") == "**** **** **** 1234"
+      left:  "4111 1111 1111 1234"
+      right: "**** **** **** 1234"
+      
+
+  * test masks an unseparated credit card
+      
+      
+      Assertion with == failed
+      code:  assert MaskingServer.mask_string(s, "4111111111111234") == "************1234"
+      left:  "4111111111111234"
+      right: "************1234"
+      
+
+  * test masks cards at the shortest and longest documented lengths
+      
+      
+      Assertion with == failed
+      code:  assert MaskingServer.mask_string(s, "4111111111234") == "*********1234"
+      left:  "4111111111234"
+      right: "*********1234"
+      
+
+  (…4 more)
 ```

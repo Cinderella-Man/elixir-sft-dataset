@@ -84,7 +84,7 @@ defmodule ReplayEventBus do
             subs: []
           }
         },
-        monitors: %{ref => {pid, [topic, ...]}},
+        monitors: %{ref => {pid, topic}},
         clock, default_history_size, history_ttl_ms, cleanup_interval_ms
       }
 
@@ -163,23 +163,76 @@ defmodule ReplayEventBus do
     # TODO
   end
 
+  def handle_call({:unsubscribe, topic, ref}, _from, state) do
+    new_state = remove_ref_from_topic(state, topic, ref)
+    {:reply, :ok, new_state}
+  end
+
+  def handle_call({:publish, topic, event}, _from, state) do
+    now = state.clock.()
+
+    topic_state =
+      state.topics
+      |> Map.get(topic, fresh_topic(state.default_history_size))
+      |> evict_expired(now, state.history_ttl_ms)
+
+    # Deliver live to all current subscribers
+    Enum.each(topic_state.subs, fn %{pid: pid} ->
+      send(pid, {:event, topic, event})
+    end)
+
+    # Append to history, enforce count bound
+    new_history =
+      (topic_state.history ++ [{now, event}])
+      |> Enum.take(-topic_state.history_size)
+
+    new_topic_state = %{topic_state | history: new_history}
+
+    {:reply, :ok, %{state | topics: Map.put(state.topics, topic, new_topic_state)}}
+  end
+
+  def handle_call({:history, topic}, _from, state) do
+    now = state.clock.()
+
+    case Map.get(state.topics, topic) do
+      nil ->
+        {:reply, [], state}
+
+      t ->
+        fresh = evict_expired(t, now, state.history_ttl_ms)
+        events = Enum.map(fresh.history, fn {_ts, evt} -> evt end)
+        {:reply, events, %{state | topics: Map.put(state.topics, topic, fresh)}}
+    end
+  end
+
+  def handle_call({:set_history_size, topic, size}, _from, state) do
+    topic_state =
+      state.topics
+      |> Map.get(topic, fresh_topic(state.default_history_size))
+      |> Map.put(:history_size, size)
+
+    # Trim existing history to new size.
+    trimmed = Enum.take(topic_state.history, -size)
+    new_topic_state = %{topic_state | history: trimmed}
+
+    {:reply, :ok, %{state | topics: Map.put(state.topics, topic, new_topic_state)}}
+  end
+
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     case Map.pop(state.monitors, ref) do
       {nil, _} ->
         {:noreply, state}
 
-      {{_pid, topics}, monitors} ->
+      {{_pid, topic}, monitors} ->
         new_topics =
-          Enum.reduce(topics, state.topics, fn topic, acc ->
-            case Map.get(acc, topic) do
-              nil ->
-                acc
+          case Map.get(state.topics, topic) do
+            nil ->
+              state.topics
 
-              t ->
-                Map.put(acc, topic, %{t | subs: Enum.reject(t.subs, &(&1.ref == ref))})
-            end
-          end)
+            t ->
+              Map.put(state.topics, topic, %{t | subs: Enum.reject(t.subs, &(&1.ref == ref))})
+          end
 
         {:noreply, %{state | topics: new_topics, monitors: monitors}}
     end
@@ -252,20 +305,14 @@ defmodule ReplayEventBus do
         new_subs = Enum.reject(t.subs, &(&1.ref == ref))
         topics = Map.put(state.topics, topic, %{t | subs: new_subs})
 
+        # Each ref guards exactly one topic (see subscribe), so removing the
+        # subscription always retires the whole monitor.
         monitors =
-          case Map.fetch(state.monitors, ref) do
-            {:ok, {pid, topics_list}} ->
-              remaining = List.delete(topics_list, topic)
-
-              if remaining == [] do
-                Process.demonitor(ref, [:flush])
-                Map.delete(state.monitors, ref)
-              else
-                Map.put(state.monitors, ref, {pid, remaining})
-              end
-
-            :error ->
-              state.monitors
+          if Map.has_key?(state.monitors, ref) do
+            Process.demonitor(ref, [:flush])
+            Map.delete(state.monitors, ref)
+          else
+            state.monitors
           end
 
         %{state | topics: topics, monitors: monitors}

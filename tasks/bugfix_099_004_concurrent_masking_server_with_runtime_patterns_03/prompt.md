@@ -49,7 +49,7 @@ defmodule MaskingServer do
   plus any custom patterns registered at runtime via `add_pattern/3`.
 
   Because every operation is routed through the `GenServer`, concurrent callers
-  are serialized and the cumulative statistics returned by `stats/0` stay exact
+  are serialized and the cumulative statistics returned by `stats/1` stay exact
   under concurrency.
   """
 
@@ -140,7 +140,7 @@ defmodule MaskingServer do
 
     new_state =
       state
-      |> Map.update!(:keys_masked, &(&1 + ks))
+      |> Map.update!(:keys_masked, &(&1 - ks))
       |> Map.update!(:patterns_applied, &(&1 + pa))
 
     {:reply, result, new_state}
@@ -232,7 +232,7 @@ defmodule MaskingServer do
     {masked, _seen} =
       Enum.map_reduce(chars, 0, fn ch, seen ->
         cond do
-          digit?(ch) and seen <= keep -> {"*", seen + 1}
+          digit?(ch) and seen < keep -> {"*", seen + 1}
           digit?(ch) -> {ch, seen + 1}
           true -> {ch, seen}
         end
@@ -255,22 +255,31 @@ end
 ## Failing test report
 
 ```
-2 of 15 test(s) failed:
+3 of 27 test(s) failed:
 
-  * test masks a dashed credit card
+  * test stats counts keys_masked across mask calls
       
       
       Assertion with == failed
-      code:  assert MaskingServer.mask_string(s, "4111-1111-1111-1234") == "****-****-****-1234"
-      left:  "****-****-****-*234"
-      right: "****-****-****-1234"
+      code:  assert MaskingServer.stats(s).keys_masked == 3
+      left:  -3
+      right: 3
       
 
-  * test built-in patterns still work after a custom pattern is added
+  * test keys_masked stays exact under concurrent callers
       
       
       Assertion with == failed
-      code:  assert MaskingServer.mask_string(s, "4111-1111-1111-1234") == "****-****-****-1234"
-      left:  "****-****-****-*234"
-      right: "****-****-****-1234"
+      code:  assert MaskingServer.stats(s).keys_masked == 50
+      left:  -50
+      right: 50
+      
+
+  * test sensitive key matching is case-insensitive for string and atom keys
+      
+      
+      Assertion with == failed
+      code:  assert MaskingServer.stats(s).keys_masked == 2
+      left:  -2
+      right: 2
 ```

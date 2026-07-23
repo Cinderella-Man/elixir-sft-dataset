@@ -2,42 +2,35 @@ defmodule AssertHelpers do
   @moduledoc """
   Custom ExUnit assertion macros for collections and structural data.
 
-  `use AssertHelpers` inside a test module to import the macros:
+  `use AssertHelpers` inside a test module to import these macros:
 
-      defmodule MyTest do
-        use ExUnit.Case, async: true
-        use AssertHelpers
+    * `assert_subset/2` — every element of one enumerable is a member of another.
+    * `assert_has_keys/2` — a map contains every one of the given keys.
+    * `assert_sorted_by/2` — an enumerable is sorted ascending by a key function.
 
-        test "membership" do
-          assert_subset([1, 2], [1, 2, 3])
-          assert_has_keys(%{a: 1, b: 2}, [:a, :b])
-          assert_sorted_by([%{age: 20}, %{age: 30}], & &1.age)
-        end
-      end
-
-  All three assertions are macros rather than functions so that ExUnit reports the
-  file and line of the *call site* when an assertion fails. Failures are surfaced via
-  `ExUnit.Assertions.flunk/1` with messages that spell out precisely what went wrong.
+  Each helper is a macro so that ExUnit reports the failure at the call site
+  (correct file and line number) rather than inside this module. Failures are
+  surfaced through `ExUnit.Assertions.flunk/1` with a descriptive message.
   """
 
   @doc """
-  Imports the assertion macros (`assert_subset/2`, `assert_has_keys/2`,
-  `assert_sorted_by/2`) into the calling module.
+  Sets up the calling module to use the assertion macros in this module.
+
+  Invoked automatically by `use AssertHelpers`.
   """
-  @spec __using__(Keyword.t()) :: Macro.t()
+  @spec __using__(Macro.t()) :: Macro.t()
   defmacro __using__(_opts) do
     quote do
-      import AssertHelpers, only: [assert_subset: 2, assert_has_keys: 2, assert_sorted_by: 2]
+      import AssertHelpers
     end
   end
 
   @doc """
-  Asserts that every element of the enumerable `subset` also appears in `superset`.
+  Asserts that every element of `subset` is also a member of `superset`.
 
-  Membership is set-based, so duplicate elements in `subset` are irrelevant. On failure
-  the message lists exactly which elements were missing along with both collections.
-
-      assert_subset([1, 1, 2], [1, 2, 3])
+  Set membership is used, so duplicate elements in `subset` are fine. On
+  failure the message lists exactly which elements are missing and shows both
+  collections.
   """
   @spec assert_subset(Macro.t(), Macro.t()) :: Macro.t()
   defmacro assert_subset(subset, superset) do
@@ -49,11 +42,8 @@ defmodule AssertHelpers do
   @doc """
   Asserts that `map` contains every key in `keys`.
 
-  `keys` may be a list of keys or a single bare key. On failure the message lists the
-  missing keys, the expected keys, and the keys actually present on the map.
-
-      assert_has_keys(%{a: 1, b: 2}, [:a, :b])
-      assert_has_keys(%{a: 1}, :a)
+  `keys` may be a list of keys or a single bare key. On failure the message
+  lists the missing keys, the expected keys, and the keys present on the map.
   """
   @spec assert_has_keys(Macro.t(), Macro.t()) :: Macro.t()
   defmacro assert_has_keys(map, keys) do
@@ -63,14 +53,12 @@ defmodule AssertHelpers do
   end
 
   @doc """
-  Asserts that `enumerable` is sorted in ascending order by `key_fun`.
+  Asserts that `enumerable` is sorted ascending (non-strict) by `key_fun`.
 
-  The ordering is non-strict: equal adjacent keys are allowed. `key_fun` must be a
-  1-arity function applied to each element to produce its sort key. On failure the
-  message reports `index N` — the zero-based index of the first element of the first
-  out-of-order pair — along with both offending elements and their computed keys.
-
-      assert_sorted_by([%{age: 20}, %{age: 30}, %{age: 30}], & &1.age)
+  `key_fun` is a 1-arity function applied to each element to compute its sort
+  key; equal adjacent keys are allowed. On failure the message reports the
+  zero-based index of the first out-of-order pair together with both offending
+  elements and their computed keys.
   """
   @spec assert_sorted_by(Macro.t(), Macro.t()) :: Macro.t()
   defmacro assert_sorted_by(enumerable, key_fun) do
@@ -79,115 +67,83 @@ defmodule AssertHelpers do
     end
   end
 
-  @doc """
-  Runtime implementation behind `assert_subset/2`. Not intended for direct use.
-  """
-  @spec __assert_subset__(Enumerable.t(), Enumerable.t()) :: true
+  @doc false
+  @spec __assert_subset__(Enumerable.t(), Enumerable.t()) :: :ok
   def __assert_subset__(subset, superset) do
-    subset_list = Enum.to_list(subset)
-    superset_list = Enum.to_list(superset)
-    superset_set = MapSet.new(superset_list)
+    super_set = MapSet.new(superset)
 
     missing =
-      subset_list
-      |> Enum.reject(&MapSet.member?(superset_set, &1))
+      subset
+      |> Enum.filter(fn element -> not MapSet.member?(super_set, element) end)
       |> Enum.uniq()
 
     if missing == [] do
-      true
+      :ok
     else
       ExUnit.Assertions.flunk("""
-      Expected all elements of the subset to be present in the superset.
+      Expected all elements of subset to appear in superset.
 
       Missing elements: #{inspect(missing)}
-
-      Subset:   #{inspect(subset_list)}
-      Superset: #{inspect(superset_list)}
+      Subset:   #{inspect(Enum.to_list(subset))}
+      Superset: #{inspect(Enum.to_list(superset))}
       """)
     end
   end
 
-  @doc """
-  Runtime implementation behind `assert_has_keys/2`. Not intended for direct use.
-  """
-  @spec __assert_has_keys__(map(), list() | term()) :: true
-  def __assert_has_keys__(map, keys) when is_map(map) do
+  @doc false
+  @spec __assert_has_keys__(map(), term()) :: :ok
+  def __assert_has_keys__(map, keys) do
     expected = List.wrap(keys)
-    present = Map.keys(map)
-    missing = Enum.reject(expected, &Map.has_key?(map, &1))
+    missing = Enum.filter(expected, fn key -> not Map.has_key?(map, key) end)
 
     if missing == [] do
-      true
+      :ok
     else
       ExUnit.Assertions.flunk("""
-      Expected the map to contain all of the given keys.
+      Expected map to contain all keys.
 
       Missing keys:  #{inspect(missing)}
       Expected keys: #{inspect(expected)}
-      Actual keys:   #{inspect(present)}
-
-      Map: #{inspect(map)}
+      Present keys:  #{inspect(Map.keys(map))}
       """)
     end
   end
 
-  def __assert_has_keys__(other, _keys) do
-    ExUnit.Assertions.flunk("""
-    Expected a map, but got: #{inspect(other)}
-    """)
-  end
-
-  @doc """
-  Runtime implementation behind `assert_sorted_by/2`. Not intended for direct use.
-  """
-  @spec __assert_sorted_by__(Enumerable.t(), (term() -> term())) :: true
-  def __assert_sorted_by__(enumerable, key_fun) when is_function(key_fun, 1) do
+  @doc false
+  @spec __assert_sorted_by__(Enumerable.t(), (term() -> term())) :: :ok
+  def __assert_sorted_by__(enumerable, key_fun) do
     list = Enum.to_list(enumerable)
 
-    case first_unsorted_index(list, key_fun) do
-      nil ->
-        true
+    case first_out_of_order(list, key_fun) do
+      :ok ->
+        :ok
 
-      index ->
-        left = Enum.at(list, index)
-        right = Enum.at(list, index + 1)
-
+      {:error, index, left, right} ->
         ExUnit.Assertions.flunk("""
-        Expected the enumerable to be sorted in ascending order by the given key function.
+        Expected enumerable to be sorted in ascending order by key_fun.
 
-        Out-of-order pair at index #{index} (element #{index} sorts after element #{index + 1}).
-
-        Element at index #{index}: #{inspect(left)}
-          key: #{inspect(key_fun.(left))}
-
-        Element at index #{index + 1}: #{inspect(right)}
-          key: #{inspect(key_fun.(right))}
-
-        Enumerable: #{inspect(list)}
+        First out-of-order pair at index #{index}.
+        Element[#{index}]:     #{inspect(left)} (key: #{inspect(key_fun.(left))})
+        Element[#{index + 1}]: #{inspect(right)} (key: #{inspect(key_fun.(right))})
         """)
     end
   end
 
-  def __assert_sorted_by__(_enumerable, key_fun) do
-    ExUnit.Assertions.flunk("""
-    Expected a 1-arity key function, but got: #{inspect(key_fun)}
-    """)
-  end
+  @spec first_out_of_order([term()], (term() -> term())) ::
+          :ok | {:error, non_neg_integer(), term(), term()}
+  defp first_out_of_order([], _key_fun), do: :ok
+  defp first_out_of_order([_single], _key_fun), do: :ok
 
-  @spec first_unsorted_index([term()], (term() -> term())) :: non_neg_integer() | nil
-  defp first_unsorted_index(list, key_fun) do
+  defp first_out_of_order(list, key_fun) do
     list
-    |> Enum.map(key_fun)
     |> Enum.chunk_every(2, 1, :discard)
-    |> Enum.find_index(fn [left_key, right_key] -> compare(left_key, right_key) == :gt end)
-  end
-
-  @spec compare(term(), term()) :: :lt | :eq | :gt
-  defp compare(left, right) do
-    cond do
-      left < right -> :lt
-      left > right -> :gt
-      true -> :eq
-    end
+    |> Enum.with_index()
+    |> Enum.find_value(:ok, fn {[left, right], index} ->
+      if key_fun.(left) <= key_fun.(right) do
+        false
+      else
+        {:error, index, left, right}
+      end
+    end)
   end
 end

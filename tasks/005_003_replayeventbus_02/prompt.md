@@ -49,7 +49,7 @@ defmodule ReplayEventBus do
             subs: []
           }
         },
-        monitors: %{ref => {pid, [topic, ...]}},
+        monitors: %{ref => {pid, topic}},
         clock, default_history_size, history_ttl_ms, cleanup_interval_ms
       }
 
@@ -76,6 +76,7 @@ defmodule ReplayEventBus do
     GenServer.start_link(__MODULE__, opts, server_opts)
   end
 
+  @doc "Subscribes `pid` to `topic`, optionally replaying buffered events. Returns `{:ok, ref}`."
   @spec subscribe(GenServer.server(), String.t(), pid(), keyword()) :: {:ok, reference()}
   def subscribe(server, topic, pid, opts \\ [])
       when is_binary(topic) and is_pid(pid) and is_list(opts) do
@@ -143,10 +144,9 @@ defmodule ReplayEventBus do
       | subs: topic_state.subs ++ [%{ref: monitor_ref, pid: pid}]
     }
 
-    monitors =
-      Map.update(state.monitors, monitor_ref, {pid, [topic]}, fn {p, topics} ->
-        {p, Enum.uniq([topic | topics])}
-      end)
+    # A fresh `Process.monitor/1` ref per subscribe: the key can never
+    # pre-exist, and each ref guards exactly the one topic it was minted for.
+    monitors = Map.put(state.monitors, monitor_ref, {pid, topic})
 
     new_state = %{
       state
@@ -218,17 +218,15 @@ defmodule ReplayEventBus do
       {nil, _} ->
         {:noreply, state}
 
-      {{_pid, topics}, monitors} ->
+      {{_pid, topic}, monitors} ->
         new_topics =
-          Enum.reduce(topics, state.topics, fn topic, acc ->
-            case Map.get(acc, topic) do
-              nil ->
-                acc
+          case Map.get(state.topics, topic) do
+            nil ->
+              state.topics
 
-              t ->
-                Map.put(acc, topic, %{t | subs: Enum.reject(t.subs, &(&1.ref == ref))})
-            end
-          end)
+            t ->
+              Map.put(state.topics, topic, %{t | subs: Enum.reject(t.subs, &(&1.ref == ref))})
+          end
 
         {:noreply, %{state | topics: new_topics, monitors: monitors}}
     end
@@ -259,8 +257,7 @@ defmodule ReplayEventBus do
   # Replay selection
   # ---------------------------------------------------------------------------
 
-  # history is oldest-first list of {ts, event}.
-  defp replay_events(history, replay, pid, topic) do
+  defp replay_events(_history, :none, _pid, _topic) do
     # TODO
   end
 
@@ -290,20 +287,14 @@ defmodule ReplayEventBus do
         new_subs = Enum.reject(t.subs, &(&1.ref == ref))
         topics = Map.put(state.topics, topic, %{t | subs: new_subs})
 
+        # Each ref guards exactly one topic (see subscribe), so removing the
+        # subscription always retires the whole monitor.
         monitors =
-          case Map.fetch(state.monitors, ref) do
-            {:ok, {pid, topics_list}} ->
-              remaining = List.delete(topics_list, topic)
-
-              if remaining == [] do
-                Process.demonitor(ref, [:flush])
-                Map.delete(state.monitors, ref)
-              else
-                Map.put(state.monitors, ref, {pid, remaining})
-              end
-
-            :error ->
-              state.monitors
+          if Map.has_key?(state.monitors, ref) do
+            Process.demonitor(ref, [:flush])
+            Map.delete(state.monitors, ref)
+          else
+            state.monitors
           end
 
         %{state | topics: topics, monitors: monitors}

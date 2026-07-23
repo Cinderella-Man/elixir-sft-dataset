@@ -95,7 +95,7 @@ defmodule PasswordPolicy do
   # Levenshtein distance — iterative two-row dynamic programming.
   # ---------------------------------------------------------------------------
 
-  def levenshtein(a, b) when is_binary(a) and is_binary(b) do
+  defp levenshtein(a, b) when is_binary(a) and is_binary(b) do
     a_graphs = String.graphemes(a)
     b_graphs = String.graphemes(b)
 

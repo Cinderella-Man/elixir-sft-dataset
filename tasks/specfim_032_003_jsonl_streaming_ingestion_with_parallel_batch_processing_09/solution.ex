@@ -1,1 +1,1 @@
-  @spec insert_parallel(repo(), schema(), [[map()]], map(), stats()) :: stats()
+  @spec insert_parallel(repo(), schema(), Enumerable.t(), map(), stats()) :: stats()

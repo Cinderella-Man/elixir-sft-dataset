@@ -81,7 +81,7 @@ defmodule ReplayEventBus do
             subs: []
           }
         },
-        monitors: %{ref => {pid, [topic, ...]}},
+        monitors: %{ref => {pid, topic}},
         clock, default_history_size, history_ttl_ms, cleanup_interval_ms
       }
 
@@ -176,10 +176,9 @@ defmodule ReplayEventBus do
       | subs: topic_state.subs ++ [%{ref: monitor_ref, pid: pid}]
     }
 
-    monitors =
-      Map.update(state.monitors, monitor_ref, {pid, [topic]}, fn {p, topics} ->
-        {p, Enum.uniq([topic | topics])}
-      end)
+    # A fresh `Process.monitor/1` ref per subscribe: the key can never
+    # pre-exist, and each ref guards exactly the one topic it was minted for.
+    monitors = Map.put(state.monitors, monitor_ref, {pid, topic})
 
     new_state = %{
       state
@@ -249,6 +248,27 @@ defmodule ReplayEventBus do
     # TODO
   end
 
+  def handle_info(:cleanup, state) do
+    now = state.clock.()
+
+    new_topics =
+      Enum.reduce(state.topics, %{}, fn {name, t}, acc ->
+        fresh = evict_expired(t, now, state.history_ttl_ms)
+
+        # Drop topics with empty history AND no subscribers.
+        if fresh.history == [] and fresh.subs == [] do
+          acc
+        else
+          Map.put(acc, name, fresh)
+        end
+      end)
+
+    schedule_cleanup(state.cleanup_interval_ms)
+    {:noreply, %{state | topics: new_topics}}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
   # ---------------------------------------------------------------------------
   # Replay selection
   # ---------------------------------------------------------------------------
@@ -295,20 +315,14 @@ defmodule ReplayEventBus do
         new_subs = Enum.reject(t.subs, &(&1.ref == ref))
         topics = Map.put(state.topics, topic, %{t | subs: new_subs})
 
+        # Each ref guards exactly one topic (see subscribe), so removing the
+        # subscription always retires the whole monitor.
         monitors =
-          case Map.fetch(state.monitors, ref) do
-            {:ok, {pid, topics_list}} ->
-              remaining = List.delete(topics_list, topic)
-
-              if remaining == [] do
-                Process.demonitor(ref, [:flush])
-                Map.delete(state.monitors, ref)
-              else
-                Map.put(state.monitors, ref, {pid, remaining})
-              end
-
-            :error ->
-              state.monitors
+          if Map.has_key?(state.monitors, ref) do
+            Process.demonitor(ref, [:flush])
+            Map.delete(state.monitors, ref)
+          else
+            state.monitors
           end
 
         %{state | topics: topics, monitors: monitors}

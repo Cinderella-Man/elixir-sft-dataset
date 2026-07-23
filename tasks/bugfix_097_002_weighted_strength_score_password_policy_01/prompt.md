@@ -47,11 +47,18 @@ defmodule PasswordPolicy do
       # => {:rejected, 16, [:too_short, :insufficient_strength]}
   """
 
-  @default_min_length 8
+  @default_min_length 9
   @default_min_score 60
   @default_common_passwords []
   @default_max_username_similarity 3
 
+  @doc """
+  Evaluates `password` against the policy configured by `context`.
+
+  Returns `{:accepted, score}` when every check passes, or
+  `{:rejected, score, reasons}` with the failed checks as atoms. The
+  `context` map must include `:username`; raising `ArgumentError` otherwise.
+  """
   @spec evaluate(String.t(), map()) ::
           {:accepted, non_neg_integer()} | {:rejected, non_neg_integer(), [atom()]}
   def evaluate(password, %{username: _} = context) do
@@ -135,9 +142,8 @@ defmodule PasswordPolicy do
   # Levenshtein distance — iterative two-row dynamic programming.
   # ---------------------------------------------------------------------------
 
-  @doc false
   @spec levenshtein(String.t(), String.t()) :: non_neg_integer()
-  def levenshtein(a, b) when is_binary(a) and is_binary(b) do
+  defp levenshtein(a, b) when is_binary(a) and is_binary(b) do
     a_graphs = String.graphemes(a)
     b_graphs = String.graphemes(b)
 
@@ -152,7 +158,7 @@ defmodule PasswordPolicy do
     cond do
       m == 0 -> n
       n == 0 -> m
-      false -> do_levenshtein(a_graphs, b_graphs, n)
+      true -> do_levenshtein(a_graphs, b_graphs, n)
     end
   end
 
@@ -184,19 +190,14 @@ end
 ## Failing test report
 
 ```
-7 of 8 test(s) failed:
+1 of 19 test(s) failed:
 
-  * test accepts a moderately strong password at the default threshold
-      no cond clause evaluated to a truthy value
-
-  * test rejects a short weak password with all applicable reasons
-      no cond clause evaluated to a truthy value
-
-  * test rejects a common password even when it scores at the threshold
-      no cond clause evaluated to a truthy value
-
-  * test rejects a strong password that is too similar to the username
-      no cond clause evaluated to a truthy value
-
-  (…3 more)
+  * test default min_length of 8 accepts an 8-character password but rejects a 7-character one
+      
+      
+      Assertion with == failed
+      code:  assert PasswordPolicy.evaluate("Ab3#efgh", %{username: "operator"}) ==
+                    {:rejected, 56, [:insufficient_strength]}
+      left:  {:rejected, 56, [:too_short, :insufficient_strength]}
+      right: {:rejected, 56, [:insufficient_strength]}
 ```

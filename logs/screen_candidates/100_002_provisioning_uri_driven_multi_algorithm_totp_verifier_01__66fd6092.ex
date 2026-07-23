@@ -1,77 +1,50 @@
 defmodule AuthenticatorURI do
   @moduledoc """
-  Parses `otpauth://totp/...` provisioning URIs into validated configurations and
-  generates/verifies TOTP codes from them.
+  Parse an `otpauth://totp/...` provisioning URI into a validated configuration
+  and then generate or verify TOTP codes from that configuration.
 
-  This module goes the opposite direction from a typical TOTP generator: rather than
-  *building* a provisioning URI, it *consumes* one. An authenticator app must honour
-  whatever the server encoded in the QR code — SHA1/SHA256/SHA512, 6/7/8 digits, and
-  periods other than the customary 30 seconds — so every OTP parameter is taken from
-  the URI instead of a hard-coded constant.
+  This module goes the *opposite* direction from a typical TOTP generator: rather
+  than building a provisioning URI from hard-coded parameters, it consumes a URI
+  that some server placed in a QR code and honours *its* parameters. That means
+  the hash algorithm (SHA1/SHA256/SHA512), the number of digits (6/7/8) and the
+  time step (period) all come from the URI — never from constants baked into this
+  code.
 
-  The implementation relies only on the OTP standard library (`:crypto`) and includes
-  its own RFC 4648 base32 decoder.
-
-  ## Example
-
-      iex> {:ok, config} = AuthenticatorURI.parse("otpauth://totp/ACME:alice?secret=JBSWY3DPEHPK3PXP")
-      iex> config.algorithm
-      :sha1
-      iex> config.digits
-      6
-      iex> AuthenticatorURI.code_at(config, 59)
-      "282760"
-
+  Only the OTP standard library is used. RFC 4648 base32 decoding is implemented
+  here directly; HMAC comes from `:crypto`.
   """
 
-  @type algorithm :: :sha1 | :sha256 | :sha512
+  import Bitwise
 
   @type config :: %{
           issuer: String.t() | nil,
           account: String.t(),
           secret: String.t(),
-          algorithm: algorithm(),
+          algorithm: :sha1 | :sha256 | :sha512,
           digits: 6 | 7 | 8,
           period: pos_integer()
         }
 
-  @type error ::
-          :invalid_scheme
-          | :unsupported_type
-          | :missing_label
-          | :missing_secret
-          | :invalid_secret
-          | :issuer_mismatch
-          | :unsupported_algorithm
-          | :invalid_digits
-          | :invalid_period
-
-  @base32_alphabet ~c"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
-
   @doc """
-  Parses an `otpauth://totp/...` provisioning URI into a validated configuration map.
+  Parse an `otpauth://totp/...` URI into a validated `t:config/0` map.
 
-  Returns `{:ok, config}` on success, or `{:error, reason}` where `reason` is one of
-  `:invalid_scheme`, `:unsupported_type`, `:missing_label`, `:missing_secret`,
-  `:invalid_secret`, `:issuer_mismatch`, `:unsupported_algorithm`, `:invalid_digits`
-  or `:invalid_period`.
-
-  Defaults follow the Key Uri Format: `SHA1`, 6 digits, and a 30 second period.
+  Returns `{:ok, config}` on success, or `{:error, reason}` where `reason` is an
+  atom describing the first problem encountered. A non-binary argument yields
+  `{:error, :invalid_scheme}`.
   """
-  @spec parse(term()) :: {:ok, config()} :: {:error, error()}
-  @spec parse(term()) :: {:ok, config()} | {:error, error()}
+  @spec parse(term()) :: {:ok, config()} | {:error, atom()}
   def parse(uri) when is_binary(uri) do
     parsed = URI.parse(uri)
 
-    with :ok <- validate_scheme(parsed.scheme),
-         :ok <- validate_type(parsed.host),
-         {:ok, label_issuer, account} <- parse_label(parsed.path),
-         params = URI.decode_query(parsed.query || ""),
-         {:ok, secret} <- parse_secret(params),
-         {:ok, issuer} <- parse_issuer(label_issuer, params),
-         {:ok, algorithm} <- parse_algorithm(params),
-         {:ok, digits} <- parse_digits(params),
-         {:ok, period} <- parse_period(params) do
+    with :ok <- check_scheme(parsed),
+         :ok <- check_type(parsed),
+         {:ok, label_issuer, account} <- parse_label(get_label(parsed)),
+         params = decode_params(parsed),
+         {:ok, secret} <- validate_secret(params),
+         {:ok, issuer} <- resolve_issuer(label_issuer, Map.get(params, "issuer")),
+         {:ok, algorithm} <- validate_algorithm(params),
+         {:ok, digits} <- validate_digits(params),
+         {:ok, period} <- validate_period(params) do
       {:ok,
        %{
          issuer: issuer,
@@ -87,88 +60,90 @@ defmodule AuthenticatorURI do
   def parse(_uri), do: {:error, :invalid_scheme}
 
   @doc """
-  Returns the OTP code for `config` at the given UNIX timestamp, in seconds.
+  Return the TOTP code for `config` at the given UNIX timestamp (in seconds).
 
-  The code is a zero-padded decimal string of exactly `config.digits` characters,
-  computed per RFC 6238 (time step) and RFC 4226 (dynamic truncation).
+  The result is a string zero-padded on the left to exactly `config.digits`
+  characters, following RFC 6238 / RFC 4226.
   """
   @spec code_at(config(), integer()) :: String.t()
-  def code_at(%{period: period, digits: digits} = config, unix_time)
-      when is_integer(unix_time) do
+  def code_at(config, unix_time) do
+    %{secret: secret, algorithm: algorithm, digits: digits, period: period} = config
+
     step = div(unix_time, period)
     counter = <<step::unsigned-big-integer-size(64)>>
-    key = base32_decode(config.secret)
-    hmac = :crypto.mac(:hmac, hash_for(config.algorithm), key, counter)
+    key = base32_decode(secret)
+    hmac = :crypto.mac(:hmac, hash_algorithm(algorithm), key, counter)
 
-    hmac
-    |> dynamic_truncate()
-    |> rem(pow10(digits))
+    offset = :binary.at(hmac, byte_size(hmac) - 1) &&& 0x0F
+    <<truncated::unsigned-big-integer-size(32)>> = binary_part(hmac, offset, 4)
+
+    code = (truncated &&& 0x7FFFFFFF) |> rem(Integer.pow(10, digits))
+
+    code
     |> Integer.to_string()
     |> String.pad_leading(digits, "0")
   end
 
   @doc """
-  Returns how many seconds the code current at `unix_time` remains valid.
+  Return how many seconds the current code stays valid.
 
-  This is `config.period - rem(unix_time, config.period)`, so on an exact period
-  boundary the full period is returned.
+  This is `config.period - rem(unix_time, config.period)`; on an exact period
+  boundary it returns the full period.
   """
-  @spec seconds_remaining(config(), integer()) :: pos_integer()
-  def seconds_remaining(%{period: period}, unix_time) when is_integer(unix_time) do
+  @spec seconds_remaining(config(), integer()) :: integer()
+  def seconds_remaining(%{period: period}, unix_time) do
     period - rem(unix_time, period)
   end
 
   @doc """
-  Returns `true` when `code` matches the code for the exact step containing `unix_time`.
+  Verify `code` against the code for the *exact* current step.
 
-  There is no drift window: codes from the previous or next step are rejected. `code`
-  may be a string or an integer; it is zero-padded on the left to `config.digits`
-  characters before being compared in constant time against `code_at/2`.
+  Returns `true` only on a match; there is no drift window, so codes from the
+  previous or next step are rejected. `code` may be a string or an integer and is
+  normalized by zero-padding on the left to `config.digits` characters, then
+  compared using a constant-time (non-short-circuiting) byte comparison.
   """
   @spec verify(config(), String.t() | integer(), integer()) :: boolean()
-  def verify(%{digits: digits} = config, code, unix_time) when is_integer(unix_time) do
-    candidate =
-      code
-      |> to_string()
-      |> String.pad_leading(digits, "0")
-
-    constant_time_equal?(candidate, code_at(config, unix_time))
+  def verify(config, code, unix_time) do
+    expected = code_at(config, unix_time)
+    provided = normalize_code(code, config.digits)
+    secure_compare(provided, expected)
   end
 
-  # -- Parsing helpers -------------------------------------------------------------
+  # --- Parsing helpers -----------------------------------------------------
 
-  @spec validate_scheme(String.t() | nil) :: :ok | {:error, error()}
-  defp validate_scheme(scheme) when is_binary(scheme) do
-    if String.downcase(scheme) == "otpauth", do: :ok, else: {:error, :invalid_scheme}
+  defp check_scheme(%URI{scheme: scheme}) when is_binary(scheme) do
+    if String.downcase(scheme) == "otpauth" do
+      :ok
+    else
+      {:error, :invalid_scheme}
+    end
   end
 
-  defp validate_scheme(_scheme), do: {:error, :invalid_scheme}
+  defp check_scheme(_parsed), do: {:error, :invalid_scheme}
 
-  @spec validate_type(String.t() | nil) :: :ok | {:error, error()}
-  defp validate_type(host) when is_binary(host) do
-    if String.downcase(host) == "totp", do: :ok, else: {:error, :unsupported_type}
+  defp check_type(%URI{host: host}) when is_binary(host) do
+    if String.downcase(host) == "totp" do
+      :ok
+    else
+      {:error, :unsupported_type}
+    end
   end
 
-  defp validate_type(_host), do: {:error, :unsupported_type}
+  defp check_type(_parsed), do: {:error, :unsupported_type}
 
-  @spec parse_label(String.t() | nil) ::
-          {:ok, String.t() | nil, String.t()} | {:error, error()}
-  defp parse_label(path) when is_binary(path) do
-    label =
-      path
-      |> String.replace_prefix("/", "")
-      |> URI.decode()
+  defp get_label(%URI{path: "/" <> rest}), do: URI.decode(rest)
+  defp get_label(_parsed), do: ""
 
+  defp parse_label(""), do: {:error, :missing_label}
+
+  defp parse_label(label) do
     case String.split(label, ":", parts: 2) do
-      [""] ->
-        {:error, :missing_label}
-
       [account] ->
-        {:ok, nil, account}
+        if account == "", do: {:error, :missing_label}, else: {:ok, nil, account}
 
-      [issuer, account] ->
-        issuer = String.trim(issuer)
-        account = strip_leading_space(account)
+      [issuer, rest] ->
+        account = strip_leading_space(rest)
 
         if issuer == "" or account == "" do
           {:error, :missing_label}
@@ -178,53 +153,53 @@ defmodule AuthenticatorURI do
     end
   end
 
-  defp parse_label(_path), do: {:error, :missing_label}
-
-  # A single optional space directly after the colon is permitted by the spec.
-  @spec strip_leading_space(String.t()) :: String.t()
   defp strip_leading_space(" " <> rest), do: rest
-  defp strip_leading_space(account), do: account
+  defp strip_leading_space(rest), do: rest
 
-  @spec parse_secret(map()) :: {:ok, String.t()} | {:error, error()}
-  defp parse_secret(%{"secret" => raw}) when is_binary(raw) do
-    normalized =
-      raw
-      |> String.replace(~r/[\s=]/u, "")
-      |> String.upcase()
+  defp decode_params(%URI{query: nil}), do: %{}
+  defp decode_params(%URI{query: query}), do: URI.decode_query(query)
 
-    if normalized != "" and valid_base32?(normalized) do
-      {:ok, normalized}
-    else
-      {:error, :invalid_secret}
+  defp validate_secret(params) do
+    case Map.get(params, "secret") do
+      nil ->
+        {:error, :missing_secret}
+
+      raw ->
+        normalized =
+          raw
+          |> String.replace(~r/[\s=]/, "")
+          |> String.upcase()
+
+        if normalized != "" and Regex.match?(~r/\A[A-Z2-7]+\z/, normalized) do
+          {:ok, normalized}
+        else
+          {:error, :invalid_secret}
+        end
     end
   end
 
-  defp parse_secret(_params), do: {:error, :missing_secret}
+  defp resolve_issuer(label_issuer, param_issuer) do
+    cond do
+      is_binary(label_issuer) and is_binary(param_issuer) ->
+        if label_issuer == param_issuer do
+          {:ok, label_issuer}
+        else
+          {:error, :issuer_mismatch}
+        end
 
-  @spec valid_base32?(String.t()) :: boolean()
-  defp valid_base32?(secret) do
-    secret
-    |> String.to_charlist()
-    |> Enum.all?(&(&1 in @base32_alphabet))
-  end
+      is_binary(label_issuer) ->
+        {:ok, label_issuer}
 
-  @spec parse_issuer(String.t() | nil, map()) :: {:ok, String.t() | nil} | {:error, error()}
-  defp parse_issuer(label_issuer, params) do
-    case {label_issuer, Map.get(params, "issuer")} do
-      {nil, nil} -> {:ok, nil}
-      {nil, param} -> {:ok, param}
-      {label, nil} -> {:ok, label}
-      {same, same} -> {:ok, same}
-      {_label, _param} -> {:error, :issuer_mismatch}
+      is_binary(param_issuer) ->
+        {:ok, param_issuer}
+
+      true ->
+        {:ok, nil}
     end
   end
 
-  @spec parse_algorithm(map()) :: {:ok, algorithm()} | {:error, error()}
-  defp parse_algorithm(params) do
-    params
-    |> Map.get("algorithm", "SHA1")
-    |> String.upcase()
-    |> case do
+  defp validate_algorithm(params) do
+    case params |> Map.get("algorithm", "SHA1") |> String.upcase() do
       "SHA1" -> {:ok, :sha1}
       "SHA256" -> {:ok, :sha256}
       "SHA512" -> {:ok, :sha512}
@@ -232,8 +207,7 @@ defmodule AuthenticatorURI do
     end
   end
 
-  @spec parse_digits(map()) :: {:ok, 6 | 7 | 8} | {:error, error()}
-  defp parse_digits(params) do
+  defp validate_digits(params) do
     case Map.get(params, "digits", "6") do
       "6" -> {:ok, 6}
       "7" -> {:ok, 7}
@@ -242,62 +216,81 @@ defmodule AuthenticatorURI do
     end
   end
 
-  @spec parse_period(map()) :: {:ok, pos_integer()} | {:error, error()}
-  defp parse_period(params) do
-    case Integer.parse(Map.get(params, "period", "30")) do
-      {period, ""} when period > 0 -> {:ok, period}
-      _other -> {:error, :invalid_period}
+  defp validate_period(params) do
+    raw = Map.get(params, "period", "30")
+
+    case Integer.parse(raw) do
+      {value, ""} when value > 0 ->
+        if Integer.to_string(value) == raw do
+          {:ok, value}
+        else
+          {:error, :invalid_period}
+        end
+
+      _other ->
+        {:error, :invalid_period}
     end
   end
 
-  # -- OTP helpers -----------------------------------------------------------------
+  # --- Code generation helpers --------------------------------------------
 
-  @spec hash_for(algorithm()) :: :sha | :sha256 | :sha512
-  defp hash_for(:sha1), do: :sha
-  defp hash_for(:sha256), do: :sha256
-  defp hash_for(:sha512), do: :sha512
+  defp hash_algorithm(:sha1), do: :sha
+  defp hash_algorithm(:sha256), do: :sha256
+  defp hash_algorithm(:sha512), do: :sha512
 
-  @spec dynamic_truncate(binary()) :: non_neg_integer()
-  defp dynamic_truncate(hmac) do
-    offset = :binary.last(hmac) &&& 0x0F
-    <<_skip::binary-size(offset), first, rest::binary-size(3), _tail::binary>> = hmac
-    <<value::unsigned-big-integer-size(32)>> = <<first &&& 0x7F, rest::binary>>
-    value
+  defp normalize_code(code, digits) when is_integer(code) do
+    code
+    |> Integer.to_string()
+    |> String.pad_leading(digits, "0")
   end
 
-  @spec pow10(pos_integer()) :: pos_integer()
-  defp pow10(exponent), do: Integer.pow(10, exponent)
-
-  @spec constant_time_equal?(binary(), binary()) :: boolean()
-  defp constant_time_equal?(left, right)
-       when byte_size(left) == byte_size(right) do
-    left
-    |> :binary.bin_to_list()
-    |> Enum.zip(:binary.bin_to_list(right))
-    |> Enum.reduce(0, fn {a, b}, acc -> Bitwise.bor(acc, Bitwise.bxor(a, b)) end)
-    |> Kernel.==(0)
+  defp normalize_code(code, digits) when is_binary(code) do
+    String.pad_leading(code, digits, "0")
   end
 
-  defp constant_time_equal?(_left, _right), do: false
-
-  # -- RFC 4648 base32 decoding ----------------------------------------------------
-
-  @spec base32_decode(String.t()) :: binary()
+  # RFC 4648 base32 decoding (uppercase alphabet A-Z plus 2-7, no padding).
+  # Leftover bits that do not complete a whole byte are discarded.
   defp base32_decode(secret) do
-    bits =
+    {_acc, _bits, bytes} =
       secret
       |> String.to_charlist()
-      |> Enum.reduce(<<>>, fn char, acc ->
-        <<acc::bitstring, base32_value(char)::size(5)>>
-      end)
+      |> Enum.reduce({0, 0, []}, &base32_step/2)
 
-    # Leftover bits that do not complete a byte are discarded.
-    usable = div(bit_size(bits), 8) * 8
-    <<bytes::binary-size(div(usable, 8)), _rest::bitstring>> = bits
     bytes
+    |> Enum.reverse()
+    |> :erlang.list_to_binary()
   end
 
-  @spec base32_value(char()) :: 0..31
-  defp base32_value(char) when char >= ?A and char <= ?Z, do: char - ?A
-  defp base32_value(char) when char >= ?2 and char <= ?7, do: char - ?2 + 26
+  defp base32_step(char, {acc, bits, bytes}) do
+    acc = (acc <<< 5) ||| base32_value(char)
+    bits = bits + 5
+
+    if bits >= 8 do
+      shift = bits - 8
+      byte = (acc >>> shift) &&& 0xFF
+      acc = acc &&& ((1 <<< shift) - 1)
+      {acc, shift, [byte | bytes]}
+    else
+      {acc, bits, bytes}
+    end
+  end
+
+  defp base32_value(char) when char in ?A..?Z, do: char - ?A
+  defp base32_value(char) when char in ?2..?7, do: char - ?2 + 26
+
+  # Constant-time comparison: fold every byte with bitwise OR of XOR diffs so no
+  # byte position can short-circuit the result. Unequal lengths fail up front.
+  defp secure_compare(a, b) when byte_size(a) == byte_size(b) do
+    a_bytes = :binary.bin_to_list(a)
+    b_bytes = :binary.bin_to_list(b)
+
+    diff =
+      a_bytes
+      |> Enum.zip(b_bytes)
+      |> Enum.reduce(0, fn {x, y}, acc -> bor(acc, bxor(x, y)) end)
+
+    diff == 0
+  end
+
+  defp secure_compare(_a, _b), do: false
 end

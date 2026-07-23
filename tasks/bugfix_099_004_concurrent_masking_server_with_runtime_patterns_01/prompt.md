@@ -48,7 +48,7 @@ defmodule MaskingServer do
   plus any custom patterns registered at runtime via `add_pattern/3`.
 
   Because every operation is routed through the `GenServer`, concurrent callers
-  are serialized and the cumulative statistics returned by `stats/0` stay exact
+  are serialized and the cumulative statistics returned by `stats/1` stay exact
   under concurrency.
   """
 
@@ -130,7 +130,7 @@ defmodule MaskingServer do
       |> MapSet.new()
 
     state = %{sensitive: sensitive, patterns: [], keys_masked: 0, patterns_applied: 0}
-    {:error, state}
+    {:ok, state}
   end
 
   @impl true
@@ -233,7 +233,7 @@ defmodule MaskingServer do
         cond do
           digit?(ch) and seen < keep -> {"*", seen + 1}
           digit?(ch) -> {ch, seen + 1}
-          true -> {ch, seen}
+          false -> {ch, seen}
         end
       end)
 
@@ -254,23 +254,19 @@ end
 ## Failing test report
 
 ```
-15 of 15 test(s) failed:
+7 of 27 test(s) failed:
 
-  * test masks sensitive keys in a flat map
-      failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.
-      Reason: %{sensitive: MapSet.new(["password", "ssn", "token"]), keys_masked: 0, patterns_applied: 0, patterns: []}
+  * test masks a dashed credit card
+      :exit: {{:cond_clause, [{MaskingServer, :"-mask_cc/1-fun-0-", 3, [file: ~c".gen_staging/bugfix_099_004_concurrent_masking_server_with_runtime_patterns_01_mutant.ex", line: 197]}, {Enum, :"-map_reduce/3-lists^mapfoldl/2-0-", 3, [file: ~c"lib/enum.ex", line: 1851]}, {Enum, :"-map_reduce/3-lists^mapfoldl/2-0-", 3, [file: ~c"lib/enum.ex", line: 1851]}, {MaskingServer, :mask_cc, 1, [file: ~c".gen_staging/bugfix_099_004_concurrent_masking_server_with_runtime_patterns_01_mutant.ex", line: 193]}, {Regex
 
-  * test masks sensitive keys regardless of value type
-      failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.
-      Reason: %{sensitive: MapSet.new(["password", "ssn", "token"]), keys_masked: 0, patterns_applied: 0, patterns: []}
+  * test masks a space-separated credit card keeping the spaces
+      :exit: {{:cond_clause, [{MaskingServer, :"-mask_cc/1-fun-0-", 3, [file: ~c".gen_staging/bugfix_099_004_concurrent_masking_server_with_runtime_patterns_01_mutant.ex", line: 197]}, {Enum, :"-map_reduce/3-lists^mapfoldl/2-0-", 3, [file: ~c"lib/enum.ex", line: 1851]}, {Enum, :"-map_reduce/3-lists^mapfoldl/2-0-", 3, [file: ~c"lib/enum.ex", line: 1851]}, {MaskingServer, :mask_cc, 1, [file: ~c".gen_staging/bugfix_099_004_concurrent_masking_server_with_runtime_patterns_01_mutant.ex", line: 193]}, {Regex
 
-  * test recursively masks nested maps
-      failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.
-      Reason: %{sensitive: MapSet.new(["password", "ssn", "token"]), keys_masked: 0, patterns_applied: 0, patterns: []}
+  * test masks a 15-digit card with uneven hyphen groups
+      :exit: {{:cond_clause, [{MaskingServer, :"-mask_cc/1-fun-0-", 3, [file: ~c".gen_staging/bugfix_099_004_concurrent_masking_server_with_runtime_patterns_01_mutant.ex", line: 197]}, {Enum, :"-map_reduce/3-lists^mapfoldl/2-0-", 3, [file: ~c"lib/enum.ex", line: 1851]}, {Enum, :"-map_reduce/3-lists^mapfoldl/2-0-", 3, [file: ~c"lib/enum.ex", line: 1851]}, {MaskingServer, :mask_cc, 1, [file: ~c".gen_staging/bugfix_099_004_concurrent_masking_server_with_runtime_patterns_01_mutant.ex", line: 193]}, {Regex
 
-  * test masks sensitive keys in a keyword list
-      failed to start child with the spec {MaskingServer, [sensitive_keys: [:password, :token, :ssn]]}.
-      Reason: %{sensitive: MapSet.new(["password", "ssn", "token"]), keys_masked: 0, patterns_applied: 0, patterns: []}
+  * test masks a space-separated card inside a map value
+      :exit: {{:cond_clause, [{MaskingServer, :"-mask_cc/1-fun-0-", 3, [file: ~c".gen_staging/bugfix_099_004_concurrent_masking_server_with_runtime_patterns_01_mutant.ex", line: 197]}, {Enum, :"-map_reduce/3-lists^mapfoldl/2-0-", 3, [file: ~c"lib/enum.ex", line: 1851]}, {Enum, :"-map_reduce/3-lists^mapfoldl/2-0-", 3, [file: ~c"lib/enum.ex", line: 1851]}, {MaskingServer, :mask_cc, 1, [file: ~c".gen_staging/bugfix_099_004_concurrent_masking_server_with_runtime_patterns_01_mutant.ex", line: 193]}, {Regex
 
-  (…11 more)
+  (…3 more)
 ```

@@ -1,1 +1,1 @@
-  @spec insert_sequential(repo(), schema(), [[map()]], map(), stats()) :: stats()
+  @spec insert_sequential(repo(), schema(), Enumerable.t(), map(), stats()) :: stats()

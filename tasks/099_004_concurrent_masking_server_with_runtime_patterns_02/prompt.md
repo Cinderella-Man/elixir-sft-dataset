@@ -26,7 +26,7 @@ defmodule MaskingServer do
   plus any custom patterns registered at runtime via `add_pattern/3`.
 
   Because every operation is routed through the `GenServer`, concurrent callers
-  are serialized and the cumulative statistics returned by `stats/0` stay exact
+  are serialized and the cumulative statistics returned by `stats/1` stay exact
   under concurrency.
   """
 
@@ -188,6 +188,7 @@ defmodule MaskingServer do
 
   # Applies built-in patterns (credit cards, then SSNs, then emails) followed by
   # every registered custom pattern, counting each match replaced.
+
   defp scrub(state, string) do
     # TODO
   end

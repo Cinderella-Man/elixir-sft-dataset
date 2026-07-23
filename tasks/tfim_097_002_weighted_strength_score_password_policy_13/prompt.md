@@ -26,6 +26,13 @@ defmodule PasswordPolicy do
   @default_common_passwords []
   @default_max_username_similarity 3
 
+  @doc """
+  Evaluates `password` against the policy configured by `context`.
+
+  Returns `{:accepted, score}` when every check passes, or
+  `{:rejected, score, reasons}` with the failed checks as atoms. The
+  `context` map must include `:username`; raising `ArgumentError` otherwise.
+  """
   @spec evaluate(String.t(), map()) ::
           {:accepted, non_neg_integer()} | {:rejected, non_neg_integer(), [atom()]}
   def evaluate(password, %{username: _} = context) do
@@ -109,9 +116,8 @@ defmodule PasswordPolicy do
   # Levenshtein distance — iterative two-row dynamic programming.
   # ---------------------------------------------------------------------------
 
-  @doc false
   @spec levenshtein(String.t(), String.t()) :: non_neg_integer()
-  def levenshtein(a, b) when is_binary(a) and is_binary(b) do
+  defp levenshtein(a, b) when is_binary(a) and is_binary(b) do
     a_graphs = String.graphemes(a)
     b_graphs = String.graphemes(b)
 

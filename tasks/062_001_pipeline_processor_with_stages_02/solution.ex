@@ -12,10 +12,8 @@
         execute(rest, next_value, [meta | meta_acc])
 
       {:error, reason} ->
-        # Return accumulated metadata (in execution order) as part of caller
-        # context — exposed via the three-element error tuple if desired, but
-        # the public contract only requires the three-element form below.
-        # We honour the spec strictly here.
+        # The contract's halt result is exactly three elements with no
+        # metadata list — the timings accumulated so far are dropped.
         {:error, name, reason}
 
       other ->

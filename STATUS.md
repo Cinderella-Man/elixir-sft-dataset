@@ -133,17 +133,15 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    reads, standing lesson). The full sweep is a NEW dedicated
    @doc-truth pass over all roots (semantic_review was not
    doc-focused), detached + sha-ledgered, after G3.
-   PILOT FIXES APPLIED 2026-07-23 (all 5 golds edited, each re-graded
-   1.0; embeds cascaded: wt 5 / tfim 93 / adapt 4 / dedoc 5 / tdd 5 /
-   specfim 27 resynced, 8 fim-child golds hand-re-carved from the new
-   parents (the fix_child_gold class), one historical stray blank in
-   062_001_03's embed removed — check_embeds 3889/0/0). RIDING: 15
-   bugfix pairs deleted, topup remint launched detached
-   `scripts/run_detached.sh logs/topup_g5_remint.log bash -c 'for i
-   in 5 32 62 97 99; do GEN_ONLY=topup GEN_SKIP_VARIATIONS=1
-   GEN_SKIP_FIM=1 mix run scripts/generate.exs $i; done'` — verify
-   after: gate 0 stale_gold, audit_bugfix 15/15, scoped validate.
-   Original findings:
+   PILOT CLOSED 2026-07-23: all 5 golds fixed + re-graded 1.0, full
+   cascade (wt/tfim/adapt/dedoc/tdd/specfim embeds; 8 fim-child golds
+   re-carved), 15 bugfix pairs re-minted (gate 961/0 stale_gold,
+   audit 15/15 + random 12/12), perfect+mutants green, embeds
+   3889/0/0. Rider gate fix: audit_bugfix's spec_included now checks
+   CONTENT (parent prompt verbatim in the child) instead of the
+   v0-only heading the rotation retired. REMAINING for G5: the full
+   corpus @doc-truth sweep (LLM, detached; queue after the G3
+   transport queue drains). Original pilot findings:
    - 099_004: moduledoc says stats/0, API is stats(server)/1 —
      one-token doc fix.
    - 062_001: @doc on run/2 claims failed-stage timing recorded;

@@ -78,7 +78,10 @@ results =
       gold_passes: (good["tests_failed"] || 0) == 0 and (good["tests_passed"] || 0) > 0,
       gold_is_parent: gold == parent_sol,
       one_line_bug: diff_lines == 1,
-      spec_included: String.contains?(prompt, "## The task the module implements")
+      # Content, not heading: the register rotation (docs/20) varies the spec
+      # section's heading per unit, and what this property MEANS is that the
+      # parent's task statement rides in the prompt verbatim.
+      spec_included: String.contains?(prompt, String.trim(File.read!(Path.join(parent, "prompt.md"))))
     }
 
     fails = for {k, v} <- checks, not v, do: k
