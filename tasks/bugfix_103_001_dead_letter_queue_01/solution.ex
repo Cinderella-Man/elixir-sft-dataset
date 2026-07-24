@@ -3,7 +3,7 @@ defmodule DLQ do
   A dead letter queue GenServer.
 
   A dead letter queue is a place to park messages that failed processing so
-  they can be inspected (`peek/3`), retried (`retry/4`), or purged (`purge/4`)
+  they can be inspected (`peek/3`), retried (`retry/4`), or purged (`purge/3`)
   later.
 
   Messages are grouped by an arbitrary `queue_name`. Different queues are

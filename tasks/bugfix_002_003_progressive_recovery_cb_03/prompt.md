@@ -58,7 +58,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
   circuit must complete `calls_required` calls at the stage with no more than
   `failures_tolerated` failures to advance.  The default ladder
   `[{5, 0}, {15, 1}, {30, 2}]` requires progressively more evidence of
-  stability at progressively higher permitted failure rates.
+  stability while tolerating progressively more failures per stage.
 
   Every call in `:recovering` executes normally — this variant does not
   sample or reject traffic during recovery, it just uses the additional
@@ -89,7 +89,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
 
   @doc "Runs `func`; returns its result or `{:error, :circuit_open}` (progressive recovery)."
   @spec call(GenServer.server(), (-> any())) :: any()
-  def call(name, func) when is_function(func, 1) do
+  def call(name, func) when is_function(func, 0) do
     GenServer.call(name, {:call, func})
   end
 
@@ -185,7 +185,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
       {:error, reply} ->
         new_count = state.failure_count + 1
 
-        if new_count >= state.config.failure_threshold do
+        if new_count > state.config.failure_threshold do
           {reply, %{state | state: :open, opened_at: state.clock.(), failure_count: 0}}
         else
           {reply, %{state | failure_count: new_count}}
@@ -327,19 +327,47 @@ end
 ## Failing test report
 
 ```
-15 of 15 test(s) failed:
-
-  * test passes through successes in closed state
-      no function clause matching in ProgressiveRecoveryCircuitBreaker.call/2
+23 of 26 test(s) failed:
 
   * test trips on threshold consecutive failures
-      no function clause matching in ProgressiveRecoveryCircuitBreaker.call/2
-
-  * test success between failures resets consecutive failure count
-      no function clause matching in ProgressiveRecoveryCircuitBreaker.call/2
+      
+      
+      match (=) failed
+      code:  assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+      left:  :open
+      right: :closed
+      
 
   * test open state rejects calls without executing
-      no function clause matching in ProgressiveRecoveryCircuitBreaker.call/2
+      
+      
+      match (=) failed
+      code:  assert {:error, :circuit_open} =
+                    ProgressiveRecoveryCircuitBreaker.call(cb, fn ->
+                      send(tracker, :was_called)
+                      {:ok, :v}
+                    end)
+      left:  {:error, :circuit_open}
+      right: {:ok, :v}
+      
 
-  (…11 more)
+  * test successful probe enters :recovering, not :closed directly
+      
+      
+      match (=) failed
+      code:  assert :half_open = ProgressiveRecoveryCircuitBreaker.state(cb)
+      left:  :half_open
+      right: :closed
+      
+
+  * test probe failure → :open with restarted reset timeout
+      
+      
+      match (=) failed
+      code:  assert :half_open = ProgressiveRecoveryCircuitBreaker.state(cb)
+      left:  :half_open
+      right: :closed
+      
+
+  (…19 more)
 ```

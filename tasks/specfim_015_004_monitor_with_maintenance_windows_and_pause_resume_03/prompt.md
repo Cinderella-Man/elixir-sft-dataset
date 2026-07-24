@@ -65,7 +65,7 @@ defmodule ManagedMonitor do
     GenServer.start_link(__MODULE__, opts, gen_opts ++ name_opt)
   end
 
-  @doc "Registers `service_name` with `check_func` every `interval_ms`. Returns `:ok`."
+  @doc "Registers `service_name` with `check_func` every `interval_ms`. Returns `:ok`, or `{:error, :already_registered}` if `service_name` is already registered."
   # TODO: @spec
   def register(server, service_name, check_func, interval_ms, max_failures \\ 3) do
     GenServer.call(server, {:register, service_name, check_func, interval_ms, max_failures})

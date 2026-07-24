@@ -59,7 +59,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
   circuit must complete `calls_required` calls at the stage with no more than
   `failures_tolerated` failures to advance.  The default ladder
   `[{5, 0}, {15, 1}, {30, 2}]` requires progressively more evidence of
-  stability at progressively higher permitted failure rates.
+  stability while tolerating progressively more failures per stage.
 
   Every call in `:recovering` executes normally — this variant does not
   sample or reject traffic during recovery, it just uses the additional
@@ -328,7 +328,7 @@ end
 ## Failing test report
 
 ```
-1 of 15 test(s) failed:
+1 of 26 test(s) failed:
 
   * test open state rejects calls without executing
       

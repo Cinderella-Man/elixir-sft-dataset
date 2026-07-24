@@ -26,7 +26,7 @@ defmodule ReplayEventBus do
           topic => %{
             # list of {ts_ms, event}, oldest first
             history: [],
-            history_size: pos_integer,
+            history_size: non_neg_integer,
             # list of %{ref, pid}, oldest subscription first
             subs: []
           }

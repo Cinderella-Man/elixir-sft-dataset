@@ -73,9 +73,9 @@ defmodule Metrics do
   Atomically increments the counter `name` by `amount` (default `1`).
 
   If the counter does not yet exist it is initialised to `0` before the
-  increment is applied, so the first call returns `amount`. The increment
-  is performed with `:ets.update_counter/4`, which is atomic and requires
-  no round-trip to the GenServer.
+  increment is applied (a first call therefore stores `amount`). The
+  increment is performed with `:ets.update_counter/4`, which is atomic and
+  requires no round-trip to the GenServer.
 
   `amount` must be a non-negative integer — counters are monotonically
   increasing and never decrease. An `amount` of `0` is explicitly allowed:
@@ -83,6 +83,7 @@ defmodule Metrics do
 
   Returns `:ok`.
   """
+
   def increment(name, amount \\ 1) when is_integer(amount) and amount >= 0 do
     # TODO
   end

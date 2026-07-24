@@ -194,7 +194,7 @@ defmodule AsyncMonitor do
     GenServer.start_link(__MODULE__, opts, gen_opts ++ name_opt)
   end
 
-  @doc "Registers `service_name` with an async `check_func`. Returns `:ok`."
+  @doc "Registers `service_name` with an async `check_func`. Returns `:ok`, or `{:error, :already_registered}` if `service_name` is already registered."
   @spec register(
           GenServer.server(),
           service_name(),
@@ -449,7 +449,7 @@ end
 ## Failing test report
 
 ```
-8 of 19 test(s) failed:
+8 of 22 test(s) failed:
 
   * test service goes :down after max_failures consecutive failures (default 3)
       

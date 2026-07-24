@@ -51,8 +51,8 @@ defmodule Metrics do
   A concurrent-safe metrics collector backed by a named public ETS table.
 
   Counters and gauges share the same table. The GenServer exists solely to
-  own the table and survive crashes — all hot-path reads and counter
-  increments go directly to ETS and never serialise through the process.
+  initialise and own the table — all hot-path reads and counter increments
+  go directly to ETS and never serialise through the process.
 
   ## Backing table
 
@@ -143,8 +143,8 @@ defmodule Metrics do
   @doc """
   Returns all metrics as a map of `%{name => value}`.
 
-  The map is built from a full ETS table scan; prefer `snapshot/0` when
-  the intent is to capture a point-in-time view.
+  The map is built from a full ETS table scan (a point-in-time capture);
+  `snapshot/0` is an alias whose name makes that intent explicit.
   """
   @spec all() :: %{term() => number()}
   def all do

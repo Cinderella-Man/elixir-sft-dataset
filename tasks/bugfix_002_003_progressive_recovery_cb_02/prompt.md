@@ -59,7 +59,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
   circuit must complete `calls_required` calls at the stage with no more than
   `failures_tolerated` failures to advance.  The default ladder
   `[{5, 0}, {15, 1}, {30, 2}]` requires progressively more evidence of
-  stability at progressively higher permitted failure rates.
+  stability while tolerating progressively more failures per stage.
 
   Every call in `:recovering` executes normally — this variant does not
   sample or reject traffic during recovery, it just uses the additional
@@ -90,7 +90,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
 
   @doc "Runs `func`; returns its result or `{:error, :circuit_open}` (progressive recovery)."
   @spec call(GenServer.server(), (-> any())) :: any()
-  def call(name, func) when is_function(func, 0) do
+  def call(name, func) when is_function(func, 1) do
     GenServer.call(name, {:call, func})
   end
 
@@ -255,7 +255,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
         advance_stage(updated_state, reply)
 
       # Scenario C: Progressing -> Stay in :recovering with new counts
-      false ->
+      true ->
         {reply, updated_state}
     end
   end
@@ -328,17 +328,19 @@ end
 ## Failing test report
 
 ```
-4 of 15 test(s) failed:
+26 of 26 test(s) failed:
 
-  * test clears every recovery stage → :closed
-      {:EXIT, #PID<0.234.0>}: {:cond_clause, [{ProgressiveRecoveryCircuitBreaker, :execute_in_recovering, 2, [file: ~c".gen_staging/bugfix_002_003_progressive_recovery_cb_02_mutant.ex", line: 217]}, {ProgressiveRecoveryCircuitBreaker, :handle_call, 3, [file: ~c".gen_staging/bugfix_002_003_progressive_recovery_cb_02_mutant.ex", line: 121]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init
+  * test passes through successes in closed state
+      no function clause matching in ProgressiveRecoveryCircuitBreaker.call/2
 
-  * test failure within stage tolerance stays in stage
-      {:EXIT, #PID<0.238.0>}: {:cond_clause, [{ProgressiveRecoveryCircuitBreaker, :execute_in_recovering, 2, [file: ~c".gen_staging/bugfix_002_003_progressive_recovery_cb_02_mutant.ex", line: 217]}, {ProgressiveRecoveryCircuitBreaker, :handle_call, 3, [file: ~c".gen_staging/bugfix_002_003_progressive_recovery_cb_02_mutant.ex", line: 121]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init
+  * test trips on threshold consecutive failures
+      no function clause matching in ProgressiveRecoveryCircuitBreaker.call/2
 
-  * test second failure in stage 1 exceeds tolerance → :open
-      {:EXIT, #PID<0.246.0>}: {:cond_clause, [{ProgressiveRecoveryCircuitBreaker, :execute_in_recovering, 2, [file: ~c".gen_staging/bugfix_002_003_progressive_recovery_cb_02_mutant.ex", line: 217]}, {ProgressiveRecoveryCircuitBreaker, :handle_call, 3, [file: ~c".gen_staging/bugfix_002_003_progressive_recovery_cb_02_mutant.ex", line: 121]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init
+  * test success between failures resets consecutive failure count
+      no function clause matching in ProgressiveRecoveryCircuitBreaker.call/2
 
-  * test reset returns to :closed from :recovering and clears stage counters
-      {:EXIT, #PID<0.266.0>}: {:cond_clause, [{ProgressiveRecoveryCircuitBreaker, :execute_in_recovering, 2, [file: ~c".gen_staging/bugfix_002_003_progressive_recovery_cb_02_mutant.ex", line: 217]}, {ProgressiveRecoveryCircuitBreaker, :handle_call, 3, [file: ~c".gen_staging/bugfix_002_003_progressive_recovery_cb_02_mutant.ex", line: 121]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init
+  * test open state rejects calls without executing
+      no function clause matching in ProgressiveRecoveryCircuitBreaker.call/2
+
+  (…22 more)
 ```

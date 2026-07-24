@@ -194,7 +194,7 @@ defmodule AsyncMonitor do
     GenServer.start_link(__MODULE__, opts, gen_opts ++ name_opt)
   end
 
-  @doc "Registers `service_name` with an async `check_func`. Returns `:ok`."
+  @doc "Registers `service_name` with an async `check_func`. Returns `:ok`, or `{:error, :already_registered}` if `service_name` is already registered."
   @spec register(
           GenServer.server(),
           service_name(),
@@ -449,19 +449,19 @@ end
 ## Failing test report
 
 ```
-6 of 19 test(s) failed:
+7 of 22 test(s) failed:
 
   * test service becomes :up after a successful async check
       {:EXIT, #PID<0.234.0>}: {{:badmatch, :ok}, [{AsyncMonitor, :handle_info, 2, [file: ~c".gen_staging/bugfix_015_003_async_check_monitor_with_timeouts_01_mutant.ex", line: 200]}, {:gen_server, :try_handle_info, 3, [file: ~c"gen_server.erl", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
 
   * test a :down service recovers to :up when check succeeds
-      {:EXIT, #PID<0.278.0>}: {{:badmatch, :ok}, [{AsyncMonitor, :handle_info, 2, [file: ~c".gen_staging/bugfix_015_003_async_check_monitor_with_timeouts_01_mutant.ex", line: 200]}, {:gen_server, :try_handle_info, 3, [file: ~c"gen_server.erl", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
+      {:EXIT, #PID<0.286.0>}: {{:badmatch, :ok}, [{AsyncMonitor, :handle_info, 2, [file: ~c".gen_staging/bugfix_015_003_async_check_monitor_with_timeouts_01_mutant.ex", line: 200]}, {:gen_server, :try_handle_info, 3, [file: ~c"gen_server.erl", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
 
   * test notification fires again on a second down after recovery
-      {:EXIT, #PID<0.288.0>}: {{:badmatch, :ok}, [{AsyncMonitor, :handle_info, 2, [file: ~c".gen_staging/bugfix_015_003_async_check_monitor_with_timeouts_01_mutant.ex", line: 200]}, {:gen_server, :try_handle_info, 3, [file: ~c"gen_server.erl", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
+      {:EXIT, #PID<0.296.0>}: {{:badmatch, :ok}, [{AsyncMonitor, :handle_info, 2, [file: ~c".gen_staging/bugfix_015_003_async_check_monitor_with_timeouts_01_mutant.ex", line: 200]}, {:gen_server, :try_handle_info, 3, [file: ~c"gen_server.erl", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
 
   * test a success in between failures resets the counter
-      {:EXIT, #PID<0.298.0>}: {{:badmatch, :ok}, [{AsyncMonitor, :handle_info, 2, [file: ~c".gen_staging/bugfix_015_003_async_check_monitor_with_timeouts_01_mutant.ex", line: 200]}, {:gen_server, :try_handle_info, 3, [file: ~c"gen_server.erl", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
+      {:EXIT, #PID<0.306.0>}: {{:badmatch, :ok}, [{AsyncMonitor, :handle_info, 2, [file: ~c".gen_staging/bugfix_015_003_async_check_monitor_with_timeouts_01_mutant.ex", line: 200]}, {:gen_server, :try_handle_info, 3, [file: ~c"gen_server.erl", line: 2434]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2420]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}
 
-  (…2 more)
+  (…3 more)
 ```

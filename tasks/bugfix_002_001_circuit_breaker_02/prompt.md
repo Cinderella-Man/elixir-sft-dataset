@@ -64,7 +64,7 @@ defmodule CircuitBreaker do
     * `:name` — process registration name (**required**)
     * `:failure_threshold` — failures before tripping to open (default `5`)
     * `:reset_timeout_ms` — milliseconds in open state before half-open (default `30_000`)
-    * `:half_open_max_probes` — concurrent probe calls allowed in half-open (default `1`)
+    * `:half_open_max_probes` — max probe calls admitted per half-open episode (default `1`)
     * `:clock` — zero-arity function returning current time in ms
         (default `fn -> System.monotonic_time(:millisecond) end`)
   """
@@ -222,7 +222,7 @@ end
 ## Failing test report
 
 ```
-4 of 15 test(s) failed:
+5 of 21 test(s) failed:
 
   * test successful calls in closed state reset the failure count
       
@@ -258,4 +258,7 @@ end
       code:  assert CircuitBreaker.state(:test_cb) == :closed
       left:  :open
       right: :closed
+      
+
+  (…1 more)
 ```

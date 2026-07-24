@@ -85,7 +85,7 @@ defmodule ReplayEventBus do
           topic => %{
             # list of {ts_ms, event}, oldest first
             history: [],
-            history_size: pos_integer,
+            history_size: non_neg_integer,
             # list of %{ref, pid}, oldest subscription first
             subs: []
           }
@@ -370,25 +370,25 @@ end
   * test default subscribe has no replay — only live events
       no match of right hand side value:
       
-          {:error, #Reference<0.1795803471.1091043348.168299>}
+          {:error, #Reference<0.3867973676.2311585793.212171>}
       
 
   * test exact topic matching only (no wildcards)
       no match of right hand side value:
       
-          {:error, #Reference<0.1795803471.1091043348.168326>}
+          {:error, #Reference<0.3867973676.2311585793.212198>}
       
 
   * test replay: :all delivers every retained event in order
       no match of right hand side value:
       
-          {:error, #Reference<0.1795803471.1091043348.168350>}
+          {:error, #Reference<0.3867973676.2311585793.212222>}
       
 
   * test replay: N delivers exactly the last N events in order
       no match of right hand side value:
       
-          {:error, #Reference<0.1795803471.1091043348.168376>}
+          {:error, #Reference<0.3867973676.2311585793.212250>}
       
 
   (…10 more)

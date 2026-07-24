@@ -58,7 +58,7 @@ defmodule DLQ do
   A dead letter queue GenServer.
 
   A dead letter queue is a place to park messages that failed processing so
-  they can be inspected (`peek/3`), retried (`retry/4`), or purged (`purge/4`)
+  they can be inspected (`peek/3`), retried (`retry/4`), or purged (`purge/3`)
   later.
 
   Messages are grouped by an arbitrary `queue_name`. Different queues are
@@ -112,7 +112,7 @@ defmodule DLQ do
   """
   @spec peek(GenServer.server(), term(), non_neg_integer()) :: [map()]
   def peek(server, queue_name, count)
-      when is_integer(count) and count >= 0 do
+      when is_integer(count) and count > 0 do
     GenServer.call(server, {:peek, queue_name, count})
   end
 
@@ -175,7 +175,7 @@ defmodule DLQ do
     queues = Map.update(state.queues, queue_name, [entry], fn entries -> entries ++ [entry] end)
     state = %{state | queues: queues, next_id: id + 1}
 
-    {:reply, {:error, id}, state}
+    {:reply, {:ok, id}, state}
   end
 
   @impl true
@@ -265,34 +265,8 @@ end
 ## Failing test report
 
 ```
-14 of 16 test(s) failed:
+1 of 23 test(s) failed:
 
-  * test push stores a message and peek returns it with retry_count 0
-      
-      
-      match (=) failed
-      code:  assert {:ok, id} = DLQ.push(dlq, "orders", %{n: 1}, :timeout, %{source: "web"})
-      left:  {:ok, id}
-      right: {:error, 0}
-      
-
-  * test push returns unique ids within the same queue
-      no match of right hand side value:
-      
-          {:error, 0}
-      
-
-  * test peek respects count and returns oldest-first order
-      no match of right hand side value:
-      
-          {:error, 0}
-      
-
-  * test retry with a succeeding handler (:ok) removes the message
-      no match of right hand side value:
-      
-          {:error, 0}
-      
-
-  (…10 more)
+  * test peek with a count of 0 returns [] without removing anything
+      no function clause matching in DLQ.peek/3
 ```
