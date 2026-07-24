@@ -62,46 +62,11 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    only the two waived 037 families below 0.6 — ledger sha-current
    for the weekly CI gate.
 
-6. **[ ] @doc prose truth on existing golds (G5).** Sweep @doc claims
-   vs prompt contract; un-promised claims get prompt sentences +
-   anchored tests (promise-audit machinery) or get cut. (The hand
-   queue in item 2 fixes many @doc-contradiction findings — check
-   what the sweep still owes after it.)
-   SIZED 2026-07-23 (sha cross-check of semantic_review latest rows):
-   5 roots have doc-claim findings measured on CURRENT bytes; 14 more
-   rows are stale (solution sha changed since review — presumed fixed
-   by the docs/19 doc-truth batch; confirm per-finding on artifact
-   reads, standing lesson). The full sweep is a NEW dedicated
-   @doc-truth pass over all roots (semantic_review was not
-   doc-focused), detached + sha-ledgered, after G3.
-   PILOT CLOSED 2026-07-23: all 5 golds fixed + re-graded 1.0, full
-   cascade (wt/tfim/adapt/dedoc/tdd/specfim embeds; 8 fim-child golds
-   re-carved), 15 bugfix pairs re-minted (gate 961/0 stale_gold,
-   audit 15/15 + random 12/12), perfect+mutants green, embeds
-   3889/0/0. Rider gate fix: audit_bugfix's spec_included now checks
-   CONTENT (parent prompt verbatim in the child) instead of the
-   v0-only heading the rotation retired. REMAINING for G5: the full
-   corpus @doc-truth sweep (LLM, detached; queue after the G3
-   transport queue drains). Original pilot findings:
-   - 099_004: moduledoc says stats/0, API is stats(server)/1 —
-     one-token doc fix.
-   - 062_001: @doc on run/2 claims failed-stage timing recorded;
-     prompt says error tuple "carries no metadata list"; code agrees
-     with prompt — rewrite the @doc sentence.
-   - 097_002: prompt promises a SINGLE public function; gold exports
-     public levenshtein/2 with @doc false (harness never calls it) —
-     make defp.
-   - 005_003: fresh Process.monitor ref per subscribe makes the
-     Map.update merge fn + the remaining!=[] branch UNREACHABLE;
-     moduledoc advertises %{ref => {pid, [topic, ...]}} multi-topic
-     shape that is always a singleton — simplify to singular shape,
-     both handlers + moduledoc.
-   - 032_003: prompt MANDATES a streaming pipeline; gold Enum.reduces
-     all parsed records into memory then chunk_every's (moduledoc
-     "never loads the full file" is false) — real fix: lazy
-     chunk-carried-counter pipeline (Stream.chunk_while + bounded
-     async_stream), results identical, memory bounded. Largest of
-     the five.
+6. **[ ] @doc prose truth on existing golds (G5) — FIX LANE (9/74 done).**
+   Sweep @doc claims vs the harness-validated code / prompt contract; fix
+   contradictions/phantom_api by aligning the doc, unpromised by softening or
+   adding a prompt sentence + test. (Manual finding-classes PILOT of 5 golds
+   closed 2026-07-23 → docs/15.)
    FULL SWEEP: TOOL PILOT VALIDATED 2026-07-24 (--limit 5: 3 clean, 2
    real grounded findings — 001_002 moduledoc "O(1) state per key" is
    unpromised+false [stale {key,window} entries accumulate unbounded when
@@ -124,7 +89,20 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    but DO change solution.ex → cascade the embed resync battery (--apply) per
    batch + re-verify (check_embeds 0, perfect on touched, S6 fresh if any prompt
    touched). Batch-commit. Two-tier (rule 7): a generator-preventable class gets
-   an accept-time doc-truth gate. TRACK progress: mark fixed/skipped per finding.
+   an accept-time doc-truth gate.
+   CASCADE COST IS HIGH (learned batch 1): a solution.ex doc edit cascades to ~18
+   derivatives; editing a FUNCTION's @doc (not just moduledoc) also stales that
+   function's fim-child gold (re-carve: apply the same @doc edit to the child) AND
+   the family's bugfix golds (delete + re-mint via GEN_ONLY=topup skip-all-except-
+   bugfix, scoped only_idea — stale_gold is never --apply-healable). ~1 batch of
+   ~10 findings per session is the sustainable pace.
+   BATCH 1 DONE 2026-07-24 (54360d577): **9/74** fixed across 7 families
+   (103_001 phantom_api; 044_001 ×3; 002_001; 002_003; 015_003; 015_004; 005_003),
+   full cascade green (embeds 3889/0/0, 4 fim golds re-carved, 21 bugfix re-minted
+   + audited 21/21, ALL PERFECT on the 7 roots). **65 remain** in logs/doc_truth.jsonl
+   (42→ fewer contradiction, 31 unpromised, 0 phantom_api left). NEXT batch: pick
+   ~10 more (start with the [high] contradictions 013_002/072_001/073_001/074_001 —
+   these may be CODE gaps not doc drift, verify prompt+harness carefully).
 
 7. **[DONE 2026-07-23] Family spot-checks (G6, CONTEXT rule 8) —
    CLOSED.** Deterministic sha-ordered stratified sample (seed string
@@ -165,16 +143,14 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    extension loop (or a plain GEN_ONLY=topup run) mints them — they are valid
    standalone _01 tasks until then (no gate breaks on missing children).
 
-   4c. **[ ] Pending repair-mint (found 2026-07-23 during G8 prep).**
-   mint_repairs.exs --dry-run: 1098 attempt chains, 223 mintable (rejected→
-   accepted) pairs, 89 already on disk (=~90 repair_ dirs), 134 candidate-new
-   never minted. Likely most fail real verification (a "rejected" attempt that
-   actually grades green teaches nothing → correctly skipped), but unconfirmed.
-   RESOLVE after the G8 probe: run mint_repairs.exs (real, DETACHED — up to ~268
-   evaluator grades) to definitively mint the truly-mintable ones + close the
-   rest as correctly-skipped. Deterministic, add-only, idempotent, self-verifying
-   (broken grades non-green AND fix grades green, both real evaluator). Review a
-   sample (rule 9) + commit new repair_ dirs on their own.
+   4c. **[DONE 2026-07-24] Pending repair-mint — RESOLVED (not mintable).**
+   mint_repairs ran for real (unheld) during the G5 bugfix re-mint: of 230
+   mintable (rejected→accepted) candidates, 89 already exist and the 141
+   candidate-new all came back `unverified` — they FAIL the real verification
+   (a "rejected" attempt that actually grades green, or a fix that doesn't grade
+   green in isolation, teaches nothing), so ZERO new repair dirs were promoted
+   (repair_ count steady at 90). The 141 are correctly skipped, not owed work.
+   Closed; no Task B (mint_repairs already self-verifies).
 
    4d. **[ ] Minor existing-data note (found 2026-07-23):** 6 corpus golds spec
    start_link with the narrow {:ok,pid}|{:error,term} form (vs ~395 using

@@ -9,6 +9,32 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-24 — G5 DOC-TRUTH sweep + fix-lane batch 1; item 4c closed.**
+  The dedicated `doc_truth_review.exs` report-only sweep ran over all 335
+  roots (tool pilot-validated first, rule 9): **273 clean, 74 findings on 62
+  roots** (42 contradiction / 31 unpromised / 1 phantom_api),
+  `logs/doc_truth.jsonl`. These are single-pass judge hypotheses (no
+  adversarial verify), so the fix lane verifies each per-artifact (rule 10).
+  - **Batch 1 (54360d577): 9/74 fixed** across 7 families, each verified:
+    103_001 (moduledoc `purge/4`→`purge/3`), 044_001 ×3 (drop false "survive
+    crashes" — no `:heir`; reword gauge atomicity; reword `all/0`↔`snapshot/0`
+    "prefer"), 002_003 (recovery "rates" → "tolerating more failures"), 002_001
+    (`:half_open_max_probes` "concurrent"→"per episode"), 015_003/015_004
+    (register @doc adds `{:error, :already_registered}`), 005_003 (@type
+    `pos_integer`→`non_neg_integer`).
+  - **Cascade lesson (high cost):** a solution.ex doc edit stales ~18
+    derivatives; editing a FUNCTION's @doc also stales that function's fim-child
+    gold (re-carve = apply the same edit to the child) and the family's bugfix
+    golds (delete + deterministic re-mint, `stale_gold` is never
+    `--apply`-healable). Batch 1 cascade: check_embeds 3889/0/0, 4 fim golds
+    re-carved, tfim/adapt/dedoc/tdd/specfim/wt resynced, a resync blank-line
+    reflow hand-fixed, 21 bugfix pairs re-minted (stale_gold 21→0) + audit
+    21/21, ALL PERFECT on the 7 roots. **65 findings remain** (multi-session).
+  - **STATUS 4c CLOSED as a side effect:** the unheld `mint_repairs` in the
+    re-mint reported the 141 candidate-new repair pairs `unverified` (they fail
+    the broken-non-green / fix-green check) → not mintable, 0 new dirs (repair_
+    steady at 90). Not owed work.
+
 - **2026-07-24 — G3 PROMPT-REGISTER VARIETY CLOSED (STATUS 5): the
   monotone "Write me an Elixir…" opener is retired corpus-wide.** The
   deterministic half (3-variant rotation in all 9 template modules) landed
