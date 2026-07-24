@@ -220,16 +220,22 @@ defmodule RollingRateCircuitBreakerTest do
   setup do
     start_supervised!({Clock, 0})
 
-    {:ok, _pid} =
-      RollingRateCircuitBreaker.start_link(
-        name: :test_cb,
-        window_size: 10,
-        error_rate_threshold: 0.5,
-        min_calls_in_window: 6,
-        reset_timeout_ms: 1_000,
-        half_open_max_probes: 1,
-        clock: &Clock.now/0
-      )
+    # start_supervised! (not a bare start_link) so ExUnit tears the named `:test_cb`
+    # process down between tests — a bare linked start_link frees the name only
+    # asynchronously, so under parallel-eval load the next test's setup could race a
+    # lingering `:test_cb` and get {:error, {:already_started, _}} (the 1/23 flake).
+    start_supervised!(
+      {RollingRateCircuitBreaker,
+       [
+         name: :test_cb,
+         window_size: 10,
+         error_rate_threshold: 0.5,
+         min_calls_in_window: 6,
+         reset_timeout_ms: 1_000,
+         half_open_max_probes: 1,
+         clock: &Clock.now/0
+       ]}
+    )
 
     %{cb: :test_cb}
   end
