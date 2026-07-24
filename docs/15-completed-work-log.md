@@ -34,6 +34,20 @@ and in git history / docs/14).
     re-mint reported the 141 candidate-new repair pairs `unverified` (they fail
     the broken-non-green / fix-green check) → not mintable, 0 new dirs (repair_
     steady at 90). Not owed work.
+  - **Bonus: 002_002 rolling-window CB flake fixed** (surfaced because editing
+    idea 2's 002_001/002_003 drags the 002_002 sibling into the pre-push's
+    parallel validate). Root cause: `setup` used a bare `start_link(name:
+    :test_cb)` — the name frees only async on the linked test's exit, so under
+    load the next setup raced a lingering `:test_cb` → `{:error,
+    {:already_started, _}}` (1/23, known since 2026-07-13). Fixed with
+    `start_supervised!`; re-screened GREEN; cascaded (wt/tfim/adapt/dedoc/tdd).
+    Task-B candidate logged (STATUS 6b): lint bare-named-start_link in setup.
+  - **Cascade-tail lesson:** a one-line @doc that exceeds 98 cols fails
+    house-style (caught by the pre-push, 18 failures across a family + its
+    derivatives, nothing shipped) — check the edited solution.ex's max line
+    length BEFORE cascading; and multiple `validate --only` flags do NOT OR
+    (only one applies). The whole batch (9 fixes + >98 wrap + flake fix + full
+    cascade + re-screen) landed clean in 6aab481e4.
 
 - **2026-07-24 — G3 PROMPT-REGISTER VARIETY CLOSED (STATUS 5): the
   monotone "Write me an Elixir…" opener is retired corpus-wide.** The

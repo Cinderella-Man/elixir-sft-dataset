@@ -96,13 +96,30 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    the family's bugfix golds (delete + re-mint via GEN_ONLY=topup skip-all-except-
    bugfix, scoped only_idea — stale_gold is never --apply-healable). ~1 batch of
    ~10 findings per session is the sustainable pace.
-   BATCH 1 DONE 2026-07-24 (54360d577): **9/74** fixed across 7 families
-   (103_001 phantom_api; 044_001 ×3; 002_001; 002_003; 015_003; 015_004; 005_003),
-   full cascade green (embeds 3889/0/0, 4 fim golds re-carved, 21 bugfix re-minted
-   + audited 21/21, ALL PERFECT on the 7 roots). **65 remain** in logs/doc_truth.jsonl
-   (42→ fewer contradiction, 31 unpromised, 0 phantom_api left). NEXT batch: pick
-   ~10 more (start with the [high] contradictions 013_002/072_001/073_001/074_001 —
-   these may be CODE gaps not doc drift, verify prompt+harness carefully).
+   BATCH 1 LANDED + PUSHED 2026-07-24 (54360d577 + tail → 6aab481e4): **9/74**
+   fixed across 7 families (103_001 phantom_api; 044_001 ×3; 002_001; 002_003;
+   015_003; 015_004; 005_003). **65 remain** in logs/doc_truth.jsonl (contradiction
+   + unpromised; 0 phantom_api left). The push had a long cascade TAIL worth
+   heeding next batch: (1) my one-line @doc additions ran >98 cols → house-style
+   fail → wrap multi-line, and CHECK max line length on the edited solution.ex
+   BEFORE cascading (multiple `--only` flags do NOT OR — only one applies; use the
+   pre-push or per-dir validate); (2) editing an idea's family drags its SIBLINGS
+   into the pre-push's parallel validate, which surfaced a pre-existing 002_002
+   flake (fixed, see below); (3) a harness edit needs a blind RE-SCREEN (S6 sha)
+   + adapt/dedoc/tdd cascade, not just wt/tfim. NEXT batch: ~10 more — start with
+   the [high] contradictions 013_002/072_001/073_001/074_001 (may be CODE gaps not
+   doc drift — verify prompt+harness carefully).
+
+   6b. **[DONE 2026-07-24] 002_002 rolling-window CB flake FIXED (found during
+   G5 batch 1).** The setup started the named `:test_cb` GenServer with a BARE
+   `start_link` — the registered name frees only asynchronously on the linked
+   test's exit, so under parallel-eval load the next test's setup raced a lingering
+   `:test_cb` → `{:error, {:already_started, _}}`, 1/23 (known flake since
+   2026-07-13). Fix: `start_supervised!` (deterministic teardown; name stays
+   `:test_cb`). Cascaded (wt/tfim/adapt/dedoc/tdd + blind re-screen GREEN), pushed
+   in 6aab481e4. Task B candidate (not yet built): a lint flagging
+   `start_link(name: <fixed atom>)` in a harness `setup` without `start_supervised`
+   — same family as the temp-path lint. Recorded for the finish-line gate sweep.
 
 7. **[DONE 2026-07-23] Family spot-checks (G6, CONTEXT rule 8) —
    CLOSED.** Deterministic sha-ordered stratified sample (seed string
