@@ -203,7 +203,10 @@ defmodule AsyncMonitor do
     GenServer.start_link(__MODULE__, opts, gen_opts ++ name_opt)
   end
 
-  @doc "Registers `service_name` with an async `check_func`. Returns `:ok`, or `{:error, :already_registered}` if `service_name` is already registered."
+  @doc """
+  Registers `service_name` with an async `check_func`. Returns `:ok`, or
+  `{:error, :already_registered}` if `service_name` is already registered.
+  """
   @spec register(
           GenServer.server(),
           service_name(),

@@ -1,4 +1,8 @@
-  @doc "Registers `service_name` with `check_func` every `interval_ms`. Returns `:ok`, or `{:error, :already_registered}` if `service_name` is already registered."
+  @doc """
+  Registers `service_name` with `check_func` every `interval_ms`. Returns
+  `:ok`, or `{:error, :already_registered}` if `service_name` is already
+  registered.
+  """
   @spec register(
           GenServer.server(),
           service_name(),
